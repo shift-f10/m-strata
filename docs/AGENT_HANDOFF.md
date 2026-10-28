@@ -280,6 +280,34 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 y (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+The owner: "Also ensure our engine supports multi gpu like the upstream". Spec
+`docs/superpowers/specs/2026-10-28-multi-gpu-design.md` (what upstream and Maya do, what each family did, what changed).
+The audit: Qwen's launch already composed upstream's split from `engine.gpu`; the gaps were no GPUs control on the
+cards, GLM-5.3/raon1 forced onto one device, and DeepSeek cards fixing Maya's one-GPU flags.
+
+- **The GPUs choice** (`ModelOptionKind::devices`, the option `gpus` last in every table; the launcher's `offer_gpus`
+  after Web search): "auto" or GPU numbers 0-63, none repeated, at most 16 (one on Gemma 4 and flint); writes
+  `engine.gpu` or, for glm53/raon1, `glm.gpu`. Tests RED first: `gpus_choose_the_cards_a_model_runs_on`, the display
+  orders, `cards_offer_web_search_when_the_server_has_it`'s GPUs check.
+- **This PC's GPUs** (`parse_nvidia_smi_gpu_list`, `list_gpus`, `HardwareFacts::gpus`): one `nvidia-smi` query on the
+  first About request; the About lists each GPU; the page draws a box per GPU (`devicesControl`), hidden on a one-GPU PC.
+  Tests RED first: `this_pcs_gpus_are_listed`, `web_ui_offers_the_gpus_of_this_pc`.
+- **GLM split**: several GPUs and the split at auto drop the forced `STRATA_GLM_SPLIT=0` (Maya's engine splits by
+  default). Test RED first: `several_glm_gpus_split_as_mayas_engine_does`.
+- **DeepSeek**: `--tp min(2, GPUs)` and `--threads on` on one GPU composed at launch (a card's own wins); new cards fix
+  neither. Test: `deepseek_launch_is_mayas_write_config` (RED shown by disabling the composition).
+- **Pictures, from the same upstream reading**: a GPU encoder adds `--vram-reserve-mib 700` (#1322; a reserve of the
+  card's own stands; both launch paths), and upstream's encoder reads 1,024 image tokens on the GPU, 300 on the CPU
+  (`Vision.token_limit`). Tests RED first: `vision_compose_rules`, `vision_child_argv_follows_upstreams_strata_vision`.
+- **README, "What this system could not test"** (the owner: "add caveats on what we could not test due to hardware
+  limitations like multi gpu etc"): several GPUs, pictures with a real model, DeepSeek and MiniMax end to end, AMD and
+  Intel GPUs, other NVIDIA generations and smaller systems, and Linux runs of the newest work.
+- Not done: upstream's card order for an auto split (#1352: needs multiprocessors x clock, which nvidia-smi does not
+  give - an engine-side device listing); a split in Gemma 4 and flint; any run on two GPUs (this PC has one). The
+  owner's DeepSeek card predates this and keeps its fixed `--tp 1 --threads on` (re-adding it drops them).
+
 ### Claude Code session, 2026-10-28 x (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 The owner: "a checkbox to also download vision files ... check the upstream on how they do it", then "Continue and

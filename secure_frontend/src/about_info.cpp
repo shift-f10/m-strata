@@ -232,6 +232,14 @@ std::string render_about_json(const std::optional<EngineBuild>& build, const Har
   out.append(hardware.ram_bytes.has_value() ? std::to_string(*hardware.ram_bytes) : std::string{"null"});
   append_key(&out, "gpu");
   append_text_or_null(&out, hardware.gpu);
+  out += ",\"gpus\":[";
+  for (std::size_t i = 0; i < hardware.gpus.size(); ++i) {
+    const auto& listed = hardware.gpus[i];
+    out += (i != 0U ? ",{\"index\":" : "{\"index\":") + std::to_string(listed.index) + ",\"name\":";
+    append_json_string(&out, listed.name);
+    out += ",\"mem_bytes\":" + (listed.mem_total_bytes ? std::to_string(*listed.mem_total_bytes) : std::string{"null"}) + "}";
+  }
+  out += ']';
   append_key(&out, "os");
   append_text_or_null(&out, hardware.os);
   out.append("}}\n");

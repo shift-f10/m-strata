@@ -6,6 +6,8 @@
 // each family library with the models it runs and the source it is built from) and this PC's hardware (the CPU and its
 // threads, the RAM, the GPU, the operating system). Never a path, a user or a host name.
 
+#include "secure_frontend/host_readings.hpp"
+
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -36,12 +38,14 @@ struct HardwareFacts final {
   std::string cpu;                         // "<name>, <n> threads"
   std::optional<std::uint64_t> ram_bytes;  // physical memory
   std::string gpu;                         // "<name>, <MiB> MiB" (the Monitor's reading); empty: none
+  std::vector<GpuListing> gpus{};          // every GPU, as nvidia-smi lists them (a card's GPUs choice reads them)
   std::string os;                          // Windows: edition, version and build; POSIX: PRETTY_NAME and the kernel
 };
 // This PC's CPU, RAM and operating system (the GPU is the caller's: the Monitor reads it). Printable ASCII only.
 [[nodiscard]] HardwareFacts hardware_facts();
 
-// {"build": {...} | null, "hardware": {"cpu", "ram_bytes", "gpu", "os"}} - a missing reading is null.
+// {"build": {...} | null, "hardware": {"cpu", "ram_bytes", "gpu", "gpus": [{"index", "name", "mem_bytes"}], "os"}} - a missing
+// reading is null, no GPU an empty list.
 [[nodiscard]] std::string render_about_json(const std::optional<EngineBuild>& build, const HardwareFacts& hardware);
 
 }  // namespace secure_frontend

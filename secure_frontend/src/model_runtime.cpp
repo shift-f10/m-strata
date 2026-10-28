@@ -67,7 +67,9 @@ std::variant<VisionPlan, std::string> plan_vision(const FrontendConfig& config, 
   }
   if (plan.executable.empty()) return std::string{"vision: no strata-vision beside the engine executable."};
   plan.arguments = compose_vision_arguments(VisionChildSpec{.mmproj = *launch.vision_mmproj, .model = *launch.vision_model,
-                                                            .threads = config.vision.threads, .max_tokens = config.engine.max_tokens,
+                                                            .threads = config.vision.threads,
+                                                            // upstream's encoder takes its own image budget (token_limit)
+                                                            .max_tokens = upstream ? std::nullopt : config.engine.max_tokens,
                                                             .no_flash_attn = config.vision.no_flash_attn, .gpu = config.vision.gpu,
                                                             .upstream_encoder = upstream});
   plan.no_new_privileges = config_defaults::kNoNewPrivilegesDefault && !config.engine.allow_new_privileges;

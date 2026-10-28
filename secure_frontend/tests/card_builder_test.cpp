@@ -297,12 +297,11 @@ void a_deepseek_pack_makes_a_deepseek_card() {
   expect(card != nullptr, "the DeepSeek card is a valid card file");
   if (card == nullptr) return;
   expect(card->profile == secure_frontend::EngineProfile::deepseek && made.profile == secure_frontend::EngineProfile::deepseek &&
-             std::get<std::vector<std::string>>(card->config.entries.at("engine.args").value) ==
-                 std::vector<std::string>{"--tp", "1", "--threads", "on"} &&
+             !card->config.entries.contains("engine.args") &&   // --tp and --threads follow the GPUs at each launch
              std::get<std::string>(card->config.entries.at("roots.models").value) == secure_frontend::path_to_utf8(pack) &&
              std::get<std::string>(card->config.entries.at("roots.tokenizer_pack").value) == secure_frontend::path_to_utf8(pack / "tokenizer") &&
              std::get<std::string>(card->config.entries.at("engine.model_id").value) == "deepseek-v4.1-flash",
-         "the DeepSeek card: Maya's one-GPU flags, the pack and its tokenizer, Maya's model name");
+         "the DeepSeek card: no fixed --tp or --threads (the launch gives them by the GPUs), the pack and its tokenizer, Maya's model name");
   std::vector<std::string> names;
   for (const auto& option : card->options) names.emplace_back(option.spec != nullptr ? option.spec->name : "");
   expect(names == std::vector<std::string>{"max_context", "thinking", "temperature", "top_p"}, "Maya's DeepSeek options");

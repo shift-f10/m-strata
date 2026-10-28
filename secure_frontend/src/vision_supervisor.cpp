@@ -24,9 +24,12 @@ std::vector<std::string> compose_vision_arguments(const VisionChildSpec& spec) {
     args.emplace_back("--threads");
     args.emplace_back(std::to_string(spec.threads));
   }
-  if (spec.max_tokens.has_value()) {
+  // upstream's Vision.token_limit: a limit of its own, else the kind's default (setup.py's VISION: GPU 1024, CPU 300)
+  std::optional<std::int64_t> max_tokens = spec.max_tokens;
+  if (!max_tokens && spec.upstream_encoder) max_tokens = spec.gpu ? 1024 : 300;
+  if (max_tokens.has_value()) {
     args.emplace_back("--max-tokens");
-    args.emplace_back(std::to_string(*spec.max_tokens));
+    args.emplace_back(std::to_string(*max_tokens));
   }
   // SP5-P2 Task 6: no --min-tokens — the maya-vision grammar at the pin (its argument
   // loop, tools/vision/strata_vision.cpp:61-79 at 451f9cb6) has no such slot and exits

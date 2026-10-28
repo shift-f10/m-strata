@@ -108,6 +108,57 @@ std::optional<GpuReading> parse_nvidia_smi_line(const std::string_view line) {
   return reading;
 }
 
+std::vector<std::string> nvidia_smi_list_arguments() {
+  return {"--query-gpu=" + std::string{kNvidiaSmiListQuery}, "--format=csv,noheader,nounits"};
+}
+
+std::vector<GpuListing> parse_nvidia_smi_gpu_list(const std::string_view text) {
+  constexpr std::size_t kMaximumListedGpus = 16U;
+  std::vector<GpuListing> listed;
+  std::size_t begin = 0;
+  while (begin < text.size() && listed.size() < kMaximumListedGpus) {
+    const std::size_t newline = text.find('\n', begin);
+    std::string_view line = text.substr(begin, newline == std::string_view::npos ? std::string_view::npos : newline - begin);
+    begin = newline == std::string_view::npos ? text.size() : newline + 1U;
+    if (!line.empty() && line.back() == '\r') line.remove_suffix(1U);
+    const std::size_t first = line.find(',');
+    const std::size_t second = first == std::string_view::npos ? first : line.find(',', first + 1U);
+    if (second == std::string_view::npos || line.find(',', second + 1U) != std::string_view::npos) continue;
+    const std::string_view index_text = trim(line.substr(0, first));
+    const std::string_view name = trim(line.substr(first + 1U, second - first - 1U));
+    if (index_text.empty() || index_text.size() > 2U ||
+        !std::all_of(index_text.begin(), index_text.end(), [](const char c) { return c >= '0' && c <= '9'; })) {
+      continue;
+    }
+    const unsigned index = static_cast<unsigned>(std::stoul(std::string{index_text}));
+    if (index > 63U || name.empty() || name.size() > kMaximumGpuNameBytes ||
+        !std::all_of(name.begin(), name.end(), [](const unsigned char c) { return c >= 0x20U && c <= 0x7eU; })) {
+      continue;
+    }
+    const Field memory = numeric_field(line.substr(second + 1U));
+    if (!memory.valid) continue;
+    if (std::any_of(listed.begin(), listed.end(), [index](const GpuListing& gpu) { return gpu.index == index; })) continue;
+    listed.push_back(GpuListing{index, std::string{name}, mebibytes(memory.value)});
+  }
+  return listed;
+}
+
+std::vector<GpuListing> list_gpus(EngineCommand command) {
+  std::error_code ec;
+  if (command.executable.empty() || !std::filesystem::is_regular_file(command.executable, ec) || ec) return {};
+  EngineStdioProcess child;
+  if (child.start(command).has_value()) return {};
+  std::string text;
+  const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < until && text.size() < 16384U) {
+    const EngineReadResult read = child.read_line(std::chrono::milliseconds(250));
+    if (read.kind == EngineReadKind::line) text += read.line + "\n";
+    else if (read.kind != EngineReadKind::timeout) break;   // the answer is complete: the tool closed its output
+  }
+  (void)child.terminate(std::chrono::milliseconds(500));
+  return parse_nvidia_smi_gpu_list(text);
+}
+
 std::filesystem::path nvidia_smi_path() {
 #if defined(_WIN32)
   // As default_downloader_path: a failure or a too-long directory never yields a bare name.

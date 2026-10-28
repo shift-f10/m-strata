@@ -1163,8 +1163,14 @@ void vision_child_argv_follows_upstreams_strata_vision() {
   expect((argv == std::vector<std::string>{"--mmproj", "/p/mmproj.gguf", "--model", "/p/model.gguf", "--gpu", "--threads", "4",
                                            "--max-tokens", "2048", "--flash-attn", "off"}),
          "upstream's order, --gpu after the files, flash attention in upstream's spelling");
+  // upstream's Vision.token_limit (serve/server.py): without a limit of its own, the encoder's kind decides - 1024 image
+  // tokens on the GPU, 300 on the CPU (setup.py's VISION table)
   const auto cpu = secure_frontend::compose_vision_arguments({.mmproj = "/p/m.gguf", .model = "/p/x.gguf", .upstream_encoder = true});
-  expect((cpu == std::vector<std::string>{"--mmproj", "/p/m.gguf", "--model", "/p/x.gguf"}), "the CPU and the defaults: the files only");
+  expect((cpu == std::vector<std::string>{"--mmproj", "/p/m.gguf", "--model", "/p/x.gguf", "--max-tokens", "300"}),
+         "the CPU encoder: upstream's 300 image tokens");
+  const auto gpu = secure_frontend::compose_vision_arguments({.mmproj = "/p/m.gguf", .model = "/p/x.gguf", .gpu = true, .upstream_encoder = true});
+  expect((gpu == std::vector<std::string>{"--mmproj", "/p/m.gguf", "--model", "/p/x.gguf", "--gpu", "--max-tokens", "1024"}),
+         "the GPU encoder: upstream's 1024 image tokens");
 }
 
 // The pin's vision block form, re-anchored by SP5-P2 Task 6 on maya-vision's grammar at
@@ -2002,6 +2008,38 @@ void glm_child_env_is_exactly_the_named_typed_set() {
   }
 }
 
+// Multi-GPU like upstream (owner 2026-10-28, "ensure our engine supports multi gpu like the upstream"): Maya's GLM
+// engine splits the layers across the visible GPUs by default (glm_model.cu load_pack_place: "the layer split is the
+// DEFAULT on multi-GPU hosts"; STRATA_GLM_SPLIT=0 forces one device). Naming several GPUs (glm.gpu) with the split left
+// at auto gives the engine those GPUs and its own split; one GPU, or none, keeps the §4.9 single device; a pinned split
+// (glm.layer_split) still wins.
+void several_glm_gpus_split_as_mayas_engine_does() {
+  const auto render = [](std::vector<unsigned> gpus, std::vector<secure_frontend::ForcedEnvironmentValue> knobs) {
+    auto environment = secure_frontend::EngineEnvironment{
+        .lib_dirs = {},
+        .temp_dir = std::filesystem::path{"/state/engine-tmp/1"},
+        .cuda_cache_dir = std::filesystem::path{"/state/cache/cuda"},
+        .watchdog_s = 180U,
+        .watchdog_io_s = 5U,
+        .family = secure_frontend::EngineFamily::glm,
+    };
+    environment.glm_gpus = std::move(gpus);
+    environment.glm_knobs = std::move(knobs);
+    return secure_frontend::render_family_environment(environment);
+  };
+  const auto two = render({0U, 1U}, {});
+  expect(two.has_value() && two->at("CUDA_VISIBLE_DEVICES") == "0,1" && two->count("STRATA_GLM_SPLIT") == 0U,
+         "two GPUs with the split at auto: both visible, the engine's own layer split");
+  const auto pinned = render({0U, 1U}, {{"STRATA_GLM_SPLIT", "40"}});
+  expect(pinned.has_value() && pinned->at("STRATA_GLM_SPLIT") == "40", "a pinned split still wins");
+  const auto one = render({1U}, {});
+  expect(one.has_value() && one->at("CUDA_VISIBLE_DEVICES") == "1" && one->at("STRATA_GLM_SPLIT") == "0",
+         "one GPU: the single device stays forced");
+  const auto none = render({}, {});
+  expect(none.has_value() && none->at("CUDA_VISIBLE_DEVICES") == "0" && none->at("STRATA_GLM_SPLIT") == "0",
+         "no GPU named: device 0 alone, as before");
+}
+
 // SP6 §4.9's safety values stay forced unless a typed row moves them; the
 // glm family omits the rows MAYA v1.1.21 has no literal for (SP6 §4.9).
 void forced_defaults_stay_forced_unless_the_table_moves_them() {
@@ -2218,6 +2256,7 @@ int main(int argc, char* argv[]) {
                                                 {"glm_child_env_is_exactly_the_named_typed_set", glm_child_env_is_exactly_the_named_typed_set},
                                                 {"forced_defaults_stay_forced_unless_the_table_moves_them",
                                                  forced_defaults_stay_forced_unless_the_table_moves_them},
+                                                {"several_glm_gpus_split_as_mayas_engine_does", several_glm_gpus_split_as_mayas_engine_does},
                                                 {"dflash_never_reaches_the_child", dflash_never_reaches_the_child},
                                                 {"sp6_env_hook_derives_values_from_environment", sp6_env_hook_derives_values_from_environment},
                                                 {"sp6_env_hook_suppresses_only_optional_rows", sp6_env_hook_suppresses_only_optional_rows},

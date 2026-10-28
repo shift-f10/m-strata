@@ -167,6 +167,8 @@ main { flex: 1; min-height: 0; display: flex; }
 .option-number .st-input { flex: 1; min-width: 0; }
 .option-auto { display: inline-flex; align-items: center; gap: 6px; font-size: var(--st-fs-sm); color: var(--st-ink-soft); cursor: pointer; }
 .option-auto input { width: 16px; height: 16px; margin: 0; accent-color: var(--st-accent); }
+.option-devices { display: flex; flex-direction: column; gap: 6px; }
+.option-devices .option-auto { align-items: flex-start; overflow-wrap: anywhere; }
 .option-fixed { font: 400 13px var(--st-font-mono); color: var(--st-ink-muted); }
 .model-option .st-input:disabled { opacity: .55; }
 .model-actions { display: flex; align-items: center; gap: var(--st-s-3); flex-wrap: wrap; }

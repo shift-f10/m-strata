@@ -47,6 +47,23 @@ inline constexpr std::string_view kNvidiaSmiQuery =
 // printable ASCII characters, or another field count refuses the whole line (nullopt).
 [[nodiscard]] std::optional<GpuReading> parse_nvidia_smi_line(std::string_view line);
 
+// This PC's GPUs (multi-GPU like upstream, owner 2026-10-28: a card's GPUs choice), numbered as nvidia-smi numbers them
+// (the numbers --gpu and CUDA_VISIBLE_DEVICES take in PCI bus order).
+struct GpuListing final {
+  unsigned index{0};
+  std::string name;
+  std::optional<std::uint64_t> mem_total_bytes{};
+};
+inline constexpr std::string_view kNvidiaSmiListQuery = "index,name,memory.total";
+// The fixed argv after the executable: one answer, every GPU.
+[[nodiscard]] std::vector<std::string> nvidia_smi_list_arguments();
+// The answer's lines, "<index>, <name>, <MiB>" (the index 0-63, the name as parse_nvidia_smi_line takes it, "[N/A]"
+// memory left unread); any other line, and a repeated index, is skipped; at most 16 GPUs.
+[[nodiscard]] std::vector<GpuListing> parse_nvidia_smi_gpu_list(std::string_view text);
+// Runs `command` (nvidia_smi_path() with nvidia_smi_list_arguments() and nvidia_smi_environment()) once and reads its
+// list, for at most 10 s; empty when the tool is missing, does not start or lists nothing.
+[[nodiscard]] std::vector<GpuListing> list_gpus(EngineCommand command);
+
 // System32\nvidia-smi.exe or /usr/bin/nvidia-smi; empty when the system directory is unknown.
 [[nodiscard]] std::filesystem::path nvidia_smi_path();
 // The fixed argv after the executable: GPU 0, the query above, one line every 1000 ms.

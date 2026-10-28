@@ -187,6 +187,7 @@
     startPolling();
     refreshLauncher();  // a server with model control off answers 404 and the page stays as it was
     refreshDownloads();  // likewise with downloads off; a transfer already running is followed
+    loadHostGpus();      // the cards' GPUs choice lists this PC's GPUs
   }
 
   async function signIn(key) {
@@ -850,6 +851,29 @@
     $("dark-toggle").setAttribute("aria-checked", window.StrataTheme && window.StrataTheme.get() === "dark" ? "true" : "false");
     refreshAbout();
   }
+  // Multi-GPU (owner 2026-10-28): this PC's GPUs as nvidia-smi numbers them (the About's hardware.gpus), for the cards'
+  // GPUs choice; null until read. Read once after sign-in; an open card form is redrawn with them.
+  var hostGpus = null;
+  var hostGpusLoading = false;
+  function setHostGpus(list) {
+    var had = Array.isArray(hostGpus) ? hostGpus.length : -1;
+    hostGpus = Array.isArray(list) ? list.filter(function (g) { return g && typeof g.index === "number" && typeof g.name === "string"; }) : [];
+    if (hostGpus.length !== had && launcher.formFor && launcher.data) {
+      var card = findCard(launcher.formFor);
+      if (card && Array.isArray(card.options) && card.options.some(function (o) { return o && o.kind === "devices"; })) { renderDetail(card, true); }
+    }
+  }
+  async function loadHostGpus() {
+    if (hostGpus !== null || hostGpusLoading) { return; }
+    hostGpusLoading = true;
+    var d = null;
+    try {
+      var response = await api("/v1/strata/about");
+      if (response.ok) { d = JSON.parse(await response.text()); }
+    } catch (e) { d = null; }
+    hostGpusLoading = false;
+    setHostGpus(d && d.hardware && Array.isArray(d.hardware.gpus) ? d.hardware.gpus : []);
+  }
   // Owner 2026-10-27: the build of our engines (engine/build.json, which make.py writes) and this PC's hardware, from
   // GET /v1/strata/about.
   async function refreshAbout() {
@@ -895,8 +919,14 @@
     }
     fact(hardware, "CPU", h.cpu || "-", false);
     fact(hardware, "Memory", h.ram_bytes ? gb(h.ram_bytes, 0) + " GB" : "-", false);
-    fact(hardware, "GPU", h.gpu || "-", false);
+    var gpus = Array.isArray(h.gpus) ? h.gpus : [];
+    if (gpus.length > 1) {   // every GPU, numbered as the cards' GPUs choice numbers them
+      gpus.forEach(function (g) { fact(hardware, "GPU " + g.index, g.name + (g.mem_bytes ? ", " + gb(g.mem_bytes, 0) + " GB" : ""), false); });
+    } else {
+      fact(hardware, "GPU", h.gpu || (gpus.length ? gpus[0].name : "-"), false);
+    }
     fact(hardware, "System", h.os || "-", false);
+    if (d && d.hardware) { setHostGpus(gpus); }
   }
 
   // ---------------------------------------------------------------- Models (the model launcher)
@@ -1054,8 +1084,44 @@
     set(value);
     return { node: select, read: read, set: set, limit: limit, element: select };
   }
+  // Multi-GPU (owner 2026-10-28): the GPUs a model runs on, one box per GPU of this PC (as nvidia-smi numbers them);
+  // none ticked is auto. Two or more split the model across them; an engine that runs on one (max 1) takes one. Where
+  // this PC has one GPU the choice is not shown and nothing is sent (the card keeps its own).
+  function devicesControl(option, value) {
+    var gpus = Array.isArray(hostGpus) ? hostGpus : [];
+    var most = typeof option.max === "number" ? option.max : 16;
+    var wrap = el("div", "option-devices");
+    wrap.id = "opt-" + option.name;
+    var boxes = [];
+    gpus.forEach(function (g) {
+      var label = el("label", "option-auto");
+      var box = el("input");
+      box.type = "checkbox";
+      box.value = String(g.index);
+      box.addEventListener("change", function () {   // one GPU at most: ticking one clears the others
+        if (most === 1 && box.checked) { boxes.forEach(function (b) { if (b !== box) { b.checked = false; } }); }
+      });
+      label.appendChild(box);
+      label.appendChild(document.createTextNode("GPU " + g.index + ": " + g.name + (g.mem_bytes ? " (" + gb(g.mem_bytes, 0) + " GB)" : "")));
+      boxes.push(box);
+      wrap.appendChild(label);
+    });
+    var set = function (v) {
+      var picked = typeof v === "string" && v !== "auto" ? v.split(",") : [];
+      boxes.forEach(function (b) { b.checked = picked.indexOf(b.value) >= 0; });
+    };
+    var read = function () {
+      if (gpus.length < 2) { return { skip: true }; }
+      var picked = boxes.filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
+      if (picked.length > most) { return { error: (option.label || option.name) + ": at most " + most + (most === 1 ? " GPU" : " GPUs") }; }
+      return { value: picked.length ? picked.join(",") : "auto" };
+    };
+    set(value);
+    return { node: wrap, read: read, set: set, hidden: gpus.length < 2 };
+  }
   function optionControl(option, value) {
     switch (option.kind) {
+      case "devices": return devicesControl(option, value);
       case "boolean": return switchControl(option, value);
       case "integer": return Array.isArray(option.choices) ? choiceControl(option, value) : numberControl(option, value, true, false);
       case "decimal": return numberControl(option, value, false, false);
@@ -1085,6 +1151,7 @@
       field.appendChild(label);
       field.appendChild(control.node);
       if (option.help) { field.appendChild(el("span", "muted small", option.help)); }
+      field.hidden = control.hidden === true;
       box.appendChild(field);
       launcher.controls.push({ option: option, read: control.read, set: control.set, field: field, limit: control.limit,
                                element: control.element });

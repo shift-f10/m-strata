@@ -137,7 +137,12 @@ Trust boundaries:
   starts the server cannot point NVML elsewhere) and the engine's Job/process-group
   handling, and killed on
   shutdown. Its stdout is parsed strictly (ten fields, bounded, fail-closed per
-  line); no vendor library is loaded into the server. Residual: that tool is the
+  line); no vendor library is loaded into the server. (2026-10-28) The About's
+  list of GPUs runs the same tool once, on the first About request, the same
+  way (`--query-gpu=index,name,memory.total`, ten seconds at most), parsed as
+  strictly (three fields, an index 0-63, a printable name, at most 16 GPUs). A
+  card's GPUs choice is typed: `"auto"` or GPU numbers 0-63, never free text,
+  written only to `engine.gpu` or `glm.gpu`. Residual: that tool is the
   driver vendor's code, trusted like the driver the engine already uses.
 - CORS is disabled by default: no `Access-Control-Allow-Origin` header is
   emitted. When configured, emit only exact allowed origins; never reflect an

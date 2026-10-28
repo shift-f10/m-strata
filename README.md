@@ -13,6 +13,7 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 - [What is in the repository](#what-is-in-the-repository)
 - [Models](#models)
 - [Development system](#development-system)
+- [What this system could not test](#what-this-system-could-not-test)
 - [Install](#install)
 - [Configure](#configure)
 - [Use](#use)
@@ -35,6 +36,9 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   (no Python), with the same bytes as upstream's and Project Maya's tools.
 - **Pictures** on Qwen3.8 and Qwen3.6: upstream's picture encoder, `strata-vision` (llama.cpp's mtmd), runs beside the
   engine and turns each picture into the embeddings the engine reads, on the GPU (about 1 GB of VRAM) or the CPU.
+- **Several GPUs**, as upstream and Project Maya run them: Qwen splits its layers across the GPUs you pick, GLM-5.3 and
+  Raon-1-mini split theirs (the GLM engine's split), DeepSeek-V4.1 runs tensor-parallel pairs, MiniMax-M3.1 takes the
+  list; Gemma 4 and flint run on one GPU.
 
 **Model selection and engine swap**
 
@@ -45,6 +49,8 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   tokenizer are checked before the running one is touched, the answer in progress may finish (up to 60 s), then the old
   engine stops and the new one loads; a start that fails never takes the running model down. One model runs at a
   time, and Stop gives its GPU and RAM back.
+- **GPUs:** on a PC with several GPUs, each card has a box per GPU (as nvidia-smi numbers them); none ticked is the
+  first GPU. About lists this PC's GPUs.
 - **Calibrate** tunes the settings that depend on this PC by timing real engine starts, once per card (today flint's
   CPU expert lane, PCIe share and CPU threads, and Gemma 4's CPU threads; the other engines tune themselves).
 - **Add a model** from files already on this PC (a folder and its `.gguf`); the pack is built when the family needs one.
@@ -148,6 +154,20 @@ Everything above was built and measured on one Windows desktop:
 A model larger than VRAM keeps its experts in RAM (and reads the rest from disk): with 96 GB, a Qwen3.8 IQ3_S
 (about 84 GB) or a GLM-5.3-Flash Maya-S pack (about 96 GB) runs with most experts in RAM. Smaller systems work, more
 slowly, when the drive is fast NVMe.
+
+## What this system could not test
+
+One Windows desktop with one NVIDIA GPU cannot check everything the code supports. These parts are built and covered
+by the server's tests (with fake engines where a GPU would be needed), but have **not been run on real hardware**:
+
+| Area | What is untested, and why |
+| --- | --- |
+| **Several GPUs** | The GPUs choice on the cards, Qwen's layer split, GLM-5.3's and Raon-1-mini's split, DeepSeek-V4.1's tensor-parallel pairs and MiniMax-M3.1's GPU list are composed as upstream and Project Maya compose them, and checked argument by argument, but never run: the development system has one GPU. Upstream's card order for a split (the faster card last) is not done yet. |
+| **Pictures (vision)** | `strata-vision` is built with CUDA and wired to the Qwen cards, the downloads and the chat, but has not read a real picture with a real model yet: the tests use a fake encoder. Needs a rebuilt out folder and a start with the Pictures option on. |
+| **DeepSeek-V4.1 and MiniMax-M3.1** | Built and wired, not run end to end yet. Their GGUFs are large (DeepSeek's 277-508 GB, MiniMax's from 93 GB): with 96 GB of RAM most of their experts would come from disk, so a run here shows whether they work, not how fast they can be. |
+| **Other GPU makers** | Only NVIDIA CUDA builds are made and run. Upstream's AMD (HIP) and Intel (SYCL) paths are in the tree but neither built nor tested here. |
+| **Other NVIDIA generations** | Every speed and every run is from one RTX 4080 SUPER (compute capability 8.9). Other generations build with `--cuda-arch` but have not been run here; nor have GPUs with less than 16 GB, or PCs with less than 96 GB of RAM. |
+| **Linux** | Every change is written for Linux and Windows, but the newest work (the GUI-first install, the newer engines, web search, pictures, several GPUs) has been built and run on Windows only. |
 
 ## Install
 
@@ -467,7 +487,8 @@ for a real install, which makes its own key at the first start.
   files download, picture attachments in the chat; to be checked on the GPU with a real model).
 - **Open:** DeepSeek and MiniMax end-to-end runs; GLM speed tuning; making Qwen3.8's MTP draft layer here (upstream's
   three Python tools, natively; today it comes from upstream's setup); pictures on the other families; web search
-  for DeepSeek and MiniMax;
+  for DeepSeek and MiniMax; several GPUs checked on a two-GPU PC, upstream's card order for a layer split (the faster
+  card last), and a split for Gemma 4 and flint;
   long-prompt speed and long-context drift on raon1; Linux runs of the newest work; the server as a window with a
   tray icon (model start and stop, the Monitor, a configuration tab).
 
