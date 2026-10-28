@@ -23,6 +23,7 @@
 #include "secure_frontend/chat_route.hpp"
 #include "secure_frontend/chat_schema.hpp"
 #include "secure_frontend/config.hpp"
+#include "secure_frontend/config_routes.hpp"
 #include "secure_frontend/connection_pool.hpp"
 #include "secure_frontend/crt_environment.hpp"
 #include "secure_frontend/download_catalog.hpp"
@@ -969,6 +970,24 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
     };
   }
 #endif
+  // The Settings tab (spec 2026-10-28-server-window-design, Part 1): the server's settings and the key, with model control
+  // (files_allowed's clients; rotation this PC only). The key can be rotated only where this server reads it from its
+  // store (a file: token.source), not a --token-env start.
+  secure_frontend::ModelCardRoutes settings_route_handler;
+  std::optional<secure_frontend::ConfigRoutes> config_routes;
+  if (config.models.control) {
+    secure_frontend::ConfigRouteSettings settings{.config_file = config_file, .client_allowed = files_allowed};
+    if (config.token.kind() == secure_frontend::SecretSourceKind::protected_file && config.roots.secret.has_value()) {
+      settings.secret_dir = config.roots.secret->path();
+      settings.token_file = config.token.location();
+    }
+    settings.log = [](const std::string_view line) { std::cerr << line << '\n'; };
+    config_routes.emplace(std::move(settings));
+    settings_route_handler.handle = [&routes = *config_routes](const secure_frontend::RouteId route, const std::string_view body,
+                                                               const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {
+      return routes.answer(route, body, context);
+    };
+  }
   // Web search (spec 2026-10-27-web-search-design §2): the page's search settings, with model control (files_allowed's clients).
   secure_frontend::ModelCardRoutes search_route_handler;
 #if defined(SECURE_FRONTEND_WEB_SEARCH)
@@ -1011,6 +1030,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       .cards = std::move(card_route_handler),
       .alerts = std::move(alert_route_handler),
       .search = std::move(search_route_handler),
+      .settings = std::move(settings_route_handler),
       .login_link = std::move(login_link_handler)});
   const secure_frontend::ConnectionLimits connection_bounds = secure_frontend::connection_limits(config);
   std::string bind_error;

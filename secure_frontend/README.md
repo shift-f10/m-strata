@@ -186,7 +186,7 @@ A client of the OpenAI-compatible `POST /v1/chat/completions` gets web search wi
 server offers the tool to the model, runs the searches itself and returns the answer.
 
 **Turn it on, once, on the server.** A build with web search (above), then `search.enabled` on and `search.url` naming
-the SearXNG instance: on the page (Models > Settings > Web search) or in `data/config.json`. Saved settings apply at the
+the SearXNG instance: on the page (Settings > Web search) or in `data/config.json`. Saved settings apply at the
 next start, so restart the server. "Test search" there shows what a model would read; the server log prints
 `[strata] search: strata-search is running` when the first chat starts it.
 
@@ -311,21 +311,36 @@ flags (`--expert`, `--models-root`, `--engine`, `--model-id`, `--profile`, `--to
   confirmation that the delete is permanent. The server checks all three and deletes only that model's files (and a
   download's store entry), the card and its calibration.
 
-**Settings sub-tab, Model folders** (every build with model control): "Use model folders as they are, even if other
+**The Settings tab** (every build with model control; 2026-10-28 a tab of its own, it was a sub-tab of Models) holds
+the API key, the server's own settings, and the sections below. **API key:** the key the page signed in with (the page
+holds it; no route returns a key), Show and Copy; "Rotate the key", typed ROTATE first and from this PC only
+(`POST /v1/strata/key/rotate`, `{"confirm":"ROTATE"}`), makes a new key in the key file as `strata key rotate` does and
+answers it once; the running server keeps the old key until it restarts. A `--token-env` start has no key file, so
+rotation is refused there. **Server and network**, **Limits and timeouts** and **Folders** list 14 config rows
+(`listener.host`, `.port`, `.allow_remote`, `.allow_wildcard_bind`, `.host_aliases`, `models.control_remote`,
+`.control_remote_networks`, `limits.engine.generation_timeout_s`, `.ready_timeout_s`, `limits.chat.max_prompt_tokens`,
+`.max_completion_tokens`, `pull.connections`, `models.downloads_root`, `.default_root`) from `POST /v1/strata/config`
+(each with its type, value, default, bounds and the schema's description) and save them through
+`POST /v1/strata/config/settings` (`{"values":{key: value or null}}`; null or an empty text is the default). A save is
+held to the server's start-up rules on the whole file: a problem the change brings is refused by name and nothing is
+written. Saved settings apply at the next start; a command-line option (`--port`, `--host`, ...) still overrides the
+file for the start that names it.
+
+**Model folders** (every build with model control): "Use model folders as they are, even if other
 users of this PC can access them" saves `roots.allow_untrusted_media` to the config file; it applies at the next start.
 Other users of this PC can then read or change those model files, and the engine reads them as you; the server's own
 folders (`data/`, the API key, cards, state) keep their checks, and a download still goes into a private folder.
-The Settings sub-tab's sections (model folders, email alerts, web search) answer the clients the model-file routes
+The Settings tab's sections (all but the key's rotation) answer the clients the model-file routes
 serve: a browser on this PC, and the hosts and subnets `models.control_remote_networks` lists; from any other PC they
 do not show.
 
-**Settings sub-tab, Email alerts** (builds with email alerts only): the SMTP server, port and security (SSL/TLS on 465 or STARTTLS
+**Email alerts** (builds with email alerts only): the SMTP server, port and security (SSL/TLS on 465 or STARTTLS
 on 587; TLS 1.2 or later, certificate checked, never plain text), the user name, From and To (1-5 addresses), and
 which alerts to send (downloads finished or failed, calibrations finished or failed, the engine stopped unexpectedly,
 the server started). "IONOS" fills in `smtp.ionos.com`, 465 SSL/TLS and the mailbox address as the user name. The
 password is saved on its own into the secret folder (DPAPI on Windows, 0600 elsewhere) and never shown again. "Send a
 test email" reports the mail server's answer. Saved settings are written to the config file and apply at the next start.
-In a build with web search the sub-tab also holds **Web search**: on/off, the SearXNG address, results per search,
+In a build with web search the tab also holds **Web search**: on/off, the SearXNG address, results per search,
 searches per answer and the time limit, Save, and a test search through the saved settings that shows what a model
 reads. A chat reply notes what it searched for.
 
@@ -465,7 +480,7 @@ Every key (generated from the schema; `readme_config_table_matches_schema` keeps
 | `roots.secret` | string | unset | - | `--secret-root` | Absolute directory holding the token file. Default: the config file's directory. |
 | `roots.logs` | string | unset | - | - | Absolute log directory (created 0700; unused in SP1). |
 | `roots.cache` | string | unset | - | - | Absolute cache directory (created 0700); when set, it holds the engine's CUDA cache in its cuda subdirectory. |
-| `roots.allow_untrusted_media` | boolean | `false` | - | `--allow-untrusted-media` | Use model folders as they are, even where other users of this PC can read or change them (shared folders, exFAT/FAT media whose permissions the OS ignores): roots.models and roots.tokenizer_pack open with RootPolicy::external (no owner-only / not-shared-writable check), and the page adds, moves and packs models in such folders without changing their permissions (the Models > Settings switch). Owner opt-in; links below the root are still refused; the server's own folders keep their checks. |
+| `roots.allow_untrusted_media` | boolean | `false` | - | `--allow-untrusted-media` | Use model folders as they are, even where other users of this PC can read or change them (shared folders, exFAT/FAT media whose permissions the OS ignores): roots.models and roots.tokenizer_pack open with RootPolicy::external (no owner-only / not-shared-writable check), and the page adds, moves and packs models in such folders without changing their permissions (the Settings tab's Model folders switch). Owner opt-in; links below the root are still refused; the server's own folders keep their checks. |
 | `roots.state` | string | unset | - | `--state-dir` | Absolute, existing owner-only directory for engine state: the engine's cwd, per-generation temp and (without roots.cache) the CUDA cache. Required to serve. |
 | `token.source` | string | `file:token` | - | `--token-file, --token-env` | file:<relative path below roots.secret> or env:<NAME>. Metadata only; the token is never in the config. |
 | `engine.profile` | string | unset | - | `--profile` | qwen, glm53 or gemma4; only with --expert (a managed model's manifest sets it). |

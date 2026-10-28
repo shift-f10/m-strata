@@ -280,6 +280,66 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z3 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+The owner: "Push them to origin and proceed to next phase" (`ca9d7f7b` pushed; the next phase is the window app and its
+Configuration tab, spec `docs/superpowers/specs/2026-10-28-server-window-design.md`), then "Go ahead and download
+webview2 sdk so you can continue to develop". This entry is the spec's Part 1, the page's Settings tab. Part 2
+(`strata-window`) has no code yet.
+
+- **Server**: `ConfigRoutes` (`config_routes.hpp/.cpp`, library `secure_frontend_config_routes`, built in every
+  configuration). `POST /v1/strata/config` lists 14 managed rows (type, the file's value or null, default, bounds, the
+  schema's description), whether the file can be written and whether the key can be rotated. `/config/settings` saves
+  `{"values":{...}}`: null or "" means the default; an unknown key or a wrong type is refused by name. The whole file is
+  then checked by the start-up rules (`card_less_server_config` for a cards config, else `validate()`), and only a
+  problem the change brings is refused (`format_issue`); the write is `update_config_file`. `/key/rotate` takes
+  `{"confirm":"ROTATE"}`, answers loopback peers only and needs a protected-file key: `generate_token`, then
+  `read_token`, and the new key is answered once, no-store. The routes are served with model control; the two settings
+  routes answer `model_files_allowed` clients. Tests: `secure_frontend_config_routes_tests` (3 cases, RED shown on the
+  save rules and the rotation) and `config_routes_need_their_handler_and_the_key`.
+- **Page**: a fifth tab, Settings, hidden until the server offers one of its sections. It holds:
+  - API key: Show and Copy of the key the page holds (no route returns a key); Rotate, typed ROTATE first, with the new
+    key shown once and cleared at sign-out;
+  - Server and network;
+  - Limits and timeouts;
+  - Folders, each with Choose through the folder picker;
+  - the moved Model folders, Email alerts and Web search sections.
+
+  Models > Settings is gone. Between 641 and 900 px the tabs are text-only and the running model's name is hidden: at
+  764 px the five-tab header scrolled sideways.
+
+  Tests:
+  - `web_ui_has_server_settings`;
+  - `web_ui_has_email_alert_settings`, now for the tab;
+  - `web_ui_has_the_models_tab_hidden_until_the_server_offers_it`, for the views list;
+  - `web_ui_header_fits_a_phone`, for the 900 px block.
+
+  RED was shown with the page as committed (and for the Choose and 900 px checks before their code); all pass now.
+- **Checked in the browser pane** on a dev server from this build (scratch data folder, dev key, port 18080):
+  - no sideways scroll at 900, 764, 641, 375 or 320 px; the five tabs fill one row at 320;
+  - a Limits save wrote `limits.engine.generation_timeout_s: 1800` to the dev config;
+  - a listen address of 0.0.0.0 without the opt-ins was refused ("a non-loopback address needs
+    listener.allow_remote"), and the file was left as it was;
+  - Rotate was disabled, with the reason, on that `--token-env` start.
+
+  Rotation itself is covered by the unit test only: it was not tried on a real data folder, where it would change the
+  owner's key.
+- **Two problems the suites caught.**
+  - `readme_config_table_matches_schema` failed after the README's `roots.allow_untrusted_media` row was changed to
+    name the Settings tab; the schema's description now says the same.
+  - The OFF build (no email, no search) failed because `config_routes.hpp` had been included inside the search build's
+    `#if`; the include is now unconditional.
+- **WebView2 SDK** (the owner's OK): `microsoft.web.webview2.1.0.4314.35.nupkg` from nuget.org (9,818,548 bytes; its
+  SHA-512 matched nuget.org's catalog entry), unpacked into `.toolchains/webview2/1.0.4314.35` (git-ignored). It holds
+  `WebView2.h` and `WebView2LoaderStatic.lib` under BSD-3-Clause. Nothing links it yet; PROVENANCE gets it with
+  `strata-window`.
+- **Full suites**:
+  - ON: 1276/1280. The README check (fixed above, 125/125 in the rerun of the router, config and settings tests), the
+    two release-only checks, and `idle_unload_respawns_before_the_next_request`, which passed twice alone.
+  - OFF: 1247/1250. The same three, without the README check.
+- **Docs**: the README's Settings section, the secure_frontend README, and the threat model (the Settings tab and its
+  residual).
+
 ### Claude Code session, 2026-10-28 z2 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 The owner: "Do all three" (push, rebuild and switch, try a picture), then "Download it" (the Qwen3.8 encoder). `main`

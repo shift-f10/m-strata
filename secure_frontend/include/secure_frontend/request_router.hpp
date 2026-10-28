@@ -31,6 +31,7 @@ enum class RouteId {
   strata_login_link,
   strata_alerts, strata_alerts_settings, strata_alerts_password, strata_alerts_test,
   strata_search, strata_search_settings, strata_search_test,
+  strata_config, strata_config_settings, strata_key_rotate,
   strata_folders, strata_folder_private, strata_folder_new, strata_card_add, strata_card_folder, strata_card_delete_begin, strata_card_delete,
   strata_folder_sharing,
   strata_about,
@@ -107,6 +108,13 @@ inline constexpr std::array<RouteEntry, 3> kSearchRoutes{{
     {"POST", "/v1/strata/search", false, RouteId::strata_search},
     {"POST", "/v1/strata/search/settings", false, RouteId::strata_search_settings},
     {"POST", "/v1/strata/search/test", false, RouteId::strata_search_test},
+}};
+// The page's Settings tab (spec 2026-10-28-server-window-design, Part 1): the server's settings - read, save - and the API
+// key rotated in its store. Served with models.control (every build); keyed; POST, small JSON bodies.
+inline constexpr std::array<RouteEntry, 3> kConfigRoutes{{
+    {"POST", "/v1/strata/config", false, RouteId::strata_config},
+    {"POST", "/v1/strata/config/settings", false, RouteId::strata_config_settings},
+    {"POST", "/v1/strata/key/rotate", false, RouteId::strata_key_rotate},
 }};
 // The largest start or stop body the control routes read (and the download and card routes').
 inline constexpr std::size_t kModelControlBodyLimit = 4096;

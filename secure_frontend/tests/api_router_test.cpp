@@ -429,7 +429,8 @@ void web_ui_has_the_models_tab_hidden_until_the_server_offers_it() {
          "a 403 shows the Models tab with the reason");
   expect(html.find("id=\"models-denied\"") != std::string::npos && html.find("control_remote") != std::string::npos,
          "the reason names the switch that allows other machines");
-  expect(js.find("[\"login\", \"chat\", \"models\", \"monitor\", \"about\"]") != std::string::npos &&
+  // (2026-10-28: the Settings tab joined the views)
+  expect(js.find("[\"login\", \"chat\", \"models\", \"monitor\", \"settings\", \"about\"]") != std::string::npos &&
              js.find("$(\"tab-btn-models\").addEventListener(\"click\", function () { showView(\"models\"); });") != std::string::npos,
          "the Models tab switches views like the others");
 }
@@ -564,6 +565,36 @@ void web_ui_models_tab_calibrates() {
   expect(js.find("$(\"model-calibration\").hidden = !cal;") != std::string::npos, "a card with no calibration shows none");
 }
 
+// The Settings tab (spec 2026-10-28-server-window-design, Part 1; the owner: "a configuration tab ... api key, etc"): the
+// API key (the one the page signed in with, shown on request and copied - never fetched), its rotation (typed ROTATE,
+// the new key shown once), and the server's settings drawn from POST /v1/strata/config and saved through
+// /v1/strata/config/settings (each with its type, its default as the placeholder, and the schema's own words).
+void web_ui_has_server_settings() {
+  const std::string html{secure_frontend::find_web_asset("/")->body};
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  for (const char* id : {"id=\"key-settings\"", "id=\"key-value\"", "id=\"key-show\"", "id=\"key-copy\"", "id=\"key-rotate-confirm\"",
+                         "id=\"key-rotate\"", "id=\"key-new\"", "id=\"server-settings\"", "id=\"limits-settings\"",
+                         "id=\"paths-settings\"", "id=\"settings-restart-note\""}) {
+    expect(html.find(id) != std::string::npos, std::string{"the Settings tab has "} + id);
+  }
+  expect(js.find("api(\"/v1/strata/config\", jsonPost({}))") != std::string::npos &&
+             js.find("api(\"/v1/strata/config/settings\", jsonPost({ values: values }))") != std::string::npos &&
+             js.find("api(\"/v1/strata/key/rotate\", jsonPost({ confirm: \"ROTATE\" }))") != std::string::npos,
+         "the three routes");
+  expect(js.find("$(\"key-value\").textContent = shown ? state.key : ") != std::string::npos,
+         "the key shown is the one the page holds (no route hands a key out)");
+  expect(js.find("if ($(\"key-rotate-confirm\").value.trim() !== \"ROTATE\")") != std::string::npos,
+         "rotation is typed ROTATE first");
+  expect(js.find("\"listener.port\"") != std::string::npos && js.find("\"limits.engine.generation_timeout_s\"") != std::string::npos &&
+             js.find("\"models.downloads_root\"") != std::string::npos,
+         "the three groups name their settings");
+  // the two folders are chosen with the page's folder picker (spec Part 1, Folders), or typed
+  expect(js.find("var CONFIG_FOLDERS = [\"models.downloads_root\", \"models.default_root\"];") != std::string::npos &&
+             js.find("var picked = await pickFolder(label, ") != std::string::npos &&
+             js.find("if (picked && picked.folder) { input.value = String(picked.folder); }") != std::string::npos,
+         "a folder setting has Choose, through the folder picker");
+}
+
 // GUI-first start-up (spec 2026-10-27 §5a): a Settings sub-tab with the email alerts - shown only when the server has
 // them (its alerts route answers; a build without them answers 404) - the IONOS preset, which alerts, the password
 // (a password field, saved on its own and never shown again), Save and "Send a test email", and a note that the
@@ -571,10 +602,11 @@ void web_ui_models_tab_calibrates() {
 void web_ui_has_email_alert_settings() {
   const std::string html{secure_frontend::find_web_asset("/")->body};
   const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
-  expect(html.find("<button type=\"button\" class=\"models-subtab\" id=\"models-subtab-settings\" role=\"tab\" aria-selected=\"false\" hidden>"
-                   "Settings</button>") != std::string::npos,
-         "a Settings sub-tab, hidden until the server offers it");
-  for (const char* id : {"id=\"models-pane-settings\"", "id=\"alerts-enabled\"", "id=\"alerts-host\"", "id=\"alerts-port\"",
+  // (2026-10-28, the Settings tab: the settings moved from Models > Settings to a tab of their own)
+  expect(html.find("<button class=\"st-tab\" role=\"tab\" id=\"tab-btn-settings\" aria-controls=\"view-settings\" aria-selected=\"false\" "
+                   "data-tab=\"settings\" hidden>") != std::string::npos,
+         "a Settings tab, hidden until the server offers it");
+  for (const char* id : {"id=\"view-settings\"", "id=\"alerts-enabled\"", "id=\"alerts-host\"", "id=\"alerts-port\"",
                          "id=\"alerts-security\"", "id=\"alerts-username\"", "id=\"alerts-from\"", "id=\"alerts-to\"",
                          "id=\"alerts-events\"", "id=\"alerts-ionos\"", "id=\"alerts-save\"", "id=\"alerts-test\"",
                          "id=\"alerts-password\"", "id=\"alerts-password-save\"", "id=\"alerts-password-state\"",
@@ -591,9 +623,10 @@ void web_ui_has_email_alert_settings() {
              js.find("api(\"/v1/strata/alerts/password\", jsonPost({ password: password }))") != std::string::npos &&
              js.find("api(\"/v1/strata/alerts/test\", jsonPost({}))") != std::string::npos,
          "the four routes");
-  // (changed 2026-10-27 with the Model folders setting: the sub-tab shows with it, alerts or web search)
-  expect(js.find("var any = alerts.built || search.built || folders.built;") != std::string::npos &&
-             js.find("$(\"models-subtab-settings\").hidden = !any;") != std::string::npos &&
+  // (changed 2026-10-27 with the Model folders setting: the sub-tab shows with it, alerts or web search; 2026-10-28: a tab,
+  // shown with the server's own settings too)
+  expect(js.find("var any = alerts.built || search.built || folders.built || serverConfig.built;") != std::string::npos &&
+             js.find("$(\"tab-btn-settings\").hidden = !any;") != std::string::npos &&
              js.find("$(\"alerts-settings\").hidden = !alerts.built;") != std::string::npos,
          "the sub-tab shows when the server has alerts (or web search, or model folders), the alerts card only with alerts");
   expect(js.find("\"smtp.ionos.com\"") != std::string::npos && js.find("$(\"alerts-port\").value = \"465\";") != std::string::npos,
@@ -931,6 +964,14 @@ void web_ui_header_fits_a_phone() {
          "the engines stack, each value labelled");
   expect(block.find(".st-toasts { left: var(--st-s-3); right: var(--st-s-3); bottom: var(--st-s-3); }") != std::string::npos,
          "toasts keep even margins");
+  // 2026-10-28, the Settings tab (a fifth tab): the one-row header needs about 800 px with the tab icons, so between a
+  // phone and that width the icons go and the tabs and the header pad less (a 764 px check scrolled sideways)
+  const auto middle = css.find("@media (max-width: 900px) {");
+  const std::string between = middle == std::string::npos ? std::string{} : css.substr(middle, css.find("\n}", middle) - middle);
+  expect(between.find(".st-tab .st-icon { display: none; }") != std::string::npos &&
+             between.find(".st-tab { padding: 0 10px; }") != std::string::npos &&
+             between.find(".st-header { padding: 0 var(--st-s-4); }") != std::string::npos,
+         "five tabs fit one row down to the phone width");
   const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
   expect(js.find("cell.setAttribute(\"data-label\", label);") != std::string::npos, "each engine cell carries its column's name");
 }
@@ -1373,6 +1414,49 @@ void search_routes_need_their_handler_and_the_key() {
   expect(none.empty(), "off: nothing is called");
 }
 
+// The Settings tab (spec 2026-10-28-server-window-design, Part 1): its routes are keyed, POST, JSON, served only while
+// their handler is set (model control on), as the search settings'.
+void config_routes_need_their_handler_and_the_key() {
+  const std::vector<std::pair<std::string, secure_frontend::RouteId>> routes{
+      {"/v1/strata/config", secure_frontend::RouteId::strata_config},
+      {"/v1/strata/config/settings", secure_frontend::RouteId::strata_config_settings},
+      {"/v1/strata/key/rotate", secure_frontend::RouteId::strata_key_rotate}};
+  const auto make = [](std::vector<std::string>* calls, const bool on) {
+    secure_frontend::SecretBytes secret;
+    (void)secret.assign(kRouterToken);
+    secure_frontend::ModelCardRoutes settings;
+    if (on) {
+      settings.handle = [calls](const secure_frontend::RouteId route, const std::string_view body,
+                                const secure_frontend::RequestContext&) -> secure_frontend::RouteResult {
+        calls->push_back(std::to_string(static_cast<int>(route)) + " " + std::string{body});
+        return secure_frontend::HttpResponse{.status = 200, .headers = {}, .body = "{}\n"};
+      };
+    }
+    return secure_frontend::ApiRouter({
+        .policy = secure_frontend::make_http_policy(*secure_frontend::parse_listener_address("127.0.0.1"), 8080, {}, {}),
+        .validator = secure_frontend::make_bearer_validator(std::make_shared<const secure_frontend::TokenVerifier>(std::move(secret))),
+        .model_id = "", .owned_by = "local", .chat_body_limit = 49152,
+        .health = [] { return secure_frontend::HealthView{true, "none", ""}; },
+        .chat = {},
+        .served = [] { return secure_frontend::ServedModels{}; },
+        .settings = std::move(settings)});
+  };
+  std::vector<std::string> calls;
+  auto router = make(&calls, true);
+  for (const auto& [target, route] : routes) {
+    expect(request(router, "POST", target, "{}", false).status == 401, target + " needs the key");
+    expect(request(router, "POST", target, "{\"x\":1}").status == 200 && !calls.empty() &&
+               calls.back() == std::to_string(static_cast<int>(route)) + " {\"x\":1}",
+           target + " reaches the handler");
+    expect(request(router, "GET", target).status == 405, target + " is POST only");
+    expect(request(router, "POST", target, "{}", true, true, "text/plain").status == 415, target + " takes JSON");
+  }
+  std::vector<std::string> none;
+  auto off = make(&none, false);
+  for (const auto& [target, route] : routes) expect(request(off, "POST", target, "{}").status == 404, target + " is no route when off");
+  expect(none.empty(), "off: nothing is called");
+}
+
 // GUI-first start-up (spec 2026-10-27 §5.3): the calibration routes are control routes - keyed, POST, a small JSON
 // body - served only while their handlers are set; a launcher without them (or with control off) answers 404.
 void calibration_routes_need_their_handlers_and_the_key() {
@@ -1515,10 +1599,12 @@ int main(int argc, char** argv) {
       {"calibration_routes_need_their_handlers_and_the_key", calibration_routes_need_their_handlers_and_the_key},
       {"alert_routes_need_their_handler_and_the_key", alert_routes_need_their_handler_and_the_key},
       {"search_routes_need_their_handler_and_the_key", search_routes_need_their_handler_and_the_key},
+      {"config_routes_need_their_handler_and_the_key", config_routes_need_their_handler_and_the_key},
       {"web_ui_cards_from_this_pc_and_the_danger_zone", web_ui_cards_from_this_pc_and_the_danger_zone},
       {"web_ui_downloads_go_to_a_chosen_folder", web_ui_downloads_go_to_a_chosen_folder},
       {"web_ui_models_tab_calibrates", web_ui_models_tab_calibrates},
       {"web_ui_has_email_alert_settings", web_ui_has_email_alert_settings},
+      {"web_ui_has_server_settings", web_ui_has_server_settings},
       {"web_ui_has_web_search_settings", web_ui_has_web_search_settings},
       {"web_ui_has_model_folder_setting", web_ui_has_model_folder_setting},
       {"web_ui_monitor_shows_stopped_and_the_model", web_ui_monitor_shows_stopped_and_the_model},

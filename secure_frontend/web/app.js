@@ -147,22 +147,20 @@
     modelsSubtab = name;
     $("models-pane-start").hidden = name !== "start";
     $("models-pane-download").hidden = name !== "download";
-    $("models-pane-settings").hidden = name !== "settings";
     $("models-subtab-start").setAttribute("aria-selected", name === "start" ? "true" : "false");
     $("models-subtab-download").setAttribute("aria-selected", name === "download" ? "true" : "false");
-    $("models-subtab-settings").setAttribute("aria-selected", name === "settings" ? "true" : "false");
   }
 
   function showView(name) {
-    ["login", "chat", "models", "monitor", "about"].forEach(function (view) { $("view-" + view).hidden = view !== name; });
+    ["login", "chat", "models", "monitor", "settings", "about"].forEach(function (view) { $("view-" + view).hidden = view !== name; });
     var signedIn = name !== "login";
     $("tabs").hidden = !signedIn;
     $("new-btn").hidden = name !== "chat";
     $("header-model").hidden = !signedIn || !launcher.enabled;
-    ["chat", "models", "monitor", "about"].forEach(function (tab) { $("tab-btn-" + tab).setAttribute("aria-selected", tab === name ? "true" : "false"); });
+    ["chat", "models", "monitor", "settings", "about"].forEach(function (tab) { $("tab-btn-" + tab).setAttribute("aria-selected", tab === name ? "true" : "false"); });
     if (name === "monitor") { startMonitor(); } else { stopMonitor(); }
     if (name === "models") { renderModels(false); refreshLauncher(); refreshDownloads(); showModelsSubtab(modelsSubtab); }
-    if (name === "models") { refreshFolders(); refreshAlerts(); refreshSearch(); }  // the Settings sub-tab: shown with any
+    if (name === "settings") { refreshFolders(); refreshAlerts(); refreshSearch(); refreshServerConfig(); renderKey(); }
     if (name === "about") { renderAbout(); }
     if (name === "chat") { $("input").focus(); }
   }
@@ -175,6 +173,9 @@
     $("login-error").textContent = message || "";
     $("login-error").hidden = !message;
     $("key").value = "";
+    keyShown = false;  // a new key shown once is not left on the page for the next sign-in
+    $("key-new").hidden = true;
+    $("key-new-value").textContent = "";
     showView("login");
     $("key").focus();
   }
@@ -187,6 +188,7 @@
     startPolling();
     refreshLauncher();  // a server with model control off answers 404 and the page stays as it was
     refreshDownloads();  // likewise with downloads off; a transfer already running is followed
+    refreshFolders(); refreshAlerts(); refreshSearch(); refreshServerConfig();  // the Settings tab shows with any of them
     loadHostGpus();      // the cards' GPUs choice lists this PC's GPUs
   }
 
@@ -2403,11 +2405,203 @@
     }
   }
 
-  // The Settings sub-tab holds the model folders, the email alerts and the web search: shown when the server has any.
+  // The Settings tab holds the API key, the server's own settings, the model folders, the email alerts and the web search:
+  // shown when the server has any of them (spec 2026-10-28-server-window-design, Part 1).
   function showSettingsSubtab() {
-    var any = alerts.built || search.built || folders.built;
-    $("models-subtab-settings").hidden = !any;
-    if (!any && modelsSubtab === "settings") { showModelsSubtab("start"); }
+    var any = alerts.built || search.built || folders.built || serverConfig.built;
+    $("tab-btn-settings").hidden = !any;
+  }
+
+  // ---------------------------------------------------------------- Settings: the API key
+  // The key this page signed in with, shown on request and copied (no route hands a key out); rotation makes a new one in
+  // the server's key store (typed ROTATE first), shown once, working after the server restarts.
+  var keyShown = false;
+  function renderKey() {
+    var shown = keyShown && !state.keyless && !!state.key;
+    $("key-value").textContent = shown ? state.key : (state.keyless ? "not needed (a loopback server without a key)" : "\u2022".repeat(16));
+    $("key-show").textContent = keyShown ? "Hide" : "Show";
+    $("key-show").disabled = state.keyless || !state.key;
+    $("key-copy").disabled = state.keyless || !state.key;
+    var rotatable = !!(serverConfig.data && serverConfig.data.key && serverConfig.data.key.rotatable === true);
+    $("key-rotate").disabled = !rotatable;
+    $("key-rotate-confirm").disabled = !rotatable;
+    $("key-state").textContent = rotatable ? "" : "This server's key comes from an environment variable (a development start): it is not rotated here.";
+  }
+  function showKeyError(text) { $("key-error").textContent = text || ""; $("key-error").hidden = !text; }
+  async function rotateKey() {
+    showKeyError("");
+    if ($("key-rotate-confirm").value.trim() !== "ROTATE") { showKeyError("Type ROTATE to confirm."); return; }
+    $("key-rotate").disabled = true;
+    var answer = await downloadsAnswer(api("/v1/strata/key/rotate", jsonPost({ confirm: "ROTATE" })));
+    $("key-rotate").disabled = false;
+    if (answer.signedOut) { return; }
+    if (answer.error) { showKeyError(answer.error); return; }
+    var r = answer.body || {};
+    $("key-rotate-confirm").value = "";
+    $("key-new-value").textContent = String(r.key || "");
+    $("key-new").hidden = !r.key;
+    $("settings-restart-note").hidden = false;
+  }
+
+  // ---------------------------------------------------------------- Settings: the server's own settings
+  // POST /v1/strata/config lists each setting with its type, the config file's value (null: its default), the default, the
+  // bounds and the schema's own words; each group's Save sends its values (null: back to the default). The server checks
+  // them as it checks its config at start, and they apply when it restarts.
+  var serverConfig = { built: false, data: null };
+  var CONFIG_GROUPS = {
+    server: ["listener.host", "listener.port", "listener.allow_remote", "listener.allow_wildcard_bind", "listener.host_aliases",
+             "models.control_remote", "models.control_remote_networks"],
+    limits: ["limits.engine.generation_timeout_s", "limits.engine.ready_timeout_s", "limits.chat.max_prompt_tokens",
+             "limits.chat.max_completion_tokens", "pull.connections"],
+    paths: ["models.downloads_root", "models.default_root"]
+  };
+  var CONFIG_FOLDERS = ["models.downloads_root", "models.default_root"];
+  var CONFIG_LABELS = {
+    "listener.host": "Listen on (address)",
+    "listener.port": "Port",
+    "listener.allow_remote": "Serve other PCs on the network",
+    "listener.allow_wildcard_bind": "Allow listening on every address (0.0.0.0)",
+    "listener.host_aliases": "Names this server answers to (one per line)",
+    "models.control_remote": "Let the PCs listed below manage models",
+    "models.control_remote_networks": "PCs or subnets that may manage models (one per line)",
+    "limits.engine.generation_timeout_s": "Longest answer (seconds)",
+    "limits.engine.ready_timeout_s": "Longest model start (seconds)",
+    "limits.chat.max_prompt_tokens": "Largest prompt (tokens)",
+    "limits.chat.max_completion_tokens": "Largest answer (tokens)",
+    "pull.connections": "Connections per download",
+    "models.downloads_root": "Downloads folder",
+    "models.default_root": "Folder Add a model opens"
+  };
+  function configSetting(key) {
+    var list = serverConfig.data && Array.isArray(serverConfig.data.settings) ? serverConfig.data.settings : [];
+    for (var i = 0; i < list.length; i += 1) { if (list[i] && list[i].key === key) { return list[i]; } }
+    return null;
+  }
+  function configField(setting) {
+    var field = el("div", "config-field");
+    var id = "cfg-" + setting.key.replace(/\./g, "-");
+    var label = CONFIG_LABELS[setting.key] || setting.key;
+    var input;
+    if (setting.type === "boolean") {
+      var check = el("label", "option-auto");
+      input = el("input");
+      input.type = "checkbox";
+      input.id = id;
+      input.checked = setting.value === null ? setting["default"] === true : setting.value === true;
+      check.appendChild(input);
+      check.appendChild(document.createTextNode(label));
+      field.appendChild(check);
+    } else {
+      field.appendChild(el("label", "st-label", label)).htmlFor = id;
+      if (setting.type === "string array") {
+        input = el("textarea", "st-input config-list");
+        input.rows = 3;
+        input.value = Array.isArray(setting.value) ? setting.value.join("\n") : "";
+        input.placeholder = "One per line";
+      } else {
+        input = el("input", "st-input");
+        input.type = setting.type === "integer" ? "number" : "text";
+        if (setting.type === "integer") {
+          input.step = "1";
+          if (typeof setting.min === "number") { input.min = String(setting.min); }
+          if (typeof setting.max === "number") { input.max = String(setting.max); }
+        }
+        input.value = setting.value === null || setting.value === undefined ? "" : String(setting.value);
+        input.placeholder = setting["default"] === null || setting["default"] === undefined ? "Not set" : "Default: " + String(setting["default"]);
+        input.spellcheck = false;
+        input.autocapitalize = "off";
+      }
+      input.id = id;
+      if (CONFIG_FOLDERS.indexOf(setting.key) >= 0) {
+        var row = el("div", "config-folder");
+        row.appendChild(input);
+        var choose = el("button", "st-btn st-btn--secondary st-btn--sm", "Choose");
+        choose.type = "button";
+        choose.addEventListener("click", async function () {
+          var picked = await pickFolder(label, "Pick a drive and a folder, or make a new private folder there. Then Save; the server " +
+                                        "uses it after it restarts.", "folder", input.value.trim());
+          if (picked && picked.folder) { input.value = String(picked.folder); }
+        });
+        row.appendChild(choose);
+        field.appendChild(row);
+      } else {
+        field.appendChild(input);
+      }
+    }
+    if (setting.help) { field.appendChild(el("span", "muted small", String(setting.help))); }
+    return { node: field, input: input, setting: setting };
+  }
+  var configFields = Object.create(null);
+  function renderServerConfig() {
+    Object.keys(CONFIG_GROUPS).forEach(function (group) {
+      var grid = document.querySelector('.config-grid[data-group="' + group + '"]');
+      if (!grid) { return; }
+      clear(grid);
+      configFields[group] = [];
+      CONFIG_GROUPS[group].forEach(function (key) {
+        var setting = configSetting(key);
+        if (!setting) { return; }
+        var made = configField(setting);
+        grid.appendChild(made.node);
+        configFields[group].push(made);
+      });
+    });
+    var editable = !!(serverConfig.data && serverConfig.data.editable);
+    document.querySelectorAll("[data-save]").forEach(function (button) { button.disabled = !editable; });
+  }
+  async function refreshServerConfig() {
+    var response, text;
+    try { response = await api("/v1/strata/config", jsonPost({})); text = await response.text(); } catch (e) { return; }
+    if (!response.ok) {
+      serverConfig.built = false;
+      ["key-settings", "server-settings", "limits-settings", "paths-settings"].forEach(function (id) { $(id).hidden = true; });
+      showSettingsSubtab();
+      return;
+    }
+    try { serverConfig.data = JSON.parse(text); } catch (e) { return; }
+    serverConfig.built = true;
+    ["key-settings", "server-settings", "limits-settings", "paths-settings"].forEach(function (id) { $(id).hidden = false; });
+    renderServerConfig();
+    renderKey();
+    showSettingsSubtab();
+  }
+  function configErrorBox(group) { return document.querySelector('[data-error="' + group + '"]'); }
+  async function saveServerConfig(group) {
+    var box = configErrorBox(group);
+    box.hidden = true;
+    var values = {};
+    var problem = "";
+    (configFields[group] || []).forEach(function (f) {
+      var key = f.setting.key;
+      if (f.setting.type === "boolean") {
+        // a box left at its default stays out of the file
+        values[key] = f.setting.value === null && f.input.checked === (f.setting["default"] === true) ? null : f.input.checked;
+        return;
+      }
+      if (f.setting.type === "string array") {
+        var lines = f.input.value.split("\n").map(function (line) { return line.trim(); }).filter(function (line) { return line; });
+        values[key] = lines.length ? lines : null;
+        return;
+      }
+      var raw = f.input.value.trim();
+      if (!raw) { values[key] = null; return; }
+      if (f.setting.type === "integer") {
+        var n = Number(raw);
+        if (!isFinite(n) || Math.floor(n) !== n) { problem = problem || (CONFIG_LABELS[key] || key) + ": enter a whole number"; return; }
+        values[key] = n;
+        return;
+      }
+      values[key] = raw;
+    });
+    if (problem) { box.textContent = problem; box.hidden = false; return; }
+    var button = document.querySelector('[data-save="' + group + '"]');
+    button.disabled = true;
+    var answer = await downloadsAnswer(api("/v1/strata/config/settings", jsonPost({ values: values })));
+    button.disabled = false;
+    if (answer.signedOut) { return; }
+    if (answer.error) { box.textContent = answer.error; box.hidden = false; return; }
+    $("settings-restart-note").hidden = false;
+    await refreshServerConfig();
   }
 
   // ---------------------------------------------------------------- Settings: model folders
@@ -2827,7 +3021,14 @@
     $("tab-btn-models").addEventListener("click", function () { showView("models"); });
     $("models-subtab-start").addEventListener("click", function () { showModelsSubtab("start"); });
     $("models-subtab-download").addEventListener("click", function () { showModelsSubtab("download"); });
-    $("models-subtab-settings").addEventListener("click", function () { showModelsSubtab("settings"); });
+    $("tab-btn-settings").addEventListener("click", function () { showView("settings"); });
+    $("key-show").addEventListener("click", function () { keyShown = !keyShown; renderKey(); });
+    $("key-copy").addEventListener("click", function () { if (state.key) { copyText(state.key); } });
+    $("key-rotate").addEventListener("click", rotateKey);
+    $("key-new-copy").addEventListener("click", function () { copyText($("key-new-value").textContent); });
+    document.querySelectorAll("[data-save]").forEach(function (button) {
+      button.addEventListener("click", function () { saveServerConfig(button.getAttribute("data-save")); });
+    });
     $("alerts-ionos").addEventListener("click", fillIonos);
     $("alerts-save").addEventListener("click", saveAlerts);
     $("alerts-password-save").addEventListener("click", saveAlertsPassword);
