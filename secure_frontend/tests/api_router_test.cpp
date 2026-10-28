@@ -613,6 +613,25 @@ void web_ui_claims_a_login_link_at_load_and_on_hashchange() {
          "the key dialog only for a key new to this tab");
 }
 
+// The view an address names (#view=<name>, or #login=<code>&view=<name>; chat, monitor or about - the views every server
+// has): strata-window opens the page on the Monitor (the owner: "the open window shows the Monitor statistics"). A
+// restarted server's link signs the open page in again where it was, not back on Chat.
+void web_ui_opens_the_view_its_address_names() {
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  expect(js.find("var asked = /(?:^#|&)view=(chat|monitor|about)$/.exec(hash || \"\");") != std::string::npos,
+         "the views an address may name");
+  expect(js.find("/^#login=([A-Za-z0-9_-]{16,128})(?:&view=[a-z]+)?$/.exec(window.location.hash || \"\")") != std::string::npos,
+         "a login link may name one");
+  expect(js.find("var view = addressView(window.location.hash) || (signedIn ? state.view : null);") != std::string::npos &&
+             js.find("await signIn(claimed, view);") != std::string::npos,
+         "the link's view, else the view shown (a restart)");
+  expect(js.find("function enterApp(models, view) {") != std::string::npos && js.find("showView(view || \"chat\");") != std::string::npos,
+         "signed in on that view, else Chat");
+  expect(js.find("if (typeof key === \"string\" && key) { await signIn(key, addressView(window.location.hash)); return; }") !=
+             std::string::npos,
+         "a held key opens the named view too");
+}
+
 // GUI-first start-up (spec 2026-10-27 §5a): a Settings sub-tab with the email alerts - shown only when the server has
 // them (its alerts route answers; a build without them answers 404) - the IONOS preset, which alerts, the password
 // (a password field, saved on its own and never shown again), Save and "Send a test email", and a note that the
@@ -1624,6 +1643,7 @@ int main(int argc, char** argv) {
       {"web_ui_has_email_alert_settings", web_ui_has_email_alert_settings},
       {"web_ui_has_server_settings", web_ui_has_server_settings},
       {"web_ui_claims_a_login_link_at_load_and_on_hashchange", web_ui_claims_a_login_link_at_load_and_on_hashchange},
+      {"web_ui_opens_the_view_its_address_names", web_ui_opens_the_view_its_address_names},
       {"web_ui_has_web_search_settings", web_ui_has_web_search_settings},
       {"web_ui_has_model_folder_setting", web_ui_has_model_folder_setting},
       {"web_ui_monitor_shows_stopped_and_the_model", web_ui_monitor_shows_stopped_and_the_model},

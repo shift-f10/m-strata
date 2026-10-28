@@ -280,6 +280,41 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z5 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+The owner: "continue" (after z4 was pushed at `ccf4f051`), on the open items of the window phase.
+
+- **The window opens on the Monitor** (his ask: "the open window shows the Monitor statistics"; z4 opened on Chat).
+  - The page takes a view in its address: `#view=<name>` or `#login=<code>&view=<name>`, for chat, monitor or about
+    (`addressView`); models and settings tabs appear only once the server offers them.
+  - `enterApp(models, view)` and `signIn(key, view)` open that view, else Chat. A restarted server's link keeps the
+    view the page shows (`state.view`), instead of going back to Chat.
+  - The window's first page is `w::page_address(link, origin, first)`: `&view=monitor` (or `/#view=monitor` with no
+    link); later loads (a restart) leave the view to the page. Both windows use it.
+
+  Tests: `web_ui_opens_the_view_its_address_names` and `the_window_opens_on_the_monitor_first`, RED with the old
+  behaviour (`page_address` without the view; the page as it was), then GREEN; router 53/53 and window shell 14/14;
+  the ON full suite 1293/1296 (the known three).
+  Run here: the window opened on the Monitor; switched to About, a tray Restart kept About, signed in, no key dialog.
+  Note: the page shows the key once at each window start (a fresh tab session each launch); the Settings tab has
+  it too.
+- **"Unreaped engine" on a model stop (seen on the owner's console after the picture tests): analysed, not fixed.**
+  - On Windows `shutdown_generation` closes stdin and waits `kShutdownStdinWait` (2 s). `signal_group_terminate` is
+    POSIX-only, so the next 1 s (`kShutdownTermWait`) adds nothing. `TerminateJobObject` then gets 1 s more.
+  - A real model (tens of GB of pinned RAM, a full GPU) can take longer than that to free its memory and end. The
+    process is then left in `abandoned_` ("unreaped"), the server exits 1 at shutdown, and the launcher's switch can
+    start the next model while the old one still holds VRAM.
+  - A timing script (start the card on a dev server, stop it, time the engine's and the encoder's exit) was ready but
+    not run: the owner's server was running DeepSeek-V4.1 on the GPU at the time.
+  - Needs the measurement, then the owner's decision. The bounds come from ruling RF5 (the 5 s shutdown bound).
+    Possible fixes: a longer post-kill wait for launcher stops, or a launcher start that waits until the old engine
+    is gone.
+- **The Linux window** still has no compile here: no Linux toolchain, and Docker Desktop is installed but not
+  running. Compiling it needs an Ubuntu image and GTK/WebKitGTK/AppIndicator dev packages: a download for the owner
+  to approve, or a CI job that installs them.
+- **The owner's server** was running DeepSeek-V4.1 (started 13:54 on the swapped build), the first time that family
+  has run here. Its result is not recorded by this session.
+
 ### Claude Code session, 2026-10-28 z4 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 The spec's Part 2, `strata-window`: the server in a window with a tray icon (the owner: "instead of a console application,

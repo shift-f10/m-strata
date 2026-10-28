@@ -44,7 +44,8 @@ refused here, by name), `POST /v1/strata/key/rotate`. Nothing about a key is eve
 - **Start.** It starts `strata-secure-server` beside it with the same arguments it was given (so `--data-dir`, `--port`
   pass through), with no console window, its output written to `data/logs/server.log` (bounded, rotated). It reads the
   server's "Sign in: open http://127.0.0.1:PORT/#login=..." line and opens the page through it (the one-time link,
-  this PC only). As built, the page opens on Chat, as in a browser.
+  this PC only), on the Monitor tab: the page takes `#login=<code>&view=monitor` (or `#view=monitor`); a restart's link
+  keeps the view the page shows.
 - **As built (2026-10-28).**
   - Every start of the server gets the environment the window started with: reading a `--token-env` key scrubs the
     variable from the reader, so a restart would otherwise lose it.
