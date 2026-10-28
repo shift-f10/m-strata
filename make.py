@@ -149,6 +149,12 @@ def frontend_configure_args(opts: Options, platform: str) -> list[str]:
             "-DSECURE_FRONTEND_WINDOW=" + _on_off("window" in opts.with_features)]
 
 
+def frontend_build_targets(opts: Options) -> list[str]:
+    """The frontend's programs to build: the server (strata-search comes with it) and strata, and strata-window, which
+    needs the server but is not needed by it."""
+    return ["strata-secure-server", "strata"] + (["strata-window"] if "window" in opts.with_features else [])
+
+
 # ---- the out folder's layout ----------------------------------------------------------------------------------------
 
 def _families(opts: Options) -> list[str]:
@@ -476,7 +482,7 @@ def main(argv: list[str] | None = None) -> int:
             shutil.copy2(opts.build_dir / "vision" / "bin" / program, stage / "engine" / program)
     run([cmake, *frontend_configure_args(opts, platform), *make_program_args(opts.build_dir / "frontend", ninja)],
         env, opts.plan)
-    run([cmake, "--build", str(opts.build_dir / "frontend"), "--target", "strata-secure-server", "strata", *jobs], env,
+    run([cmake, "--build", str(opts.build_dir / "frontend"), "--target", *frontend_build_targets(opts), *jobs], env,
         opts.plan)
     run([cmake, "--install", str(opts.build_dir / "frontend"), "--prefix", str(stage), "--component", "runtime"], env,
         opts.plan)
