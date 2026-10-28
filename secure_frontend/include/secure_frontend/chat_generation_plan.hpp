@@ -211,6 +211,18 @@ using ChatGenerationPlanResult = std::variant<ChatGenerationPlan, ChatGeneration
                                                                          std::size_t default_max_tokens,
                                                                          const SamplingDefaults& defaults,
                                                                          const MinimaxThinking& thinking);
+// Web search for MiniMax-M3.1 (owner 2026-10-28): that plan with the server's tools and the search loop's rounds
+// (render_minimax_tool_prompt). Where the pack holds the tool namespace ]<]minimax[>[ as a special token, the prompt
+// writes it as that token and the reply's is output as its text (literal_tokens) for the call reader; elsewhere it is
+// text both ways. The same split, stops and refusals as the text plan.
+[[nodiscard]] ChatGenerationPlanResult make_minimax_tool_generation_plan(const ChatCompletionRequest& request,
+                                                                         const TokenizerPack& tokenizer,
+                                                                         std::span<const std::string> tools,
+                                                                         std::span<const ToolRound> rounds,
+                                                                         std::size_t maximum_prompt_tokens,
+                                                                         std::size_t default_max_tokens,
+                                                                         const SamplingDefaults& defaults,
+                                                                         const MinimaxThinking& thinking);
 [[nodiscard]] ChatGenerationPlanResult make_raon1_chat_generation_plan(
     const ChatCompletionRequest& request, const TokenizerPack& tokenizer,
     std::size_t maximum_prompt_tokens = static_cast<std::size_t>(config_defaults::kChatMaxPromptTokens),

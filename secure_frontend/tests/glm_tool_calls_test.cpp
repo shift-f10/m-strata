@@ -333,7 +333,7 @@ void the_route_plans_a_search_in_the_turns_form() {
   secure_frontend::ChatCompletionRequest request;
   request.model = "m";
   request.messages = {{"user", "Q"}};
-  secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::glm};
+  secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::glm, {}};
   const auto pack = glm_pack();
   const auto planned = secure_frontend::search_first_plan(config, turn, pack);
   const auto* plan = std::get_if<secure_frontend::ChatGenerationPlan>(&planned);

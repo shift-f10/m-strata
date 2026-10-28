@@ -280,6 +280,51 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z8 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+This entry is the MiniMax half of the owner's "deepseek does not seem to have mcp search access and I believe minimax
+may have the same issue"; z7 did DeepSeek. Every profile now has the tool.
+
+- **The prompt**: `render_minimax_tool_prompt` writes Maya's MiniMax template for a chat with tools:
+  - the tool section goes in the first developer turn: each function as `tojson` writes it, in `<tool>`, then the
+    call format in the tool namespace `]<]minimax[>[`;
+  - each round goes as Maya's `run_with_mcp` appends it: stripped, the reasoning in `<mm:think>` or the
+    `</mm:think>` prefix, the calls by the template's `to_xml`;
+  - then one `tool` turn holds a `<response>` per result.
+
+  The text and tool prompts now share one renderer. A round without reasoning whose content holds the think pair as
+  text is split as the template splits it. The prompts are checked byte for byte against the 11 that Maya's code
+  rendered: both tool forms, with every literal special and with none (44 renders).
+- **The plan**: `make_minimax_tool_generation_plan` is the text plan (one `minimax_plan` serves both) plus the
+  namespace. Where the pack holds `]<]minimax[>[` as a special token, the prompt writes it as that token and the reply's
+  is output as its text (`literal_tokens`); elsewhere it is text both ways. `kMinimaxToolNamespace` is shared by the
+  renderer, the plan and the reader.
+- **The calls**: `MinimaxToolCallParser` runs a port of Maya's `MinimaxRewriter` on both channels, then z7's
+  rewritten-mode GLM reader.
+  - A string parameter (the declaration's string parameters, Maya's `may_be_string`) streams JSON-quoted.
+  - Any other value goes out whole at its close: a nested one as the object or array it spells, a plain one as JSON
+    when it is a number, true, false or null.
+  - Tag names and scalars follow Python's whitespace (RED with an ASCII-only reader).
+
+  The calls are checked against the events Maya's parser gave for 14 replies.
+- **Wiring**: `ToolFormat::minimax`; `search_tool_format(minimax)`. `SearchTurn::minimax` carries the turn's MiniMax
+  thinking (`minimax_request_thinking`) to the search route's plan. Every `SearchTurn` initializer names it. The card
+  gets the Web search switch (`kMinimaxOptions` 6→7, before GPUs).
+- **Tests**:
+  - `secure_frontend_minimax_tool_calls_tests`, 6 cases; the real-pack case runs with `SECURE_FRONTEND_MINIMAX_PACK`.
+    On the first build every case passed except the route case, RED for the missing card option.
+  - Updated to every profile having the tool: `minimax_options_are_mayas`,
+    `web_search_is_a_checkbox_of_the_tool_profiles`, `cards_offer_web_search_when_the_server_has_it`, and the Gemma 4
+    route assertion.
+  - Full suite in both configurations:
+    - OFF: 1276/1278, failing only the two release-only tests.
+    - ON: 1304/1308, failing the same two plus two timing tests, `send_all_bounded_stall_restarts_on_progress` and
+      `import_with_unreadable_installed_version_needs_interactive_yes`. Both passed 3/3 when rerun alone, so they are
+      load flakes.
+- **Not checked yet: MiniMax's real pack.** None was on this box; the owner was downloading MiniMax-M3.1 meanwhile.
+  Once it is packed, run the real-pack case. It prints whether the namespace and the reasoning pair are special
+  tokens. Where `<mm:think>` is text, the reply is not split, as in the text plan. Nothing has run on the GPU.
+
 ### Claude Code session, 2026-10-28 z7 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 The owner: "deepseek does not seem to have mcp search access and I believe minimax may have the same issue". Both

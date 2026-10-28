@@ -71,7 +71,7 @@ std::optional<ToolFormat> search_tool_format(const NativeChatProfile profile) {
     case NativeChatProfile::flint: return ToolFormat::flint;  // flint's writes GLM's
     case NativeChatProfile::gemma4: return ToolFormat::gemma4;  // its own <|tool_call>call:NAME{...} (owner 2026-10-28)
     case NativeChatProfile::deepseek: return ToolFormat::deepseek;  // DSML, as Maya renders and reads it (owner 2026-10-28)
-    case NativeChatProfile::minimax: break;  // (no tool form wired for it yet)
+    case NativeChatProfile::minimax: return ToolFormat::minimax;  // its namespaced XML, as Maya renders and reads it (owner 2026-10-28)
   }
   return std::nullopt;
 }
@@ -250,7 +250,7 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
   const std::optional<ToolFormat> tool_format = search_tool_format(config_.profile);
   if (config_.tools != nullptr && tool_format && !vision_request && request.strata_search != false) {
     if (auto offer = config_.tools->offer()) {
-      search = std::make_shared<SearchTurn>(SearchTurn{request, std::move(*offer), thinking, effort, *tool_format});
+      search = std::make_shared<SearchTurn>(SearchTurn{request, std::move(*offer), thinking, effort, *tool_format, minimax_thinking});
     }
   }
 

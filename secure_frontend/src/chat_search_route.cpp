@@ -37,6 +37,9 @@ ChatGenerationPlanResult search_plan(const SearchLimits& limits, const SearchTur
       return make_deepseek_tool_generation_plan(
           turn.request, tokenizer, tools, rounds, limits.max_prompt_tokens, 1U, limits.sampling,
           turn.thinking ? deepseek_effort_budget(turn.effort.effort == QwenEffort::low ? "low" : "high") : std::nullopt);
+    case ToolFormat::minimax:  // its thinking as the text plan's (minimax_request_thinking)
+      return make_minimax_tool_generation_plan(turn.request, tokenizer, tools, rounds, limits.max_prompt_tokens, 1U, limits.sampling,
+                                               turn.minimax);
     case ToolFormat::qwen: break;
   }
   return make_qwen_tool_generation_plan(turn.request, tokenizer, tools, rounds, limits.max_prompt_tokens, 1U, limits.sampling,

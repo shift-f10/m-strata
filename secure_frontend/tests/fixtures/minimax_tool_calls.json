@@ -1,0 +1,309 @@
+{
+ "generator": "tools/generate_minimax_tool_call_fixture.py",
+ "tool": {
+  "name": "web_search",
+  "description": "Search the web.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string"
+    },
+    "max_results": {
+     "type": "integer"
+    },
+    "note": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ "cases": [
+  {
+   "name": "a_call_after_the_thinking",
+   "reply": "I need to search.</mm:think>]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>world cup 2026]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "I need to search."
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "world cup 2026"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "content_before_a_call",
+   "reply": "ok</mm:think>Let me check.\n]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>x]<]minimax[>[</query>]<]minimax[>[<max_results>3]<]minimax[>[</max_results>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "ok"
+    },
+    {
+     "kind": "content",
+     "text": "Let me check.\n"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "x",
+       "max_results": 3
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "two_invokes",
+   "reply": "x</mm:think>]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>a]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>b]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "a"
+      }
+     }
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "b"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "nested_values",
+   "reply": "x</mm:think>]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>q]<]minimax[>[</query>]<]minimax[>[<opts>]<]minimax[>[<k>v]<]minimax[>[</k>]<]minimax[>[<n>1]<]minimax[>[</n>]<]minimax[>[</opts>]<]minimax[>[<tags>]<]minimax[>[<item>a]<]minimax[>[</item>]<]minimax[>[<item>b]<]minimax[>[</item>]<]minimax[>[</tags>]<]minimax[>[<flag>true]<]minimax[>[</flag>]<]minimax[>[<ratio>2.50]<]minimax[>[</ratio>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q",
+       "opts": {
+        "k": "v",
+        "n": 1
+       },
+       "tags": [
+        "a",
+        "b"
+       ],
+       "flag": true,
+       "ratio": 2.5
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_string_parameter_stays_a_string",
+   "reply": "x</mm:think>]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>[1, 2]]<]minimax[>[</query>]<]minimax[>[<note>42]<]minimax[>[</note>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "[1, 2]",
+       "note": "42"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "an_untyped_value_is_its_json_or_its_text",
+   "reply": "x</mm:think>]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>q]<]minimax[>[</query>]<]minimax[>[<n>7]<]minimax[>[</n>]<]minimax[>[<word>plain text]<]minimax[>[</word>]<]minimax[>[<none>null]<]minimax[>[</none>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q",
+       "n": 7,
+       "word": "plain text",
+       "none": null
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_string_keeps_newlines_angles_and_tags",
+   "reply": "x</mm:think>]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>\nline <one>\na < b ]<]minimax[>[<inner>z]<]minimax[>[</inner>\n]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "\nline <one>\na < b ]<]minimax[>[<inner>z]<]minimax[>[</inner>\n"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "text_after_the_calls",
+   "reply": "x</mm:think>]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>q]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>\n\nDone.",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q"
+      }
+     }
+    },
+    {
+     "kind": "content",
+     "text": "\n\nDone."
+    }
+   ]
+  },
+  {
+   "name": "an_unclosed_call_is_closed_at_the_end",
+   "reply": "x</mm:think>]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>q]<]minimax[>[</query>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_cut_value_at_the_end",
+   "reply": "x</mm:think>]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>half",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "half"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_call_in_the_reasoning_is_reasoning",
+   "reply": "Like ]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>q]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call> then.</mm:think>Answer.",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "Like <tool_call>web_search<arg_key>query</arg_key><arg_value>\"q\"</arg_value></tool_call> then."
+    },
+    {
+     "kind": "content",
+     "text": "Answer."
+    }
+   ]
+  },
+  {
+   "name": "the_namespace_alone_is_text",
+   "reply": "x</mm:think>The token ]<]minimax[>[ alone, and ]<]minimax[>[<b>x]<]minimax[>[</b>.",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "kind": "content",
+     "text": "The token ]<]minimax[>[ alone, and ]<]minimax[>[<b>x]<]minimax[>[</b>."
+    }
+   ]
+  },
+  {
+   "name": "unicode_around_a_call",
+   "reply": "思考。</mm:think>答え：]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>日本 été]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "思考。"
+    },
+    {
+     "kind": "content",
+     "text": "答え："
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "日本 été"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "python_whitespace_in_tags_and_values",
+   "reply": "x</mm:think>]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke　name=\"web_search\">]<]minimax[>[<query>q]<]minimax[>[</query>]<]minimax[>[<max_results> 5　]<]minimax[>[</max_results>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q",
+       "max_results": 5
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

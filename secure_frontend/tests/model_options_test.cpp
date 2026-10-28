@@ -674,13 +674,13 @@ void flint_options_follow_the_flint_engine() {
 }
 
 // Owner 2026-10-28 ("a toggle in the card that can enable search"): web_search, a checkbox of each profile with the
-// server's tool (qwen, glm53, raon1, flint, gemma4, deepseek). It writes no flag and no row: the launcher reads it at a
-// start to hand the model the tool or not. A card may list it with its own default.
+// server's tool (qwen, glm53, raon1, flint, gemma4, deepseek, minimax: every profile). It writes no flag and no row: the
+// launcher reads it at a start to hand the model the tool or not. A card may list it with its own default.
 void web_search_is_a_checkbox_of_the_tool_profiles() {
-  // gemma4 since 2026-10-28 (the owner: "gemma4 did not use search"); deepseek since 2026-10-28 (the owner: "deepseek
-  // does not seem to have mcp search access")
+  // gemma4 since 2026-10-28 (the owner: "gemma4 did not use search"); deepseek and minimax since 2026-10-28 (the owner:
+  // "deepseek does not seem to have mcp search access and I believe minimax may have the same issue")
   for (const auto profile : {EngineProfile::qwen, EngineProfile::glm53, EngineProfile::raon1, EngineProfile::flint, EngineProfile::gemma4,
-                             EngineProfile::deepseek}) {
+                             EngineProfile::deepseek, EngineProfile::minimax}) {
     const auto* spec = secure_frontend::find_model_option(profile, "web_search");
     expect(spec != nullptr && spec->kind == ModelOptionKind::boolean && spec->label == "Web search" && !spec->help.empty(),
            "a tool profile has the Web search checkbox");
@@ -690,7 +690,6 @@ void web_search_is_a_checkbox_of_the_tool_profiles() {
     secure_frontend::apply_option_values(profile, ModelOptionValues{{"web_search", true}}, draft);
     expect(draft.entries.empty(), "it writes no config row");
   }
-  expect(secure_frontend::find_model_option(EngineProfile::minimax, "web_search") == nullptr, "minimax has no tool to offer yet");
   expect(secure_frontend::is_model_option_name("web_search"), "a fixed option name (kept in the remembered file)");
   const auto listed = limits_of(EngineProfile::raon1, R"({"web_search": {"default": false}})");
   expect(listed.size() == 1U && std::get_if<bool>(&listed[0].default_value) != nullptr && !std::get<bool>(listed[0].default_value),
@@ -1098,7 +1097,7 @@ void the_vision_option_writes_the_encoder_rows() {
 }
 
 void minimax_options_are_mayas() {
-  expect(names_of(EngineProfile::minimax) == Strings{"max_context", "kv", "thinking", "temperature", "top_p", "gpus"},
+  expect(names_of(EngineProfile::minimax) == Strings{"max_context", "kv", "thinking", "temperature", "top_p", "web_search", "gpus"},
          "the minimax options in display order: " + joined(names_of(EngineProfile::minimax)));
   const auto* context = secure_frontend::find_model_option(EngineProfile::minimax, "max_context");
   expect(context != nullptr && context->kind == ModelOptionKind::integer && context->minimum == 1 && context->maximum == 1048576 &&
@@ -1125,8 +1124,9 @@ void minimax_options_are_mayas() {
   expect(secure_frontend::option_flags(EngineProfile::minimax, "kv") == std::vector<std::string_view>{"--kv-cache"} &&
              secure_frontend::option_flags(EngineProfile::minimax, "max_context") == std::vector<std::string_view>{"--max-context"},
          "--kv-cache and --max-context are the options' flags");
-  expect(secure_frontend::find_model_option(EngineProfile::minimax, "web_search") == nullptr,
-         "no Web search checkbox: MiniMax has no tool form wired");
+  // (2026-10-28: its namespaced XML calls are wired, as for every other profile)
+  const auto* search = secure_frontend::find_model_option(EngineProfile::minimax, "web_search");
+  expect(search != nullptr && search->kind == ModelOptionKind::boolean, "the Web search checkbox: MiniMax's tool form is wired");
 }
 
 void past_trained_context_adds_yarn() {

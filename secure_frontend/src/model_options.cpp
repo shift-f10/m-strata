@@ -261,7 +261,7 @@ constexpr std::array<ModelOptionSpec, 8> kDeepseekOptions{{
 constexpr std::array<std::int64_t, 6> kMinimaxContexts{32768, 65536, 131072, 262144, 524288, 1048576};
 constexpr std::array<std::string_view, 4> kMinimaxKv{"bf16", "int8", "fp8", "fp4"};
 constexpr std::array<std::string_view, 5> kMinimaxThinking{"auto", "none", "low", "medium", "high"};
-constexpr std::array<ModelOptionSpec, 6> kMinimaxOptions{{
+constexpr std::array<ModelOptionSpec, 7> kMinimaxOptions{{
     listed(integer_option("max_context", "Context length",
                           "Tokens of context the engine allocates (Maya's choices; past 256K not yet run end to end)", 1, 1048576),
            kMinimaxContexts),
@@ -270,6 +270,7 @@ constexpr std::array<ModelOptionSpec, 6> kMinimaxOptions{{
                   "The thinking level for requests that name none (auto: MiniMax decides when to think)", kMinimaxThinking),
     kTemperature,
     kTopP,
+    kWebSearch,  // its namespaced XML calls, as Maya renders and reads them (owner 2026-10-28)
     kGpus,
 }};
 

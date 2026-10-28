@@ -280,7 +280,7 @@ void the_route_plans_raon1_and_flint_searches() {
   secure_frontend::ChatCompletionRequest request;
   request.model = "m";
   request.messages = {{"user", "Q"}};
-  secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::raon1};
+  secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::raon1, {}};
   const auto raon = raon_pack();
   const auto planned = secure_frontend::search_first_plan(config, turn, raon);
   const auto* plan = std::get_if<secure_frontend::ChatGenerationPlan>(&planned);
@@ -323,7 +323,7 @@ void the_real_packs_plan_their_searches() {
     expect(pack != nullptr, std::string{real.variable} + ": the pack loads");
     if (pack == nullptr) continue;
     for (const bool thinking : {true, false}) {
-      const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, tool}, thinking, {}, real.format};
+      const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, tool}, thinking, {}, real.format, {}};
       const auto planned = secure_frontend::search_first_plan(config, turn, *pack);
       const auto* refused = std::get_if<secure_frontend::ChatGenerationPlanError>(&planned);
       expect(refused == nullptr, std::string{real.variable} + (thinking ? " thinking" : " not thinking") + ": the search plan, not " +

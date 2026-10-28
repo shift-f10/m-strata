@@ -80,6 +80,7 @@ struct SearchTurn final {
   bool thinking{true};
   QwenEffortPlacement effort{QwenEffort::high, false};
   ToolFormat format{ToolFormat::qwen};  // the profile's: qwen (upstream's template), glm53 (Maya's GLM-5.3 one)
+  MinimaxThinking minimax{};            // the minimax profile's thinking (off, or its effort)
 };
 
 // The route's values a later round's prompt and budget need (chat_search_route.cpp); copied into a stream's closure.

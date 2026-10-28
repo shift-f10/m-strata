@@ -86,7 +86,7 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 **Web search through MCP and SearXNG**
 
 - A build with `search` has `strata-search`, an MCP server the server runs as a private child, which asks **your own
-  SearXNG instance**. Qwen3.6, Qwen3.8, GLM-5.3, Raon-1-mini, flint, Gemma 4 and DeepSeek-V4.1 models get a `web_search` tool, each in its own
+  SearXNG instance**. Qwen3.6, Qwen3.8, GLM-5.3, Raon-1-mini, flint, Gemma 4, DeepSeek-V4.1 and MiniMax-M3.1 models get a `web_search` tool, each in its own
   template's form, and decide when to search.
 - Up to `search.max_rounds` searches per answer (8 by default), then the model answers from what it found; the chat
   shows each search and its results in a box, and the API returns them as `strata_search` events.
@@ -526,8 +526,8 @@ search:
 ```
 
 Run `docker compose up -d` there, then in Settings > Web search turn it on, enter
-`http://<that machine>:8080`, save, restart the server, and use "Test search". A Qwen, GLM-5.3, raon1, flint, Gemma 4 or DeepSeek-V4.1
-model then gets the `web_search` tool on every text chat; what it searches for leaves your PC through that instance. Each such
+`http://<that machine>:8080`, save, restart the server, and use "Test search". Every model (Qwen, GLM-5.3, raon1, flint, Gemma 4,
+DeepSeek-V4.1, MiniMax-M3.1) then gets the `web_search` tool on every text chat; what it searches for leaves your PC through that instance. Each such
 card has a **Web search** switch (on by default; off, that model starts without the tool), and while it is on the chat
 settings have one too (off, the page's chats ask for no search). After the last allowed search the model is told to
 answer from what it found.
@@ -666,12 +666,12 @@ for a real install, which makes its own key at the first start.
   downloads into a chosen folder, the danger-zone delete); optional email alerts; the engine as a launcher over one
   library per family (upstream Strata `v0.2.6`, Project Maya `v1.1.30`, raon1, Gemma 4, flint); native `strata-prepare`
   packers; GLM-5.3, DeepSeek-V4.1, MiniMax-M3.1 and Qwen3.6 in the server; optional web search over MCP and SearXNG for
-  Qwen, GLM, raon1, flint, Gemma 4 and DeepSeek, with a switch on each card and in the chat; Qwen's and GLM's prompts tokenized exactly as
+  every family (Qwen, GLM, raon1, flint, Gemma 4, DeepSeek, MiniMax), with a switch on each card and in the chat; Qwen's and GLM's prompts tokenized exactly as
   upstream's and Maya's tokenizers do; pictures on Qwen cards (upstream's `strata-vision` beside the engine, the Vision
   files download, picture attachments in the chat; checked on Qwen3.8 IQ3_S on the GPU).
 - **Open:** DeepSeek and MiniMax end-to-end runs; GLM speed tuning; making Qwen3.8's MTP draft layer here (upstream's
   three Python tools, natively; today it comes from upstream's setup); pictures on the other families; web search
-  for MiniMax, and DeepSeek's checked on the GPU; several GPUs checked on a two-GPU PC, upstream's card order for a layer split (the faster
+  for DeepSeek and MiniMax checked on the GPU; several GPUs checked on a two-GPU PC, upstream's card order for a layer split (the faster
   card last), and a split for Gemma 4 and flint;
   long-prompt speed and long-context drift on raon1; Linux runs of the newest work; the server as a window with a
   tray icon (model start and stop, the Monitor, a configuration tab).
