@@ -42,8 +42,9 @@ struct ToolRound final {
 // Which family's form the calls take: upstream's Qwen template (qwen_tool_calls.hpp) or Maya's GLM-5.3 one
 // (glm_tool_calls.hpp); raon-1-mini's template writes Qwen's calls and flint's GLM's, each in its own prompt
 // (owner 2026-10-28); Gemma 4's are its own <|tool_call>call:NAME{...}<tool_call|> (gemma4_tool_calls.hpp); DeepSeek-V4.1's
-// are DSML, read as Maya reads them (deepseek_tool_calls.hpp).
-enum class ToolFormat { qwen, glm, raon1, flint, gemma4, deepseek };
+// are DSML, read as Maya reads them (deepseek_tool_calls.hpp); MiniMax-M3.1's are its namespaced XML, read as Maya reads
+// them (minimax_tool_calls.hpp).
+enum class ToolFormat { qwen, glm, raon1, flint, gemma4, deepseek, minimax };
 
 struct ToolParseEvent final {
   enum class Kind { reasoning, content, call };

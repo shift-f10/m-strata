@@ -697,16 +697,19 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
 
 - **One tool, the server's own.** The model may call `web_search` and nothing else; the
   tool is offered by the server, never by a request (client-sent `tools` stay refused), a
-  model, a manifest or a card. Calls are read only from qwen, glm53, raon1, flint, gemma4
-  and deepseek replies (2026-10-28: raon1 in Qwen's form, flint in GLM's, Gemma 4 in its own
+  model, a manifest or a card. Calls are read only from qwen, glm53, raon1, flint, gemma4,
+  deepseek and minimax replies (2026-10-28: raon1 in Qwen's form, flint in GLM's, Gemma 4 in its own
   `<|tool_call>call:NAME{...}<tool_call|>` read by llama.cpp's grammar, DeepSeek in its
-  DSML blocks rewritten into GLM's form as Maya's `DsmlRewriter` does, each as its own
+  DSML blocks rewritten into GLM's form as Maya's `DsmlRewriter` does, MiniMax in its
+  namespaced XML rewritten likewise by Maya's `MinimaxRewriter`, each as its own
   template writes it), as upstream, Maya and llama.cpp read them, and only for that tool;
   any other call, and one the grammar refuses, is text. The results and the model's own
   words go back into the prompt as plain spans (their special literals are text, never a
   token), so a page that writes `<|tool_call>`, `<turn|>` or `｜DSML｜` cannot open a call or
   a turn. DeepSeek's `｜DSML｜` token is output as its text only for the call reader; a
-  client's message holding it is still refused.
+  client's message holding it is still refused. MiniMax's namespace `]<]minimax[>[`, where
+  the pack holds it as a token, is output as its text for the call reader alone; in a
+  message or a result it is plain text, as Maya encodes it.
 - **The MTP draft layer (2026-10-28).** A Qwen3.8 card made by Add a model runs upstream's
   draft layer (`mtp/rt`) only when it passes the model folders' rule (private, unless model
   folders are used as they are); a draft layer other users of the PC could change is left

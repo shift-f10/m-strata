@@ -430,7 +430,7 @@ target_include_directories(secure_frontend_qwen_prompt_renderer
 target_link_libraries(secure_frontend_qwen_prompt_renderer PUBLIC secure_frontend_chat_schema secure_frontend_json)
 # Web search (spec 2026-10-27-web-search-design.md, phase 3): the calls a Qwen reply writes, read as upstream reads them.
 secure_frontend_add_library(secure_frontend_tool_calls SOURCES src/tool_calls.cpp src/qwen_tool_calls.cpp src/glm_tool_calls.cpp
-    src/gemma4_tool_calls.cpp src/deepseek_tool_calls.cpp
+    src/gemma4_tool_calls.cpp src/deepseek_tool_calls.cpp src/minimax_tool_calls.cpp
     LINKS secure_frontend_json)
 target_compile_features(secure_frontend_glm_prompt_renderer PUBLIC cxx_std_20)
 target_include_directories(secure_frontend_glm_prompt_renderer
@@ -467,7 +467,7 @@ target_include_directories(secure_frontend_minimax_prompt_renderer
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(secure_frontend_minimax_prompt_renderer PUBLIC secure_frontend_chat_schema)
+target_link_libraries(secure_frontend_minimax_prompt_renderer PUBLIC secure_frontend_chat_schema secure_frontend_json)
 target_compile_features(secure_frontend_chat_generation_plan PUBLIC cxx_std_20)
 target_include_directories(secure_frontend_chat_generation_plan
     PUBLIC
@@ -1874,6 +1874,20 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         refuses_what_the_tool_prompt_cannot_say plans_with_dsml_as_text the_route_plans_deepseek_searches)
     # The real vocabulary (SECURE_FRONTEND_DEEPSEEK_PACK, a maya-ds4 pack's tokenizer folder; unset, skipped).
     secure_frontend_add_cases(secure_frontend_deepseek_tool_calls_tests the_real_pack_plans_its_search LABELS flint-real-pack)
+
+    # Web search for MiniMax-M3.1 (owner 2026-10-28): Maya's tool prompt (Maya's MiniMax template under its ChatTemplate,
+    # tools/generate_minimax_tool_prompt_fixture.py), Maya's reading of the namespaced calls
+    # (tools/generate_minimax_tool_call_fixture.py), the plan, the route.
+    secure_frontend_add_test_executable(secure_frontend_minimax_tool_calls_tests tests/minimax_tool_calls_test.cpp
+        secure_frontend_chat_generation_plan secure_frontend_tool_calls secure_frontend_chat_route secure_frontend_model_options)
+    secure_frontend_add_cases(secure_frontend_minimax_tool_calls_tests renders_mayas_tool_prompts_byte_for_byte
+        ARGS ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimax_tool_prompts.json)
+    secure_frontend_add_cases(secure_frontend_minimax_tool_calls_tests reads_calls_as_maya_does
+        ARGS ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimax_tool_calls.json)
+    secure_frontend_add_cases(secure_frontend_minimax_tool_calls_tests
+        refuses_what_the_tool_prompt_cannot_say plans_with_the_namespace the_route_plans_minimax_searches)
+    # The real vocabulary (SECURE_FRONTEND_MINIMAX_PACK, a maya-mm3 pack's tokenizer folder; unset, skipped).
+    secure_frontend_add_cases(secure_frontend_minimax_tool_calls_tests the_real_pack_plans_its_search LABELS flint-real-pack)
 
     secure_frontend_add_test_executable(secure_frontend_glm_profile_tests tests/glm_profile_test.cpp
         secure_frontend_chat_generation_plan)

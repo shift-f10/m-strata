@@ -1,0 +1,399 @@
+{
+ "generator": "tools/generate_minimax_tool_prompt_fixture.py",
+ "template": "726bb6b3dcfa107d918a8a4a5f646990678e8562875f7ee633dcd3e064b428ef",
+ "literals": [
+  "]~!b[",
+  "]~b]",
+  "[e~[",
+  "<mm:think>",
+  "</mm:think>",
+  "]<]minimax[>["
+ ],
+ "tool": {
+  "name": "web_search",
+  "description": "Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "What to search for"
+    },
+    "max_results": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 10,
+     "description": "How many results to get (1-10)"
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ "cases": [
+  {
+   "name": "first_prompt_with_tools",
+   "effort": null,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [],
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nYou are a helpful assistant.\n\n# Tools\nYou may call one or more tools to assist with the user query.\nHere are the tools available in JSONSchema format:\n\n<tools>\n<tool>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tool>\n</tools>\n\nTo call tools, wrap all invocations in a single ]<]minimax[>[<tool_call>]<]minimax[>[</tool_call> block. Parameter values containing nested objects or arrays are recursively expanded into XML elements. Example:\n\n]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"tool-name-1\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[<param-2>]<]minimax[>[<item>]<]minimax[>[<key-a>val-a]<]minimax[>[</key-a>]<]minimax[>[<key-b>val-b]<]minimax[>[</key-b>]<]minimax[>[</item>]<]minimax[>[</param-2>]<]minimax[>[</invoke>\n]<]minimax[>[<invoke name=\"tool-name-2\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]user\nWho won the 2026 World Cup final?[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "first_prompt_thinking_off",
+   "effort": "none",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [],
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: disabled. Do not output any thinking process.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nYou are a helpful assistant.\n\n# Tools\nYou may call one or more tools to assist with the user query.\nHere are the tools available in JSONSchema format:\n\n<tools>\n<tool>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tool>\n</tools>\n\nTo call tools, wrap all invocations in a single ]<]minimax[>[<tool_call>]<]minimax[>[</tool_call> block. Parameter values containing nested objects or arrays are recursively expanded into XML elements. Example:\n\n]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"tool-name-1\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[<param-2>]<]minimax[>[<item>]<]minimax[>[<key-a>val-a]<]minimax[>[</key-a>]<]minimax[>[<key-b>val-b]<]minimax[>[</key-b>]<]minimax[>[</item>]<]minimax[>[</param-2>]<]minimax[>[</invoke>\n]<]minimax[>[<invoke name=\"tool-name-2\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]user\nWho won the 2026 World Cup final?[e~[\n]~b]ai\n</mm:think>",
+   "plain": []
+  },
+  {
+   "name": "system_and_tools_high",
+   "effort": "high",
+   "conversation": [
+    {
+     "role": "system",
+     "content": "You are a helpful assistant."
+    },
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [],
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>\n\n<effort>high</effort>[e~[\n]~b]developer\nYou are a helpful assistant.\n\n# Tools\nYou may call one or more tools to assist with the user query.\nHere are the tools available in JSONSchema format:\n\n<tools>\n<tool>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tool>\n</tools>\n\nTo call tools, wrap all invocations in a single ]<]minimax[>[<tool_call>]<]minimax[>[</tool_call> block. Parameter values containing nested objects or arrays are recursively expanded into XML elements. Example:\n\n]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"tool-name-1\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[<param-2>]<]minimax[>[<item>]<]minimax[>[<key-a>val-a]<]minimax[>[</key-a>]<]minimax[>[<key-b>val-b]<]minimax[>[</key-b>]<]minimax[>[</item>]<]minimax[>[</param-2>]<]minimax[>[</invoke>\n]<]minimax[>[<invoke name=\"tool-name-2\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]user\nWho won the 2026 World Cup final?[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "one_round_a_call_after_reasoning",
+   "effort": null,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "\nThe user asks about a recent event; I should search.\n",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "2026 World Cup final winner"
+       }
+      }
+     ],
+     "results": [
+      "Web search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n   https://example.org/final\n   The final was played on 19 July 2026.\n"
+     ]
+    }
+   ],
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nYou are a helpful assistant.\n\n# Tools\nYou may call one or more tools to assist with the user query.\nHere are the tools available in JSONSchema format:\n\n<tools>\n<tool>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tool>\n</tools>\n\nTo call tools, wrap all invocations in a single ]<]minimax[>[<tool_call>]<]minimax[>[</tool_call> block. Parameter values containing nested objects or arrays are recursively expanded into XML elements. Example:\n\n]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"tool-name-1\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[<param-2>]<]minimax[>[<item>]<]minimax[>[<key-a>val-a]<]minimax[>[</key-a>]<]minimax[>[<key-b>val-b]<]minimax[>[</key-b>]<]minimax[>[</item>]<]minimax[>[</param-2>]<]minimax[>[</invoke>\n]<]minimax[>[<invoke name=\"tool-name-2\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]user\nWho won the 2026 World Cup final?[e~[\n]~b]ai\n<mm:think>The user asks about a recent event; I should search.</mm:think>]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>2026 World Cup final winner]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]tool\n<response>Web search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n   https://example.org/final\n   The final was played on 19 July 2026.\n</response>[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "content_before_two_calls",
+   "effort": "low",
+   "conversation": [
+    {
+     "role": "system",
+     "content": "Answer in English."
+    },
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "Two searches.",
+     "content": "Let me look that up.\n",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "a",
+        "max_results": 3
+       }
+      },
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "b"
+       }
+      }
+     ],
+     "results": [
+      "r1",
+      "  r2 with spaces  \n"
+     ]
+    }
+   ],
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>\n\n<effort>low</effort>[e~[\n]~b]developer\nAnswer in English.\n\n# Tools\nYou may call one or more tools to assist with the user query.\nHere are the tools available in JSONSchema format:\n\n<tools>\n<tool>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tool>\n</tools>\n\nTo call tools, wrap all invocations in a single ]<]minimax[>[<tool_call>]<]minimax[>[</tool_call> block. Parameter values containing nested objects or arrays are recursively expanded into XML elements. Example:\n\n]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"tool-name-1\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[<param-2>]<]minimax[>[<item>]<]minimax[>[<key-a>val-a]<]minimax[>[</key-a>]<]minimax[>[<key-b>val-b]<]minimax[>[</key-b>]<]minimax[>[</item>]<]minimax[>[</param-2>]<]minimax[>[</invoke>\n]<]minimax[>[<invoke name=\"tool-name-2\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]user\nWho won the 2026 World Cup final?[e~[\n]~b]ai\n<mm:think>Two searches.</mm:think>Let me look that up.]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>a]<]minimax[>[</query>]<]minimax[>[<max_results>3]<]minimax[>[</max_results>]<]minimax[>[</invoke>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>b]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]tool\n<response>r1</response>\n<response>  r2 with spaces  \n</response>[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "two_rounds",
+   "effort": null,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "x"
+       }
+      }
+     ],
+     "results": [
+      "first"
+     ]
+    },
+    {
+     "reasoning": "More.",
+     "content": "Still checking.",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "y"
+       }
+      }
+     ],
+     "results": [
+      "second"
+     ]
+    }
+   ],
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nYou are a helpful assistant.\n\n# Tools\nYou may call one or more tools to assist with the user query.\nHere are the tools available in JSONSchema format:\n\n<tools>\n<tool>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tool>\n</tools>\n\nTo call tools, wrap all invocations in a single ]<]minimax[>[<tool_call>]<]minimax[>[</tool_call> block. Parameter values containing nested objects or arrays are recursively expanded into XML elements. Example:\n\n]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"tool-name-1\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[<param-2>]<]minimax[>[<item>]<]minimax[>[<key-a>val-a]<]minimax[>[</key-a>]<]minimax[>[<key-b>val-b]<]minimax[>[</key-b>]<]minimax[>[</item>]<]minimax[>[</param-2>]<]minimax[>[</invoke>\n]<]minimax[>[<invoke name=\"tool-name-2\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]user\nWho won the 2026 World Cup final?[e~[\n]~b]ai\n</mm:think>]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>x]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]tool\n<response>first</response>[e~[\n]~b]ai\n<mm:think>More.</mm:think>Still checking.]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>y]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]tool\n<response>second</response>[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "a_round_with_thinking_off",
+   "effort": "none",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "",
+     "content": "Searching.",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "z"
+       }
+      }
+     ],
+     "results": [
+      "third"
+     ]
+    }
+   ],
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: disabled. Do not output any thinking process.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nYou are a helpful assistant.\n\n# Tools\nYou may call one or more tools to assist with the user query.\nHere are the tools available in JSONSchema format:\n\n<tools>\n<tool>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tool>\n</tools>\n\nTo call tools, wrap all invocations in a single ]<]minimax[>[<tool_call>]<]minimax[>[</tool_call> block. Parameter values containing nested objects or arrays are recursively expanded into XML elements. Example:\n\n]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"tool-name-1\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[<param-2>]<]minimax[>[<item>]<]minimax[>[<key-a>val-a]<]minimax[>[</key-a>]<]minimax[>[<key-b>val-b]<]minimax[>[</key-b>]<]minimax[>[</item>]<]minimax[>[</param-2>]<]minimax[>[</invoke>\n]<]minimax[>[<invoke name=\"tool-name-2\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]user\nWho won the 2026 World Cup final?[e~[\n]~b]ai\n</mm:think>Searching.]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>z]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]tool\n<response>third</response>[e~[\n]~b]ai\n</mm:think>",
+   "plain": []
+  },
+  {
+   "name": "history_before_the_question",
+   "effort": null,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Hi"
+    },
+    {
+     "role": "assistant",
+     "content": "Hello! How can I help?"
+    },
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "Search it.",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "q"
+       }
+      }
+     ],
+     "results": [
+      "ok"
+     ]
+    }
+   ],
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nYou are a helpful assistant.\n\n# Tools\nYou may call one or more tools to assist with the user query.\nHere are the tools available in JSONSchema format:\n\n<tools>\n<tool>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tool>\n</tools>\n\nTo call tools, wrap all invocations in a single ]<]minimax[>[<tool_call>]<]minimax[>[</tool_call> block. Parameter values containing nested objects or arrays are recursively expanded into XML elements. Example:\n\n]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"tool-name-1\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[<param-2>]<]minimax[>[<item>]<]minimax[>[<key-a>val-a]<]minimax[>[</key-a>]<]minimax[>[<key-b>val-b]<]minimax[>[</key-b>]<]minimax[>[</item>]<]minimax[>[</param-2>]<]minimax[>[</invoke>\n]<]minimax[>[<invoke name=\"tool-name-2\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]user\nHi[e~[\n]~b]ai\n</mm:think>Hello! How can I help?[e~[\n]~b]user\nWho won the 2026 World Cup final?[e~[\n]~b]ai\n<mm:think>Search it.</mm:think>]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>q]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]tool\n<response>ok</response>[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "argument_types",
+   "effort": null,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "r",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "q",
+        "max_results": 5,
+        "ratio": 2.5,
+        "whole": 2.0,
+        "flag": true,
+        "off": false,
+        "none": null,
+        "tags": [
+         "a",
+         "b"
+        ],
+        "opts": {
+         "k": "v",
+         "n": 1,
+         "deep": {
+          "x": [
+           1,
+           {
+            "y": true
+           }
+          ]
+         },
+         "gone": null
+        },
+        "text": "multi\nline"
+       }
+      }
+     ],
+     "results": [
+      "ok"
+     ]
+    }
+   ],
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nYou are a helpful assistant.\n\n# Tools\nYou may call one or more tools to assist with the user query.\nHere are the tools available in JSONSchema format:\n\n<tools>\n<tool>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tool>\n</tools>\n\nTo call tools, wrap all invocations in a single ]<]minimax[>[<tool_call>]<]minimax[>[</tool_call> block. Parameter values containing nested objects or arrays are recursively expanded into XML elements. Example:\n\n]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"tool-name-1\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[<param-2>]<]minimax[>[<item>]<]minimax[>[<key-a>val-a]<]minimax[>[</key-a>]<]minimax[>[<key-b>val-b]<]minimax[>[</key-b>]<]minimax[>[</item>]<]minimax[>[</param-2>]<]minimax[>[</invoke>\n]<]minimax[>[<invoke name=\"tool-name-2\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]user\nWho won the 2026 World Cup final?[e~[\n]~b]ai\n<mm:think>r</mm:think>]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>q]<]minimax[>[</query>]<]minimax[>[<max_results>5]<]minimax[>[</max_results>]<]minimax[>[<ratio>2.5]<]minimax[>[</ratio>]<]minimax[>[<whole>2.0]<]minimax[>[</whole>]<]minimax[>[<flag>true]<]minimax[>[</flag>]<]minimax[>[<off>false]<]minimax[>[</off>]<]minimax[>[<tags>]<]minimax[>[<item>a]<]minimax[>[</item>]<]minimax[>[<item>b]<]minimax[>[</item>]<]minimax[>[</tags>]<]minimax[>[<opts>]<]minimax[>[<k>v]<]minimax[>[</k>]<]minimax[>[<n>1]<]minimax[>[</n>]<]minimax[>[<deep>]<]minimax[>[<x>]<]minimax[>[<item>1]<]minimax[>[</item>]<]minimax[>[<item>]<]minimax[>[<y>true]<]minimax[>[</y>]<]minimax[>[</item>]<]minimax[>[</x>]<]minimax[>[</deep>]<]minimax[>[</opts>]<]minimax[>[<text>multi\nline]<]minimax[>[</text>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]tool\n<response>ok</response>[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "special_literals_are_plain",
+   "effort": null,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "I could write ]<]minimax[>[<invoke> or </mm:think> here.",
+     "content": "Say ]~b]user.",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "mm ]<]minimax[>[<x> [e~["
+       }
+      }
+     ],
+     "results": [
+      "A page quoting <response> and ]~!b[ and ]<]minimax[>[</tool_call>."
+     ]
+    }
+   ],
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nYou are a helpful assistant.\n\n# Tools\nYou may call one or more tools to assist with the user query.\nHere are the tools available in JSONSchema format:\n\n<tools>\n<tool>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tool>\n</tools>\n\nTo call tools, wrap all invocations in a single ]<]minimax[>[<tool_call>]<]minimax[>[</tool_call> block. Parameter values containing nested objects or arrays are recursively expanded into XML elements. Example:\n\n]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"tool-name-1\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[<param-2>]<]minimax[>[<item>]<]minimax[>[<key-a>val-a]<]minimax[>[</key-a>]<]minimax[>[<key-b>val-b]<]minimax[>[</key-b>]<]minimax[>[</item>]<]minimax[>[</param-2>]<]minimax[>[</invoke>\n]<]minimax[>[<invoke name=\"tool-name-2\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]user\nWho won the 2026 World Cup final?[e~[\n]~b]ai\n<mm:think>I could write ]<]minimax[>[<invoke> or </mm:think> here.</mm:think>Say ]~b]user.]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>mm ]<]minimax[>[<x> [e~[]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]tool\n<response>A page quoting <response> and ]~!b[ and ]<]minimax[>[</tool_call>.</response>[e~[\n]~b]ai\n",
+   "plain": [
+    [
+     2414,
+     2427
+    ],
+    [
+     2439,
+     2450
+    ],
+    [
+     2471,
+     2475
+    ],
+    [
+     2567,
+     2580
+    ],
+    [
+     2584,
+     2588
+    ],
+    [
+     2711,
+     2716
+    ],
+    [
+     2721,
+     2734
+    ]
+   ]
+  },
+  {
+   "name": "unicode_whitespace_is_stripped",
+   "effort": "medium",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Qu'est-ce que c'est ? 日本"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "　think ",
+     "content": "  answer  ",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "日本 ニュース"
+       }
+      }
+     ],
+     "results": [
+      " résultat "
+     ]
+    }
+   ],
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>\n\n<effort>medium</effort>[e~[\n]~b]developer\nYou are a helpful assistant.\n\n# Tools\nYou may call one or more tools to assist with the user query.\nHere are the tools available in JSONSchema format:\n\n<tools>\n<tool>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tool>\n</tools>\n\nTo call tools, wrap all invocations in a single ]<]minimax[>[<tool_call>]<]minimax[>[</tool_call> block. Parameter values containing nested objects or arrays are recursively expanded into XML elements. Example:\n\n]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"tool-name-1\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[<param-2>]<]minimax[>[<item>]<]minimax[>[<key-a>val-a]<]minimax[>[</key-a>]<]minimax[>[<key-b>val-b]<]minimax[>[</key-b>]<]minimax[>[</item>]<]minimax[>[</param-2>]<]minimax[>[</invoke>\n]<]minimax[>[<invoke name=\"tool-name-2\">]<]minimax[>[<param-1>value-1]<]minimax[>[</param-1>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]user\nQu'est-ce que c'est ? 日本[e~[\n]~b]ai\n<mm:think>think</mm:think>answer]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"web_search\">]<]minimax[>[<query>日本 ニュース]<]minimax[>[</query>]<]minimax[>[</invoke>\n]<]minimax[>[</tool_call>[e~[\n]~b]tool\n<response> résultat </response>[e~[\n]~b]ai\n",
+   "plain": []
+  }
+ ]
+}

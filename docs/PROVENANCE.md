@@ -741,6 +741,15 @@ Peasant Smith and the Project Maya contributors"; read from `G:\Project-maya`'s 
   `tests/fixtures/deepseek_tool_prompts.json` and `deepseek_tool_calls.json` hold our inputs and what Maya's own code
   gave for them (`secure_frontend/tools/generate_deepseek_tool_{prompt,call}_fixture.py`, run on the byte-exact copy of
   Maya's `serve` folder). The pack's chat template is not committed (its SHA-256 is in the prompt file).
+- **MiniMax-M3.1 tool calls (2026-10-28)**: `render_minimax_tool_prompt` writes what Maya's MiniMax chat template
+  (`tools/mm3/chat_template.jinja`, MiniMax's own with Maya's "disabled" mode; MiniMax Community License,
+  `engine/third_party/maya/LICENSE.minimax-m31`) writes for a chat with tools: its tool section (kept verbatim, the
+  model was trained on it), an assistant turn's calls by its `to_xml` macro, and the `tool` turn of `<response>` blocks.
+  It is ported to C++ and checked byte for byte. `minimax_tool_calls.cpp` ports Maya's `MinimaxRewriter` (`_tag`,
+  `_close_value`, `_parse`, `_scalar`; `serve/frontend.py`, MIT), which turns the namespaced calls into GLM's form for
+  the GLM port above. `tests/fixtures/minimax_tool_prompts.json` and `minimax_tool_calls.json` hold our inputs and what
+  Maya's own code gave for them (`secure_frontend/tools/generate_minimax_tool_{prompt,call}_fixture.py`); the template
+  is in the tree already (`engine/third_party/maya/tools/mm3/`), its SHA-256 in the prompt file.
 
 ## Pictures on model cards (2026-10-28): upstream's strata-vision, built as it is
 

@@ -351,7 +351,7 @@ void the_route_plans_deepseek_searches() {
   request.messages = {{"user", "Hi"}};
   const auto pack = deepseek_pack();
   for (const bool thinking : {true, false}) {
-    const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, thinking, {}, ToolFormat::deepseek};
+    const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, thinking, {}, ToolFormat::deepseek, {}};
     const auto planned = secure_frontend::search_first_plan(config, turn, pack);
     const auto* plan = std::get_if<secure_frontend::ChatGenerationPlan>(&planned);
     expect(plan != nullptr && plan->literal_tokens.size() == 1U && plan->starts_in_reasoning == thinking &&
@@ -379,7 +379,7 @@ void the_real_pack_plans_its_search() {
   request.model = "m";
   request.messages = {{"user", "what is today's headlines?"}};
   for (const bool thinking : {true, false}) {
-    const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, thinking, {}, secure_frontend::ToolFormat::deepseek};
+    const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, thinking, {}, secure_frontend::ToolFormat::deepseek, {}};
     const auto planned = secure_frontend::search_first_plan(config, turn, *pack);
     const auto* refused = std::get_if<secure_frontend::ChatGenerationPlanError>(&planned);
     expect(refused == nullptr, std::string{thinking ? "thinking" : "chat mode"} + ": the search plan, not " +

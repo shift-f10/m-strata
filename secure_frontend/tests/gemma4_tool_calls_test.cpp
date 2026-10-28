@@ -343,14 +343,15 @@ void the_route_plans_gemma4_searches() {
              secure_frontend::search_tool_format(NativeChatProfile::flint) == std::optional<ToolFormat>{ToolFormat::flint} &&
              // (2026-10-28, the owner: "deepseek does not seem to have mcp search access": DeepSeek's DSML form)
              secure_frontend::search_tool_format(NativeChatProfile::deepseek) == std::optional<ToolFormat>{ToolFormat::deepseek} &&
-             !secure_frontend::search_tool_format(NativeChatProfile::minimax),
-         "a Gemma 4 chat gets the tool in its own form, DeepSeek in DSML; MiniMax none yet");
+             // (2026-10-28, the owner: "I believe minimax may have the same issue": MiniMax's namespaced XML)
+             secure_frontend::search_tool_format(NativeChatProfile::minimax) == std::optional<ToolFormat>{ToolFormat::minimax},
+         "a Gemma 4 chat gets the tool in its own form, DeepSeek in DSML, MiniMax in its namespaced XML");
   secure_frontend::ChatRouteConfig config{};
   config.max_prompt_tokens = 100000U;
   secure_frontend::ChatCompletionRequest request;
   request.model = "m";
   request.messages = {{"user", "Hi"}};
-  const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, true, {}, secure_frontend::ToolFormat::gemma4};
+  const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, true, {}, secure_frontend::ToolFormat::gemma4, {}};
   const auto pack = test_support::spm_tokenizer();
   const auto planned = secure_frontend::search_first_plan(config, turn, pack);
   const auto* plan = std::get_if<secure_frontend::ChatGenerationPlan>(&planned);
@@ -377,7 +378,7 @@ void the_real_pack_plans_its_search() {
   request.model = "m";
   request.messages = {{"user", "what is today's headlines?"}};
   for (const bool thinking : {true, false}) {
-    const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, thinking, {}, secure_frontend::ToolFormat::gemma4};
+    const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, thinking, {}, secure_frontend::ToolFormat::gemma4, {}};
     const auto planned = secure_frontend::search_first_plan(config, turn, *pack);
     const auto* refused = std::get_if<secure_frontend::ChatGenerationPlanError>(&planned);
     expect(refused == nullptr, std::string{thinking ? "thinking" : "not thinking"} + ": the search plan, not " +

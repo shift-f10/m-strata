@@ -554,10 +554,14 @@ ChatGenerationPlanResult make_deepseek_tool_generation_plan(const ChatCompletion
                             std::vector<std::pair<std::size_t, std::string>>{{*dsml_id, dsml}}};
 }
 
-ChatGenerationPlanResult make_minimax_chat_generation_plan(const ChatCompletionRequest& request, const TokenizerPack& tokenizer,
-                                                           const std::size_t maximum_prompt_tokens,
-                                                           const std::size_t default_max_tokens, const SamplingDefaults& defaults,
-                                                           const MinimaxThinking& thinking) {
+namespace {
+
+// MiniMax's plan for a plain chat (no tools) or a search round (its tools and the rounds so far).
+ChatGenerationPlanResult minimax_plan(const ChatCompletionRequest& request, const TokenizerPack& tokenizer,
+                                      const std::optional<std::span<const std::string>> tools,
+                                      const std::span<const ToolRound> rounds, const std::size_t maximum_prompt_tokens,
+                                      const std::size_t default_max_tokens, const SamplingDefaults& defaults,
+                                      const MinimaxThinking& thinking) {
   if (request.model.empty() || request.messages.empty() || maximum_prompt_tokens == 0U ||
       (request.max_tokens.has_value() && *request.max_tokens == 0U)) {
     return error(ChatGenerationPlanErrorCode::invalid_request, "chat generation request is outside native serving limits");
@@ -565,17 +569,21 @@ ChatGenerationPlanResult make_minimax_chat_generation_plan(const ChatCompletionR
   if (count_image_parts(request) != 0U) {
     return error(ChatGenerationPlanErrorCode::invalid_request, "the MiniMax profile cannot serve image parts");
   }
-  // The literals the pack holds as special tokens; the turn framing must be among them.
+  // The literals the pack holds as special tokens; the turn framing must be among them. With tools the namespace too:
+  // where it is a special token it is output as its text, for the call reader.
   std::vector<std::string_view> special;
   for (const std::string_view literal : kMinimaxLiterals) {
     if (find_special_token(tokenizer, literal).has_value()) special.push_back(literal);
   }
+  const auto ns = tools ? find_special_token(tokenizer, kMinimaxToolNamespace) : std::nullopt;
+  if (ns) special.push_back(kMinimaxToolNamespace);
   const auto turn_end = find_special_token(tokenizer, "[e~[");
   const auto turn_start = find_special_token(tokenizer, "]~b]");
   if (!find_special_token(tokenizer, "]~!b[") || !turn_end || !turn_start) {
     return error(ChatGenerationPlanErrorCode::tokenization_failed, "the local tokenizer pack does not carry MiniMax's turn framing");
   }
-  const auto pieces = render_minimax_text_prompt(request.messages, thinking, special);
+  const auto pieces = tools ? render_minimax_tool_prompt(request.messages, *tools, rounds, thinking, special)
+                            : render_minimax_text_prompt(request.messages, thinking, special);
   if (!pieces) {
     return error(ChatGenerationPlanErrorCode::prompt_render_failed, "chat messages cannot be represented by MiniMax's template");
   }
@@ -596,8 +604,27 @@ ChatGenerationPlanResult make_minimax_chat_generation_plan(const ChatCompletionR
   ChatGenerationPlan plan{request.model, *token_ids, request.max_tokens.value_or(default_max_tokens),
                           merge_sampling(request.sampling, defaults), think_tokens, think_tokens.has_value() && !thinking.off,
                           std::vector<std::size_t>{}, std::nullopt, std::vector<std::size_t>{*turn_end, *turn_start}, {}};
+  if (ns) plan.literal_tokens.emplace_back(*ns, std::string{kMinimaxToolNamespace});
   plan.keeps_newlines_after_think = true;
   return plan;
+}
+
+}  // namespace
+
+ChatGenerationPlanResult make_minimax_chat_generation_plan(const ChatCompletionRequest& request, const TokenizerPack& tokenizer,
+                                                           const std::size_t maximum_prompt_tokens,
+                                                           const std::size_t default_max_tokens, const SamplingDefaults& defaults,
+                                                           const MinimaxThinking& thinking) {
+  return minimax_plan(request, tokenizer, std::nullopt, {}, maximum_prompt_tokens, default_max_tokens, defaults, thinking);
+}
+
+ChatGenerationPlanResult make_minimax_tool_generation_plan(const ChatCompletionRequest& request, const TokenizerPack& tokenizer,
+                                                           const std::span<const std::string> tools,
+                                                           const std::span<const ToolRound> rounds,
+                                                           const std::size_t maximum_prompt_tokens,
+                                                           const std::size_t default_max_tokens, const SamplingDefaults& defaults,
+                                                           const MinimaxThinking& thinking) {
+  return minimax_plan(request, tokenizer, tools, rounds, maximum_prompt_tokens, default_max_tokens, defaults, thinking);
 }
 
 ChatGenerationPlanResult make_raon1_chat_generation_plan(const ChatCompletionRequest& request, const TokenizerPack& tokenizer,
