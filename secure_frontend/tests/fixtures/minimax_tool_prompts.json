@@ -7,7 +7,9 @@
   "[e~[",
   "<mm:think>",
   "</mm:think>",
-  "]<]minimax[>["
+  "]<]minimax[>[",
+  "<tool_call>",
+  "</tool_call>"
  ],
  "tool": {
   "name": "web_search",
@@ -363,6 +365,10 @@
     [
      2721,
      2734
+    ],
+    [
+     2734,
+     2746
     ]
    ]
   },

@@ -21,6 +21,9 @@ namespace secure_frontend {
 inline constexpr std::array<std::string_view, 5> kMinimaxLiterals{"]~!b[", "]~b]", "[e~[", "<mm:think>", "</mm:think>"};
 // The template's tool namespace (ns_token): every tag of a call, and of the tool section's example, follows it.
 inline constexpr std::string_view kMinimaxToolNamespace = "]<]minimax[>[";
+// The call block's tags the template writes after the namespace (toolcall_begin_token, toolcall_end_token), which
+// MiniMax-M3.1's vocabulary holds as special tokens of their own.
+inline constexpr std::array<std::string_view, 2> kMinimaxCallTags{"<tool_call>", "</tool_call>"};
 
 // One chat's thinking in Maya's words (frontend.py ChatTemplate.render for MiniMax): `off` is thinking_mode "disabled"
 // (the system block says so and the generation prompt closes the think block with </mm:think>); otherwise MiniMax's

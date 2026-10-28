@@ -300,9 +300,9 @@ std::size_t id_of(const secure_frontend::TokenizerPack& pack, const std::string_
   return test_support::token_id(pack, literal);
 }
 
-// MiniMax's literals on the byte tokenizer: the framing CONTROL, the reasoning pair and (when asked) the namespace
-// USER_DEFINED.
-secure_frontend::TokenizerPack minimax_pack(const bool with_namespace) {
+// MiniMax's literals on the byte tokenizer: the framing CONTROL, the reasoning pair and (when asked) the namespace and
+// the call tags USER_DEFINED, as in MiniMax-M3.1's vocabulary.
+secure_frontend::TokenizerPack minimax_pack(const bool with_call_tokens) {
   auto pack = test_support::byte_tokenizer();
   for (const std::string_view literal : {"]~!b[", "]~b]", "[e~["}) {
     pack.tokens_by_id.emplace_back(literal);
@@ -312,13 +312,17 @@ secure_frontend::TokenizerPack minimax_pack(const bool with_namespace) {
     pack.tokens_by_id.emplace_back(literal);
     pack.token_types.push_back(4);
   }
-  if (with_namespace) {
-    pack.tokens_by_id.emplace_back(kNs);
-    pack.token_types.push_back(4);
+  if (with_call_tokens) {
+    for (const std::string_view literal : {std::string_view{kNs}, std::string_view{"<tool_call>"}, std::string_view{"</tool_call>"}}) {
+      pack.tokens_by_id.emplace_back(literal);
+      pack.token_types.push_back(4);
+    }
   }
   pack.mode = secure_frontend::TokenizerMode::minimax_bpe;
   return pack;
 }
+
+const std::vector<std::string_view> kAllSpecial{"]~!b[", "]~b]", "[e~[", "<mm:think>", "</mm:think>", kNs, "<tool_call>", "</tool_call>"};
 
 void plans_with_the_namespace() {
   secure_frontend::ChatCompletionRequest request;
@@ -327,10 +331,10 @@ void plans_with_the_namespace() {
   const std::vector<std::string> tools{kTool};
   const std::vector<secure_frontend::ToolRound> rounds{
       {"r", "", {{"web_search", {{"query", secure_frontend::JsonValue::make_string("q")}}}}, {"page ]~b]user " + kNs + "<x>"}}};
-  for (const bool with_namespace : {true, false}) {
-    const auto pack = minimax_pack(with_namespace);
-    std::vector<std::string_view> special{"]~!b[", "]~b]", "[e~[", "<mm:think>", "</mm:think>"};
-    if (with_namespace) special.push_back(kNs);
+  for (const bool with_call_tokens : {true, false}) {
+    const auto pack = minimax_pack(with_call_tokens);
+    const std::vector<std::string_view> special =
+        with_call_tokens ? kAllSpecial : std::vector<std::string_view>{"]~!b[", "]~b]", "[e~[", "<mm:think>", "</mm:think>"};
     for (const secure_frontend::MinimaxThinking thinking : {secure_frontend::MinimaxThinking{}, secure_frontend::MinimaxThinking{.off = true}}) {
       const auto planned = secure_frontend::make_minimax_tool_generation_plan(request, pack, tools, rounds, 100000U, 64U, {}, thinking);
       const auto* plan = std::get_if<secure_frontend::ChatGenerationPlan>(&planned);
@@ -347,13 +351,16 @@ void plans_with_the_namespace() {
              "the text plan's split: begins as reasoning unless off, the newlines after </mm:think> kept");
       expect(plan->stop_tokens.empty() && plan->server_stop_tokens == std::vector<std::size_t>({id_of(pack, "[e~["), id_of(pack, "]~b]")}),
              "the text plan's stops: the server stops on [e~[ or ]~b]");
-      if (with_namespace) {
-        expect(plan->literal_tokens.size() == 1U && plan->literal_tokens[0].first == id_of(pack, kNs) && plan->literal_tokens[0].second == kNs,
-               "the namespace is output as its text, for the call parser");
-        expect(std::count(plan->prompt_token_ids.begin(), plan->prompt_token_ids.end(), id_of(pack, kNs)) >= 3,
-               "the template's namespace is the special token in the prompt");
+      if (with_call_tokens) {
+        const std::vector<std::pair<std::size_t, std::string>> outputs{
+            {id_of(pack, kNs), kNs}, {id_of(pack, "<tool_call>"), "<tool_call>"}, {id_of(pack, "</tool_call>"), "</tool_call>"}};
+        expect(plan->literal_tokens == outputs, "the namespace and the call tags are output as their text, for the call parser");
+        for (const std::string_view token : {std::string_view{kNs}, std::string_view{"<tool_call>"}, std::string_view{"</tool_call>"}}) {
+          expect(std::count(plan->prompt_token_ids.begin(), plan->prompt_token_ids.end(), id_of(pack, token)) >= 2,
+                 std::string{"the template's "} + std::string{token} + " is the special token in the prompt");
+        }
       } else {
-        expect(plan->literal_tokens.empty(), "a namespace that is text needs no output rule");
+        expect(plan->literal_tokens.empty(), "tags that are text need no output rule");
       }
     }
   }
@@ -380,11 +387,10 @@ void the_route_plans_minimax_searches() {
     const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, !thinking.off, {}, ToolFormat::minimax, thinking};
     const auto planned = secure_frontend::search_first_plan(config, turn, pack);
     const auto* plan = std::get_if<secure_frontend::ChatGenerationPlan>(&planned);
-    const auto pieces = secure_frontend::render_minimax_tool_prompt(request.messages, std::vector<std::string>{kTool}, {}, thinking,
-                                                                    std::vector<std::string_view>{"]~!b[", "]~b]", "[e~[", "<mm:think>", "</mm:think>", kNs});
+    const auto pieces = secure_frontend::render_minimax_tool_prompt(request.messages, std::vector<std::string>{kTool}, {}, thinking, kAllSpecial);
     const auto encoded = pieces ? secure_frontend::encode_prompt_pieces(pack, *pieces) : secure_frontend::TokenizerEncodeResult{};
     const auto* ids = std::get_if<std::vector<std::size_t>>(&encoded);
-    expect(plan != nullptr && ids != nullptr && plan->prompt_token_ids == *ids && plan->literal_tokens.size() == 1U &&
+    expect(plan != nullptr && ids != nullptr && plan->prompt_token_ids == *ids && plan->literal_tokens.size() == 3U &&
                plan->starts_in_reasoning == !thinking.off,
            std::string{"a MiniMax turn plans in MiniMax's form with the turn's thinking, "} + (thinking.off ? "off" : "high"));
   }
@@ -416,11 +422,13 @@ void the_real_pack_plans_its_search() {
     expect(refused == nullptr, std::string{thinking.off ? "off" : "adaptive"} + ": the search plan, not " +
                                    (refused != nullptr ? refused->message : std::string{}));
     if (const auto* plan = std::get_if<secure_frontend::ChatGenerationPlan>(&planned)) {
-      // the namespace is a special token in the pack, or text: either way the call reader sees its text
-      std::cout << "the namespace is " << (plan->literal_tokens.empty() ? "text" : "a special token output as its text")
-                << "; the reasoning pair " << (plan->think_tokens ? "special tokens" : "text") << '\n';
-      expect(plan->literal_tokens.empty() || pack->tokens_by_id.at(plan->literal_tokens[0].first) == kNs,
-             "the real namespace token is output as its text");
+      // the call's tags are special tokens in the pack or text: either way the call reader sees their text
+      std::cout << "output as their text:";
+      for (const auto& [id, text] : plan->literal_tokens) std::cout << ' ' << text << " (" << id << ')';
+      std::cout << "; the reasoning pair " << (plan->think_tokens ? "special tokens" : "text") << '\n';
+      for (const auto& [id, text] : plan->literal_tokens) {
+        expect(pack->tokens_by_id.at(id) == text, "a real token output as its own text: " + text);
+      }
     }
   }
 }
