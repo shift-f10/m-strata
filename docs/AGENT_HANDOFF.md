@@ -280,6 +280,22 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z2 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+The owner: "Do all three" (push, rebuild and switch, try a picture), then "Download it" (the Qwen3.8 encoder). `main`
+was pushed at `297be6f5` after the guard (run by hand: `.git/hooks/identifying_guard.py` is not wired as a hook); the
+out folder was rebuilt by `make.py --with email,search` and switched (old one in `out/dist-mstrata-prev5`, `data/`
+kept); the encoder (`mmproj-Qwen3.8-Flash-Next-BF16.gguf`, 907,543,008 bytes) was pulled by `strata pull` against a
+manifest pinned to upstream setup.py's SHA-256, into the server's store; the owner's Qwen3.8 card names it (the
+original in `data/state/card-backups/`).
+
+- **The first real picture failed, and why**: the card and its encoder started (85 s), but the picture's request waited
+  the 300 s encode limit and answered 503. Upstream's strata-vision answers `OK <tokens> <nx> <ny> <ms>`; our reply
+  parser took everything after `OK ` as the count (the older maya-vision `OK <n>`), so it never saw an answer. Now the
+  count is the first field, as upstream's server reads it (`int(line.split()[1])`). The test fake answers in
+  upstream's form (and takes `--min-tokens`, `--flash-attn`) when it runs as `strata-vision`, as the card tests install
+  it: `a_card_reads_pictures_with_its_encoder` was RED with it, GREEN with the fix; 147/147 in the vision-related suites.
+
 ### Claude Code session, 2026-10-28 z (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 The owner: "make sure the front end is mobile responsive". The page was measured, not guessed: a dev server from this
