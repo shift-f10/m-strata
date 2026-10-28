@@ -280,6 +280,37 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z9 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+- **MiniMax's real pack** (the owner's `minimax-m3.1-flash-maya-s`, downloaded and packed by him) failed the real-pack
+  case: "rendered MiniMax prompt cannot be encoded".
+  - The vocabulary holds `<tool_call>` and `</tool_call>` as special tokens (USER_DEFINED, 200052/200053), beside the
+    namespace `]<]minimax[>[` (200058).
+  - Maya marks every special token its vocabulary has. Its tokenizer encodes the template's text with
+    `parse_special`, so `]<]minimax[>[<tool_call>` is two tokens, and the model writes them so.
+  - Our text pieces refuse a special token's spelling.
+
+  Fixed: `kMinimaxCallTags`. The tool plan writes each call tag the pack holds as a special token as that token, and
+  outputs it as its text (`literal_tokens`, with the namespace) for the call reader. The prompt fixture's literals now
+  include the two tags, as Maya marks them: the prompts are unchanged, and only one case's plain spans changed.
+  - RED: `plans_with_the_namespace` and `the_route_plans_minimax_searches`, on a test pack with the tags as tokens,
+    and the real pack.
+  - With both real packs named: the MiniMax case plans with 200058/200052/200053 output as text and the reasoning
+    pair split; DeepSeek's plans as before.
+  - 92/92 (ON) and 91/91 (OFF) over the tool, MiniMax, option and launcher tests.
+- **Calibration for DeepSeek and MiniMax** (the owner: "when I downloaded minimax and deepseek, I did not see the
+  system calibrate when I ran them"): analysed, not built.
+  - Our Calibrate (`sweep_plan`) covers flint and Gemma 4 only, so DeepSeek, MiniMax (and Qwen, GLM, raon1) cards
+    never calibrate, neither on a first start nor from the button.
+  - Maya v1.1.30 runs three calibrations for these families:
+    - the speed calibration (`tools/calibrate_ds4.py`): the DSpark drafter or none, measured on the config's first
+      start that has a drafter and no calibration (`needs_speed_calibration`), and in the setup;
+    - for MiniMax only, the prefill calibration (`tools/calibrate_mm3_prefill.py`, the engine's own
+      `--calibrate-prefill`): the prompt chunk and the GEMM backend, measured once at the first start
+      (`needs_prefill_calibration`) and kept in the pack's `prefill-tune.txt`;
+    - `--tp` and `--cpu-threads` (`tools/calibrate_ds4_tp.py`, `tools/mm3/calibrate.py`): `./maya.sh --calibrate`,
+      offered at the setup.
+
 ### Claude Code session, 2026-10-28 z8 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 This entry is the MiniMax half of the owner's "deepseek does not seem to have mcp search access and I believe minimax

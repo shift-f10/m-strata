@@ -32,7 +32,10 @@ QUESTION = "Who won the 2026 World Cup final?"
 RESULT = ("Web search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n"
           "   https://example.org/final\n   The final was played on 19 July 2026.\n")
 NS = "]<]minimax[>["
-LITERALS = ["]~!b[", "]~b]", "[e~[", "<mm:think>", "</mm:think>", NS]
+# The template's five literals, its tool namespace, and the call tags it writes after the namespace - the special tokens
+# of MiniMax-M3.1's vocabulary that these prompts spell (Maya marks every special token the vocabulary has; no other
+# appears in them).
+LITERALS = ["]~!b[", "]~b]", "[e~[", "<mm:think>", "</mm:think>", NS, "<tool_call>", "</tool_call>"]
 
 
 def call(**arguments):

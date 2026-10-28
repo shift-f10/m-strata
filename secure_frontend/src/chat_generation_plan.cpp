@@ -569,14 +569,22 @@ ChatGenerationPlanResult minimax_plan(const ChatCompletionRequest& request, cons
   if (count_image_parts(request) != 0U) {
     return error(ChatGenerationPlanErrorCode::invalid_request, "the MiniMax profile cannot serve image parts");
   }
-  // The literals the pack holds as special tokens; the turn framing must be among them. With tools the namespace too:
-  // where it is a special token it is output as its text, for the call reader.
+  // The literals the pack holds as special tokens; the turn framing must be among them. With tools the namespace and the
+  // call tags too (Maya's tokenizer encodes the template's text with parse_special): each one that is a special token
+  // is written as that token, and the reply's is output as its text, for the call reader.
   std::vector<std::string_view> special;
   for (const std::string_view literal : kMinimaxLiterals) {
     if (find_special_token(tokenizer, literal).has_value()) special.push_back(literal);
   }
-  const auto ns = tools ? find_special_token(tokenizer, kMinimaxToolNamespace) : std::nullopt;
-  if (ns) special.push_back(kMinimaxToolNamespace);
+  std::vector<std::pair<std::size_t, std::string>> outputs;
+  if (tools) {
+    for (const std::string_view tag : {kMinimaxToolNamespace, kMinimaxCallTags[0], kMinimaxCallTags[1]}) {
+      if (const auto id = find_special_token(tokenizer, tag)) {
+        special.push_back(tag);
+        outputs.emplace_back(*id, std::string{tag});
+      }
+    }
+  }
   const auto turn_end = find_special_token(tokenizer, "[e~[");
   const auto turn_start = find_special_token(tokenizer, "]~b]");
   if (!find_special_token(tokenizer, "]~!b[") || !turn_end || !turn_start) {
@@ -604,7 +612,7 @@ ChatGenerationPlanResult minimax_plan(const ChatCompletionRequest& request, cons
   ChatGenerationPlan plan{request.model, *token_ids, request.max_tokens.value_or(default_max_tokens),
                           merge_sampling(request.sampling, defaults), think_tokens, think_tokens.has_value() && !thinking.off,
                           std::vector<std::size_t>{}, std::nullopt, std::vector<std::size_t>{*turn_end, *turn_start}, {}};
-  if (ns) plan.literal_tokens.emplace_back(*ns, std::string{kMinimaxToolNamespace});
+  plan.literal_tokens = std::move(outputs);
   plan.keeps_newlines_after_think = true;
   return plan;
 }

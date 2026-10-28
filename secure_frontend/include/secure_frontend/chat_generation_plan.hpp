@@ -212,9 +212,10 @@ using ChatGenerationPlanResult = std::variant<ChatGenerationPlan, ChatGeneration
                                                                          const SamplingDefaults& defaults,
                                                                          const MinimaxThinking& thinking);
 // Web search for MiniMax-M3.1 (owner 2026-10-28): that plan with the server's tools and the search loop's rounds
-// (render_minimax_tool_prompt). Where the pack holds the tool namespace ]<]minimax[>[ as a special token, the prompt
-// writes it as that token and the reply's is output as its text (literal_tokens) for the call reader; elsewhere it is
-// text both ways. The same split, stops and refusals as the text plan.
+// (render_minimax_tool_prompt). Where the pack holds the tool namespace ]<]minimax[>[ or a call tag (<tool_call>,
+// </tool_call>; MiniMax-M3.1's holds all three) as a special token, the prompt writes it as that token and the reply's
+// is output as its text (literal_tokens) for the call reader; elsewhere it is text both ways. The same split, stops and
+// refusals as the text plan.
 [[nodiscard]] ChatGenerationPlanResult make_minimax_tool_generation_plan(const ChatCompletionRequest& request,
                                                                          const TokenizerPack& tokenizer,
                                                                          std::span<const std::string> tools,
