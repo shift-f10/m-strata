@@ -159,6 +159,10 @@ def test_the_window_is_built_only_when_asked(tmp_path):
     assert ".\\strata-window.exe" in windowed and "tray" in windowed and "strata-window" not in plain
     assert "./strata-window" in make.readme_text(options("--with", "window", platform="linux"), "linux")
     assert "Models > Settings" not in windowed and "Settings tab" in windowed
+    # built, not only installed (2026-10-28: the first --with window build failed at install: nothing built the window,
+    # which needs the server but is not needed by it, as strata-search is)
+    assert make.frontend_build_targets(options("--with", "window")) == ["strata-secure-server", "strata", "strata-window"]
+    assert make.frontend_build_targets(options()) == ["strata-secure-server", "strata"]
 
 
 MAYA_PROFILES = ("expert-profile-glm.bin", "expert-profile-ds4.bin", "expert-profile-mm3.bin")

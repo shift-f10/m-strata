@@ -338,6 +338,12 @@ we should make it into a window application ... minimized into the tray that has
   - README.txt's Settings line now names the Settings tab (it said Models > Settings).
 
   Test: `test_the_window_is_built_only_when_asked`, RED then GREEN; tools/secure `test_make.py` 22/22.
+- **The first `--with window` build failed at install:** nothing had built `strata-window`, which needs the server but
+  is not needed by it, as `strata-search` is. `frontend_build_targets` now names it (the same test, RED then GREEN).
+  The out folder was then rebuilt (`--with email,search,window`, 811 MiB) and switched: `out/dist-mstrata` holds this
+  build with `strata-window.exe`, the old program files are in `out/dist-mstrata-prev8`, and `data/` was kept. The
+  owner's server was restarted in its console as before, and it serves the Settings route and the new page. No model
+  was running at the switch.
 - **Licences:** NOTICE.md carries the WebView2 SDK's BSD-3-Clause notice (the static loader is in
   `strata-window.exe`). PROVENANCE records the package (sha256, size, source) and says its NOTICE.txt components
   belong to the package's .NET tools, which are not linked.
