@@ -404,6 +404,20 @@ def _find_vcvars() -> Path | None:
     return None
 
 
+def missing_cpp_tools_message(vcvars: Path) -> str:
+    """What to do when vcvars64 sets up no compiler: Visual Studio (or its Build Tools) is installed without its C++
+    workload."""
+    install = vcvars.parents[3]  # <install>\VC\Auxiliary\Build\vcvars64.bat
+    installer = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer"
+    return (f"make: {vcvars} did not set up the MSVC x64 environment (cl was not found after it).\n"
+            f"      Visual Studio at {install} is installed without its C++ tools. Open Visual Studio Installer, choose\n"
+            f"      Modify on it, tick \"Desktop development with C++\" (the MSVC v143 x64 compiler and a Windows SDK) and\n"
+            f"      Modify; or, from an administrator prompt:\n"
+            f"        \"{installer / 'setup.exe'}\" modify --installPath \"{install}\" "
+            f"--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive\n"
+            f"      Then run make again (install the CUDA Toolkit after it, so it adds its Visual Studio integration).")
+
+
 def build_environment(platform: str) -> dict[str, str]:
     """The environment the builds run in: on Windows the MSVC x64 developer environment (vcvars64), unless cl is on
     PATH already."""
@@ -423,7 +437,7 @@ def build_environment(platform: str) -> dict[str, str]:
         if eq and key:
             env[key] = value
     if not shutil.which("cl", path=env.get("PATH")):
-        raise SystemExit(f"make: {vcvars} did not set up the MSVC x64 environment (cl was not found after it)")
+        raise SystemExit(missing_cpp_tools_message(vcvars))
     return env
 
 

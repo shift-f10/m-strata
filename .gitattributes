@@ -16,3 +16,7 @@
 # The built-in chat page is embedded byte for byte (cmake/EmbedWebUi.cmake refuses CR).
 /secure_frontend/web/** text eol=lf
 /secure_frontend/web/fonts/*.woff2 binary
+# Batch files keep CRLF wherever the repository is cloned (cmd can miss a goto label in an LF-only file).
+*.bat text eol=crlf
+# install.sh keeps LF like the other shell scripts (*.sh above); install.ps1 is read by Windows PowerShell 5.1
+*.ps1 text eol=crlf

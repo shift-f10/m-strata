@@ -165,6 +165,18 @@ def test_the_window_is_built_only_when_asked(tmp_path):
     assert make.frontend_build_targets(options()) == ["strata-secure-server", "strata"]
 
 
+def test_missing_cpp_tools_say_how_to_add_them():
+    """Owner 2026-10-28, a second PC: "vcvars64.bat did not set up the MSVC x64 environment (cl was not found after it)" -
+    Build Tools 2022 without its C++ workload. The stop says which workload to add and how, by the installer or its
+    command line."""
+    from pathlib import Path as P
+    vcvars = P(r"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat")
+    text = make.missing_cpp_tools_message(vcvars)
+    assert str(vcvars) in text and "Desktop development with C++" in text and "Visual Studio Installer" in text
+    assert ("setup.exe\" modify --installPath \"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\" "
+            "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended") in text
+
+
 MAYA_PROFILES = ("expert-profile-glm.bin", "expert-profile-ds4.bin", "expert-profile-mm3.bin")
 # MiniMax-M3.1-Flash (owner 2026-10-28): Maya's chat template every MiniMax pack carries, with its licence beside it
 MINIMAX_FILES = ("engine/templates/minimax-m3.1/chat_template.jinja", "engine/templates/minimax-m3.1/LICENSE.minimax-m31")

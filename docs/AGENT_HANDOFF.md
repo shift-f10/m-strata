@@ -280,6 +280,64 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z6 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+The owner tried the README's install on another PC and pasted the errors, then: "make the installation guide full step
+by step with dependencies as well" and "make an easy install bat that does pretty much everything, download
+dependencies, install them then run the build".
+
+- **What stopped him** (from his output):
+  - `git -C llama.cpp checkout` was run from inside `llama.cpp` ("cannot change to 'llama.cpp'"); the first checkout
+    had already worked.
+  - `.\make.bat` was run from the folder above the repository.
+  - `--out D:\M-Strata` is, on Windows, the `D:\m-strata` checkout itself (names ignore case). That example was this
+    session's own advice; the READMEs now use `D:\M-Strata-app`.
+  - On a failure, make.bat ran make twice (`... && ... || ...`).
+  - Build Tools were installed without the C++ workload: vcvars64.bat ran and `cl` was not found.
+- **make.bat** is rewritten with labels: the repository's `.venv-dev` Python, else `py -3`, else `python`, each tried
+  once. make's exit code is make.bat's.
+- **make.py**: the "cl was not found" stop now says how to add "Desktop development with C++": Visual Studio Installer,
+  or `setup.exe modify ... --add Microsoft.VisualStudio.Workload.VCTools` (`missing_cpp_tools_message`; test
+  `test_missing_cpp_tools_say_how_to_add_them`).
+- **`install.bat` → `install.ps1` (Windows) and `install.sh` (Ubuntu 24.04+ / Debian).** Each step runs only when needed:
+  - look at what the PC has and print a plan (`-Plan` / `--plan` stops there), then ask (`-Yes` / `--yes` does not);
+  - install what is missing:
+    - Windows, with winget: Git, Python 3.12, Build Tools 2022 with the C++ workload (or the workload added to Build
+      Tools that lack it), CUDA 13.0;
+    - Linux, with apt: the packages, and CUDA 13.0 from NVIDIA's cuda-keyring repository;
+  - clone the repository when run outside it, else update its submodules;
+  - put CMake and Ninja in `.venv-dev`;
+  - shallow-fetch the pinned llama.cpp into `.toolchains/llama.cpp`, or use `../llama.cpp` when it is at the pin;
+  - for `window`, get the WebView2 SDK (SHA-256 checked);
+  - run make into a new `M-Strata-app` folder beside the repository, never the repository's own folder.
+
+  A llama.cpp folder named with `-GgmlDir` / `--ggml-dir` is used as it is, never initialised, fetched or checked out:
+  it may be a vendored copy rather than a clone, as on this box. When winget reports "restart to finish" (0x8A150109),
+  or the Visual Studio Installer exits 3010, the script carries on and says at the end to restart. Neither script
+  installs the NVIDIA driver.
+- `.gitattributes`: `*.bat` and `*.ps1` are checked out CRLF (cmd.exe's labels need it).
+- **README "Install"** now covers:
+  - what you need, in a table per system;
+  - the one-script installs (with `curl.exe` for a PC without Git);
+  - the steps by hand for Windows and for Linux;
+  - the build options;
+  - "If the install stops": each error he saw, with its fix.
+
+  `secure_frontend/README.md` points to it. "What this system could not test" gains the installs' own row.
+- **Tests:**
+  - `tools/secure/test_install.py`, 7 tests. The scripts pin the engine's llama.cpp, the WebView2 version and SHA-256
+    that PROVENANCE records, and CUDA 13.0. The wrappers run the scripts, and the scripts run make. The C++ workload
+    is the one make names. A named llama.cpp folder is used as it is. Line endings and the BOM are right.
+  - RED shown for the pin test and for the named-folder test (both scripts).
+  - With `tools/secure/test_make.py`, 30 pass.
+- **Run here:**
+  - `install.bat -Plan`.
+  - `install.bat -Yes -Out out\install-test -GgmlDir <the box's llama.cpp> -With email,search,window`, end to end,
+    exit 0. It covered the plan, the submodules, the venv, the named llama.cpp folder, the SDK already in place, the
+    build, and the 811 MiB out folder with `strata-window`.
+  - Not run: the winget installs themselves, since this box has every dependency. They get their first run on the
+    owner's other PC. `install.sh` is `sh -n` only: no Linux here.
+
 ### Claude Code session, 2026-10-28 z5 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 The owner: "continue" (after z4 was pushed at `ccf4f051`), on the open items of the window phase.
