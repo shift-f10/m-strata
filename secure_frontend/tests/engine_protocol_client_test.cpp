@@ -59,9 +59,10 @@ void runs_the_solo_protocol() {
   expect(generation.done_line == "DONE 2 3 1.0 2.0 length" && client.ready(), "DONE should restore idle state");
 }
 
-// SP5 M1 Task 12 (Ruling T12-i): the pin's GENI variant — the same head and ids, with the
-// request's combined embeddings file at the END of the line (serve/server.py:1778). With no
-// embeddings the GEN line stays byte-for-byte today's (text requests see no change).
+// SP5 M1 Task 12 (Ruling T12-i): the GENI variant — the same head, the request's combined embeddings file, then the
+// ids: upstream's engine reads "GENI <max_new> [keys] <file> <id,id,...>" (engine/src/program/generate.cpp; its server
+// writes it so, serve/server.py:2199). The older pin put the file last; the engine we ship refuses that (the owner's
+// first real picture, 2026-10-28). With no embeddings the GEN line stays byte-for-byte today's.
 void gen_line_unchanged_without_embeddings_geni_with_them() {
   {
     FakeTransport transport;
@@ -83,8 +84,8 @@ void gen_line_unchanged_without_embeddings_geni_with_them() {
                                     "vision/req-0123456789ab.sve")
                 .has_value(),
            "GENI with an embeddings path is accepted");
-    expect(transport.writes == std::vector<std::string>({"GENI 4 1,2,3 vision/req-0123456789ab.sve"}),
-           "GENI renders the pin's tail (:1778): head, ids, then the path");
+    expect(transport.writes == std::vector<std::string>({"GENI 4 vision/req-0123456789ab.sve 1,2,3"}),
+           "GENI renders upstream's order: head, the path, then the ids");
   }
   {
     // The path rides the same line cap: a line that would overrun the cap is refused

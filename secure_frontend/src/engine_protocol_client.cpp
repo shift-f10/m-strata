@@ -320,18 +320,20 @@ std::optional<EngineProtocolError> EngineProtocolClient::begin_generation(
   const bool repeatable = (sampling.seed.has_value() && *sampling.seed > 0U) ||
                           (sampling.temperature.has_value() && *sampling.temperature <= 0.0);
   if (flavor_ == EngineProtocolFlavor::maya_118 && repeatable) command += " pcie_frac=1";
+  // GENI: the embeddings file, then the ids - upstream's engine reads "GENI <max_new> [keys] <file> <id,id,...>"
+  // (generate.cpp; its server writes it so, serve/server.py:2199). The older pin's order (ids, then the file) is refused.
+  if (!embeddings.empty()) {
+    command.push_back(' ');
+    command.append(embeddings);
+    if (command.size() > effective_max_line_bytes_) {  // the file rides the same cap (SP3 DOS rule, extended)
+      return EngineProtocolError{EngineProtocolErrorCode::invalid_argument, "generation command exceeds line limit"};
+    }
+  }
   command += ' ';
   for (std::size_t index = 0; index < prompt_token_ids.size(); ++index) {
     if (index != 0) command.push_back(',');
     command += std::to_string(prompt_token_ids[index]);
     if (command.size() > effective_max_line_bytes_) {
-      return EngineProtocolError{EngineProtocolErrorCode::invalid_argument, "generation command exceeds line limit"};
-    }
-  }
-  if (!embeddings.empty()) {
-    command.push_back(' ');
-    command.append(embeddings);
-    if (command.size() > effective_max_line_bytes_) {  // the tail rides the same cap (SP3 DOS rule, extended)
       return EngineProtocolError{EngineProtocolErrorCode::invalid_argument, "generation command exceeds line limit"};
     }
   }

@@ -572,19 +572,39 @@ bool sleep_or_stop(StdinReader& reader, const int milliseconds) {
   return reader.take_stop();
 }
 
+// GENI <max_new> [k=v ...] <embeddings-file> <ids>, read as upstream's engine reads it (engine/src/program/generate.cpp:
+// the file is the first token without '=', a .sve; the ids follow). True when the line is not one: the engine answers
+// its ERR (the owner's first real picture, 2026-10-28, sent the older pin's order, ids then the file).
+bool geni_out_of_order(const std::string& line) {
+  if (line.rfind("GENI ", 0) != 0) return false;
+  std::istringstream fields(line.substr(5));
+  unsigned long max_new = 0;
+  fields >> max_new;
+  std::string token;
+  while (fields >> token) {
+    if (token.find('=') != std::string::npos) continue;
+    return token.size() < 5U || token.compare(token.size() - 4U, 4U, ".sve") != 0;
+  }
+  return true;
+}
+
 void run_generation(const Options& options, const std::string& line, StdinReader& reader) {
   // GEN <max_new> [k=v ...] <ids>   and the SP5 M1 Task 12 variant
-  // GENI <max_new> [k=v ...] <ids> <embeddings-file> (the pin's :1778 shape; the trailing
-  // path is not an id run — skip it when counting the prompt).
+  // GENI <max_new> [k=v ...] <embeddings-file> <ids>, read as upstream's engine reads it (generate.cpp: the file is the
+  // first token without '=', the ids follow): a GENI whose ids come before the file is refused with the engine's ERR.
   const bool geni = line.rfind("GENI ", 0) == 0;
   std::istringstream fields(line.substr(geni ? 5 : 4));
   unsigned long max_new = 0;
   fields >> max_new;
   std::string token;
   std::size_t prompt = 0;
+  bool file_seen = false;
   while (fields >> token) {
     if (token.find('=') != std::string::npos) continue;
-    if (geni && token.find_first_not_of("0123456789,") != std::string::npos) continue;  // the .sve path
+    if (geni && !file_seen) {   // the embeddings file (the dispatch refused a GENI without one first)
+      file_seen = true;
+      continue;
+    }
     prompt = static_cast<std::size_t>(std::count(token.begin(), token.end(), ',')) + 1U;
   }
   static std::size_t generation_count = 0;  // this engine's generations so far (web search: the scripts in turn)
@@ -722,6 +742,10 @@ int serve(const Options& options) {
   while (const auto next = reader.next()) {
     const std::string& record = *next;
     if (record.rfind("GEN ", 0) == 0 || record.rfind("GENI ", 0) == 0) {
+      if (geni_out_of_order(record)) {
+        std::cout << "ERR expected: GEN <max_new> <id,id,...> or GENI <max_new> <file> <id,id,...>\n" << std::flush;
+        continue;
+      }
       if (options.hang_in_gen) sleep_forever();  // stops acting on stdin: STOP is never seen
       if (options.abort_in_gen) {
         std::cout << "T 7\n" << std::flush;
