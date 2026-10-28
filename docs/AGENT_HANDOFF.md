@@ -302,6 +302,11 @@ original in `data/state/card-backups/`).
   (any mode; out of order: the engine's `ERR`): the protocol test, `enc_round_trip_reaches_the_prompt` and
   `a_card_reads_pictures_with_its_encoder` were RED with it (503 `engine_error`, as on the box), GREEN with the fix;
   282/282 in the generation suites.
+- **The third real picture worked** (the out folder rebuilt at `39141d3a`, switched; old builds in `prev6`, `prev7`):
+  the owner's Qwen3.8 IQ3_S card, Pictures on the GPU, a 256x256 PNG of a red square and a blue circle, asked through
+  `/v1/chat/completions` with an `image_url` data URL: 200 in 4.1 s, "the red square is on the left, the blue circle on
+  the right" (97 prompt tokens, 140 completion). The model was stopped after. Not yet run: Qwen3.6, the CPU encoder,
+  several pictures, the page's attach button.
 
 ### Claude Code session, 2026-10-28 z (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
