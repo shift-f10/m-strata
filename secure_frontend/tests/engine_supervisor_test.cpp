@@ -1153,6 +1153,20 @@ void vision_child_argv_matches_maya_vision_grammar_at_pin() {
          "the encoder argv sits inside the maya-vision grammar at the pin");
 }
 
+// Vision for cards (2026-10-28): the encoder the out folder ships is upstream's strata-vision (upstream/tools/vision),
+// whose server writes --mmproj, --model, then --gpu, --threads and --max-tokens (serve/server.py reader_args) and whose
+// grammar spells flash attention --flash-attn on|off|auto: no --no-flash-attn there (an unknown argument exits 2).
+void vision_child_argv_follows_upstreams_strata_vision() {
+  const auto argv = secure_frontend::compose_vision_arguments({.mmproj = "/p/mmproj.gguf", .model = "/p/model.gguf", .threads = 4,
+                                                               .max_tokens = 2048, .no_flash_attn = true, .gpu = true,
+                                                               .upstream_encoder = true});
+  expect((argv == std::vector<std::string>{"--mmproj", "/p/mmproj.gguf", "--model", "/p/model.gguf", "--gpu", "--threads", "4",
+                                           "--max-tokens", "2048", "--flash-attn", "off"}),
+         "upstream's order, --gpu after the files, flash attention in upstream's spelling");
+  const auto cpu = secure_frontend::compose_vision_arguments({.mmproj = "/p/m.gguf", .model = "/p/x.gguf", .upstream_encoder = true});
+  expect((cpu == std::vector<std::string>{"--mmproj", "/p/m.gguf", "--model", "/p/x.gguf"}), "the CPU and the defaults: the files only");
+}
+
 // The pin's vision block form, re-anchored by SP5-P2 Task 6 on maya-vision's grammar at
 // 451f9cb6: --mmproj, --model, then the optional --threads / --max-tokens; our added
 // --no-flash-attn rides last and the grammar itself carries it. The role opens on the
@@ -2232,6 +2246,7 @@ int main(int argc, char* argv[]) {
                                                 {"proc04_slow_stdin_write_bounded_by_request_deadline", proc04_slow_stdin_write_bounded_by_request_deadline},
                                                 {"vision_child_launches_with_pinned_args_when_enabled", vision_child_launches_with_pinned_args_when_enabled},
                                                 {"vision_child_argv_matches_maya_vision_grammar_at_pin", vision_child_argv_matches_maya_vision_grammar_at_pin},
+                                                {"vision_child_argv_follows_upstreams_strata_vision", vision_child_argv_follows_upstreams_strata_vision},
                                                 {"vision_child_respects_resource_limits", vision_child_respects_resource_limits},
                                                 {"vision_encode_round_trip_at_the_pin", vision_encode_round_trip_at_the_pin},
                                                 {"vision_encode_failures_take_the_pinned_paths", vision_encode_failures_take_the_pinned_paths},

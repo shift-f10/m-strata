@@ -3,9 +3,11 @@
 #include "secure_frontend/engine_arguments.hpp"
 #include "secure_frontend/model_index_store.hpp"
 #include "secure_frontend/model_inventory.hpp"
+#include "secure_frontend/canonical_path.hpp"
 
 #include <algorithm>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -107,8 +109,27 @@ std::variant<ComposedLaunch, LaunchFailure> expert_launch(const FrontendConfig& 
   // The GLM profile keeps its arguments verbatim (its runner does not speak these flags).
   std::vector<std::string> mtp_removed;
   if (!config.engine.mtp && qwen_tails) mtp_removed = draft_layer_removed(config.engine.args);
+  // Vision for model cards (spec 2026-10-28): the card's encoder file, held to the model folders' rule, and the model's
+  // own GGUF for it; the engine is told it reads images (--vision, upstream's engine flag). qwen only: the families
+  // upstream's engine reads pictures with.
+  std::optional<std::string> vision_mmproj;
+  std::optional<std::string> vision_model;
+  if (config.vision.enabled) {
+    if (profile != EngineProfile::qwen) return config_failure({"vision: only a qwen model reads images here"});
+    const std::filesystem::path& mmproj = *config.vision.mmproj;  // set: compose_engine_launch refused otherwise
+    auto folder = open_root(mmproj.parent_path(), config.roots.allow_untrusted_media ? RootPolicy::external : RootPolicy::existing);
+    std::error_code ec;
+    if (!std::holds_alternative<CanonicalRoot>(folder) || !std::filesystem::is_regular_file(mmproj, ec) ||
+        std::filesystem::is_symlink(mmproj, ec)) {
+      return config_failure({"vision.mmproj: the picture encoder file is missing, a link, or in a folder other users of this PC "
+                             "can change"});
+    }
+    vision_mmproj = path_to_utf8(std::filesystem::path{mmproj}.make_preferred());
+    vision_model = path_to_utf8((config.roots.models.path() / path_from_utf8(selected->relative_artifact_path)).make_preferred());
+    if (std::find(argv.begin(), argv.end(), "--vision") == argv.end()) argv.emplace_back("--vision");
+  }
   ComposedLaunch launch{profile, std::move(argv), config.roots.tokenizer_pack, id, std::move(served), false,
-                        std::move(mtp_removed), std::nullopt, std::nullopt};
+                        std::move(mtp_removed), std::move(vision_mmproj), std::move(vision_model)};
   if (!launch.tokenizer_root) {
     // launch_config_issues let this through only for a tokenizer_from_gguf profile: the selected model's file
     auto file = parse_relative_path(selected->relative_artifact_path);
@@ -165,10 +186,12 @@ std::vector<std::string> managed_config_issues(const FrontendConfig& config) { r
 std::variant<ComposedLaunch, LaunchFailure> compose_engine_launch(const FrontendConfig& config, const bool expert) {
   // SP5 M1 Task 11 (Ruling T11-aa): --expert is the operator path — no manifest, no mmproj
   // artifact — so vision fails there by name before anything else is composed.
-  if (expert && config.vision.enabled) {
+  // Vision for model cards (spec 2026-10-28-vision-for-cards-design.md): an expert launch - every card's - reads images
+  // with the card's own encoder file, vision.mmproj.
+  if (expert && config.vision.enabled && !config.vision.mmproj) {
     return LaunchFailure{ExitCode::usage,
                          {"vision: the supervised encoder needs a managed model (its mmproj comes from the "
-                          "manifest; --expert has none)"}};
+                          "manifest; --expert has none) or a card's vision.mmproj"}};
   }
   if (expert) return expert_launch(config);
   if (auto issues = managed_config_issues(config); !issues.empty()) return config_failure(std::move(issues));

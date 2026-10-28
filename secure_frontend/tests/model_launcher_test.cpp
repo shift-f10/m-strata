@@ -145,6 +145,70 @@ ServerOptions two_cards(std::vector<std::string> alpha_args = {}, std::vector<st
   return options;
 }
 
+// Vision for cards (spec 2026-10-28-vision-for-cards-design.md; the owner: "a checkbox to also download vision files"):
+// a qwen card with its picture encoder (vision.mmproj, the Pictures option) starts the encoder with its engine (upstream's
+// strata-vision beside the engine), a chat with a picture reaches the engine as a GENI line, a stop takes the encoder
+// down with the engine, and a text-only card refuses pictures.
+std::string b64(const std::string& raw) {
+  static constexpr char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string out;
+  for (std::size_t i = 0; i < raw.size(); i += 3U) {
+    const unsigned b0 = static_cast<unsigned char>(raw[i]);
+    const unsigned b1 = i + 1U < raw.size() ? static_cast<unsigned char>(raw[i + 1U]) : 0U;
+    const unsigned b2 = i + 2U < raw.size() ? static_cast<unsigned char>(raw[i + 2U]) : 0U;
+    out += table[b0 >> 2U];
+    out += table[((b0 & 3U) << 4U) | (b1 >> 4U)];
+    out += i + 1U < raw.size() ? table[((b1 & 15U) << 2U) | (b2 >> 6U)] : '=';
+    out += i + 2U < raw.size() ? table[b2 & 63U] : '=';
+  }
+  return out;
+}
+
+std::string picture_body(const std::string& model) {
+  const auto be32 = [](const unsigned v) {
+    return std::string{static_cast<char>(v >> 24), static_cast<char>(v >> 16), static_cast<char>(v >> 8), static_cast<char>(v)};
+  };
+  const std::string png = std::string("\x89PNG\r\n\x1a\n", 8) + be32(13) + "IHDR" + be32(8) + be32(6) + std::string(9U, '\0');
+  return R"({"model":")" + model + R"(","messages":[{"role":"user","content":[{"type":"text","text":"look"},)" +
+         R"({"type":"image_url","image_url":{"url":"data:image/png;base64,)" + b64(png) + R"("}}]}],"max_tokens":2})";
+}
+
+void a_card_reads_pictures_with_its_encoder() {
+  const auto record_file = test_support::make_temp_dir("seer") / "record.txt";
+  ServerOptions options;
+  options.model_cards = {CardOptions{.name = "Seer", .profile = "qwen", .engine_args = {"--record-file=" + test_support::utf8_path(record_file)},
+                                     .options_json = R"({"vision": {"default": "cpu"}})", .vision = true},
+                         CardOptions{.name = "Plain", .profile = "qwen"}};
+  options.config_literals = {{"models.control", "true"}};
+  auto server = ServerProcess::start(options);
+  expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots");
+  if (!server) return;
+  const auto listed = call(*server, "GET", "/v1/strata/models");
+  expect(listed && listed->body.find(R"("name":"vision","kind":"choice")") != std::string::npos,
+         "Seer lists its Pictures option: " + shown(listed));
+  const auto started = call(*server, "POST", "/v1/strata/models/start", R"({"name":"Seer"})");
+  expect(started && started->status == 202, "Seer's start is accepted: " + shown(started));
+  expect(wait_for_card(*server, "Seer", "running"), "Seer runs: " + server->stderr_text());
+  expect(server->stderr_text().find("Seer: the picture encoder is running") != std::string::npos,
+         "its encoder started with it: " + server->stderr_text());
+  expect(server->descendants().size() == 2U, "two children: the engine and the encoder");
+  const auto picture = call(*server, "POST", "/v1/chat/completions", picture_body("Seer"));
+  expect(picture && picture->status == 200, "a chat with a picture answers on Seer: " + shown(picture));
+  const auto record = secure_frontend_test::read_file(record_file);
+  expect(record.find("GENI ") != std::string::npos, "the picture reached the engine as a GENI line: " + record.substr(0, 400));
+  const auto stopped = call(*server, "POST", "/v1/strata/models/stop", "{}");
+  expect(stopped && stopped->status == 202 && wait_for_card(*server, "Seer", "stopped"), "Seer stops");
+  const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (!server->descendants().empty() && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  expect(server->descendants().empty(), "the encoder stopped with the engine");
+  const auto plain = call(*server, "POST", "/v1/strata/models/start", R"({"name":"Plain"})");
+  expect(plain && plain->status == 202 && wait_for_card(*server, "Plain", "running"), "Plain runs");
+  const auto refused = call(*server, "POST", "/v1/chat/completions", picture_body("Plain"));
+  expect(refused && refused->status == 400, "a text-only card refuses pictures: " + shown(refused));
+  server->stop(ServerProcess::Stop::ctrl_break);
+  expect(server->wait_exit(std::chrono::seconds(20)) == std::optional<int>{0}, "a clean exit");
+}
+
 void launcher_boots_idle_and_starts_a_card() {
   // The engine may write only below its state directory: a relative dump lands in its cwd,
   // <state>/engine.
@@ -878,6 +942,7 @@ void experts_show_as_soon_as_a_model_runs() {
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"launcher_boots_idle_and_starts_a_card", launcher_boots_idle_and_starts_a_card},
+      {"a_card_reads_pictures_with_its_encoder", a_card_reads_pictures_with_its_encoder},
       {"switch_waits_for_the_generation_then_swaps", switch_waits_for_the_generation_then_swaps},
       {"failed_start_keeps_the_server_usable", failed_start_keeps_the_server_usable},
       {"start_refusals_name_the_problem", start_refusals_name_the_problem},

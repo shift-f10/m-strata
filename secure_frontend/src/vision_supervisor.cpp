@@ -16,9 +16,10 @@
 namespace secure_frontend {
 
 std::vector<std::string> compose_vision_arguments(const VisionChildSpec& spec) {
-  // The pin's reader_args order (serve/server.py:2556-2568); --gpu is not typed
-  // in M1; --no-flash-attn is the added spec §5.1 family flag, last.
+  // The pin's reader_args order (serve/server.py:2556-2568): the files, --gpu (vision.gpu, upstream's reader_args),
+  // --threads, --max-tokens; flash attention off is the added spec §5.1 family flag, last.
   std::vector<std::string> args{"--mmproj", spec.mmproj, "--model", spec.model};
+  if (spec.gpu) args.emplace_back("--gpu");
   if (spec.threads > 0) {
     args.emplace_back("--threads");
     args.emplace_back(std::to_string(spec.threads));
@@ -30,7 +31,9 @@ std::vector<std::string> compose_vision_arguments(const VisionChildSpec& spec) {
   // SP5-P2 Task 6: no --min-tokens — the maya-vision grammar at the pin (its argument
   // loop, tools/vision/strata_vision.cpp:61-79 at 451f9cb6) has no such slot and exits
   // 2 on an unknown argument.
-  if (spec.no_flash_attn) args.emplace_back("--no-flash-attn");
+  // upstream's strata-vision spells it --flash-attn off (tools/vision/strata_vision.cpp), maya-vision --no-flash-attn
+  if (spec.no_flash_attn && spec.upstream_encoder) args.insert(args.end(), {"--flash-attn", "off"});
+  else if (spec.no_flash_attn) args.emplace_back("--no-flash-attn");
   return args;
 }
 

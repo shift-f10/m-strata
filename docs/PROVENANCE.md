@@ -731,6 +731,22 @@ Peasant Smith and the Project Maya contributors"; read from `G:\Project-maya`'s 
   template over that path (`secure_frontend/tools/generate_gemma4_tool_prompt_fixture.py`); the template is not
   committed (its SHA-256 is in the file).
 
+## Pictures on model cards (2026-10-28): upstream's strata-vision, built as it is
+
+Spec `docs/superpowers/specs/2026-10-28-vision-for-cards-design.md`.
+
+- **The encoder** is upstream Strata's `tools/vision` (`strata_vision.cpp`, its CMake file; the `upstream/` submodule at
+  `v0.2.4.2`, MIT, "Copyright (c) 2026 Niko1221 and the Strata contributors"), built out of source by `make.py` and
+  never changed, over llama.cpp's `mtmd` library at the engine's pinned checkout `3cf03257` (MIT, "Copyright (c)
+  2023-2026 The ggml authors"). The out folder ships the program as `engine/strata-vision(.exe)`.
+- **The server side is ours**: the card rows (`vision.mmproj`, `vision.gpu`), the Pictures option, the per-card
+  encoder in `model_runtime.cpp`, the download's `mmproj` file and the cards that name it. The encoder's command line
+  follows upstream's `serve/server.py` reader arguments (`--mmproj`, `--model`, `--gpu`, `--threads`,
+  `--max-tokens`, `--flash-attn`), and the catalog's encoder pins (repository, revision, size, SHA-256) are upstream's
+  `setup.py` pins (`mmproj_hf`, `MMPROJ`) as the catalog already carried them.
+- **The picture encoder files** (`mmproj-*.gguf`) are downloaded from their model repositories at those pins, never
+  in the tree; they keep their models' licences.
+
 ## strata-prepare (ours, 2026-10-27): upstream's pack tools as a native program
 
 `engine/src/prepare/` (spec `docs/superpowers/specs/2026-10-27-strata-prepare-design.md`) is our C++ under this

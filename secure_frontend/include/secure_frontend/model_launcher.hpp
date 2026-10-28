@@ -71,6 +71,8 @@ struct LauncherSettings final {
   std::chrono::milliseconds stop_bound{config_defaults::kShutdownBound};  // one supervisor's orderly shutdown
   // How a start's engine processes are made (production: make_stdio_process_factory).
   std::function<ProcessFactory(EngineLaunchPlan)> factory{};
+  // How a start's picture encoder is made when its card reads images (unset: vision_process_factory).
+  std::function<ProcessFactory(const VisionPlan&)> vision_factory{};
   // One fixed line per start, stop and outcome (default: stderr).
   std::function<void(std::string_view)> log{};
   // GUI-first start-up (spec 2026-10-27 §5): <roots.state>/calibration, each card's calibration (<card>.json). Unset:

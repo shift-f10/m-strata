@@ -415,8 +415,20 @@
       fillSearches(parts, message.searches || [], message.searchLimit || 0);
       node.appendChild(box);
     }
+    if (message.role === "user" && Array.isArray(message.images) && message.images.length) {
+      var shelf = el("div", "msg-pictures");
+      message.images.forEach(function (p) {
+        var img = el("img");
+        img.src = p.url;
+        img.alt = p.name;
+        img.title = p.name;
+        shelf.appendChild(img);
+      });
+      node.appendChild(shelf);
+    }
     parts.bubble = el("div", "st-bubble");
     if (message.role === "assistant") { renderMarkdown(parts.bubble, message.content || ""); } else { parts.bubble.textContent = message.content; }
+    parts.bubble.hidden = message.role === "user" && !message.content;
     node.appendChild(parts.bubble);
     parts.meta = el("div", "st-msg__meta");
     fillMeta(parts, message);
@@ -459,7 +471,22 @@
     $("input").focus();
   }
 
-  // ---------------------------------------------------------------- attachments (text files)
+  // ---------------------------------------------------------------- attachments (text files, pictures)
+  // Vision for cards (spec 2026-10-28): a picture goes to the model as an OpenAI image_url part (a data: URL) when the
+  // running card reads pictures (its Pictures option is on the GPU or the CPU). The server holds it to vision.max_n and
+  // vision.max_side; this page sends at most PICTURES_MAX per question and none over PICTURE_MAX_BYTES.
+  var PICTURE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+  var PICTURES_MAX = 4;
+  var PICTURE_MAX_BYTES = 20 * 1024 * 1024;
+  function picturesOffered() {
+    if (!launcher.enabled || !launcher.data || !launcher.data.running) { return false; }
+    var card = findCard(launcher.data.running);
+    var options = card && Array.isArray(card.options) ? card.options : [];
+    for (var i = 0; i < options.length; i += 1) {
+      if (options[i] && options[i].name === "vision") { return options[i].value === "gpu" || options[i].value === "cpu"; }
+    }
+    return false;
+  }
   function renderAttachments() {
     var box = $("attachments");
     clear(box);
@@ -473,6 +500,19 @@
   function addFiles(files) {
     Array.prototype.forEach.call(files, function (file) {
       var reader = new FileReader();
+      if (oneOf(PICTURE_TYPES, file.type)) {
+        if (!picturesOffered()) { toast("error", "This model reads no pictures", file.name + ": start a model with its Pictures option on"); return; }
+        var pictures = state.attachments.filter(function (a) { return a.image; }).length;
+        if (pictures >= PICTURES_MAX) { toast("error", "At most " + PICTURES_MAX + " pictures per question", file.name); return; }
+        if (file.size > PICTURE_MAX_BYTES) { toast("error", "Picture too large (20 MB at most)", file.name); return; }
+        reader.onload = function () {
+          state.attachments.push({ name: file.name, image: String(reader.result || "") });
+          renderAttachments();
+        };
+        reader.onerror = function () { toast("error", "Could not read", file.name); };
+        reader.readAsDataURL(file);
+        return;
+      }
       reader.onload = function () {
         var text = String(reader.result || "");
         if (text.indexOf("\u0000") >= 0) { toast("error", "Not a text file", file.name); return; }
@@ -497,7 +537,7 @@
   function conversation(history) {
     var turns = [];
     history.forEach(function (m) {
-      if (!m || typeof m.content !== "string" || !m.content) { return; }
+      if (!m || typeof m.content !== "string" || (!m.content && !(Array.isArray(m.images) && m.images.length))) { return; }
       var last = turns.length ? turns[turns.length - 1].role : "";
       if (m.role === "user" && last === "user") {
         turns[turns.length - 1] = m;
@@ -525,11 +565,39 @@
     }
     return false;
   }
+  // The latest question's pictures go as image_url parts; an earlier question's are named in its words (the request stays
+  // within the server's picture limit, and the page does not keep pictures past a reload).
+  function pictureNote(m) {
+    return (m.images || []).map(function (p) { return "[picture: " + p.name + "]"; }).join(" ");
+  }
+  function requestMessages(turns) {
+    var last = -1;
+    turns.forEach(function (m, i) { if (m.role === "user") { last = i; } });
+    return turns.map(function (m, i) {
+      var pictures = Array.isArray(m.images) ? m.images : [];
+      if (!pictures.length) { return { role: m.role, content: m.content }; }
+      if (i !== last) { return { role: m.role, content: (pictureNote(m) + (m.content ? "\n\n" + m.content : "")) }; }
+      var parts = [];
+      if (m.content) { parts.push({ type: "text", text: m.content }); }
+      pictures.forEach(function (p) { parts.push({ type: "image_url", image_url: { url: p.url } }); });
+      return { role: m.role, content: parts };
+    });
+  }
+  // The chat as this browser keeps it: pictures as their names (a data URL is too large to keep).
+  function savedChat() {
+    return conversation(state.history).map(function (m) {
+      if (!Array.isArray(m.images) || !m.images.length) { return m; }
+      var kept = {};
+      Object.keys(m).forEach(function (k) { if (k !== "images") { kept[k] = m[k]; } });
+      kept.content = pictureNote(m) + (m.content ? "\n\n" + m.content : "");
+      return kept;
+    });
+  }
   function requestBody() {
     var s = state.settings;
     var body = {
       model: state.model,
-      messages: conversation(state.history).map(function (m) { return { role: m.role, content: m.content }; }),
+      messages: requestMessages(conversation(state.history)),
       stream: true,
       stream_options: { include_usage: true },
       reasoning_effort: LEVELS[s.thinking] ? s.thinking : "high"
@@ -589,13 +657,18 @@
   }
   async function send(text) {
     var content = text;
-    if (state.attachments.length) {
-      var blocks = state.attachments.map(function (file) { return "File " + file.name + ":\n```\n" + file.text + "\n```"; });
+    var images = state.attachments.filter(function (file) { return file.image; }).map(function (file) { return { name: file.name, url: file.image }; });
+    var texts = state.attachments.filter(function (file) { return !file.image; });
+    if (texts.length) {
+      var blocks = texts.map(function (file) { return "File " + file.name + ":\n```\n" + file.text + "\n```"; });
       content = blocks.join("\n\n") + (text ? "\n\n" + text : "");
+    }
+    if (state.attachments.length) {
       state.attachments = [];
       renderAttachments();
     }
     var user = { role: "user", content: content };
+    if (images.length) { user.images = images; }
     state.history.push(user);
     $("chat-empty").hidden = true;
     $("chat").appendChild(messageNode(user).node);
@@ -680,7 +753,7 @@
     if (run.answer) { state.history.push(reply); } else { state.history.pop(); }
     parts.bubble.hidden = !run.answer;
     fillMeta(parts, reply);
-    save(SLOT_CHAT, conversation(state.history));
+    save(SLOT_CHAT, savedChat());
     pollHealth();
     scrollToEnd();
     $("input").focus();
@@ -1446,7 +1519,8 @@
   var HF_LINK = /^https:\/\/huggingface\.co\//;
   var GGUF_FILE = /\.gguf$/i;
   var downloads = { enabled: false, data: null, timer: null, acting: false, errors: Object.create(null),
-                    states: Object.create(null), confirm: null, folder: "", folderFree: null };
+                    states: Object.create(null), confirm: null, folder: "", folderFree: null,
+                    vision: Object.create(null) };   // the "Vision files" boxes ticked here (id -> bool)
 
   function oneOf(list, value) { return list.indexOf(value) >= 0; }
   function dlCards(d) {
@@ -1529,6 +1603,23 @@
                  fmt(card.files) + (card.files === 1 ? " file" : " files")];
     if (card.repo) { facts.push(String(card.repo)); }
     box.appendChild(el("p", "dl-card__facts", facts.join(DOT)));
+    // Vision for cards (spec 2026-10-28): the model's picture encoder, a second file, comes too when ticked; its card then
+    // reads pictures. Offered before the download starts (and on a resume); afterwards the card says it came.
+    var visionBytes = Number(card.vision_bytes) || 0;
+    var offerVision = visionBytes > 0 && (oneOf(DL_STARTABLE, card.state) || card.state === "paused");
+    if (offerVision) {
+      var visionLabel = el("label", "option-auto dl-card__vision");
+      var visionBox = el("input");
+      visionBox.type = "checkbox";
+      visionBox.checked = wantsVision(card);
+      visionBox.disabled = downloads.acting;
+      visionBox.addEventListener("change", function () { downloads.vision[card.id] = visionBox.checked; });
+      visionLabel.appendChild(visionBox);
+      visionLabel.appendChild(document.createTextNode("Vision files (+" + dgb(visionBytes) + " GB): read pictures with this model"));
+      box.appendChild(visionLabel);
+    } else if (card.vision === true) {
+      box.appendChild(el("p", "muted small", "With its vision files: the model reads pictures"));
+    }
     if (card.state === "ready") { box.appendChild(el("p", "muted small", "Downloaded and set up: its card is in the model list.")); }
     else if (card.runnable === false && card.note) { box.appendChild(el("p", "dl-card__note", String(card.note))); }
     else if (card.note) { box.appendChild(el("p", "muted small", String(card.note))); }
@@ -1707,12 +1798,19 @@
     try { parsed = text ? JSON.parse(text) : null; } catch (e) { parsed = null; }
     return { body: parsed };
   }
+  // The box as ticked here, else as the server kept it (a resume after a restart).
+  function wantsVision(card) {
+    if (Object.prototype.hasOwnProperty.call(downloads.vision, card.id)) { return downloads.vision[card.id] === true; }
+    return card.vision === true;
+  }
   async function startDownload(card) {
     if (downloads.acting) { return; }
     downloads.errors[card.id] = "";
     downloads.acting = true;
     renderDownloads();
-    var answer = await downloadsAnswer(api("/v1/strata/downloads/start", jsonPost(withFolder({ id: card.id }))));
+    var request = { id: card.id };
+    if ((Number(card.vision_bytes) || 0) > 0) { request.vision = wantsVision(card); }
+    var answer = await downloadsAnswer(api("/v1/strata/downloads/start", jsonPost(withFolder(request))));
     downloads.acting = false;
     if (answer.signedOut) { return; }
     if (answer.error) { downloads.errors[card.id] = answer.error; }

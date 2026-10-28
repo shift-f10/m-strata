@@ -7,11 +7,13 @@
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/manifest_json.hpp"
 #include "secure_frontend/model_cards.hpp"
+#include "secure_frontend/model_options.hpp"
 #include "secure_frontend/sha256.hpp"
 #include "support/gguf_builder.hpp"
 #include "support/test_support.hpp"
 #include "support/test_tokenizer.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -121,14 +123,17 @@ std::string catalog_text() {
          std::string{kCommit} +
          "\",\"files\":[{\"path\":\"Q/m-00001-of-00002.gguf\",\"size\":1000,\"sha256\":\"" + kShaA +
          "\"},{\"path\":\"Q/m-00002-of-00002.gguf\",\"size\":2000,\"sha256\":\"" + kShaB +
-         "\"}],\"prepare\":\"iq_pack\",\"pack_args\":[],\"expert_profile\":\"expert-profile.bin\",\"mmproj\":null},"
+         "\"}],\"prepare\":\"iq_pack\",\"pack_args\":[],\"expert_profile\":\"expert-profile.bin\",\"mmproj\":{\"path\":"
+         "\"mmproj-BF16.gguf\",\"size\":300,\"sha256\":\"" + kShaB + "\",\"repo\":\"acme/Vision-GGUF\",\"revision\":\"" +
+         std::string{kCommit} + "\"}},"
          "{\"id\":\"glm-small\",\"name\":\"GLM small\",\"source\":\"maya\",\"family\":\"glm53\",\"engine\":\"glm53\","
          "\"about\":\"\",\"repo\":\"acme/GLM-GGUF\",\"revision\":\"main\",\"files\":[{\"path\":\"S/g-00001-of-00001.gguf\",\"size\":null,"
          "\"sha256\":\"" + kShaA + "\"}],\"prepare\":\"unsupported\",\"pack_args\":[],\"expert_profile\":null,\"mmproj\":null},"
          "{\"id\":\"qwen36-small\",\"name\":\"Qwen3.6 small\",\"source\":\"strata\",\"family\":\"qwen36\",\"engine\":\"qwen\","
          "\"about\":\"gguf-direct\",\"repo\":\"acme/Qwen36-GGUF\",\"revision\":\"" + std::string{kCommit} +
          "\",\"files\":[{\"path\":\"Q36/m.gguf\",\"size\":500,\"sha256\":\"" + kShaA +
-         "\"}],\"prepare\":\"none\",\"pack_args\":[],\"expert_profile\":null,\"mmproj\":null},"
+         "\"}],\"prepare\":\"none\",\"pack_args\":[],\"expert_profile\":null,\"mmproj\":{\"path\":\"mmproj-F16.gguf\","
+         "\"size\":200,\"sha256\":\"" + kShaB + "\",\"repo\":\"acme/Qwen36-GGUF\",\"revision\":\"" + std::string{kCommit} + "\"}},"
          "{\"id\":\"glm-maya\",\"name\":\"GLM Maya\",\"source\":\"maya\",\"family\":\"glm53\",\"engine\":\"glm53\","
          "\"about\":\"packed by Maya's step\",\"repo\":\"acme/GLM-GGUF\",\"revision\":\"" + std::string{kCommit} +
          "\",\"files\":[{\"path\":\"S/g-00001-of-00002.gguf\",\"size\":1000,\"sha256\":\"" + kShaA +
@@ -1021,6 +1026,130 @@ void pause_resume_and_cancel_discards() {
 
 // The download routes' JSON (the plan's contract): the list, a start by id or by a confirmed
 // link, pause, cancel and the link check, each refusal an ApiError row.
+// Vision for cards (spec 2026-10-28 point 2; the owner: "a checkbox to also download vision files"): a qwen entry with a
+// pinned picture encoder lists its size (vision_bytes; 0 where there is none, and GLM's stay text only here), a start
+// that asks for the files where there are none is refused, and a start with them pulls the encoder as the manifest's
+// mmproj (its own repository and revision), counts it in the size, and the card reads pictures with it (vision.mmproj,
+// the Pictures option, on the GPU by default). Without the box ticked nothing changes.
+void the_vision_files_come_with_the_download_when_asked() {
+  Fixture f;
+  f.with_gguf_engine = true;
+#if defined(_WIN32)
+  const auto tool = f.dir / "strata-prepare.exe";
+#else
+  const auto tool = f.dir / "strata-prepare";
+#endif
+  secure_frontend_test::write_file(tool, "tool");
+  secure_frontend_test::make_private_directory(f.dir / "profiles");
+  secure_frontend_test::write_file(f.dir / "profiles" / "expert-profile.bin", "profile");
+  auto lines = pull_lines("qwen-small");
+  lines.insert(lines.end() - 1, {"FILE mmproj-BF16.gguf 300", "BYTES mmproj-BF16.gguf 300 300", "FINISHED mmproj-BF16.gguf ok"});
+  f.spawner.pulls.push_back(Script{lines});
+  f.spawner.pulls.push_back(Script{{"STEP pack", "DONE"}});
+  const auto installed = f.dir / "installed";
+  secure_frontend_test::make_private_directory(installed);
+  secure_frontend_test::make_private_directory(installed / "Q");
+  f.spawner.on_spawn = [&](const secure_frontend::EngineCommand& command) {
+    if (command.executable != tool) return;
+    const auto& a = command.arguments;
+    const auto out = std::find(a.begin(), a.end(), "--out");
+    if (out == a.end() || out + 1 == a.end()) return;
+    const std::filesystem::path pack = secure_frontend::path_from_utf8(*(out + 1));
+    std::filesystem::create_directories(pack);
+    secure_frontend_test::write_file(pack / "prepared.json", "{\"pack\": " + json_of(pack) + ", \"tokenizer\": null, \"ple\": null, \"shards\": 2}\n");
+  };
+  f.start(1U << 30U);
+  const auto entry_of = [](const std::string& listed, const std::string& id) {
+    const auto at = listed.find("{\"id\":\"" + id + "\"");
+    return at == std::string::npos ? std::string{} : listed.substr(at, listed.find('}', at) - at);
+  };
+  const std::string before = f.manager->list_json();
+  expect(has(entry_of(before, "qwen-small"), "\"vision_bytes\":300") && has(entry_of(before, "qwen-small"), "\"vision\":false"),
+         "a qwen entry with a picture encoder lists its size, not chosen: " + entry_of(before, "qwen-small"));
+  expect(has(entry_of(before, "glm-small"), "\"vision_bytes\":0"), "an entry with none lists 0: " + entry_of(before, "glm-small"));
+  const auto refused = f.manager->start("glm-small", std::nullopt, true);
+  expect(refused && refused->status == 400 && refused->code == "invalid_request", "vision files where there are none are refused");
+  {
+    std::lock_guard lock(f.spawner.mutex);
+    f.spawner.installed = installed;
+  }
+  expect(!f.manager->start("qwen-small", std::nullopt, true).has_value() && f.manager->wait_idle(std::chrono::seconds(10)), "it downloads");
+  const std::string listed = f.manager->list_json();
+  expect(has(entry_of(listed, "qwen-small"), "\"state\":\"ready\"") && has(entry_of(listed, "qwen-small"), "\"size_bytes\":3300") &&
+             has(entry_of(listed, "qwen-small"), "\"vision\":true"),
+         "ready, the encoder counted in its size: " + entry_of(listed, "qwen-small"));
+  std::ifstream in(f.dir / "work" / "qwen-small.manifest.json", std::ios::binary);
+  std::ostringstream text;
+  text << in.rdbuf();
+  secure_frontend::ManifestRules release;
+  release.allow_raw_profile = false;
+  const auto parsed = secure_frontend::parse_manifest(text.str(), release);
+  const auto* manifest = std::get_if<secure_frontend::ParsedManifest>(&parsed);
+  expect(manifest != nullptr && manifest->manifest.files.size() == 3U, "the manifest lists the encoder too: " + text.str());
+  if (manifest != nullptr && manifest->manifest.files.size() == 3U) {
+    const auto& encoder = manifest->manifest.files[2];
+    expect(encoder.role == secure_frontend::FileRole::mmproj && encoder.path == "mmproj-BF16.gguf" && encoder.size == 300U &&
+               encoder.sources == std::vector<std::string>{"https://huggingface.co/acme/Vision-GGUF/resolve/" + std::string{kCommit} +
+                                                           "/mmproj-BF16.gguf"},
+           "the encoder: role mmproj, from its own repository and revision");
+  }
+  const auto read = secure_frontend::read_model_card(f.dir / "cards" / "qwen-small.json");
+  const auto* card = std::get_if<secure_frontend::ModelCard>(&read);
+  expect(card != nullptr && card->config.entries.contains("vision.mmproj") &&
+             std::get<std::string>(card->config.entries.at("vision.mmproj").value) == secure_frontend::path_to_utf8(installed / "mmproj-BF16.gguf"),
+         "the card names its encoder file");
+  const bool pictures = card != nullptr && std::any_of(card->options.begin(), card->options.end(), [](const secure_frontend::ModelOptionLimits& o) {
+                          return o.spec != nullptr && o.spec->name == "vision" && std::get_if<std::string>(&o.default_value) != nullptr &&
+                                 *std::get_if<std::string>(&o.default_value) == "gpu";
+                        });
+  expect(pictures, "the card lists the Pictures option, on the GPU by default");
+  // Without the box: the Qwen3.6 entry's two files are not asked for, its card reads no pictures.
+  Fixture plain;
+  plain.with_gguf_engine = true;
+  plain.spawner.pulls.push_back(Script{{"MANIFEST qwen36-small:download " + std::string(64, 'c'), "FILE Q36/m.gguf 500",
+                                        "BYTES Q36/m.gguf 500 500", "FINISHED Q36/m.gguf ok", "RESULT ok"}});
+  const auto q36 = plain.dir / "installed";
+  secure_frontend_test::make_private_directory(q36);
+  secure_frontend_test::make_private_directory(q36 / "Q36");
+  secure_frontend_test::write_file(q36 / "Q36" / "m.gguf", test_support::gguf_with_tokenizer(test_support::byte_tokenizer(), "gpt2", "qwen35moe")
+                                                         .u32("qwen35moe.context_length", 262144U)
+                                                         .bytes());
+  plain.start(1U << 30U);
+  {
+    std::lock_guard lock(plain.spawner.mutex);
+    plain.spawner.installed = q36;
+  }
+  expect(!plain.manager->start("qwen36-small").has_value() && plain.manager->wait_idle(std::chrono::seconds(10)), "Qwen3.6 downloads");
+  std::ifstream plain_in(plain.dir / "work" / "qwen36-small.manifest.json", std::ios::binary);
+  std::ostringstream plain_text;
+  plain_text << plain_in.rdbuf();
+  expect(!has(plain_text.str(), "mmproj"), "without the box the manifest has no encoder");
+  const auto plain_read = secure_frontend::read_model_card(plain.dir / "cards" / "qwen36-small.json");
+  const auto* plain_card = std::get_if<secure_frontend::ModelCard>(&plain_read);
+  expect(plain_card != nullptr && !plain_card->config.entries.contains("vision.mmproj"), "and its card reads no pictures");
+  // With it, the GGUF-made card names the encoder too.
+  Fixture seen;
+  seen.with_gguf_engine = true;
+  seen.spawner.pulls.push_back(Script{{"MANIFEST qwen36-small:download " + std::string(64, 'c'), "FILE Q36/m.gguf 500", "FINISHED Q36/m.gguf ok",
+                                       "FILE mmproj-F16.gguf 200", "FINISHED mmproj-F16.gguf ok", "RESULT ok"}});
+  const auto seen_dir = seen.dir / "installed";
+  secure_frontend_test::make_private_directory(seen_dir);
+  secure_frontend_test::make_private_directory(seen_dir / "Q36");
+  secure_frontend_test::write_file(seen_dir / "Q36" / "m.gguf", secure_frontend_test::read_file(q36 / "Q36" / "m.gguf"));
+  seen.start(1U << 30U);
+  {
+    std::lock_guard lock(seen.spawner.mutex);
+    seen.spawner.installed = seen_dir;
+  }
+  expect(!seen.manager->start("qwen36-small", std::nullopt, true).has_value() && seen.manager->wait_idle(std::chrono::seconds(10)),
+         "Qwen3.6 with its encoder downloads");
+  const auto seen_read = secure_frontend::read_model_card(seen.dir / "cards" / "qwen36-small.json");
+  const auto* seen_card = std::get_if<secure_frontend::ModelCard>(&seen_read);
+  expect(seen_card != nullptr && seen_card->config.entries.contains("vision.mmproj") &&
+             std::get<std::string>(seen_card->config.entries.at("vision.mmproj").value) == secure_frontend::path_to_utf8(seen_dir / "mmproj-F16.gguf"),
+         "the Qwen3.6 card names its encoder file");
+}
+
 void download_routes_answer_the_contract() {
   using secure_frontend::RouteId;
   Fixture f;
@@ -1044,7 +1173,11 @@ void download_routes_answer_the_contract() {
   const auto started = answer(RouteId::strata_download_start, "{\"id\":\"qwen-small\"}");
   expect(started.status == 202 && has(started.body, "\"state\":\"queued\"") && has(started.body, "\"id\":\"qwen-small\""),
          "a start: 202 queued: " + started.body);
-  const auto twice = answer(RouteId::strata_download_start, "{\"id\":\"qwen-small\"}");
+  const auto not_boolean = answer(RouteId::strata_download_start, "{\"id\":\"qwen-small\",\"vision\":\"yes\"}");
+  expect(not_boolean.status == 400 && has(not_boolean.body, "\"code\":\"invalid_request\""), "vision is a boolean: " + not_boolean.body);
+  const auto no_files = answer(RouteId::strata_download_start, "{\"id\":\"glm-small\",\"vision\":true}");
+  expect(no_files.status == 400 && has(no_files.body, "\"code\":\"invalid_request\""), "no vision files to take: " + no_files.body);
+  const auto twice = answer(RouteId::strata_download_start, "{\"id\":\"qwen-small\",\"vision\":false}");
   expect(twice.status == 409 && has(twice.body, "\"code\":\"download_in_progress\""), "already downloading: " + twice.body);
   for (int i = 0; i < 200 && !has(m.list_json(), "\"state\":\"downloading\""); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
   const auto paused = answer(RouteId::strata_download_pause, "{\"id\":\"qwen-small\"}");
@@ -1098,5 +1231,6 @@ int main(int argc, char** argv) {
       {"a_downloaded_gguf_becomes_a_card", a_downloaded_gguf_becomes_a_card},
       {"a_multipart_paste_assembles_its_shards", a_multipart_paste_assembles_its_shards},
       {"download_routes_answer_the_contract", download_routes_answer_the_contract},
+      {"the_vision_files_come_with_the_download_when_asked", the_vision_files_come_with_the_download_when_asked},
   }, failures);
 }

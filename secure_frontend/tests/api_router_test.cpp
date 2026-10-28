@@ -727,7 +727,7 @@ void web_ui_downloads_go_to_a_chosen_folder() {
   }
   expect(js.find("function withFolder(") != std::string::npos && js.find("payload.folder = downloads.folder;") != std::string::npos,
          "the chosen folder rides with each request");
-  expect(js.find("jsonPost(withFolder({ id: card.id }))") != std::string::npos &&
+  expect(js.find("var request = { id: card.id };") != std::string::npos && js.find("jsonPost(withFolder(request))") != std::string::npos &&
              js.find("jsonPost(withFolder({ url: offer.url, confirm: true }))") != std::string::npos &&
              js.find("jsonPost(withFolder(body))") != std::string::npos,
          "a start, a link's start and a link check name the folder");
@@ -926,8 +926,13 @@ void web_ui_downloads_start_cancel_poll_and_check_links() {
   expect(js.find("function jsonPost(payload) { return { method: \"POST\", headers: { \"Content-Type\": \"application/json\" }, "
                  "body: JSON.stringify(payload) }; }") != std::string::npos,
          "the download routes take JSON bodies");
-  expect(js.find("api(\"/v1/strata/downloads/start\", jsonPost(withFolder({ id: card.id })))") != std::string::npos,
+  expect(js.find("var request = { id: card.id };") != std::string::npos &&
+             js.find("api(\"/v1/strata/downloads/start\", jsonPost(withFolder(request)))") != std::string::npos,
          "Download posts the card's id (and the chosen folder) to the start route");
+  // vision for cards (spec 2026-10-28): the Vision files box rides with the start where the entry has picture files
+  expect(js.find("if ((Number(card.vision_bytes) || 0) > 0) { request.vision = wantsVision(card); }") != std::string::npos &&
+             js.find("\"Vision files (+\" + dgb(visionBytes) + \" GB): read pictures with this model\"") != std::string::npos,
+         "Download sends the Vision files box of an entry that has them");
   expect(js.find("api(\"/v1/strata/downloads/cancel\", jsonPost({ id: card.id }))") != std::string::npos,
          "Cancel posts the card's id to the cancel route");
   expect(js.find("var body = { url: url };") != std::string::npos &&

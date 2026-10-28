@@ -59,6 +59,8 @@ constexpr ModelOptionSpec choice_option(const std::string_view name, const std::
 constexpr std::array<std::string_view, 4> kQwenKv{"fp16", "int8", "q4_0", "k8v4"};
 // reasoning.effort's levels (frontend_config.cpp, the reasoning.effort row and its reader).
 constexpr std::array<std::string_view, 4> kQwenThinking{"none", "low", "medium", "high"};
+// Vision for cards (spec 2026-10-28-vision-for-cards-design.md): upstream setup's --vision gpu|cpu|no, as card rows.
+constexpr std::array<std::string_view, 3> kVisionModes{"off", "gpu", "cpu"};
 // The Gemma spec's D10: thinking off or on (reasoning.effort none or high).
 constexpr std::array<std::string_view, 2> kGemmaThinking{"off", "on"};
 
@@ -112,7 +114,7 @@ constexpr ModelOptionSpec kWebSearch =
 // draft must reach, core/mtp.cpp:1689); --expert-cache :2541-2544 (auto or a count of expert blobs
 // in VRAM, >= -1 :3304; at most the 48 x 512 experts there are, core/geometry.hpp:25/:53);
 // --prefill :2558-2565 (auto or a chunk of N prompt tokens; auto's largest is 32,768, :2564).
-constexpr std::array<ModelOptionSpec, 15> kQwenOptions{{
+constexpr std::array<ModelOptionSpec, 16> kQwenOptions{{
     listed(integer_option("max_context", "Context length",
                           "Tokens of context the engine allocates; past the trained 256K the engine stretches the model with "
                           "YaRN rope scaling (experimental, upstream's own rule)",
@@ -139,6 +141,9 @@ constexpr std::array<ModelOptionSpec, 15> kQwenOptions{{
     kTopP,
     kTopK,
     kMinP,
+    choice_option("vision", "Pictures",
+                  "Read pictures with the model's picture encoder: on the GPU (faster, takes about 1 GB of VRAM), on the CPU, or off",
+                  kVisionModes),
     kWebSearch,
 }};
 
@@ -582,6 +587,9 @@ void write_option(const EngineProfile profile, const std::string_view name, cons
     set_entry(draft, "defaults.sampling." + std::string{name}, ConfigDraftValue{std::in_place_type<double>, *decimal});
   } else if (name == "top_k" && integer != nullptr) {
     set_entry(draft, "defaults.sampling.top_k", ConfigDraftValue{std::in_place_type<std::int64_t>, *integer});
+  } else if (name == "vision" && text != nullptr) {  // the card's picture encoder (its vision.mmproj): where it runs, or off
+    set_entry(draft, "vision.enabled", ConfigDraftValue{std::in_place_type<bool>, *text != "off"});
+    set_entry(draft, "vision.gpu", ConfigDraftValue{std::in_place_type<bool>, *text == "gpu"});
   }
 }
 

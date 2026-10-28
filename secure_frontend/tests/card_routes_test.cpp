@@ -210,6 +210,41 @@ void a_card_is_added_from_a_folder() {
   expect(root.status == 422 && has(root, "\"code\":\"folder_refused\""), "a drive's root is never changed: " + shown(root));
 }
 
+// Vision for cards (spec 2026-10-28 point 3): a Qwen model added from a folder that holds its picture encoder (one
+// mmproj*.gguf beside it) gets a card that reads pictures - vision.mmproj names the file, the Pictures option is listed;
+// a folder without one gives a text-only card.
+void a_qwen_model_beside_its_encoder_reads_pictures() {
+  Fixture f;
+  const auto folder = f.root / "qwen36";
+  secure_frontend_test::make_private_directory(folder);
+  const auto qwen36 = test_support::gguf_with_tokenizer(test_support::byte_tokenizer(), "gpt2", "qwen35moe")
+                          .u32("qwen35moe.context_length", 262144U)
+                          .bytes();
+  secure_frontend_test::write_file(folder / "Qwen3.6-Test-Q8_0.gguf", qwen36);
+  const auto plain = f.add(folder, "Qwen3.6-Test-Q8_0.gguf");
+  expect(plain.status == 201, "a Qwen3.6 model is added: " + shown(plain));
+  const auto encoder_of = [&f](const std::string& name) {
+    std::pair<std::string, bool> out;
+    const auto held = f.launcher->card(name);
+    if (!held) return out;
+    if (const auto row = held->card.config.entries.find("vision.mmproj"); row != held->card.config.entries.end()) {
+      out.first = std::get<std::string>(row->second.value);
+    }
+    for (const auto& limit : held->card.options) out.second = out.second || limit.spec->name == "vision";
+    return out;
+  };
+  expect(encoder_of("Qwen3.6-Test-Q8_0") == std::pair<std::string, bool>{}, "no encoder beside it: a text-only card");
+  const auto seer = f.root / "seer";
+  secure_frontend_test::make_private_directory(seer);
+  secure_frontend_test::write_file(seer / "Seer-Q8_0.gguf", qwen36);
+  secure_frontend_test::write_file(seer / "mmproj-F16.gguf", "GGUF");
+  const auto added = f.add(seer, "Seer-Q8_0.gguf");
+  expect(added.status == 201, "a Qwen3.6 model beside its encoder is added: " + shown(added));
+  const auto [row, listed] = encoder_of("Seer-Q8_0");
+  expect(row == secure_frontend::path_to_utf8(std::filesystem::canonical(seer) / "mmproj-F16.gguf") && listed,
+         "its card names the encoder and lists Pictures: " + row);
+}
+
 std::string value_after(const std::vector<std::string>& arguments, const std::string& flag) {
   const auto at = std::find(arguments.begin(), arguments.end(), flag);
   return at == arguments.end() || at + 1 == arguments.end() ? std::string{} : *(at + 1);
@@ -774,6 +809,7 @@ int main(int argc, char** argv) {
       {"card_routes_answer_loopback_clients_only", card_routes_answer_loopback_clients_only},
       {"folders_list_the_drives_and_one_folder", folders_list_the_drives_and_one_folder},
       {"a_card_is_added_from_a_folder", a_card_is_added_from_a_folder},
+      {"a_qwen_model_beside_its_encoder_reads_pictures", a_qwen_model_beside_its_encoder_reads_pictures},
       {"qwen38_and_glm_models_are_added_with_their_packs", qwen38_and_glm_models_are_added_with_their_packs},
       {"a_qwen38_model_finds_its_draft_layer", a_qwen38_model_finds_its_draft_layer},
       {"a_deepseek_model_is_added_with_mayas_ds4_pack", a_deepseek_model_is_added_with_mayas_ds4_pack},

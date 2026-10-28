@@ -280,6 +280,53 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 x (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+The owner: "a checkbox to also download vision files ... check the upstream on how they do it", then "Continue and
+commit". Spec `docs/superpowers/specs/2026-10-28-vision-for-cards-design.md` (upstream's way: `setup.py`'s encoder
+pins, `tools/vision`'s `strata-vision`, the engine's `--vision`, the server's reader arguments). Qwen cards only (the
+families upstream's engine reads pictures with); the other profiles stay text only.
+
+- **Card rows and option**: `vision.mmproj` (absolute) and `vision.gpu` are card-owned rows (a main config under
+  `models.cards` that sets them, or `vision.enabled`, is refused as card rows; the launcher no longer refuses
+  `vision.enabled` itself); the qwen option `vision` (Pictures: off, gpu, cpu) writes `vision.enabled` and
+  `vision.gpu`. `--check` prints both rows. Tests RED first: `the_vision_option_writes_the_encoder_rows`,
+  `card_refusals_name_the_rule`.
+- **Launch**: an expert (card) launch with vision on is qwen only, checks the encoder file by the model folders' rule
+  (regular, not a link, `open_root` existing or external), carries it and the model's GGUF on `ComposedLaunch` and adds
+  `--vision`. Test RED first: `vision_compose_rules`' card block.
+- **Encoder**: `compose_vision_arguments` follows upstream's reader (`--mmproj`, `--model`, `--gpu`, threads, max
+  tokens; `vision.no_flash_attn` as `--flash-attn off` for upstream's program). `compose_model` plans the encoder
+  (`VisionPlan`: upstream's `strata-vision` beside the engine, else `maya-vision`; scratch `<state>/vision`); the
+  per-card `ModelRuntime` owns it (`make_vision_role`, `start_vision` after READY, `stop_vision` on stop, swap and
+  exit; a card whose encoder fails does not start); `server_bootstrap` uses the same role. Tests RED first:
+  `vision_child_argv_follows_upstreams_strata_vision`, `a_card_reads_pictures_with_its_encoder` (two children, a picture
+  reaches the fake engine as GENI, the encoder stops with the card, a text card refuses pictures); the managed vision
+  API cases still pass.
+- **Downloads**: the catalog reads an encoder's own `repo`/`revision`; `hf_manifest_json` takes a file's own repository
+  and commit; `start(id, folder, vision)` / the route's `"vision": true` pulls the pinned encoder as the manifest's
+  `mmproj` and counts it (400 for an entry without one; the list's `vision_bytes`, `vision`; kept in `vision.json` for a
+  resume); the native, GGUF and Python card makers name it. Test RED first:
+  `the_vision_files_come_with_the_download_when_asked`.
+- **Cards from folders**: `GgufCardRequest`/`PackedCardRequest::mmproj` (qwen only: the row and Pictures, GPU by
+  default); `find_mmproj` (the folder's one `mmproj*.gguf`, not a link; two: none); Add a model uses it. Tests RED
+  first: `cards_name_their_picture_encoder`, `a_qwen_model_beside_its_encoder_reads_pictures`.
+- **The page**: the download cards' "Vision files (+0.9 GB)" box (sent with Download and Resume); PNG, JPEG and WebP
+  attachments while the running card's Pictures option is on (at most 4, 20 MB each; the latest question carries its
+  pictures as `image_url` parts, earlier ones and the saved chat name them). `app.js` parses (esprima, in `.venv-dev`);
+  on a dev server from this build (scratch data folder, dev key) the box shows on the 18 Qwen entries and the console
+  has no error past the sign-in. The chat's picture path is checked by the tests' requests, not in a browser.
+- **make.py** builds upstream's `tools/vision` out of source (`vision_configure_args`: the pinned llama.cpp,
+  ggml-cuda, portable) and copies `strata-vision` into `engine/` (it needs only the bundled cuBLAS); `--without vision`
+  leaves it out; `required_files`, `build.json` and README.txt name it. Tests RED first in `test_make.py` (21 pass).
+- Tests on this PC, 0 build errors and warnings. Email and search on: 1,271, all pass but the two release-binary checks
+  (as in every hooks build) and the idle-unload flake. Off: 1,241, the same. (Four suites failed on their first run -
+  the page's start request, the launcher rule and `auth04`'s switch list - and were updated with the change; they pass
+  143/143 and 137/137.) `tools/secure`: 116 passed, the same 7 release-bundle cases need a cross build.
+- **Not done here**: a GPU run with a real encoder and a real Qwen model (the owner's server holds the GPU, and the
+  owner's install has no `strata-vision` until a rebuild); pictures on the other families; adding the vision files to
+  a download that is already installed.
+
 ### Claude Code session, 2026-10-28 w (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 The owner: "while I am still downloading, do not swap my server yet but begin working on the rest of the issues and

@@ -22,6 +22,9 @@ struct GgufCardRequest final {
   std::string file;               // the GGUF file in it (a split model's first shard)
   std::filesystem::path engine;   // the engine the card runs (models.default_engine)
   std::string source;             // where the model came from: "folder", or the download's id (the Download list hides it)
+  // Vision for cards (spec 2026-10-28): the model's picture encoder (an mmproj GGUF, absolute). A qwen card names it
+  // (vision.mmproj) and lists the Pictures option, on the GPU by default; the other families read no pictures here.
+  std::optional<std::filesystem::path> mmproj{};
 };
 struct CardText final {
   std::string name;
@@ -72,6 +75,8 @@ struct PackedCardRequest final {
   // qwen38: the MTP draft layer's runtime folder (upstream's mtp/rt: dense.bin, experts.bin, draft_vocab.bin), when one
   // was found (find_mtp_runtime); the card then runs it as upstream's setup does and lists its settings
   std::optional<std::filesystem::path> mtp;
+  // qwen38: the model's picture encoder, as GgufCardRequest's
+  std::optional<std::filesystem::path> mmproj{};
 };
 // The card of a model whose pack strata-prepare built. qwen38: profile qwen, the folder and first shard as the model,
 // --pack / --ple-gguf / --expert-profile, the options upstream's setup gives a pack (128K, int8 KV, 32K resident, spec
@@ -100,6 +105,10 @@ struct PackedCardRequest final {
 // grandparent's holding dense.bin, experts.bin and draft_vocab.bin as regular files (not links) - upstream's setup keeps
 // it at <data>/mtp/rt beside models/ and packs/. nullopt: none. Its privacy is the caller's to check.
 [[nodiscard]] std::optional<std::filesystem::path> find_mtp_runtime(const std::filesystem::path& folder);
+
+// A Qwen model folder's picture encoder (spec 2026-10-28): its one mmproj*.gguf (the name's start in any case), a
+// regular file and not a link. None, or more than one: nullopt (a card never guesses between encoders).
+[[nodiscard]] std::optional<std::filesystem::path> find_mmproj(const std::filesystem::path& folder);
 
 // A card's text with roots.models set to `folder` (the model moved); everything else as it was.
 [[nodiscard]] std::variant<std::string, CardError> card_with_folder(std::string_view card_json, const std::filesystem::path& folder);

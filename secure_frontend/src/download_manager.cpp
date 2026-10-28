@@ -200,6 +200,13 @@ class StdioLineChild final : public LineChild {
 // A downloaded file where the store keeps it: <version>/<its catalog path>, the catalog's subfolder kept (Maya's
 // repositories put each quant in one, Maya-XS/...; owner 2026-10-28: a DeepSeek pack failed with "missing_gguf"
 // when only the name was kept), with this system's separators.
+// Vision for cards (spec 2026-10-28): the entries whose picture encoder a card here reads pictures with - a qwen
+// model's, pinned to a commit with its size (GLM-5.3's encoders stay unused: its cards are text only here).
+bool vision_offered(const DownloadEntry& entry) {
+  if (entry.engine != "qwen" || !entry.mmproj || !entry.mmproj->size) return false;
+  return is_hf_commit(entry.mmproj->revision.empty() ? entry.revision : entry.mmproj->revision);
+}
+
 std::filesystem::path stored_file(const std::filesystem::path& version, const std::string& relative) {
   return (version / path_from_utf8(relative)).make_preferred();
 }
@@ -252,11 +259,13 @@ HttpResponse download_route_answer(DownloadManager& manager, const RouteId route
   std::vector<std::string> extra_urls;
   bool have_extra = false;
   bool confirm = false;
+  std::optional<bool> vision;   // spec 2026-10-28: the "Vision files" checkbox (a catalog start)
   for (const auto& item : *members) {
     if (item.key == "id" && item.value.if_string() != nullptr) id = item.value.if_string();
     else if (item.key == "url" && item.value.if_string() != nullptr) url = item.value.if_string();
     else if (item.key == "folder" && item.value.if_string() != nullptr) folder_text = item.value.if_string();
     else if (item.key == "confirm" && item.value.if_boolean() != nullptr) confirm = *item.value.if_boolean();
+    else if (item.key == "vision" && item.value.if_boolean() != nullptr) vision = *item.value.if_boolean();
     else if (item.key == "profile" && item.value.if_string() != nullptr) profile = item.value.if_string();
     else if (item.key == "extra_urls" && item.value.if_array() != nullptr) {
       have_extra = true;
@@ -275,6 +284,7 @@ HttpResponse download_route_answer(DownloadManager& manager, const RouteId route
   if (folder_text != nullptr && route != RouteId::strata_download_start && route != RouteId::strata_download_link) {
     return make_error_response(ApiError::invalid_request);
   }
+  if (vision.has_value() && (route != RouteId::strata_download_start || url != nullptr)) return make_error_response(ApiError::invalid_request);
   std::optional<std::filesystem::path> folder;
   if (folder_text != nullptr && !folder_text->empty()) {
     if (!is_valid_utf8(*folder_text)) return make_error_response(ApiError::invalid_request);
@@ -306,7 +316,7 @@ HttpResponse download_route_answer(DownloadManager& manager, const RouteId route
   }
   if (id == nullptr || url != nullptr || confirm) return make_error_response(ApiError::invalid_request);
   if (route == RouteId::strata_download_start) {
-    if (const auto refused = manager.start(*id, folder)) return refusal_answer(*refused);
+    if (const auto refused = manager.start(*id, folder, vision.value_or(false))) return refusal_answer(*refused);
     return accepted("queued", *id);
   }
   if (route == RouteId::strata_download_pause) {
@@ -374,6 +384,7 @@ DownloadManager::DownloadManager(DownloadSettings settings) : settings_(std::mov
   }
   load_custom();
   load_destinations();
+  load_vision();
   refresh_installed();
   worker_ = std::thread([this] { run(); });
 }
@@ -404,9 +415,10 @@ std::string_view DownloadManager::state_name(const State state) noexcept {
   return "available";
 }
 
-std::uint64_t DownloadManager::total_of(const DownloadEntry& entry) const {
+std::uint64_t DownloadManager::total_of(const DownloadEntry& entry, const bool vision) const {
   std::uint64_t total = 0;
   for (const auto& file : entry.files) total += file.size.value_or(0);
+  if (vision && entry.mmproj) total += entry.mmproj->size.value_or(0);
   return total;
 }
 
@@ -487,6 +499,39 @@ void DownloadManager::save_destinations() {
   text += "}\n";
   auto root = open_root(settings_.work_dir);
   const auto name = parse_relative_path("destinations.json");
+  if (std::holds_alternative<CanonicalRoot>(root) && std::holds_alternative<RelativePath>(name)) {
+    (void)write_private_file(std::get<CanonicalRoot>(root), std::get<RelativePath>(name), text, TokenStoreMode::replace);
+  }
+}
+
+void DownloadManager::load_vision() {
+  std::ifstream in(settings_.work_dir / "vision.json", std::ios::binary);
+  if (!in) return;
+  std::ostringstream text;
+  text << in.rdbuf();
+  const auto parsed = parse_json(text.str(), kChildJsonLimits);
+  const auto* root = std::get_if<JsonValue>(&parsed);
+  const auto* ids = root == nullptr ? nullptr : member(*root, "ids");
+  if (ids == nullptr || ids->if_array() == nullptr) return;
+  for (const auto& id : *ids->if_array()) {
+    const auto index = id.if_string() != nullptr ? find(*id.if_string()) : std::nullopt;
+    if (!index || !vision_offered(cards_[*index].entry)) continue;
+    cards_[*index].vision = true;
+    cards_[*index].total = total_of(cards_[*index].entry, true);
+  }
+}
+
+void DownloadManager::save_vision() {
+  std::string text = "{\"ids\":[";
+  bool first = true;
+  for (const auto& card : cards_) {
+    if (!card.vision) continue;
+    text += (first ? "" : ",") + json_text(card.entry.id);
+    first = false;
+  }
+  text += "]}\n";
+  auto root = open_root(settings_.work_dir);
+  const auto name = parse_relative_path("vision.json");
   if (std::holds_alternative<CanonicalRoot>(root) && std::holds_alternative<RelativePath>(name)) {
     (void)write_private_file(std::get<CanonicalRoot>(root), std::get<RelativePath>(name), text, TokenStoreMode::replace);
   }
@@ -653,7 +698,9 @@ std::string DownloadManager::list_json() {
            (card.error.empty() ? std::string{"null"} : json_text(card.error)) + ",\"needed_bytes\":" + std::to_string(needed) +
            ",\"fits\":" + (fits ? "true" : "false") + ",\"runnable\":" + (qwen_ready || gguf_ready || glm_ready ? "true" : "false") +
            ",\"note\":" + json_text(note) + ",\"folder\":" + json_text(path_to_utf8(store_of(card))) +
-           ",\"file\":" + json_text(model_file_stem(e)) + "}";
+           ",\"file\":" + json_text(model_file_stem(e)) +
+           ",\"vision_bytes\":" + std::to_string(vision_offered(e) ? e.mmproj->size.value_or(0) : 0U) +
+           ",\"vision\":" + (card.vision ? "true" : "false") + "}";
   }
   // The families a pasted GGUF can be matched to (the page's profile picker). "runnable" is whether
   // a card is written after the download; Gemma 4 is listed but stays download-only (no tokenizer).
@@ -669,7 +716,7 @@ std::string DownloadManager::list_json() {
 }
 
 std::optional<DownloadManager::Refusal> DownloadManager::start(const std::string_view id,
-                                                              const std::optional<std::filesystem::path>& folder) {
+                                                              const std::optional<std::filesystem::path>& folder, const bool vision) {
   // §4.3: the folder it goes to (a paused download keeps its own unless the start names another), checked first
   std::filesystem::path store;
   {
@@ -677,6 +724,7 @@ std::optional<DownloadManager::Refusal> DownloadManager::start(const std::string
     if (stopping_) return Refusal{503, "server_shutting_down"};
     const auto index = find(id);
     if (!index) return Refusal{404, "model_not_found"};
+    if (vision && !vision_offered(cards_[*index].entry)) return Refusal{400, "invalid_request"};   // no encoder to take
     auto chosen = chosen_store(cards_[*index], folder);
     if (const auto* refused = std::get_if<Refusal>(&chosen)) return *refused;
     store = std::get<std::filesystem::path>(std::move(chosen));
@@ -698,7 +746,8 @@ std::optional<DownloadManager::Refusal> DownloadManager::start(const std::string
     // folder starts over there (its partial files are in the old one).
     const bool moved = store != card.store;
     const std::uint64_t kept = moved ? 0U : card.bytes;
-    const std::uint64_t remaining = card.total > kept ? card.total - kept : 0U;
+    const std::uint64_t wanted = total_of(card.entry, vision);   // with the picture encoder when it comes too
+    const std::uint64_t remaining = wanted > kept ? wanted - kept : 0U;
     if (space && space->free_bytes < remaining + settings_.margin_bytes) return Refusal{507, "insufficient_storage"};
     if (moved) {
       card.store = store;
@@ -706,8 +755,11 @@ std::optional<DownloadManager::Refusal> DownloadManager::start(const std::string
     }
     card.state = State::queued;
     card.error.clear();
+    card.vision = vision;
+    card.total = wanted;
     queue_.push_back(*index);
     save_destinations();
+    save_vision();
   }
   log("[strata] downloads: queued " + std::string{id});
   changed_.notify_all();
@@ -1130,7 +1182,7 @@ void DownloadManager::run_card(const std::size_t index) {
       std::lock_guard lock(mutex_);
       cards_[index].entry.files = card.entry.files;
       cards_[index].entry.revision = card.entry.revision;  // a resume pulls this commit: the same partial files
-      cards_[index].total = total_of(card.entry);
+      cards_[index].total = total_of(card.entry, card.vision);
       remaining = cards_[index].total > cards_[index].bytes ? cards_[index].total - cards_[index].bytes : 0U;
     }
     // O2: the sizes are known only now, so the free space is checked again before any pull.
@@ -1150,6 +1202,10 @@ void DownloadManager::run_card(const std::size_t index) {
   download.commit = card.entry.revision;
   download.license_url = "https://huggingface.co/" + card.entry.repo;
   for (const auto& file : card.entry.files) download.files.push_back(HfFile{file.path, file.size.value_or(0), file.sha256, false});
+  if (card.vision && vision_offered(card.entry)) {   // the picture encoder: role mmproj, from its own repository and revision
+    const auto& encoder = *card.entry.mmproj;
+    download.files.push_back(HfFile{encoder.path, encoder.size.value_or(0), encoder.sha256, true, encoder.repo, encoder.revision});
+  }
   if (!pull(index, download, error)) {
     bool stopped = false;
     bool paused = false;
@@ -1323,9 +1379,11 @@ bool DownloadManager::pull(const std::size_t index, const HfDownload& download, 
 
 bool DownloadManager::prepare(const std::size_t index, const HfDownload& download, std::string& error) {
   DownloadEntry entry;
+  bool vision = false;
   {
     std::lock_guard lock(mutex_);
     entry = cards_[index].entry;
+    vision = cards_[index].vision && vision_offered(entry);
   }
   // The installed version directory (the store's own index).
   auto root = open_root(settings_.downloads_root);
@@ -1414,19 +1472,24 @@ bool DownloadManager::prepare(const std::size_t index, const HfDownload& downloa
   const std::uint64_t ctx_max = prof ? prof->context_max : 262144U;
   const bool mtp_default = entry.source != "custom";
   const std::string card_name = card_name_for(entry);
+  // the picture encoder that came with it (spec 2026-10-28): vision.mmproj, and Pictures on the GPU by default
+  const std::string vision_row =
+      vision ? ",\"vision\":{\"mmproj\":" + json_text(path_to_utf8(stored_file(version, entry.mmproj->path))) + "}" : std::string{};
+  const std::string vision_option = vision ? "\"vision\":{\"default\":\"gpu\"}," : "";
   const std::string card = "{\"schema_version\":1,\"name\":" + json_text(card_name) + ",\"profile\":\"qwen\",\"config\":{\"engine\":{" +
                            "\"executable\":" + json_text(tmpl.engine_executable) + ",\"model_id\":" + json_text(model_id) +
                            ",\"lib_dirs\":" + lib_dirs + (tmpl.engine_gpu ? ",\"gpu\":" + json_text(*tmpl.engine_gpu) : std::string{}) +
                            ",\"args\":" + args_json + "},\"roots\":{\"models\":" + json_text(path_to_utf8(models_root)) +
-                           ",\"tokenizer_pack\":" + json_text(path_to_utf8(pack / "tokenizer")) +
-                           "},\"limits\":{\"chat\":{\"max_prompt_tokens\":1048576,\"max_completion_tokens\":1048576}}}," +
+                           ",\"tokenizer_pack\":" + json_text(path_to_utf8(pack / "tokenizer")) + "}" + vision_row +
+                           ",\"limits\":{\"chat\":{\"max_prompt_tokens\":1048576,\"max_completion_tokens\":1048576}}}," +
                            (gguf_direct
                                 ? std::string{"\"options\":{\"max_context\":{\"default\":"} + std::to_string(ctx_default) +
                                       ",\"min\":" + std::to_string(ctx_min) + ",\"max\":" + std::to_string(ctx_max) + "},\"mtp\":{\"default\":" +
-                                      (mtp_default ? "true" : "false") + "},\"prefill\":{\"default\":\"auto\"},\"thinking\":{\"default\":\"high\"}}}\n"
+                                      (mtp_default ? "true" : "false") + "}," + vision_option +
+                                      "\"prefill\":{\"default\":\"auto\"},\"thinking\":{\"default\":\"high\"}}}\n"
                                 : std::string{"\"options\":{\"max_context\":{\"default\":131072,\"min\":4096,\"max\":1048576},\"kv\":{\"default\":\"int8\"},"} +
                                       "\"kv_resident\":{\"default\":32768,\"max\":262144},\"spec\":{\"default\":4},\"expert_cache\":{\"default\":\"auto\"}," +
-                                      "\"prefill\":{\"default\":\"auto\"},\"thinking\":{\"default\":\"high\"}}}\n");
+                                      vision_option + "\"prefill\":{\"default\":\"auto\"},\"thinking\":{\"default\":\"high\"}}}\n");
   return write_download_card(entry, card_name, card, error);
 }
 
@@ -1437,10 +1500,12 @@ bool DownloadManager::prepare(const std::size_t index, const HfDownload& downloa
 bool DownloadManager::native_prepare(const std::size_t index, std::string& error) {
   DownloadEntry entry;
   std::filesystem::path store;
+  bool vision = false;
   {
     std::lock_guard lock(mutex_);
     entry = cards_[index].entry;
     store = store_of(cards_[index]);
+    vision = cards_[index].vision && vision_offered(entry);
   }
   const auto version = settings_.seams.locate(store, entry.id);
   const auto tool = native_prepare_tool();
@@ -1468,6 +1533,7 @@ bool DownloadManager::native_prepare(const std::size_t index, std::string& error
                             .source = "download:" + entry.id, .pack = pack, .folder = shard.parent_path(), .model_id = model_id};
   if (ple != nullptr && ple->if_string() != nullptr && !ple->if_string()->empty() && shard_count <= 2) request.ple_gguf = *ple->if_string();
   if (entry.expert_profile) request.expert_profile = settings_.gguf_engine->parent_path() / "profiles" / path_from_utf8(*entry.expert_profile);
+  if (vision) request.mmproj = stored_file(*version, entry.mmproj->path);   // the picture encoder that came with it
   const auto card = card_for_pack(request);
   return write_download_card(entry, card.name, card.json, error);
 }
@@ -1663,10 +1729,12 @@ bool DownloadManager::write_download_card(const DownloadEntry& entry, const std:
 bool DownloadManager::gguf_card(const std::size_t index, std::string& error) {
   DownloadEntry entry;
   std::filesystem::path store;
+  bool vision = false;
   {
     std::lock_guard lock(mutex_);
     entry = cards_[index].entry;
     store = store_of(cards_[index]);
+    vision = cards_[index].vision && vision_offered(entry);
   }
   const auto version = settings_.seams.locate(store, entry.id);
   if (!version) {
@@ -1692,8 +1760,11 @@ bool DownloadManager::gguf_card(const std::size_t index, std::string& error) {
     error = "the model file's GGUF header could not be read";
     return false;
   }
+  std::optional<std::filesystem::path> encoder;   // the picture encoder that came with it
+  if (vision) encoder = stored_file(*version, entry.mmproj->path);
   const auto made = card_for_gguf(std::get<GgufMetadata>(header), {.folder = std::get<CanonicalRoot>(root).path(), .file = file,
-                                                                   .engine = *settings_.gguf_engine, .source = "download:" + entry.id});
+                                                                   .engine = *settings_.gguf_engine, .source = "download:" + entry.id,
+                                                                   .mmproj = std::move(encoder)});
   if (const auto* refused = std::get_if<CardError>(&made)) {
     error = refused->message;
     return false;

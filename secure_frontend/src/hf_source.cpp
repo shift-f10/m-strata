@@ -151,6 +151,8 @@ std::variant<std::string, std::string_view> hf_manifest_json(const HfDownload& d
     if (!is_hf_gguf_path(f.path)) return std::string_view{"every file must be a .gguf"};
     if (f.size == 0) return std::string_view{"every file has a size"};
     if (!lower_hex(f.sha256, 64)) return std::string_view{"every file has a SHA-256"};
+    if (!f.repo.empty() && !is_hf_repo(f.repo)) return std::string_view{"a file's repository must be owner/name"};
+    if (!f.commit.empty() && !is_hf_commit(f.commit)) return std::string_view{"a file's revision must be resolved to a commit"};
     if (f.mmproj) ++mmproj;
   }
   if (mmproj > 1U) return std::string_view{"at most one mmproj file"};
@@ -175,7 +177,7 @@ std::variant<std::string, std::string_view> hf_manifest_json(const HfDownload& d
     if (i != 0U) json += ',';
     json += "{\"path\":" + quoted(f.path) + ",\"role\":" + quoted(f.mmproj ? "mmproj" : "weights") +
             ",\"size\":" + std::to_string(f.size) + ",\"sha256\":" + quoted(f.sha256) + ",\"sources\":[" +
-            quoted(hf_file_url(d.repo, d.commit, f.path)) + "]}";
+            quoted(hf_file_url(f.repo.empty() ? d.repo : f.repo, f.commit.empty() ? d.commit : f.commit, f.path)) + "]}";
     if (!f.mmproj && !first_shard.has_value()) {
       const auto shards = gguf_shard_set(f.path);
       first_shard = shards.front();

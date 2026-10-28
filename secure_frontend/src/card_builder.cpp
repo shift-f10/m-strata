@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -119,6 +120,12 @@ std::variant<CardText, CardError> card_for_gguf(const GgufMetadata& metadata, co
   json += "},\n    \"roots\": {\"models\": ";
   append_json_string(&json, path_to_utf8(request.folder));
   json += "}";
+  const bool pictures = qwen && request.mmproj.has_value();   // the families upstream's engine reads pictures with
+  if (pictures) {
+    json += ",\n    \"vision\": {\"mmproj\": ";
+    append_json_string(&json, path_to_utf8(*request.mmproj));
+    json += "}";
+  }
   // Qwen's chat rows, as the download card had them: long prompts and answers (the engine's own context bounds them)
   if (qwen) json += ",\n    \"limits\": {\"chat\": {\"max_prompt_tokens\": 1048576, \"max_completion_tokens\": 1048576}}";
   json += "\n  },\n  \"options\": {\n";
@@ -127,6 +134,7 @@ std::variant<CardText, CardError> card_for_gguf(const GgufMetadata& metadata, co
   if (qwen) {
     json += std::string{"    \"mtp\": {\"default\": "} + (mtp ? "true" : "false") + "},\n";
     json += "    \"prefill\": {\"default\": \"auto\"},\n";
+    if (pictures) json += "    \"vision\": {\"default\": \"gpu\"},\n";   // upstream setup's --vision gpu
     json += "    \"thinking\": {\"default\": \"high\"}";
   } else {
     json += "    \"expert_vram\": {\"default\": \"auto\"},\n";
@@ -221,13 +229,32 @@ CardText card_for_pack(const PackedCardRequest& request) {
   // the MTP draft layer as upstream's setup runs it (--spec 4 --spec-min-p 0.5 --mtp <rt>; the options set the first two)
   if (request.mtp) args += ",\"--mtp\"," + text(path_to_utf8(*request.mtp));
   const std::string mtp_options = request.mtp ? "\"mtp\":{\"default\":true},\"spec_min_p\":{\"default\":0.5}," : "";
+  // the picture encoder (spec 2026-10-28): vision.mmproj, and Pictures on the GPU by default (upstream setup's --vision gpu)
+  const std::string vision_row = request.mmproj ? ",\"vision\":{\"mmproj\":" + text(path_to_utf8(*request.mmproj)) + "}" : "";
+  const std::string vision_option = request.mmproj ? "\"vision\":{\"default\":\"gpu\"}," : "";
   const std::string json =
       head + text(request.model_id) + ",\"args\":" + args + "]},\"roots\":{\"models\":" + text(path_to_utf8(request.folder)) +
-      "},\"limits\":{\"chat\":{\"max_prompt_tokens\":1048576,\"max_completion_tokens\":1048576}}}," +
+      "}" + vision_row + ",\"limits\":{\"chat\":{\"max_prompt_tokens\":1048576,\"max_completion_tokens\":1048576}}}," +
       "\"options\":{\"max_context\":{\"default\":131072,\"min\":4096,\"max\":1048576},\"kv\":{\"default\":\"int8\"}," +
-      "\"kv_resident\":{\"default\":32768,\"max\":262144}," + mtp_options + "\"spec\":{\"default\":4},\"expert_cache\":{\"default\":\"auto\"}," +
+      "\"kv_resident\":{\"default\":32768,\"max\":262144}," + mtp_options + vision_option + "\"spec\":{\"default\":4},\"expert_cache\":{\"default\":\"auto\"}," +
       "\"prefill\":{\"default\":\"auto\"},\"thinking\":{\"default\":\"high\"}}}\n";
   return CardText{request.name, EngineProfile::qwen, json};
+}
+
+std::optional<std::filesystem::path> find_mmproj(const std::filesystem::path& folder) {
+  std::optional<std::filesystem::path> found;
+  std::error_code ec;
+  for (std::filesystem::directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
+    const std::string name = path_to_utf8(it->path().filename());
+    if (name.size() < 11U || name.compare(name.size() - 5U, 5U, ".gguf") != 0) continue;
+    std::string start = name.substr(0, 6U);
+    for (auto& c : start) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::error_code type_ec;
+    if (start != "mmproj" || it->is_symlink(type_ec) || !it->is_regular_file(type_ec)) continue;
+    if (found) return std::nullopt;   // two encoders: never a guess
+    found = it->path();
+  }
+  return found;
 }
 
 std::optional<std::filesystem::path> find_mtp_runtime(const std::filesystem::path& folder) {

@@ -542,6 +542,8 @@ Every key (generated from the schema; `readme_config_table_matches_schema` keeps
 | `vision.threads` | integer | `0` | 0-256 | - | Encoder CPU threads (0: the tool's own default; cap added, C-1). |
 | `vision.ready_timeout_s` | integer | `300` | 0-86400 | - | Seconds the encoder gets to print READY (0: wait for ever, as at the pin). |
 | `vision.encode_timeout_s` | integer | `300` | 0-86400 | - | Seconds one image encoding may take (0: wait for ever, as at the pin). |
+| `vision.mmproj` | string | unset | - | - | Absolute path of the picture encoder (an mmproj GGUF) a model card's engine reads images with; a card row. |
+| `vision.gpu` | boolean | `false` | - | - | Encode pictures on the GPU (the encoder's --gpu; off: the CPU); a card row. |
 | `glm.thinking_budget` | integer | `32768` | 0-1000000000 | - | Thinking-token budget when a request names none (Maya's default 32768; 0 disables the budget). |
 | `glm.reasoning_effort` | string | unset | - | - | Thinking level when a request names none: none, low, high or max (Maya's canonical levels; Maya's aliases such as "medium" are not accepted here). |
 | `glm.fit_max_tokens` | boolean | `false` | - | - | Fit a request's output budget to the context room on the GLM side (Maya's default: false). |
@@ -615,6 +617,27 @@ under `<state>/vision` (owner-private) and is deleted when the request ends.
 exactly as at the pin (:2564-2567), and `vision.no_flash_attn` is the added
 spec §5.1 family flag. Real encode behaviour on real images is proven only by
 the owner-box acceptance kit.
+
+**Pictures on model cards (2026-10-28, spec
+`docs/superpowers/specs/2026-10-28-vision-for-cards-design.md`).** A qwen card
+(a Qwen3.8 pack or a Qwen3.6 GGUF) reads pictures with its own encoder file:
+the card rows `vision.mmproj` (absolute; it must pass the model folders' rule:
+a regular file, not a link, in a folder no other user may change unless
+`roots.allow_untrusted_media`) and `vision.gpu`, and the card option `vision`
+(Pictures: `gpu`, the default upstream's setup gives, `cpu` or `off`), which
+writes `vision.enabled` and `vision.gpu`. The launch adds `--vision` to the
+engine; the per-card runtime starts upstream's `strata-vision` beside the
+engine (`--mmproj`, `--model` the model's first GGUF, `--gpu`, and
+`vision.no_flash_attn` as `--flash-attn off`) with the model, and stops it
+with the model; a card whose encoder does not reach READY does not start. The
+other profiles read no pictures (their launch refuses `vision.enabled`). A
+download with the **Vision files** box ticked (`POST /v1/strata/downloads/start`
+with `"vision": true`; the list's `vision_bytes` is the encoder's size, 0
+where there is none) pulls the catalog's pinned `mmproj` as the manifest's
+`mmproj` file, from its own repository and revision, and the card names it;
+**Add a model** gives a qwen card the folder's one `mmproj*.gguf` (none, or
+two: none). The page attaches PNG, JPEG and WebP pictures while the running
+card's Pictures option is on, sent as `image_url` data URLs.
 
 **Constants.** Internal constants live in
 `include/secure_frontend/api_constants.hpp` (SP3) and `config_defaults.hpp`

@@ -303,8 +303,9 @@ HttpResponse CardRoutes::add(const std::string_view body) {
   const auto header = read_gguf_metadata(std::get<OpenedFile>(opened));
   if (!std::holds_alternative<GgufMetadata>(header)) return refused(ApiError::card_refused, "the file is not a GGUF model, or its header is damaged");
   if (const auto family = packed_family(std::get<GgufMetadata>(header))) return add_packed(*family, std::get<GgufMetadata>(header), root, *file);
-  const auto made = card_for_gguf(std::get<GgufMetadata>(header),
-                                  {.folder = root.path(), .file = *file, .engine = *settings_.engine, .source = "folder"});
+  // vision for cards (spec 2026-10-28): the folder's one mmproj*.gguf is the model's picture encoder (a qwen card's)
+  const auto made = card_for_gguf(std::get<GgufMetadata>(header), {.folder = root.path(), .file = *file, .engine = *settings_.engine,
+                                                                   .source = "folder", .mmproj = find_mmproj(root.path())});
   if (const auto* error = std::get_if<CardError>(&made)) return refused(ApiError::card_refused, error->message);
   return publish(std::get<CardText>(made));
 }
@@ -405,6 +406,8 @@ HttpResponse CardRoutes::add_packed(const PackedFamily family, const GgufMetadat
     if (ple != nullptr && ple->if_string() != nullptr && !ple->if_string()->empty() && shard_count <= 2) request.ple_gguf = *ple->if_string();
     request.folder = root.path();
     request.model_id = stem;
+    request.mmproj = find_mmproj(root.path());   // the model's picture encoder beside it (spec 2026-10-28)
+    if (request.mmproj) log("[strata] models: " + name + ": reads pictures with " + path_to_utf8(request.mmproj->filename()));
     // the bundled expert profile for the model's expert set: the original's 512 experts, the Coder's 256 (upstream's
     // setup gives the Coder expert-profile-coder.bin, every other Qwen3.8 model expert-profile.bin)
     const auto experts = metadata.integer("qwen4exp.expert_count");

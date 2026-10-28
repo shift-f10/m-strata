@@ -193,6 +193,9 @@ main { flex: 1; min-height: 0; display: flex; }
 .dl-card .st-badge { flex: none; }
 .dl-card__facts { font-size: var(--st-fs-sm); color: var(--st-ink-soft); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .dl-card__note { font-size: var(--st-fs-xs); color: var(--st-warn-text); }
+.dl-card__vision { align-items: flex-start; }
+.msg-pictures { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--st-s-2); margin-bottom: var(--st-s-1); }
+.msg-pictures img { max-width: min(220px, 60vw); max-height: 220px; border-radius: var(--st-r-md, 8px); border: 1px solid var(--st-line, rgba(0,0,0,.12)); object-fit: cover; }
 .dl-card__progress { font-size: var(--st-fs-sm); color: var(--st-ink-muted); font-variant-numeric: tabular-nums; }
 .dl-card__actions { display: flex; align-items: center; gap: var(--st-s-2); flex-wrap: wrap; margin-top: auto; padding-top: var(--st-s-1); }
 .dl-card .msg-error { font-size: var(--st-fs-sm); padding: 8px 12px; }

@@ -12,6 +12,8 @@
 #include "secure_frontend/canonical_path.hpp"
 #include "secure_frontend/gguf_metadata.hpp"
 #include "secure_frontend/subsystem_limits.hpp"
+#include "secure_frontend/engine_stdio_process.hpp"
+#include "secure_frontend/exit_status.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -35,7 +37,71 @@ TokenizerPackLoadResult gguf_tokenizer(const CanonicalRoot& models, const std::o
   return load_tokenizer_from_gguf(std::get<GgufMetadata>(header), mode);
 }
 
+// The encoder of a launch that reads images (spec 2026-10-28-vision-for-cards-design.md; SP5 M1 Task 11): the program
+// beside the engine - upstream's strata-vision, which the out folder builds from upstream/tools/vision, else an older kit's
+// maya-vision - and the scratch folder its pictures are staged in. A failure is the log line the boot used to print.
+std::variant<VisionPlan, std::string> plan_vision(const FrontendConfig& config, const ComposedLaunch& launch) {
+  // Ruling T12-j: ENC/QUIT names ride protocol lines space-separated, and the GENI line names the combined file by
+  // absolute path - a state path holding whitespace can never host the scratch dir.
+  const std::filesystem::path& state_dir = *config.roots.state;
+  if (state_dir.string().find_first_of(" \t") != std::string::npos) {
+    return std::string{"vision: the state directory path must not contain spaces."};
+  }
+  // Ruling T12-c: image scratch is <state>/vision, owner-only, and IS the child's cwd.
+  VisionPlan plan;
+  plan.scratch = state_dir / "vision";
+  if (!create_owner_only_directory(plan.scratch)) return std::string{"vision: unable to prepare the image scratch directory."};
+  const auto beside = config.engine.executable.path().parent_path();
+  bool upstream = true;
+  for (const char* name : {"strata-vision", "maya-vision"}) {
+    std::filesystem::path candidate = beside / name;
+#if defined(_WIN32)
+    candidate += L".exe";
+#endif
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(candidate, ec)) {
+      plan.executable = candidate;
+      break;
+    }
+    upstream = false;
+  }
+  if (plan.executable.empty()) return std::string{"vision: no strata-vision beside the engine executable."};
+  plan.arguments = compose_vision_arguments(VisionChildSpec{.mmproj = *launch.vision_mmproj, .model = *launch.vision_model,
+                                                            .threads = config.vision.threads, .max_tokens = config.engine.max_tokens,
+                                                            .no_flash_attn = config.vision.no_flash_attn, .gpu = config.vision.gpu,
+                                                            .upstream_encoder = upstream});
+  plan.no_new_privileges = config_defaults::kNoNewPrivilegesDefault && !config.engine.allow_new_privileges;
+  // The STRATA_VISION_READY_S / _ENCODE_S counterparts (0 = wait for ever, the pin's :291 rule).
+  plan.limits.policy.ready_timeout = std::chrono::milliseconds{std::chrono::seconds{config.vision.ready_timeout_s}};
+  plan.limits.encode_timeout = std::chrono::milliseconds{std::chrono::seconds{config.vision.encode_timeout_s}};
+  plan.max_side = config.vision.max_side;
+  plan.resident = config.vision.resident;
+  return plan;
+}
+
 }  // namespace
+
+ProcessFactory vision_process_factory(const VisionPlan& plan) {
+  // The engine's confinement family minus the per-generation cgroup delegation (recorded M1 gap); the environment stays
+  // an empty allowlist and the cwd is the scratch dir (T11-ee); the pin's reader_args carry no --serve (T11-ff).
+  return [exe = plan.executable, argv = plan.arguments, cwd = plan.scratch, nnp = plan.no_new_privileges](std::uint64_t) -> SpawnResult {
+    auto child = std::make_unique<EngineStdioProcess>();
+    EngineCommand command{.executable = exe, .arguments = argv, .environment = {}, .working_directory = cwd,
+                          .no_new_privileges = nnp, .kill_exit_code = kVisionKillExitCode, .insert_serve = false};
+    if (const auto error = child->start(command)) return SpawnFailure{error->message};
+    return child;
+  };
+}
+
+VisionRole make_vision_role(const VisionPlan& plan, ProcessFactory factory) {
+  VisionRole role;
+  role.supervisor = std::make_unique<VisionSupervisor>(std::move(factory), plan.limits);
+  VisionService::Limits limits;
+  limits.payload.max_side = plan.max_side;  // vision.max_side, the pre-decode probe (T12-c)
+  limits.scratch_dir = plan.scratch;
+  role.service = std::make_unique<VisionService>(*role.supervisor, std::move(limits));
+  return role;
+}
 
 std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& config, const bool expert) {
   // Derived once, before bind/spawn; each subsystem keeps its own const copy.
@@ -175,8 +241,17 @@ std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& 
                        .stream_keepalive = config.limits.http.stream_keepalive,
                        .vision = nullptr,
                        .monitor = nullptr};
+  // the picture encoder when this model reads images (the gate above)
+  std::optional<VisionPlan> vision;
+  if (schema_limits.vision_capable && launch.vision_model.has_value()) {
+    auto planned = plan_vision(config, launch);
+    if (auto* failure = std::get_if<std::string>(&planned)) {
+      return ComposeFailure{{std::move(*failure)}, "the picture encoder could not be set up (see the server log)", EXIT_FAILURE};
+    }
+    vision = std::get<VisionPlan>(std::move(planned));
+  }
   return ComposedModel{std::move(launch), std::move(tokenizer), std::move(model_id), std::move(model_aliases), std::move(chat),
-                       std::move(supervisor), std::move(plan)};
+                       std::move(supervisor), std::move(plan), std::move(vision)};
 }
 
 // Creates <state>/engine, the temp root and the CUDA cache owner-only and
@@ -200,19 +275,34 @@ bool prepare_state_dir(const std::filesystem::path& state_dir, const EngineEnvir
 }
 
 ModelRuntime::ModelRuntime(ComposedModel model, ProcessFactory factory, const GateLimits gate, ServeMonitor* monitor,
-                           std::shared_ptr<SupervisorClock> clock)
+                           std::shared_ptr<SupervisorClock> clock, ProcessFactory vision_factory)
     : model_id_(model.model_id),
       aliases_(model.aliases),
       tokenizer_(std::move(model.tokenizer)),
       supervisor_(model.supervisor, std::move(factory), std::move(clock)),
       port_(supervisor_),
       gate_(gate),
+      vision_resident_(!model.vision.has_value() || model.vision->resident),
+      vision_(model.vision.has_value()
+                  ? make_vision_role(*model.vision, vision_factory ? std::move(vision_factory) : vision_process_factory(*model.vision))
+                  : VisionRole{}),
       chat_(
-          [&model, monitor] {
+          [this, &model, monitor] {
             ChatRouteConfig chat = std::move(model.chat);
             chat.monitor = monitor;
+            chat.vision = vision_.service.get();  // nullptr for a text-only model: the route's image gate stays closed
             return chat;
           }(),
           port_, gate_, tokenizer_) {}
+
+bool ModelRuntime::start_vision() {
+  if (vision_.supervisor == nullptr || !vision_resident_) return true;
+  vision_.supervisor->start();
+  return vision_.supervisor->up();
+}
+
+void ModelRuntime::stop_vision() noexcept {
+  if (vision_.supervisor != nullptr) vision_.supervisor->stop();
+}
 
 }  // namespace secure_frontend
