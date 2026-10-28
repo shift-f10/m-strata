@@ -44,7 +44,14 @@ refused here, by name), `POST /v1/strata/key/rotate`. Nothing about a key is eve
 - **Start.** It starts `strata-secure-server` beside it with the same arguments it was given (so `--data-dir`, `--port`
   pass through), with no console window, its output written to `data/logs/server.log` (bounded, rotated). It reads the
   server's "Sign in: open http://127.0.0.1:PORT/#login=..." line and opens the page through it (the one-time link,
-  this PC only), on the Monitor tab.
+  this PC only). As built, the page opens on Chat, as in a browser.
+- **As built (2026-10-28).**
+  - Every start of the server gets the environment the window started with: reading a `--token-env` key scrubs the
+    variable from the reader, so a restart would otherwise lose it.
+  - A restarted server's link reaches the page as a fragment change, so the page now claims a link on `hashchange`
+    as well as at load. It shows the key once only when the key is new to the tab.
+  - On Linux the tray menu is refreshed every 3 s (AppIndicator exports a fixed menu), and a middle click opens the
+    window.
 - **Window.** The page in WebView2 (Windows) / WebKitGTK (Linux). Navigation stays on the server's own origin; a link
   elsewhere opens in the default browser. The web view's data lives in `data/state/window` (owner-only). Closing the
   window hides it to the tray.

@@ -102,10 +102,21 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   their text). **About:** the engines this folder was built with and this PC's hardware. Light and dark; fits a phone.
 - **OpenAI-compatible API:** `/v1/chat/completions` (streamed or not, with usage and `reasoning_effort`),
   `/v1/models`, `/health` and `/metrics`.
+- **Settings tab:** the API key (show, copy, rotate), where the server listens and which PCs may use it, limits and
+  timeouts, the download folders, and the model folders, email alerts and web search.
+
+**The window app**
+
+- **`strata-window`** (a build with `window`) is the server in a window. It runs the server as its child, signs you
+  in with the one-time link and shows the page. Closing the window keeps the server running in the tray; the tray
+  icon's menu opens the window, starts or stops a model, restarts the server and exits (the model stops in order
+  first). Windows uses Microsoft Edge WebView2, part of Windows 10 and 11; Linux uses WebKitGTK and a tray icon
+  (Ayatana AppIndicator).
 
 **Security**
 
-- An API key on every route, shown once through a one-time login link; `strata key show` and `key rotate`.
+- An API key on every route, shown once through a one-time login link; the Settings tab or `strata key show` and
+  `key rotate`.
 - Loopback by default: serving the LAN, wildcard binds and model control from other PCs are separate opt-ins (control
   can be limited to the hosts and subnets you list), with Host and Origin checks and a strict page policy.
 - The engine runs as a private child with no shell and a fixed environment. The server tokenizes every prompt itself
@@ -167,7 +178,8 @@ by the server's tests (with fake engines where a GPU would be needed), but have 
 | **DeepSeek-V4.1 and MiniMax-M3.1** | Built and wired, not run end to end yet. Their GGUFs are large (DeepSeek's 277-508 GB, MiniMax's from 93 GB): with 96 GB of RAM most of their experts would come from disk, so a run here shows whether they work, not how fast they can be. |
 | **Other GPU makers** | Only NVIDIA CUDA builds are made and run. Upstream's AMD (HIP) and Intel (SYCL) paths are in the tree but neither built nor tested here. |
 | **Other NVIDIA generations** | Every speed and every run is from one RTX 4080 SUPER (compute capability 8.9). Other generations build with `--cuda-arch` but have not been run here; nor have GPUs with less than 16 GB, or PCs with less than 96 GB of RAM. |
-| **Linux** | Every change is written for Linux and Windows, but the newest work (the GUI-first install, the newer engines, web search, pictures, several GPUs) has been built and run on Windows only. |
+| **Linux** | Every change is written for Linux and Windows, but the newest work (the GUI-first install, the newer engines, web search, pictures, several GPUs, the window app) has been built and run on Windows only. |
+| **The window app on Linux** | `strata-window`'s Linux window (GTK 3, WebKitGTK 4.1, Ayatana AppIndicator) is written but has been neither compiled nor run: the development system has no Linux desktop. The part it shares with Windows (the server child, the sign-in, the log, the tray's requests) is built and tested on both. The Windows window was run here; its tray menu was driven through Windows' own messages and UI Automation, not by hand. |
 
 ## Install
 
@@ -179,7 +191,7 @@ by the server's tests (with fake engines where a GPU would be needed), but have 
 - To build: **Visual Studio 2022 Build Tools** with the C++ workload (Windows) or GCC 13+ / Clang 17+ (Linux), the
   **CUDA Toolkit** (13.0 tested), **Python 3.10+** (the build script uses the standard library only), **CMake 3.28+**
   and **Ninja** (`pip install cmake ninja` is enough), and **Git**. On Linux, email alerts also need OpenSSL's
-  development files.
+  development files, and the window GTK 3's, WebKitGTK 4.1's and libayatana-appindicator3's.
 
 ### Get the code
 
@@ -213,7 +225,7 @@ On Linux:
 | `--ggml-dir DIR` | The pinned llama.cpp checkout (or set `STRATA_GGML_DIR`). |
 | `--cuda-root DIR` | The CUDA toolkit (default: `CUDA_PATH` / `CUDA_HOME`). |
 | `--cuda-arch native` | GPU targets: `native` (this PC's GPU) or a list such as `"86;89;120"`. |
-| `--with email,search` | Optional features, off otherwise: email alerts, and web search for the models. |
+| `--with email,search,window` | Optional features, off otherwise: email alerts, web search for the models, and `strata-window`, the server in a window with a tray icon. |
 | `--without maya,raon1,vision` | Leave those engine families, or the picture encoder (`vision`), out (strata, Gemma 4 and flint are always built). |
 | `--no-cuda-runtime` | Do not bundle cuBLAS (the PC running it then needs a CUDA toolkit). |
 | `--jobs N` | Parallel compile jobs (default: the CPU count). |
@@ -221,11 +233,25 @@ On Linux:
 | `--plan` | Print the commands only. |
 
 The first build compiles the CUDA engine and takes a while; later builds are incremental (`out/make-build`). The out
-folder holds only what runs: `strata-secure-server`, `strata`, `strata-search` (with `--with search`), `engine/` (the
+folder holds only what runs: `strata-secure-server`, `strata`, `strata-search` (with `--with search`), `strata-window`
+(with `--with window`), `engine/` (the
 launcher, one library per family, `strata-prepare`, `strata-vision` (upstream's picture encoder, built from
 `upstream/tools/vision` with the same pinned llama.cpp), the bundled cuBLAS, the expert profiles and, with the Maya
 families, `templates/minimax-m3.1/`), `README.txt`, `config.example.json`, `LICENSE` and `NOTICE.md`. It is made
 owner-only. Copy or move the whole folder anywhere.
+
+On Windows the window needs Microsoft's WebView2 SDK (BSD-3-Clause; its header and static loader), unpacked into
+`.toolchains\webview2\1.0.4314.35` in the repository folder (or set `SECURE_FRONTEND_WEBVIEW2_DIR`). Its SHA-256 is
+`90778deb1b77e36292828b4b5833c9255c27533f40e0ddd55891ae718944edc4` (check it with
+`certutil -hashfile webview2.zip SHA256` before unpacking):
+
+```bat
+curl.exe -L -o webview2.zip https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4314.35/microsoft.web.webview2.1.0.4314.35.nupkg
+```
+
+```bat
+mkdir .toolchains\webview2\1.0.4314.35 && tar -xf webview2.zip -C .toolchains\webview2\1.0.4314.35
+```
 
 ## Configure
 
@@ -393,9 +419,18 @@ engines:
 
 Open `http://127.0.0.1:8080/` and sign in with the API key (or the login link). **Chat** talks to the running model
 (with its reasoning shown separately, and a note of what it searched for), **Monitor** shows the GPU, CPU, memory and
-speed and the recent requests with the model each ran on (Stopped when no model runs), **Models** manages models and
-settings, and **About** lists the engines this folder was built with (`engine/build.json`, which `make` writes) and
+speed and the recent requests with the model each ran on (Stopped when no model runs), **Models** manages models,
+**Settings** holds the API key and the server's settings, and **About** lists the engines this folder was built with (`engine/build.json`, which `make` writes) and
 this PC's CPU, memory, GPU and system.
+
+### The window
+
+A build with `--with window` has `strata-window` beside the server. Start it instead of the server, with the same
+options (`.\strata-window.exe`, `.\strata-window.exe --port 9090`, ...): it starts the server without a console,
+opens the page signed in, and puts an icon in the tray. Closing the window hides it; the server keeps running. The
+tray icon's menu (right-click; on Linux, its menu) opens the window, starts or stops a model, restarts the server
+(how saved settings take effect) and exits. The server's output goes to `data/logs/server.log` (two files of at most
+4 MiB; the one-time login link is never written there). Starting it a second time shows the running window.
 
 ### The API (OpenAI-compatible)
 

@@ -102,10 +102,10 @@
   }
 
   // ---------------------------------------------------------------- API
-  function api(path, options) {
+  function api(path, options, withoutKey) {
     var init = options || {};
     var headers = init.headers || {};
-    if (state.key) { headers.Authorization = "Bearer " + state.key; }
+    if (state.key && !withoutKey) { headers.Authorization = "Bearer " + state.key; }
     init.headers = headers;
     init.cache = "no-store";
     init.credentials = "omit";
@@ -207,10 +207,10 @@
   // is exchanged once, from this PC, for the API key (POST /v1/strata/login-link, no key needed). null: refused.
   async function claimLoginLink(code) {
     try {
-      // through the one API helper; no key is held yet, so none is sent
+      // through the one API helper, never with a key (the route takes none; after a rotation the old one is dead)
       var response = await api("/v1/strata/login-link", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: code })
-      });
+      }, true);
       if (!response.ok) { return null; }
       var body = await response.json();
       return body && typeof body.key === "string" && body.key ? body.key : null;
@@ -3085,6 +3085,27 @@
     $("sign-out").addEventListener("click", function () { signOut(""); });
   }
 
+  // A one-time login link in the address - at load, or opened later in this tab (strata-window does so after a server
+  // restart: a fragment change, no reload) - the code leaves the address bar at once, then buys this tab the key. true
+  // when there was one. A failed link while signed in keeps the session (a notice only).
+  async function claimFromAddress(signedIn) {
+    var link = /^#login=([A-Za-z0-9_-]{16,128})$/.exec(window.location.hash || "");
+    if (!link) { return false; }
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) { /* kept */ }
+    var before = state.key;
+    var claimed = await claimLoginLink(link[1]);
+    if (claimed) {
+      await signIn(claimed);
+      // shown once when new to this tab (a first sign-in, a rotation's new key), not for a restart's same key
+      if (state.key === claimed && claimed !== before) { showKeyOnce(claimed); }
+      return true;
+    }
+    var expired = "That login link has expired or was already used. Restart the server for a new one, or sign in with your key.";
+    if (signedIn) { toast("error", expired); return true; }
+    showLogin(expired);
+    return true;
+  }
+
   async function start() {
     state.settings = Object.assign({}, DEFAULTS, load(SLOT_SETTINGS, {}));
     // Settings saved by the page's earlier Off / On control: off is none, on was high.
@@ -3096,19 +3117,8 @@
     if (state.history.length && state.history[state.history.length - 1].role === "user") { state.history.pop(); }
     wire();
     syncThemeIcon();
-    // A one-time login link: the code leaves the address bar at once, then buys this tab the key.
-    var link = /^#login=([A-Za-z0-9_-]{16,128})$/.exec(window.location.hash || "");
-    if (link) {
-      try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) { /* kept */ }
-      var claimed = await claimLoginLink(link[1]);
-      if (claimed) {
-        await signIn(claimed);
-        if (state.key === claimed) { showKeyOnce(claimed); }
-        return;
-      }
-      showLogin("That login link has expired or was already used. Restart the server for a new one, or sign in with your key.");
-      return;
-    }
+    window.addEventListener("hashchange", function () { claimFromAddress(!!state.key || state.keyless); });
+    if (await claimFromAddress(false)) { return; }
     var key = load(SLOT_KEY, null);
     if (typeof key === "string" && key) { await signIn(key); return; }
     try {

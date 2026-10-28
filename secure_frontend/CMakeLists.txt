@@ -22,6 +22,9 @@ option(SECURE_FRONTEND_TEST_HOOKS "Compile test-only hooks; never for shipped bi
 # name. `make --with email` turns it on; the repository's dev presets do.
 option(SECURE_FRONTEND_EMAIL_ALERTS "Build the optional email alerts (an SMTP client over TLS)" OFF)
 option(SECURE_FRONTEND_WEB_SEARCH "Build the optional web search (strata-search: an MCP server over a SearXNG instance)" OFF)
+# strata-window (spec 2026-10-28-server-window-design, Part 2): the server in a window with a tray icon. `make --with
+# window` turns it on; Windows needs the WebView2 SDK (SECURE_FRONTEND_WEBVIEW2_DIR), Linux GTK 3 and WebKitGTK 4.1.
+option(SECURE_FRONTEND_WINDOW "Build strata-window: the server in a window with a tray icon (WebView2 / WebKitGTK)" OFF)
 if(SECURE_FRONTEND_TEST_HOOKS)
     add_compile_definitions(SECURE_FRONTEND_TEST_HOOKS=1)
 endif()
@@ -830,6 +833,17 @@ secure_frontend_add_library(secure_frontend_config_routes SOURCES src/config_rou
     LINKS secure_frontend_server_cli secure_frontend_config_writer secure_frontend_model_cards secure_frontend_token_reader
           secure_frontend_api_core secure_frontend_paths)
 
+# strata-window's portable half (spec 2026-10-28-server-window-design, Part 2): the server's console lines, the web
+# view's navigation rule, the tray's model list and requests, the server it starts and its key, the server child.
+# Built and tested in every configuration; only the native windows wait for SECURE_FRONTEND_WINDOW. Windows starts
+# the server through the engine's launch_in_job (src/win_child_launch.cpp, in the stdio process library).
+secure_frontend_add_library(secure_frontend_window_shell SOURCES src/window_shell.cpp
+    LINKS secure_frontend_first_start secure_frontend_server_cli secure_frontend_model_cards secure_frontend_token_reader
+          secure_frontend_api_client secure_frontend_json)
+if(WIN32)
+    target_link_libraries(secure_frontend_window_shell PUBLIC secure_frontend_engine_stdio_process)
+endif()
+
 secure_frontend_add_library(secure_frontend_server_bootstrap
     SOURCES src/server_bootstrap.cpp
     LINKS secure_frontend_config secure_frontend_token_reader secure_frontend_secrets
@@ -923,6 +937,44 @@ install(TARGETS strata-secure-server strata RUNTIME DESTINATION . COMPONENT runt
 if(SECURE_FRONTEND_WEB_SEARCH)
     # web search: strata-search beside the server, which runs it from its own folder
     install(TARGETS strata-search RUNTIME DESTINATION . COMPONENT runtime)
+endif()
+if(SECURE_FRONTEND_WINDOW)
+    # strata-window (spec 2026-10-28-server-window-design, Part 2): the server in a window with a tray icon. Windows:
+    # WebView2 through Microsoft's SDK (its header and static loader; BSD-3-Clause), the runtime being part of Windows
+    # 10 and 11; MSVC builds it (the handlers use __uuidof). Linux: GTK 3, WebKitGTK 4.1 and Ayatana AppIndicator.
+    if(WIN32)
+        set(SECURE_FRONTEND_WEBVIEW2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.toolchains/webview2/1.0.4314.35" CACHE PATH
+            "The unpacked Microsoft.Web.WebView2 NuGet package (strata-window)")
+        if(NOT EXISTS "${SECURE_FRONTEND_WEBVIEW2_DIR}/build/native/include/WebView2.h")
+            message(FATAL_ERROR "strata-window needs the WebView2 SDK: unpack the Microsoft.Web.WebView2 NuGet package and "
+                                "set SECURE_FRONTEND_WEBVIEW2_DIR to its folder")
+        endif()
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64")
+            set(_webview2_arch arm64)
+        elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
+            set(_webview2_arch x64)
+        else()
+            set(_webview2_arch x86)
+        endif()
+        add_executable(strata-window WIN32 src/window_main_win32.cpp)
+        target_compile_definitions(strata-window PRIVATE UNICODE _UNICODE)
+        target_include_directories(strata-window SYSTEM PRIVATE "${SECURE_FRONTEND_WEBVIEW2_DIR}/build/native/include")
+        target_link_libraries(strata-window PRIVATE secure_frontend_window_shell
+            "${SECURE_FRONTEND_WEBVIEW2_DIR}/build/native/${_webview2_arch}/WebView2LoaderStatic.lib"
+            ole32 shell32 user32 gdi32 advapi32 version shlwapi)
+    else()
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(STRATA_WINDOW_GTK REQUIRED gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1)
+        add_executable(strata-window src/window_main_gtk.cpp)
+        # the toolkit's own headers are not held to this tree's -Werror
+        target_include_directories(strata-window SYSTEM PRIVATE ${STRATA_WINDOW_GTK_INCLUDE_DIRS})
+        target_compile_options(strata-window PRIVATE ${STRATA_WINDOW_GTK_CFLAGS_OTHER})
+        target_link_libraries(strata-window PRIVATE secure_frontend_window_shell ${STRATA_WINDOW_GTK_LINK_LIBRARIES})
+    endif()
+    target_compile_features(strata-window PRIVATE cxx_std_20)
+    secure_frontend_set_warnings(strata-window)
+    add_dependencies(strata-window strata-secure-server)  # the window runs the server beside it
+    install(TARGETS strata-window RUNTIME DESTINATION . COMPONENT runtime)
 endif()
 if(MSVC)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION .)
@@ -1426,7 +1478,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         alert_routes_need_their_handler_and_the_key search_routes_need_their_handler_and_the_key
         config_routes_need_their_handler_and_the_key
         web_ui_cards_from_this_pc_and_the_danger_zone web_ui_downloads_go_to_a_chosen_folder
-        web_ui_models_tab_calibrates web_ui_has_email_alert_settings web_ui_has_server_settings web_ui_has_web_search_settings web_ui_has_model_folder_setting
+        web_ui_models_tab_calibrates web_ui_has_email_alert_settings web_ui_has_server_settings web_ui_claims_a_login_link_at_load_and_on_hashchange
+        web_ui_has_web_search_settings web_ui_has_model_folder_setting
         web_ui_monitor_shows_stopped_and_the_model web_ui_about_lists_the_engines_and_this_pc
         web_ui_search_box_limit_note_and_engine_table web_ui_chat_can_turn_search_off
         login_link_route_answers_without_the_key_only_when_on
@@ -2093,6 +2146,26 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_config_routes_tests
         the_settings_are_listed_with_their_rules a_save_is_held_to_the_start_up_rules the_key_is_rotated_in_its_store
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+
+    # strata-window's portable half (spec 2026-10-28-server-window-design, Part 2), the server child driven with a fake
+    # server that stops on Ctrl-Break / SIGTERM as the real one does.
+    add_executable(secure_frontend_fake_server_child tests/fake_server_child_main.cpp)
+    target_compile_features(secure_frontend_fake_server_child PRIVATE cxx_std_20)
+    target_include_directories(secure_frontend_fake_server_child PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    secure_frontend_set_warnings(secure_frontend_fake_server_child)
+    secure_frontend_add_test_executable(secure_frontend_window_shell_tests tests/window_shell_test.cpp
+        secure_frontend_window_shell secure_frontend_first_start secure_frontend_token_reader)
+    secure_frontend_add_cases(secure_frontend_window_shell_tests
+        the_sign_in_link_is_read_and_never_logged the_listening_line_names_the_pages_origin
+        navigation_stays_on_the_pages_origin the_tray_lists_the_launchers_cards requests_carry_the_key_only_in_its_header
+        the_log_rotates_at_its_bound the_window_starts_the_server_beside_it)
+    secure_frontend_add_cases(secure_frontend_window_shell_tests
+        the_servers_key_is_read_as_key_show_reads_it LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+    secure_frontend_add_cases(secure_frontend_window_shell_tests
+        the_server_child_stops_in_order a_server_that_ignores_the_stop_is_killed a_server_that_exits_is_reported
+        a_missing_server_is_a_message every_start_gets_the_windows_first_environment
+        ARGS $<TARGET_FILE:secure_frontend_fake_server_child> TIMEOUT 120 LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+    add_dependencies(secure_frontend_window_shell_tests secure_frontend_fake_server_child)
 
     secure_frontend_add_test_executable(secure_frontend_about_info_tests tests/about_info_test.cpp secure_frontend_about_info)
     secure_frontend_add_cases(secure_frontend_about_info_tests

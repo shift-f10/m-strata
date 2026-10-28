@@ -344,6 +344,34 @@ In a build with web search the tab also holds **Web search**: on/off, the SearXN
 searches per answer and the time limit, Save, and a test search through the saved settings that shows what a model
 reads. A chat reply notes what it searched for.
 
+### strata-window: the server in a window with a tray icon (2026-10-28)
+
+`-DSECURE_FRONTEND_WINDOW=ON` (`make.py --with window`) builds `strata-window`
+(spec `docs/superpowers/specs/2026-10-28-server-window-design.md`, Part 2). It takes the server's own options and
+refuses `init`, `--check` and `--help`, which stay with `strata-secure-server`.
+
+- **The server.** It runs `strata-secure-server` beside it as a child: no console window, the environment the window
+  started with (a `--token-env` variable included, on every start), and its stdout and stderr read as lines.
+- **The page.** It opens the server's one-time login link in its own view, and the page's own sign-in when the server
+  prints no link. A restarted server's new link is claimed in place: the page claims a link on `hashchange` too, and
+  shows the key once only when it is new to the tab.
+- **The log.** Every other line goes to `<data>/logs/server.log` (two files of at most 4 MiB); the link never does.
+- **The tray.** Its menu offers Open M-Strata, Start or Stop for each card (`GET /v1/strata/models`, then
+  `POST .../start` with the card's name only, so its remembered options apply, or `.../stop`), Restart the server and
+  Exit. The requests go to the server's loopback address with the key read as `strata key show` reads it.
+- **Stopping.** Restart and Exit stop the server as Ctrl-Break or SIGTERM would, with 60 s before it is killed. The
+  server also ends with the window: a kill-on-close Job on Windows, the parent-death signal on Linux.
+- **The window.** Closing it hides it. A second start shows the running window. The view stays on the page's origin;
+  other addresses open in the default browser, and anything else is refused.
+- **Windows:** WebView2, through the SDK in `SECURE_FRONTEND_WEBVIEW2_DIR` (default
+  `../.toolchains/webview2/1.0.4314.35`). It is built with MSVC, since the handlers use `__uuidof`. The view's profile
+  is in `<data>/state/window`.
+- **Linux:** GTK 3, WebKitGTK 4.1 and Ayatana AppIndicator, found by pkg-config. The tray menu is refreshed every
+  3 s, and a middle click on the icon opens the window.
+- **Tests:** the shared part (`window_shell.hpp`: the console lines, navigation, the tray's list and requests, the key,
+  the log, the server child) is built and tested in every configuration (`secure_frontend_window_shell_tests`,
+  driving `secure_frontend_fake_server_child`); the Linux runs come from CI.
+
 ## Runnable smoke server
 
 `secure-frontend-smoke` is a local, privacy-preserving test server. It serves

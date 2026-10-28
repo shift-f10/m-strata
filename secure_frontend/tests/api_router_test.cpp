@@ -595,6 +595,24 @@ void web_ui_has_server_settings() {
          "a folder setting has Choose, through the folder picker");
 }
 
+// A one-time login link is claimed at load and also when it arrives in an open tab's address (strata-window opens a
+// restarted server's new link in the page it shows: a fragment change, no reload - after a key rotation the old key
+// no longer works, so the new link must be claimed). A failed link while signed in keeps the session.
+void web_ui_claims_a_login_link_at_load_and_on_hashchange() {
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  expect(js.find("async function claimFromAddress(signedIn) {") != std::string::npos, "one claim for both");
+  expect(js.find("if (await claimFromAddress(false)) { return; }") != std::string::npos, "at load");
+  expect(js.find("window.addEventListener(\"hashchange\", function () { claimFromAddress(!!state.key || state.keyless); });") !=
+             std::string::npos,
+         "and when a new link arrives in the address");
+  expect(js.find("if (signedIn) { toast(\"error\", expired); return true; }") != std::string::npos,
+         "a failed link while signed in keeps the session");
+  // a restart's link buys the same key: the key is shown once only when it is new to this tab (a rotation's new key)
+  expect(js.find("var before = state.key;") != std::string::npos &&
+             js.find("if (state.key === claimed && claimed !== before) { showKeyOnce(claimed); }") != std::string::npos,
+         "the key dialog only for a key new to this tab");
+}
+
 // GUI-first start-up (spec 2026-10-27 §5a): a Settings sub-tab with the email alerts - shown only when the server has
 // them (its alerts route answers; a build without them answers 404) - the IONOS preset, which alerts, the password
 // (a password field, saved on its own and never shown again), Save and "Send a test email", and a note that the
@@ -1605,6 +1623,7 @@ int main(int argc, char** argv) {
       {"web_ui_models_tab_calibrates", web_ui_models_tab_calibrates},
       {"web_ui_has_email_alert_settings", web_ui_has_email_alert_settings},
       {"web_ui_has_server_settings", web_ui_has_server_settings},
+      {"web_ui_claims_a_login_link_at_load_and_on_hashchange", web_ui_claims_a_login_link_at_load_and_on_hashchange},
       {"web_ui_has_web_search_settings", web_ui_has_web_search_settings},
       {"web_ui_has_model_folder_setting", web_ui_has_model_folder_setting},
       {"web_ui_monitor_shows_stopped_and_the_model", web_ui_monitor_shows_stopped_and_the_model},

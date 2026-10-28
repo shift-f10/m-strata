@@ -280,6 +280,75 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z4 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+The spec's Part 2, `strata-window`: the server in a window with a tray icon (the owner: "instead of a console application,
+we should make it into a window application ... minimized into the tray that has the start and stop models menu").
+
+- **Portable half, every configuration** (`window_shell.hpp/.cpp`, library `secure_frontend_window_shell`):
+  - the server's sign-in and listening lines (a wildcard bind opened on loopback), and the log rule (no line holding a
+    login code);
+  - the web view's navigation rule (stay, browser, refuse; user@host refused);
+  - the tray's model list (`GET /v1/strata/models`) and the start body (the card's name only, so its remembered
+    options apply);
+  - loopback requests (`LoopbackStreamConnection`, the key in the Authorization header only);
+  - `server_setup` (the server's own command-line parser; `init`, `--check` and `--help` refused; the data folder
+    found as the server finds it);
+  - `server_key`, read as `strata key show` reads it (`card_less_server_config` for a cards config, else `validate()`);
+  - `RotatingLog` (two files of 4 MiB, 0600 on POSIX);
+  - `ServerChild`. On Windows it uses the engine's `launch_in_job`: a kill-on-close Job, no console, the pipe for both
+    stdout and stderr, and it stops through Ctrl-Break from the child's own console (`AttachConsole`). On Linux:
+    fork/execve, `PR_SET_PDEATHSIG`, SIGTERM. In both, one reader thread reaps the child, and stop() kills it after
+    the grace period.
+
+  Tests: `secure_frontend_window_shell_tests`, 13 cases, with `secure_frontend_fake_server_child`. RED was shown by
+  disabling a line each for the sign-in log rule, the Ctrl-Break, the user@host refusal and the card-less rule, and
+  through the old behaviour for the login-code format and the restart environment.
+- **Windows window** (`window_main_win32.cpp`, `SECURE_FRONTEND_WINDOW`, MSVC):
+  - WebView2 through the SDK in `.toolchains/webview2/1.0.4314.35`: the static loader, and COM handlers from our own
+    template (no WRL);
+  - a drawn icon; the window hides on close, and one window runs per data folder (named mutex);
+  - the tray menu (Open, a Start or Stop per card, Restart the server, Exit), with Restart and Exit stopping the server
+    on a thread of their own;
+  - the view's profile in `<data>/state/window`; a page of its own when the server ends.
+- **Linux window** (`window_main_gtk.cpp`: GTK 3, WebKitGTK 4.1, Ayatana AppIndicator via pkg-config): written to
+  mirror the Windows one, but **not compiled or run** (no Linux desktop here). The portable half covers what they
+  share.
+- **Run here and checked** (dev server from this build, scratch data folder, dev key, a demo card on the test fake
+  engine, WebView2's DevTools port read by a socket CDP client, the tray menu opened by its callback message and
+  driven by keys posted to the menu window):
+  - the server ran as the window's child;
+  - the page signed itself in with the one-time link, and `server.log` holds no login code;
+  - closing hid the window, the server kept running, and Open showed the window again;
+  - the tray listed the card and its Start reached the server ("start Demo-Q8_0 ... (loopback client)"; the card then
+    failed on its 4-byte placeholder model, as expected);
+  - Restart gave a new server, and the page signed in with the new link with no key dialog;
+  - Exit ended the window and its server in seconds (an orderly stop, not the 60 s kill).
+- **Three bugs the run found, each fixed with a test first:**
+  - The window took only `[A-Za-z0-9-]` login codes; the server's are base64url (43 characters, `_` among them), so
+    the window ignored the real link. It now takes the page's rule: 16 to 128 of `A-Z a-z 0-9 _ -`.
+  - Restart lost `--token-env`, because `read_token` scrubs that variable from the reader (the window, for the tray's
+    key). `ServerSetup::environment` keeps the window's first environment, and every start gets it.
+  - A restarted server's link changed only the fragment, so the page never claimed it. The page now claims a link on
+    `hashchange` too (`claimFromAddress`; the claim never sends a key), and shows the key only when it is new to the
+    tab. Test: `web_ui_claims_a_login_link_at_load_and_on_hashchange`.
+- **make.py:**
+  - `--with window` (`-DSECURE_FRONTEND_WINDOW`; `strata-window(.exe)` in the layout);
+  - README.txt's Window paragraph;
+  - README.txt's Settings line now names the Settings tab (it said Models > Settings).
+
+  Test: `test_the_window_is_built_only_when_asked`, RED then GREEN; tools/secure `test_make.py` 22/22.
+- **Licences:** NOTICE.md carries the WebView2 SDK's BSD-3-Clause notice (the static loader is in
+  `strata-window.exe`). PROVENANCE records the package (sha256, size, source) and says its NOTICE.txt components
+  belong to the package's .NET tools, which are not linked.
+- **Full suites:** ON 1291/1294 (the two release-only checks and `idle_unload_respawns_before_the_next_request`, as
+  before; the window target built with the dev tree's `SECURE_FRONTEND_WINDOW=ON`); OFF 1261/1264 (the same three;
+  the 13 window-shell cases ran there too).
+- **Docs:** README (features, build, the window, caveats), secure_frontend README, threat model (the window app and its
+  residual), the spec's as-built notes.
+- **Not done:** the Linux window is not compiled; MSYS2 clang does not build the window (`__uuidof` on WebView2's
+  interfaces); the WebView2-runtime-missing path and several monitors at different DPIs were not tried.
+
 ### Claude Code session, 2026-10-28 z3 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 The owner: "Push them to origin and proceed to next phase" (`ca9d7f7b` pushed; the next phase is the window app and its
