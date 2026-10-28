@@ -10,6 +10,7 @@
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace secure_frontend {
 namespace {
@@ -54,6 +55,19 @@ constexpr ModelOptionSpec choice_option(const std::string_view name, const std::
   spec.choices = choices;
   return spec;
 }
+
+// Multi-GPU like upstream (owner 2026-10-28): the GPUs a card runs on, as nvidia-smi numbers them - upstream's "gpu"
+// (serve/server.py gpu_list: several GPUs split the model's layers). The engines that split take up to 16; our Gemma 4
+// and flint engines run on one (their --gpu uses the first).
+constexpr ModelOptionSpec devices_option(const std::string_view help, const std::int64_t most) {
+  ModelOptionSpec spec = make_spec("gpus", Kind::devices, "GPUs", help);
+  spec.minimum = 1;
+  spec.maximum = most;
+  return spec;
+}
+constexpr ModelOptionSpec kGpus =
+    devices_option("The graphics cards this model runs on (auto: the first); two or more split its layers across them", 16);
+constexpr ModelOptionSpec kOneGpu = devices_option("The graphics card this model runs on (auto: the first); this engine uses one", 1);
 
 // upstream/src/program/generate.cpp:3148-3151 (--kv; "q4" is only an alias of q4_0).
 constexpr std::array<std::string_view, 4> kQwenKv{"fp16", "int8", "q4_0", "k8v4"};
@@ -114,7 +128,7 @@ constexpr ModelOptionSpec kWebSearch =
 // draft must reach, core/mtp.cpp:1689); --expert-cache :2541-2544 (auto or a count of expert blobs
 // in VRAM, >= -1 :3304; at most the 48 x 512 experts there are, core/geometry.hpp:25/:53);
 // --prefill :2558-2565 (auto or a chunk of N prompt tokens; auto's largest is 32,768, :2564).
-constexpr std::array<ModelOptionSpec, 16> kQwenOptions{{
+constexpr std::array<ModelOptionSpec, 17> kQwenOptions{{
     listed(integer_option("max_context", "Context length",
                           "Tokens of context the engine allocates; past the trained 256K the engine stretches the model with "
                           "YaRN rope scaling (experimental, upstream's own rule)",
@@ -145,11 +159,12 @@ constexpr std::array<ModelOptionSpec, 16> kQwenOptions{{
                   "Read pictures with the model's picture encoder: on the GPU (faster, takes about 1 GB of VRAM), on the CPU, or off",
                   kVisionModes),
     kWebSearch,
+    kGpus,
 }};
 
 // Our strata-gemma4-engine (strata_gemma4): the bounds are kGemma4Flags (engine_arguments.cpp). Web search since
 // 2026-10-28 (Gemma 4's own tool form).
-constexpr std::array<ModelOptionSpec, 9> kGemmaOptions{{
+constexpr std::array<ModelOptionSpec, 10> kGemmaOptions{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (up to the model's trained 256K)",
                           1, 262144),
            kGemmaContexts),
@@ -162,11 +177,12 @@ constexpr std::array<ModelOptionSpec, 9> kGemmaOptions{{
     kTopK,
     kMinP,
     kWebSearch,
+    kOneGpu,
 }};
 
 // multiengine_flint (strata_flint): the Gemma engine's options, bounded by kFlintFlags (engine_arguments.cpp); its
 // trained context is 256K too.
-constexpr std::array<ModelOptionSpec, 9> kFlintOptions{{
+constexpr std::array<ModelOptionSpec, 10> kFlintOptions{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (up to the model's trained 256K)",
                           1, 262144),
            kGemmaContexts),
@@ -179,6 +195,7 @@ constexpr std::array<ModelOptionSpec, 9> kFlintOptions{{
     kTopK,
     kMinP,
     kWebSearch,
+    kOneGpu,
 }};
 
 // Maya's GLM-5.3 engine (multiengine_maya, the glm53 profile, launcher spec D10 met 2026-10-27): its launch is
@@ -187,7 +204,7 @@ constexpr std::array<ModelOptionSpec, 9> kFlintOptions{{
 // GLM engine's vocabulary (glm.kv, glm_driver.cpp); no thinking option (the GLM prompt opens its think block always).
 constexpr std::array<std::int64_t, 4> kGlmContexts{8192, 32768, 65536, 131072};
 constexpr std::array<std::string_view, 4> kGlmKv{"fp16", "int8", "q8_0", "q4_0"};
-constexpr std::array<ModelOptionSpec, 7> kGlmOptions{{
+constexpr std::array<ModelOptionSpec, 8> kGlmOptions{{
     listed(integer_option("max_context", "Context length",
                           "Tokens of context the engine allocates (Maya's choices; past 32K the attention cache streams from RAM)",
                           1, 1048576),
@@ -199,13 +216,14 @@ constexpr std::array<ModelOptionSpec, 7> kGlmOptions{{
     kTopK,
     kMinP,
     kWebSearch,
+    kGpus,
 }};
 
 // raon-1-mini on our port of Maya's GLM engine (multiengine_raon1, the raon1 profile; owner 2026-10-27: its card from
 // its files): the same typed rows as glm53 (glm.max_context, glm.kv) up to the 256K it was served at; the cache in the
 // GLM engine's vocabulary (fp16 keeps raon1's exact F32 cache); KRAFTON's sampling as the card's defaults.
 constexpr std::array<std::int64_t, 5> kRaon1Contexts{8192, 32768, 65536, 131072, 262144};
-constexpr std::array<ModelOptionSpec, 7> kRaon1Options{{
+constexpr std::array<ModelOptionSpec, 8> kRaon1Options{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (its full attention keeps them all)",
                           1, 1048576),
            kRaon1Contexts),
@@ -216,13 +234,14 @@ constexpr std::array<ModelOptionSpec, 7> kRaon1Options{{
     kTopK,
     kMinP,
     kWebSearch,
+    kGpus,
 }};
 
 // DeepSeek-V4.1 on Maya's maya-ds4 (2026-10-27, spec 2026-10-27-strata-prepare-design §7.2): Maya's own choices - its
 // context menu (maya.py v1.1.30 DS4_CONTEXTS; maya-ds4's own --max-context, in engine.args by the maya_ds4 allowlist),
 // the thinking level (DS4_EFFORT "high"; DeepSeek's effort line: low 50, medium and high 75, none chat mode), sampling.
 constexpr std::array<std::int64_t, 6> kDeepseekContexts{32768, 65536, 131072, 262144, 524288, 1048576};
-constexpr std::array<ModelOptionSpec, 6> kDeepseekOptions{{
+constexpr std::array<ModelOptionSpec, 7> kDeepseekOptions{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (Maya's choices)", 1, 1048576),
            kDeepseekContexts),
     choice_option("thinking", "Thinking", "The thinking level for requests that name none (DeepSeek's reasoning effort)",
@@ -231,6 +250,7 @@ constexpr std::array<ModelOptionSpec, 6> kDeepseekOptions{{
     kTopP,
     kTopK,
     kMinP,
+    kGpus,
 }};
 
 // MiniMax-M3.1-Flash on Maya's maya-mm3 (owner 2026-10-28): Maya's own choices - its context menu (maya.py v1.1.30
@@ -240,7 +260,7 @@ constexpr std::array<ModelOptionSpec, 6> kDeepseekOptions{{
 constexpr std::array<std::int64_t, 6> kMinimaxContexts{32768, 65536, 131072, 262144, 524288, 1048576};
 constexpr std::array<std::string_view, 4> kMinimaxKv{"bf16", "int8", "fp8", "fp4"};
 constexpr std::array<std::string_view, 5> kMinimaxThinking{"auto", "none", "low", "medium", "high"};
-constexpr std::array<ModelOptionSpec, 5> kMinimaxOptions{{
+constexpr std::array<ModelOptionSpec, 6> kMinimaxOptions{{
     listed(integer_option("max_context", "Context length",
                           "Tokens of context the engine allocates (Maya's choices; past 256K not yet run end to end)", 1, 1048576),
            kMinimaxContexts),
@@ -249,6 +269,7 @@ constexpr std::array<ModelOptionSpec, 5> kMinimaxOptions{{
                   "The thinking level for requests that name none (auto: MiniMax decides when to think)", kMinimaxThinking),
     kTemperature,
     kTopP,
+    kGpus,
 }};
 
 constexpr std::array<std::string_view, 1> kDeepseekFlags{"--max-context"};
@@ -280,6 +301,7 @@ std::string_view kind_name(const Kind kind) {
     case Kind::decimal: return "decimal";
     case Kind::choice: return "choice";
     case Kind::integer_or_auto: return "integer_or_auto";
+    case Kind::devices: return "devices";
   }
   return "boolean";  // unreachable: every kind is a case above
 }
@@ -291,12 +313,32 @@ std::string_view type_reason(const Kind kind) {
     case Kind::decimal: return "must be a number";
     case Kind::choice: return "must be a string";
     case Kind::integer_or_auto: return "must be an integer or \"auto\"";
+    case Kind::devices: return "must be \"auto\" or GPU numbers 0-63 such as \"0,1\", none repeated";
   }
   return "has the wrong type";  // unreachable
 }
 
 std::string_view bounds_reason(const Kind kind) {
   return kind == Kind::choice ? "is not one of the card's choices" : "is outside the card's bounds";
+}
+
+// A devices value: "auto" (0 GPUs named), or 1-16 GPU numbers 0-63 separated by commas, none repeated; nullopt otherwise.
+std::optional<std::size_t> device_count(const std::string_view text) {
+  if (text == "auto") return 0U;
+  std::vector<unsigned> seen;
+  std::size_t begin = 0;
+  for (;;) {
+    const std::size_t comma = text.find(',', begin);
+    const std::string_view part = text.substr(begin, comma == std::string_view::npos ? std::string_view::npos : comma - begin);
+    if (part.empty() || part.size() > 2U || !std::all_of(part.begin(), part.end(), [](const char c) { return c >= '0' && c <= '9'; })) {
+      return std::nullopt;
+    }
+    const unsigned device = static_cast<unsigned>(part.size() == 1U ? part[0] - '0' : (part[0] - '0') * 10 + (part[1] - '0'));
+    if (device > 63U || std::find(seen.begin(), seen.end(), device) != seen.end() || seen.size() == 16U) return std::nullopt;
+    seen.push_back(device);
+    if (comma == std::string_view::npos) return seen.size();
+    begin = comma + 1U;
+  }
 }
 
 // A JSON value read as the option's kind (no bounds yet): a decimal takes an integer literal,
@@ -320,6 +362,11 @@ std::optional<ModelOptionValue> typed(const Kind kind, const JsonValue& json) {
       if (const auto* value = json.if_integer()) return ModelOptionValue{std::in_place_type<std::int64_t>, *value};
       if (const auto* value = json.if_string(); value != nullptr && *value == "auto") {
         return ModelOptionValue{std::in_place_type<std::string>, "auto"};
+      }
+      break;
+    case Kind::devices:
+      if (const auto* value = json.if_string(); value != nullptr && device_count(*value)) {
+        return ModelOptionValue{std::in_place_type<std::string>, *value};
       }
       break;
   }
@@ -348,6 +395,9 @@ std::optional<ModelOptionValue> typed(const Kind kind, const ModelOptionValue& h
       if (std::holds_alternative<std::int64_t>(held)) return held;
       if (const auto* value = std::get_if<std::string>(&held); value != nullptr && *value == "auto") return held;
       break;
+    case Kind::devices:
+      if (const auto* value = std::get_if<std::string>(&held); value != nullptr && device_count(*value)) return held;
+      break;
   }
   return std::nullopt;
 }
@@ -360,6 +410,10 @@ bool within(const ModelOptionLimits& limit, const ModelOptionValue& value) {
   }
   if (const auto* text = std::get_if<std::string>(&value)) {
     if (limit.spec->kind == Kind::integer_or_auto) return *text == "auto";
+    if (limit.spec->kind == Kind::devices) {   // auto, or as many GPUs as the engine runs on
+      const auto count = device_count(*text);
+      return count.has_value() && static_cast<std::int64_t>(*count) <= limit.maximum;
+    }
     return std::find(limit.choices.begin(), limit.choices.end(), *text) != limit.choices.end();
   }
   return true;  // a boolean has no bounds
@@ -587,6 +641,13 @@ void write_option(const EngineProfile profile, const std::string_view name, cons
     set_entry(draft, "defaults.sampling." + std::string{name}, ConfigDraftValue{std::in_place_type<double>, *decimal});
   } else if (name == "top_k" && integer != nullptr) {
     set_entry(draft, "defaults.sampling.top_k", ConfigDraftValue{std::in_place_type<std::int64_t>, *integer});
+  } else if (name == "gpus" && text != nullptr) {
+    // the GPUs it runs on (auto: the card's own rows stand): the GLM engine (glm53, raon1) reads glm.gpu, every other
+    // launch engine.gpu (multi-GPU like upstream, 2026-10-28)
+    if (*text != "auto") {
+      const bool glm = profile == EngineProfile::glm53 || profile == EngineProfile::raon1;
+      set_entry(draft, glm ? "glm.gpu" : "engine.gpu", ConfigDraftValue{std::in_place_type<std::string>, *text});
+    }
   } else if (name == "vision" && text != nullptr) {  // the card's picture encoder (its vision.mmproj): where it runs, or off
     set_entry(draft, "vision.enabled", ConfigDraftValue{std::in_place_type<bool>, *text != "off"});
     set_entry(draft, "vision.gpu", ConfigDraftValue{std::in_place_type<bool>, *text == "gpu"});
@@ -873,6 +934,9 @@ std::string describe_options_json(const std::vector<ModelOptionLimits>& limits, 
           append_json_string(&out, limit.choices[i]);
         }
         out += ']';
+        break;
+      case Kind::devices:
+        out += ",\"max\":" + std::to_string(limit.maximum);   // the most GPUs the engine runs on
         break;
       case Kind::boolean: break;
     }

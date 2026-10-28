@@ -1,5 +1,6 @@
 #include "secure_frontend/engine_environment.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <iterator>
@@ -135,6 +136,14 @@ FamilyEnvironmentRows family_environment_rows(const EngineEnvironment& environme
     std::erase_if(rows.forced,
                   [](const ForcedEnvironmentValue& forced) { return forced.name == "STRATA_GLM_VISION_LEND_MB"; });
     rows.suppressed.emplace_back("STRATA_GLM_VISION_LEND_MB");
+  }
+  // Multi-GPU like upstream (owner 2026-10-28): Maya's engine splits the layers across the visible GPUs by default
+  // (glm_model.cu load_pack_place); the §4.9 single device stays forced unless several GPUs are named. A pinned split
+  // (a knob above) is left as it is. The rendering is closed, so without the row the engine sees none.
+  const bool pinned = std::any_of(environment.glm_knobs.begin(), environment.glm_knobs.end(),
+                                  [](const ForcedEnvironmentValue& knob) { return knob.name == "STRATA_GLM_SPLIT"; });
+  if (environment.glm_gpus.size() > 1U && !pinned) {
+    std::erase_if(rows.forced, [](const ForcedEnvironmentValue& forced) { return forced.name == "STRATA_GLM_SPLIT"; });
   }
   std::string devices;
   for (const unsigned gpu : environment.glm_gpus) devices += (devices.empty() ? "" : ",") + std::to_string(gpu);

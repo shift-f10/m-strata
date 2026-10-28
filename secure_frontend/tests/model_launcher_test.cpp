@@ -913,6 +913,16 @@ void cards_offer_web_search_when_the_server_has_it() {
   }
   const std::string off = listing(nullptr);
   expect(off.find("web_search") == std::string::npos, "no server search, no checkbox: " + off);
+  // Multi-GPU like upstream (owner 2026-10-28): every card offers its GPUs choice, auto unless its file says otherwise -
+  // up to 16 GPUs, one on the single-GPU engines (flint, Gemma 4) - after Web search, the tables' order
+  for (const char* name : {"Q", "G", "R", "F", "E", "D"}) {
+    const bool one = std::string_view{name} == "F" || std::string_view{name} == "E";
+    const std::string options = options_of(on, name);
+    expect(options.find(R"({"name":"gpus","kind":"devices","label":"GPUs",)") != std::string::npos &&
+               options.find(std::string{R"("default":"auto","max":)"} + (one ? "1" : "16") + R"(,"value":"auto"})") != std::string::npos &&
+               (options.find("web_search") == std::string::npos || options.find("web_search") < options.find("\"gpus\"")),
+           std::string{name} + " offers GPUs, auto: " + options);
+  }
 }
 
 // Owner 2026-10-23 ("Every model should be showing the number of experts loaded along with

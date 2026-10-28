@@ -116,6 +116,27 @@ void offer_web_search(ModelCard& card, const ToolRunner* tools) {
   card.options.push_back(std::move(limit));
 }
 
+// Multi-GPU like upstream (owner 2026-10-28): every card offers its GPUs choice, auto unless its card file lists it
+// otherwise (the page shows it where this PC has more than one GPU). The option is the tables' last: appended after Web
+// search, in display order.
+void offer_gpus(ModelCard& card) {
+  const auto* spec = find_model_option(card.profile, "gpus");
+  if (spec == nullptr) return;
+  if (std::any_of(card.options.begin(), card.options.end(), [spec](const ModelOptionLimits& limit) { return limit.spec == spec; })) return;
+  ModelOptionLimits limit;
+  limit.spec = spec;
+  limit.default_value = std::string{"auto"};
+  limit.minimum = spec->minimum;
+  limit.maximum = spec->maximum;
+  card.options.push_back(std::move(limit));
+}
+
+// The options a card offers beyond its file's: Web search with the server's, then its GPUs.
+void offer_options(ModelCard& card, const ToolRunner* tools) {
+  offer_web_search(card, tools);
+  offer_gpus(card);
+}
+
 // The card's options as the page sees them: without the server's web search, no Web search checkbox.
 std::vector<ModelOptionLimits> shown_options(const ModelCard& card, const ToolRunner* tools) {
   std::vector<ModelOptionLimits> shown;
@@ -142,7 +163,7 @@ ModelLauncher::ModelLauncher(LauncherSettings settings) : settings_(std::move(se
   // add_card never reallocates: a start holds its card by reference outside the lock.
   if (settings_.cards.size() > kMaxLauncherCards) settings_.cards.resize(kMaxLauncherCards);
   settings_.cards.reserve(kMaxLauncherCards);
-  for (auto& card : settings_.cards) offer_web_search(card, settings_.tools);
+  for (auto& card : settings_.cards) offer_options(card, settings_.tools);
   status_.resize(settings_.cards.size());
   status_.reserve(kMaxLauncherCards);
   for (std::size_t i = 0; i < settings_.cards.size(); ++i) page_card_.push_back(i >= settings_.operator_cards);
@@ -164,7 +185,7 @@ bool ModelLauncher::add_card(ModelCard card) {
   {
     std::lock_guard lock(mutex_);
     if (shutting_down_ || find_card(card.name).has_value() || settings_.cards.size() >= kMaxLauncherCards) return false;
-    offer_web_search(card, settings_.tools);
+    offer_options(card, settings_.tools);
     settings_.cards.push_back(std::move(card));
     status_.emplace_back();
     page_card_.push_back(true);
@@ -182,7 +203,7 @@ CardChange ModelLauncher::replace_card(ModelCard card) {
     if (!found.has_value()) return CardChange::not_found;
     if (!page_card_[*found]) return CardChange::not_page_card;
     if (busy_ || pending_.has_value()) return CardChange::busy;
-    offer_web_search(card, settings_.tools);
+    offer_options(card, settings_.tools);
     settings_.cards[*found] = std::move(card);
   }
   log("[strata] models: replaced " + name);

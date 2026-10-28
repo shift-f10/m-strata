@@ -921,6 +921,21 @@ void web_ui_header_fits_a_phone() {
   expect(css.find(".st-header__brand { white-space: nowrap; flex: none; }") != std::string::npos, "the brand stays on one line");
 }
 
+// Multi-GPU like upstream (owner 2026-10-28): a card's GPUs choice ("devices") is one box per GPU of this PC, as the
+// About lists them (nvidia-smi's numbers), none ticked auto, one at most on a single-GPU engine; hidden on a one-GPU PC,
+// where nothing is sent.
+void web_ui_offers_the_gpus_of_this_pc() {
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  expect(js.find("case \"devices\": return devicesControl(option, value);") != std::string::npos &&
+             js.find("return { value: picked.length ? picked.join(\",\") : \"auto\" };") != std::string::npos &&
+             js.find("if (gpus.length < 2) { return { skip: true }; }") != std::string::npos &&
+             js.find("field.hidden = control.hidden === true;") != std::string::npos,
+         "the GPUs choice: a box per GPU, auto when none, not sent on a one-GPU PC");
+  expect(js.find("setHostGpus(d && d.hardware && Array.isArray(d.hardware.gpus) ? d.hardware.gpus : []);") != std::string::npos &&
+             js.find("fact(hardware, \"GPU \" + g.index,") != std::string::npos,
+         "this PC's GPUs come from the About, which lists each");
+}
+
 void web_ui_downloads_start_cancel_poll_and_check_links() {
   const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
   expect(js.find("function jsonPost(payload) { return { method: \"POST\", headers: { \"Content-Type\": \"application/json\" }, "
@@ -1521,6 +1536,7 @@ int main(int argc, char** argv) {
       {"web_ui_downloads_profile_picker_and_multipart", web_ui_downloads_profile_picker_and_multipart},
       {"web_ui_models_tab_subtabs_and_family_groups", web_ui_models_tab_subtabs_and_family_groups},
       {"web_ui_downloads_start_cancel_poll_and_check_links", web_ui_downloads_start_cancel_poll_and_check_links},
+      {"web_ui_offers_the_gpus_of_this_pc", web_ui_offers_the_gpus_of_this_pc},
       {"web_ui_downloads_pause_and_resume", web_ui_downloads_pause_and_resume},
       {"web_ui_header_fits_a_phone", web_ui_header_fits_a_phone},
       {"keyless_router_answers_without_a_key", keyless_router_answers_without_a_key},

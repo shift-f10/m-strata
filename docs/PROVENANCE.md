@@ -747,6 +747,14 @@ Spec `docs/superpowers/specs/2026-10-28-vision-for-cards-design.md`.
 - **The picture encoder files** (`mmproj-*.gguf`) are downloaded from their model repositories at those pins, never
   in the tree; they keep their models' licences.
 
+## Several GPUs (2026-10-28): upstream's and Maya's rules, ours to compose
+
+Spec `docs/superpowers/specs/2026-10-28-multi-gpu-design.md`. Behaviour followed, no code copied: upstream Strata's
+`serve/server.py` (`gpu_list`, `engine_args`' layer split, `Vision.token_limit`, #1322's GPU-encoder reserve) and
+`setup.py`'s `VISION` table (the `upstream/` submodule, `v0.2.4.2`, MIT); Project Maya's `maya.py` `write_config_ds4`
+(`--tp min(2, GPUs)`, `--threads on` on one GPU) and its GLM engine's default layer split (`glm_model.cu`
+`load_pack_place`; MIT). The GPU list is read with NVIDIA's own `nvidia-smi`, as the Monitor reads the GPU.
+
 ## strata-prepare (ours, 2026-10-27): upstream's pack tools as a native program
 
 `engine/src/prepare/` (spec `docs/superpowers/specs/2026-10-27-strata-prepare-design.md`) is our C++ under this

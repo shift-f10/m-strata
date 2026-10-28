@@ -20,8 +20,9 @@
 
 namespace secure_frontend {
 
-// integer_or_auto: the string "auto" or an integer.
-enum class ModelOptionKind { boolean, integer, decimal, choice, integer_or_auto };
+// integer_or_auto: the string "auto" or an integer. devices: "auto" or GPU numbers 0-63 separated by commas, none
+// repeated ("0,1"), at most `maximum` of them (multi-GPU, 2026-10-28).
+enum class ModelOptionKind { boolean, integer, decimal, choice, integer_or_auto, devices };
 
 // One option of an engine profile with the engine's hard bounds.
 struct ModelOptionSpec final {

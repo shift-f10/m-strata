@@ -181,10 +181,11 @@ CardText card_for_pack(const PackedCardRequest& request) {
                            "\",\"source\":" + text(request.source) +
                            ",\"config\":{\"engine\":{\"executable\":" + text(path_to_utf8(request.engine)) + ",\"model_id\":";
   if (request.family == PackedFamily::deepseek) {
-    // Maya's write_config_ds4 for one GPU (maya.py v1.1.30 :4136-4138; the launch adds --pack and --vision off), the pack
-    // as the model folder and its tokenizer; Maya's DeepSeek menus (DS4_CONTEXTS, 64K; DS4_EFFORT; DS4_SAMPLING)
+    // Maya's write_config_ds4 (maya.py v1.1.30 :4136-4138; the launch adds --pack, --tp and --threads by the card's GPUs,
+    // and --vision off), the pack as the model folder and its tokenizer; Maya's DeepSeek menus (DS4_CONTEXTS, 64K;
+    // DS4_EFFORT; DS4_SAMPLING)
     const std::string json =
-        head + text(kDeepseekModelName) + ",\"args\":[\"--tp\",\"1\",\"--threads\",\"on\"]},\"roots\":{\"models\":" +
+        head + text(kDeepseekModelName) + "},\"roots\":{\"models\":" +
         text(path_to_utf8(request.pack)) + ",\"tokenizer_pack\":" + text(path_to_utf8(request.pack / "tokenizer")) +
         "},\"limits\":{\"chat\":{\"max_prompt_tokens\":1048576,\"max_completion_tokens\":1048576}}}," +
         "\"options\":{\"max_context\":{\"default\":65536,\"min\":32768,\"max\":1048576},\"thinking\":{\"default\":\"high\"}," +

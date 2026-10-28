@@ -639,6 +639,20 @@ where there is none) pulls the catalog's pinned `mmproj` as the manifest's
 two: none). The page attaches PNG, JPEG and WebP pictures while the running
 card's Pictures option is on, sent as `image_url` data URLs.
 
+**Several GPUs (2026-10-28, spec `docs/superpowers/specs/2026-10-28-multi-gpu-design.md`).** Every card has a GPUs
+choice (the option `gpus`, kind `devices`, offered by the launcher after Web search): `"auto"` or GPU numbers 0-63 as
+nvidia-smi numbers them, such as `"0,1"`, none repeated, at most 16 (one on Gemma 4 and flint, whose engines use the
+first). It writes `engine.gpu` (qwen: `--gpu` and, with two or more, upstream's `--layer-split auto` unless the card pins
+`engine.layer_split`; deepseek and minimax: `--gpus`; gemma4 and flint: `--gpu`) or `glm.gpu` (glm53 and raon1:
+`CUDA_VISIBLE_DEVICES`); auto writes nothing, so the card's own rows stand. With several GPUs named and `glm.layer_split`
+at auto, the GLM family's environment no longer forces `STRATA_GLM_SPLIT=0`: Maya's engine splits the layers across them
+by default (one GPU or none keeps the single device; a pinned split wins). DeepSeek's `--tp` and `--threads` are composed
+as Maya's `write_config_ds4` writes them, `--tp min(2, GPUs)` and `--threads on` on one GPU, unless the card names them
+(cards from this build fix neither). `GET /v1/strata/about` lists `hardware.gpus` (`index`, `name`, `mem_bytes`), read
+once by `nvidia-smi --query-gpu=index,name,memory.total` on the first request; the page draws one box per GPU and hides
+the choice on a one-GPU PC. A GPU picture encoder adds upstream's `--vram-reserve-mib 700` to a qwen launch without a
+reserve of its own, and upstream's encoder reads up to 1,024 image tokens on the GPU, 300 on the CPU.
+
 **Constants.** Internal constants live in
 `include/secure_frontend/api_constants.hpp` (SP3) and `config_defaults.hpp`
 (SP1). SP3 removed SP1's 1000 ms minimum send budget (SP1 addendum A4); the

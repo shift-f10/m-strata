@@ -187,13 +187,13 @@ bool engine_accepts(const secure_frontend::EngineArgumentsProfile profile, const
 void option_tables_per_profile() {
   expect(names_of(EngineProfile::qwen) == Strings{"max_context", "kv", "kv_resident", "kv_grow", "mtp", "spec", "spec_min_p",
                                                   "expert_cache", "prefill", "thinking", "temperature", "top_p", "top_k", "min_p",
-                                                  "vision", "web_search"},
+                                                  "vision", "web_search", "gpus"},
          "the qwen options in display order: " + joined(names_of(EngineProfile::qwen)));
   expect(names_of(EngineProfile::gemma4) ==
-             Strings{"max_context", "chunk", "expert_vram", "thinking", "temperature", "top_p", "top_k", "min_p", "web_search"},
+             Strings{"max_context", "chunk", "expert_vram", "thinking", "temperature", "top_p", "top_k", "min_p", "web_search", "gpus"},
          "the gemma4 options in display order: " + joined(names_of(EngineProfile::gemma4)));
   // D10 met (owner 2026-10-27): Maya's own GLM choices - its context menu, the engine's --kv, the sampling defaults
-  expect(names_of(EngineProfile::glm53) == Strings{"max_context", "kv", "temperature", "top_p", "top_k", "min_p", "web_search"},
+  expect(names_of(EngineProfile::glm53) == Strings{"max_context", "kv", "temperature", "top_p", "top_k", "min_p", "web_search", "gpus"},
          "the glm53 options in display order: " + joined(names_of(EngineProfile::glm53)));
 
   for (const auto profile : {EngineProfile::qwen, EngineProfile::gemma4}) {
@@ -642,7 +642,7 @@ void options_apply_as_flags_and_keys() {
 void flint_options_follow_the_flint_engine() {
   using secure_frontend::EngineArgumentsProfile;
   expect(names_of(EngineProfile::flint) ==
-             Strings{"max_context", "chunk", "expert_vram", "thinking", "temperature", "top_p", "top_k", "min_p", "web_search"},
+             Strings{"max_context", "chunk", "expert_vram", "thinking", "temperature", "top_p", "top_k", "min_p", "web_search", "gpus"},
          "the flint options in display order: " + joined(names_of(EngineProfile::flint)));
   for (const auto& [name, flag] : {std::pair{"max_context", "--max-context"}, std::pair{"chunk", "--chunk"},
                                    std::pair{"expert_vram", "--expert-vram"}}) {
@@ -987,7 +987,7 @@ void glm_options_write_the_glm_rows() {
 // high 75, none chat mode), the sampling rows. The context is maya-ds4's own --max-context in engine.args (the maya_ds4
 // allowlist), the thinking level reasoning.effort.
 void deepseek_options_are_mayas() {
-  expect(names_of(EngineProfile::deepseek) == Strings{"max_context", "thinking", "temperature", "top_p", "top_k", "min_p"},
+  expect(names_of(EngineProfile::deepseek) == Strings{"max_context", "thinking", "temperature", "top_p", "top_k", "min_p", "gpus"},
          "the deepseek options in display order: " + joined(names_of(EngineProfile::deepseek)));
   const auto* context = secure_frontend::find_model_option(EngineProfile::deepseek, "max_context");
   expect(context != nullptr && context->kind == ModelOptionKind::integer && context->minimum == 1 && context->maximum == 1048576 &&
@@ -1019,6 +1019,63 @@ void deepseek_options_are_mayas() {
 // --kv-cache in engine.args; thinking auto writes no row, any other level reasoning.effort.
 // Vision for cards (spec 2026-10-28-vision-for-cards-design.md): a qwen card whose model has a picture encoder lists
 // "vision" - off, gpu or cpu - which writes vision.enabled and vision.gpu (the card's own rows), never an engine flag.
+// Multi-GPU like upstream (owner 2026-10-28, "ensure our engine supports multi gpu like the upstream"): every card has a
+// GPUs choice - "auto" (the config's own, else the first GPU) or the cards it runs on, as nvidia-smi numbers them
+// ("0,1"). Upstream's "gpu" (serve/server.py gpu_list): several GPUs split the model's layers. The qwen, deepseek and
+// minimax launches read engine.gpu (--gpu, maya-ds4's and maya-mm3's --gpus), glm53 and raon1 glm.gpu (their
+// CUDA_VISIBLE_DEVICES); Gemma 4 and flint run on one GPU, so they take one.
+void gpus_choose_the_cards_a_model_runs_on() {
+  for (const auto profile : {EngineProfile::qwen, EngineProfile::glm53, EngineProfile::raon1, EngineProfile::deepseek,
+                             EngineProfile::minimax, EngineProfile::gemma4, EngineProfile::flint}) {
+    const auto* spec = secure_frontend::find_model_option(profile, "gpus");
+    const bool one = profile == EngineProfile::gemma4 || profile == EngineProfile::flint;
+    expect(spec != nullptr && spec->kind == ModelOptionKind::devices && spec->minimum == 1 && spec->maximum == (one ? 1 : 16),
+           "every profile lists GPUs (one for the single-GPU engines)");
+    expect(secure_frontend::option_flags(profile, "gpus").empty(), "it writes a config row, never a flag of its own");
+  }
+  const auto qwen = limits_of(EngineProfile::qwen, R"({"gpus": {"default": "auto"}})");
+  const auto chosen = [&qwen](const std::string_view asked) { return resolved(qwen, nullptr, ModelOptionValues{{"gpus", std::string{asked}}}); };
+  const auto asked = json(R"({"gpus": "1,0"})");
+  const auto values = resolved(qwen, &asked);
+  expect(values && value_is(*values, "gpus", std::string{"1,0"}), "two GPUs in the order given");
+  for (const char* bad : {"0,0", "0,", ",1", "a", "0 1", "64", "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17", ""}) {
+    const auto refused = resolve_issues(qwen, json(std::string{R"({"gpus": ")"} + bad + "\"}"));
+    expect(!refused.empty(), std::string{"refused: \""} + bad + "\"" + listed(refused));
+    // a remembered value the rule does not take falls back to the default
+    const auto fallback = chosen(bad);
+    expect(fallback && value_is(*fallback, "gpus", std::string{"auto"}), std::string{"a remembered \""} + bad + "\" gives way to auto");
+  }
+  const auto gemma = limits_of(EngineProfile::gemma4, R"({"gpus": {"default": "1"}})");
+  expect(limit_named(gemma, "gpus") != nullptr, "Gemma 4 runs on one chosen GPU");
+  expect(!resolve_issues(gemma, json(R"({"gpus": "0,1"})")).empty(), "two GPUs are refused on Gemma 4");
+  expect(has_issue(card_issues(EngineProfile::flint, json(R"({"gpus": {"default": "0,1"}})")), "options.gpus", ConfigIssueCode::out_of_range),
+         "a flint card may not default to two GPUs");
+  const auto written = [](const EngineProfile profile, const std::string& value) {
+    secure_frontend::FrontendConfigDraft draft;
+    secure_frontend::apply_option_values(profile, ModelOptionValues{{"gpus", value}}, draft);
+    return draft;
+  };
+  for (const auto profile : {EngineProfile::qwen, EngineProfile::deepseek, EngineProfile::minimax, EngineProfile::gemma4}) {
+    const auto draft = written(profile, profile == EngineProfile::gemma4 ? "1" : "0,1");
+    const auto* row = entry_of(draft, "engine.gpu");
+    expect(row != nullptr && std::get<std::string>(row->value) == (profile == EngineProfile::gemma4 ? "1" : "0,1") &&
+               entry_of(draft, "glm.gpu") == nullptr && args_of(draft).empty(),
+           "engine.gpu holds the chosen GPUs");
+  }
+  for (const auto profile : {EngineProfile::glm53, EngineProfile::raon1}) {
+    const auto draft = written(profile, "0,1");
+    const auto* row = entry_of(draft, "glm.gpu");
+    expect(row != nullptr && std::get<std::string>(row->value) == "0,1" && entry_of(draft, "engine.gpu") == nullptr,
+           "the GLM engine's glm.gpu holds them");
+  }
+  const auto automatic = written(EngineProfile::qwen, "auto");
+  expect(entry_of(automatic, "engine.gpu") == nullptr && entry_of(automatic, "glm.gpu") == nullptr, "auto writes nothing");
+  const std::string described = secure_frontend::describe_options_json(qwen, ModelOptionValues{{"gpus", std::string{"0,1"}}});
+  expect(described.find(R"("name":"gpus","kind":"devices")") != std::string::npos &&
+             described.find(R"("default":"auto","max":16,"value":"0,1")") != std::string::npos,
+         "the page reads the kind, the most GPUs and the value: " + described);
+}
+
 void the_vision_option_writes_the_encoder_rows() {
   const auto* spec = secure_frontend::find_model_option(EngineProfile::qwen, "vision");
   expect(spec != nullptr && spec->kind == ModelOptionKind::choice && spec->choices.size() == 3U && spec->choices[0] == "off" &&
@@ -1041,7 +1098,7 @@ void the_vision_option_writes_the_encoder_rows() {
 }
 
 void minimax_options_are_mayas() {
-  expect(names_of(EngineProfile::minimax) == Strings{"max_context", "kv", "thinking", "temperature", "top_p"},
+  expect(names_of(EngineProfile::minimax) == Strings{"max_context", "kv", "thinking", "temperature", "top_p", "gpus"},
          "the minimax options in display order: " + joined(names_of(EngineProfile::minimax)));
   const auto* context = secure_frontend::find_model_option(EngineProfile::minimax, "max_context");
   expect(context != nullptr && context->kind == ModelOptionKind::integer && context->minimum == 1 && context->maximum == 1048576 &&
@@ -1118,5 +1175,6 @@ int main(int argc, char** argv) {
       {"deepseek_options_are_mayas", deepseek_options_are_mayas},
       {"minimax_options_are_mayas", minimax_options_are_mayas},
       {"the_vision_option_writes_the_encoder_rows", the_vision_option_writes_the_encoder_rows},
+      {"gpus_choose_the_cards_a_model_runs_on", gpus_choose_the_cards_a_model_runs_on},
   }, failures);
 }

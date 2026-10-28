@@ -288,10 +288,32 @@ void vision_compose_rules() {
                launch->vision_model == secure_frontend::path_to_utf8((config.get().roots.models.path() / "m.gguf").make_preferred()),
            "the card's encoder file and the model's own GGUF reach the encoder");
     expect(std::count(launch->engine_args.begin(), launch->engine_args.end(), "--vision") == 1, "the engine receives --vision");
+    // upstream's serve/server.py (#1322) and setup.py (VISION["gpu"]["reserve_mib"]): a GPU encoder keeps 700 MiB of VRAM free
+    // beside the engine (a reserve given on the command line, so the engine does not shrink it on a small card)
+    const auto reserve = std::find(launch->engine_args.begin(), launch->engine_args.end(), "--vram-reserve-mib");
+    expect(reserve != launch->engine_args.end() && reserve + 1 != launch->engine_args.end() && *(reserve + 1) == "700",
+           "a GPU encoder: --vram-reserve-mib 700 on the engine");
+    const auto cpu = secure_frontend::compose_engine_launch(with_vision(", \"vram_reserve_mib\": 1200").get(), true);
+    const auto* own = std::get_if<secure_frontend::ComposedLaunch>(&cpu);
+    expect(own != nullptr && std::count(own->engine_args.begin(), own->engine_args.end(), "1200") == 1 &&
+               std::count(own->engine_args.begin(), own->engine_args.end(), "700") == 0,
+           "a reserve of the card's own stands");
     const auto gemma = secure_frontend::compose_engine_launch(with_vision(", \"profile\": \"gemma4\"").get(), true);
     const auto* refused = std::get_if<secure_frontend::LaunchFailure>(&gemma);
     expect(refused != nullptr && refused->messages.front().find("only a qwen model") != std::string::npos,
            "only a qwen card reads images");
+    {
+      const auto on_cpu = with_vision("");
+      std::string text = secure_frontend_test::read_file(h.config);
+      const std::string gpu_on = "\"gpu\": true";
+      text.replace(text.find(gpu_on), gpu_on.size(), "\"gpu\": false");
+      secure_frontend_test::write_file(h.config, text);
+      const auto cpu_launch = secure_frontend::compose_engine_launch(h.validated_config().get(), true);
+      const auto* plain = std::get_if<secure_frontend::ComposedLaunch>(&cpu_launch);
+      expect(plain != nullptr && std::count(plain->engine_args.begin(), plain->engine_args.end(), "--vram-reserve-mib") == 0,
+             "a CPU encoder takes no VRAM: no reserve");
+      (void)on_cpu;
+    }
     const auto ready = with_vision("");
     std::filesystem::remove(mmproj);
     const auto missing = secure_frontend::compose_engine_launch(ready.get(), true);
@@ -777,6 +799,25 @@ void deepseek_launch_is_mayas_write_config() {
                  std::vector<std::string>{"--pack", pack, "--max-context", "65536", "--tp", "1", "--threads", "on",
                                           "--gpus", "0,1", "--vision", "off"},
          "named GPUs are maya-ds4's own --gpus");
+  // Multi-GPU like upstream (owner 2026-10-28): Maya's write_config_ds4 (maya.py v1.1.30) gives --tp min(2, GPUs) - two
+  // equal GPUs per tensor-parallel group - and --threads on only on one GPU (the chunked prompt path); a card that names
+  // its own --tp or --threads keeps them.
+  const std::vector<std::string> plain{"--max-context", "65536"};
+  const auto one = secure_frontend::build_engine_arguments(kDs4, pack_model, root, plain);
+  expect(std::holds_alternative<std::vector<std::string>>(one) &&
+             std::get<std::vector<std::string>>(one) ==
+                 std::vector<std::string>{"--pack", pack, "--max-context", "65536", "--tp", "1", "--threads", "on", "--vision", "off"},
+         "one GPU: --tp 1 --threads on, as Maya's setup writes them");
+  const auto pair = secure_frontend::build_engine_arguments(kDs4, pack_model, root, plain, {0U, 1U});
+  expect(std::holds_alternative<std::vector<std::string>>(pair) &&
+             std::get<std::vector<std::string>>(pair) ==
+                 std::vector<std::string>{"--pack", pack, "--max-context", "65536", "--tp", "2", "--gpus", "0,1", "--vision", "off"},
+         "two GPUs: --tp 2 and no --threads");
+  const auto three = secure_frontend::build_engine_arguments(kDs4, pack_model, root, plain, {0U, 1U, 2U});
+  expect(std::holds_alternative<std::vector<std::string>>(three) &&
+             std::get<std::vector<std::string>>(three) ==
+                 std::vector<std::string>{"--pack", pack, "--max-context", "65536", "--tp", "2", "--gpus", "0,1,2", "--vision", "off"},
+         "three GPUs: groups of two (--tp 2)");
 }
 
 // The composition over a deepseek config as a card writes one (card_for_pack): the inventory's marker in the pack folder,

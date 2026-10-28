@@ -15,6 +15,16 @@
 namespace secure_frontend {
 namespace {
 
+// upstream setup.py's VISION["gpu"]["reserve_mib"]: the VRAM a GPU picture encoder keeps free beside the engine
+constexpr std::int64_t kGpuEncoderReserveMib = 700;
+
+// engine.vram_reserve_mib, else - with a GPU picture encoder - upstream's 700 MiB (serve/server.py #1322), given on the
+// command line so the engine does not shrink it on a small card
+std::optional<std::int64_t> engine_vram_reserve(const FrontendConfig& config) {
+  if (config.engine.vram_reserve_mib.has_value() || !(config.vision.enabled && config.vision.gpu)) return config.engine.vram_reserve_mib;
+  return kGpuEncoderReserveMib;
+}
+
 LaunchFailure config_failure(std::vector<std::string> messages) { return LaunchFailure{ExitCode::usage, std::move(messages)}; }
 
 LaunchFailure store_failure(const AcquireError& error) { return LaunchFailure{exit_class(error.reason), {format_error(error)}}; }
@@ -88,7 +98,7 @@ std::variant<ComposedLaunch, LaunchFailure> expert_launch(const FrontendConfig& 
     return false;
   }();
   if (qwen_tails) {  // Ruling T7-a: this family reaches the engine through argv only
-    const VramGpuElasticArgs vram{.vram_reserve_mib = config.engine.vram_reserve_mib,
+    const VramGpuElasticArgs vram{.vram_reserve_mib = engine_vram_reserve(config),
                                   .vram_elastic = config.engine.vram_elastic,
                                   .vram_segment_mib = config.engine.vram_segment_mib,
                                   .layer_split = config.engine.layer_split,
@@ -283,7 +293,7 @@ std::variant<ComposedLaunch, LaunchFailure> compose_engine_launch(const Frontend
   // SP5 M1 Task 7 (parity rows vram_reserve_mib / vram_elastic / vram_segment_mib /
   // layer_split / split_skip_if_fits): the family renders after the composed tail, gated
   // per the pin (several GPUs for the split pair, the elastic branch nesting the size).
-  const VramGpuElasticArgs vram{.vram_reserve_mib = config.engine.vram_reserve_mib,
+  const VramGpuElasticArgs vram{.vram_reserve_mib = engine_vram_reserve(config),
                                 .vram_elastic = config.engine.vram_elastic,
                                 .vram_segment_mib = config.engine.vram_segment_mib,
                                 .layer_split = config.engine.layer_split,

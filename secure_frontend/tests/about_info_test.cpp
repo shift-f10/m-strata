@@ -2,13 +2,17 @@
 // of the system"): the engine folder's build record (make.py's engine/build.json) read and checked, this PC's
 // hardware, and the JSON GET /v1/strata/about answers.
 #include "secure_frontend/about_info.hpp"
+#include "secure_frontend/host_readings.hpp"
 #include "secure_frontend/json.hpp"
 #include "support/test_support.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <optional>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -91,6 +95,40 @@ void the_about_json_has_both() {
          "without a record or a reading: null, not invented: " + none);
 }
 
+// Multi-GPU like upstream (owner 2026-10-28): the cards' GPUs choice lists this PC's GPUs as nvidia-smi numbers them
+// (the numbers --gpu and CUDA_VISIBLE_DEVICES take with CUDA_DEVICE_ORDER=PCI_BUS_ID). One nvidia-smi answer, every GPU;
+// a line that is not "<index>, <name>, <MiB>" is skipped, a repeated index too; at most 16. The About lists them.
+void this_pcs_gpus_are_listed() {
+  expect(secure_frontend::nvidia_smi_list_arguments() ==
+             std::vector<std::string>{"--query-gpu=index,name,memory.total", "--format=csv,noheader,nounits"},
+         "one answer for every GPU, no units");
+  const auto listed = secure_frontend::parse_nvidia_smi_gpu_list(
+      "0, NVIDIA GeForce RTX 4080 SUPER, 16376\r\n1, NVIDIA RTX PRO 4500 Blackwell, [N/A]\n"
+      "not a line\n1, a second index 1, 100\n2, Tab\tname, 5\n3, , 7\n");
+  expect(listed.size() == 2U, "two GPUs read: " + std::to_string(listed.size()));
+  if (listed.size() == 2U) {
+    expect(listed[0].index == 0U && listed[0].name == "NVIDIA GeForce RTX 4080 SUPER" &&
+               listed[0].mem_total_bytes == std::optional<std::uint64_t>{16376ULL << 20U},
+           "the first: index, name, memory");
+    expect(listed[1].index == 1U && listed[1].name == "NVIDIA RTX PRO 4500 Blackwell" && !listed[1].mem_total_bytes.has_value(),
+           "[N/A] memory: not read, the GPU still listed");
+  }
+  std::string many;
+  for (int i = 0; i < 20; ++i) many += std::to_string(i) + ", GPU, 1024\n";
+  expect(secure_frontend::parse_nvidia_smi_gpu_list(many).size() == 16U, "at most 16");
+  expect(secure_frontend::list_gpus({.executable = secure_frontend_test::make_scratch_directory() / "missing-nvidia-smi"}).empty(),
+         "no nvidia-smi: no GPUs, nothing invented");
+  secure_frontend::HardwareFacts hardware{.cpu = "CPU", .gpu = "GPU 0"};
+  hardware.gpus = {{.index = 0U, .name = "NVIDIA GeForce RTX 4080 SUPER", .mem_total_bytes = 16376ULL << 20U},
+                   {.index = 1U, .name = "Second \"quoted\"", .mem_total_bytes = std::nullopt}};
+  const std::string text = secure_frontend::render_about_json(std::nullopt, hardware);
+  expect(text.find(R"("gpus":[{"index":0,"name":"NVIDIA GeForce RTX 4080 SUPER","mem_bytes":17171480576},)"
+                   R"({"index":1,"name":"Second \"quoted\"","mem_bytes":null}])") != std::string::npos,
+         "the About lists them: " + text);
+  expect(secure_frontend::render_about_json(std::nullopt, secure_frontend::HardwareFacts{}).find("\"gpus\":[]") != std::string::npos,
+         "none: an empty list");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -98,5 +136,6 @@ int main(int argc, char** argv) {
       {"the_build_record_is_read_and_checked", the_build_record_is_read_and_checked},
       {"this_pcs_hardware_is_named", this_pcs_hardware_is_named},
       {"the_about_json_has_both", the_about_json_has_both},
+      {"this_pcs_gpus_are_listed", this_pcs_gpus_are_listed},
   }, failures);
 }

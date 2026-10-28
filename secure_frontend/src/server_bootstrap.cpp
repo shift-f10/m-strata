@@ -61,6 +61,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -79,9 +80,23 @@ using secure_frontend::FrontendConfig;
 // the GPU as the Monitor last read it, when the Monitor runs.
 secure_frontend::MetricsProvider about_provider(const std::filesystem::path& engine,
                                                 const std::optional<secure_frontend::ServeMonitor>& monitor) {
-  return [build = secure_frontend::read_engine_build(engine.parent_path()), hardware = secure_frontend::hardware_facts(), &monitor] {
+  // multi-GPU (owner 2026-10-28): every GPU as nvidia-smi lists them, for a card's GPUs choice - read once, on the first
+  // request (nvidia-smi as the Monitor runs it: from the system directory, a fixed argv and environment)
+  struct Listed final {
+    std::once_flag once;
+    std::vector<secure_frontend::GpuListing> gpus;
+  };
+  return [build = secure_frontend::read_engine_build(engine.parent_path()), hardware = secure_frontend::hardware_facts(), &monitor,
+          listed = std::make_shared<Listed>()] {
     auto facts = hardware;
     if (monitor.has_value()) facts.gpu = monitor->gpu_fact();
+    std::call_once(listed->once, [&listed] {
+      listed->gpus = secure_frontend::list_gpus({.executable = secure_frontend::nvidia_smi_path(),
+                                                 .arguments = secure_frontend::nvidia_smi_list_arguments(),
+                                                 .environment = secure_frontend::nvidia_smi_environment(),
+                                                 .no_new_privileges = true, .insert_serve = false});
+    });
+    facts.gpus = listed->gpus;
     return secure_frontend::render_about_json(build, facts);
   };
 }

@@ -436,6 +436,14 @@ EngineArgumentsResult build_engine_arguments(const EngineArgumentsProfile profil
     }
     std::vector<std::string> composed{"--pack", path_to_utf8(models_root.join(*relative).parent_path())};
     composed.insert(composed.end(), arguments.begin(), arguments.end());
+    if (profile == EngineArgumentsProfile::maya_ds4) {
+      // write_config_ds4: --tp min(2, GPUs) (two equal GPUs per tensor-parallel group) and, on one GPU, --threads on
+      // (the chunked prompt path); a card that names either keeps its own
+      const std::size_t cards = std::max<std::size_t>(1U, gpus.size());
+      const auto names = [&arguments](const std::string_view flag) { return std::find(arguments.begin(), arguments.end(), flag) != arguments.end(); };
+      if (!names("--tp")) composed.insert(composed.end(), {"--tp", std::to_string(std::min<std::size_t>(2U, cards))});
+      if (cards == 1U && !names("--threads")) composed.insert(composed.end(), {"--threads", "on"});
+    }
     if (profile == EngineArgumentsProfile::maya_mm3) {
       if (std::find(arguments.begin(), arguments.end(), "--kv-streaming") == arguments.end()) {
         composed.emplace_back("--kv-streaming");
