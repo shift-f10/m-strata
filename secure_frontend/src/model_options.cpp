@@ -241,7 +241,7 @@ constexpr std::array<ModelOptionSpec, 8> kRaon1Options{{
 // context menu (maya.py v1.1.30 DS4_CONTEXTS; maya-ds4's own --max-context, in engine.args by the maya_ds4 allowlist),
 // the thinking level (DS4_EFFORT "high"; DeepSeek's effort line: low 50, medium and high 75, none chat mode), sampling.
 constexpr std::array<std::int64_t, 6> kDeepseekContexts{32768, 65536, 131072, 262144, 524288, 1048576};
-constexpr std::array<ModelOptionSpec, 7> kDeepseekOptions{{
+constexpr std::array<ModelOptionSpec, 8> kDeepseekOptions{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (Maya's choices)", 1, 1048576),
            kDeepseekContexts),
     choice_option("thinking", "Thinking", "The thinking level for requests that name none (DeepSeek's reasoning effort)",
@@ -250,6 +250,7 @@ constexpr std::array<ModelOptionSpec, 7> kDeepseekOptions{{
     kTopP,
     kTopK,
     kMinP,
+    kWebSearch,  // DSML calls, as Maya renders and reads them (owner 2026-10-28)
     kGpus,
 }};
 

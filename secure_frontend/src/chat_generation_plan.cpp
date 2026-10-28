@@ -515,6 +515,45 @@ ChatGenerationPlanResult make_deepseek_chat_generation_plan(const ChatCompletion
                             std::vector<std::size_t>{}, std::nullopt, std::move(stops), {}};
 }
 
+ChatGenerationPlanResult make_deepseek_tool_generation_plan(const ChatCompletionRequest& request, const TokenizerPack& tokenizer,
+                                                            const std::span<const std::string> tools,
+                                                            const std::span<const ToolRound> rounds,
+                                                            const std::size_t maximum_prompt_tokens,
+                                                            const std::size_t default_max_tokens, const SamplingDefaults& defaults,
+                                                            const std::optional<int> effort) {
+  if (request.model.empty() || request.messages.empty() || maximum_prompt_tokens == 0U ||
+      (request.max_tokens.has_value() && *request.max_tokens == 0U) || (effort && (*effort < 1 || *effort > 100))) {
+    return error(ChatGenerationPlanErrorCode::invalid_request, "chat generation request is outside native serving limits");
+  }
+  if (count_image_parts(request) != 0U) {
+    return error(ChatGenerationPlanErrorCode::invalid_request, "the DeepSeek profile cannot serve image parts");
+  }
+  // the text plan's markers, plus ｜DSML｜: the tag every call is written in
+  const auto think_tokens = find_qwen_think_tokens(tokenizer);
+  auto stops = find_deepseek_end_of_turn_tokens(tokenizer);
+  const std::string dsml{"\xEF\xBD\x9C" "DSML\xEF\xBD\x9C"};
+  const auto dsml_id = find_special_token(tokenizer, dsml);
+  if (!think_tokens.has_value() || stops.size() != 2U || !dsml_id.has_value()) {
+    return error(ChatGenerationPlanErrorCode::tokenization_failed, "the local tokenizer pack does not carry DeepSeek's tool tag");
+  }
+  const auto pieces = render_deepseek_tool_prompt(request.messages, tools, rounds, effort);
+  if (!pieces) {
+    return error(ChatGenerationPlanErrorCode::prompt_render_failed, "chat messages cannot be represented by the fixed DeepSeek profile");
+  }
+  const auto encoded = encode_prompt_pieces(tokenizer, *pieces);
+  const auto* token_ids = std::get_if<std::vector<std::size_t>>(&encoded);
+  if (token_ids == nullptr) {
+    return error(ChatGenerationPlanErrorCode::tokenization_failed, "rendered DeepSeek prompt cannot be encoded by the local tokenizer pack");
+  }
+  if (token_ids->empty() || token_ids->size() > maximum_prompt_tokens) {
+    return error(ChatGenerationPlanErrorCode::prompt_too_large, "encoded chat prompt exceeds native serving limits");
+  }
+  return ChatGenerationPlan{request.model, *token_ids, request.max_tokens.value_or(default_max_tokens),
+                            merge_sampling(request.sampling, defaults), think_tokens, effort.has_value(),
+                            std::vector<std::size_t>{}, std::nullopt, std::move(stops),
+                            std::vector<std::pair<std::size_t, std::string>>{{*dsml_id, dsml}}};
+}
+
 ChatGenerationPlanResult make_minimax_chat_generation_plan(const ChatCompletionRequest& request, const TokenizerPack& tokenizer,
                                                            const std::size_t maximum_prompt_tokens,
                                                            const std::size_t default_max_tokens, const SamplingDefaults& defaults,

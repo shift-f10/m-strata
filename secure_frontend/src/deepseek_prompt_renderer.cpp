@@ -1,9 +1,13 @@
 #include "secure_frontend/deepseek_prompt_renderer.hpp"
 
+#include "secure_frontend/json.hpp"
+#include "secure_frontend/prompt_builder.hpp"
 #include "secure_frontend/tokenizer_pack.hpp"
 
+#include <array>
 #include <cstddef>
 #include <string_view>
+#include <variant>
 
 namespace secure_frontend {
 namespace {
@@ -63,6 +67,37 @@ bool append_bounded(std::string* const output, const std::string_view text) {
   return true;
 }
 
+std::string effort_line(const int effort) {
+  return "Reasoning Effort: " + std::to_string(effort) + " (range 1-100, the higher the value, the more thorough the reasoning)\n\n";
+}
+
+// ds41_encoding.py's TOOLS_TEMPLATE up to its {tool_schemas}, its names filled in (dsml_token, the " calls" block, the
+// " invoke" and " parameter" tags, thinking_start_token and thinking_end_token), and what follows the schemas.
+std::string tools_head() {
+  const std::string d{kDsml};
+  return "## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<" + d +
+         " calls>\" block like the following:\n\n<" + d + " calls>\n<" + d + " invoke name=\"$TOOL_NAME\">\n<" + d +
+         " parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</" + d + " parameter>\n...\n</" + d +
+         " invoke>\n<" + d + " invoke name=\"$TOOL_NAME2\">\n...\n</" + d + " invoke>\n</" + d +
+         " calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, "
+         "arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by "
+         "<think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\n"
+         "Otherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n";
+}
+constexpr std::string_view kToolsTail =
+    "\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n";
+constexpr JsonLimits kToolLimits{.max_bytes = 1U << 20U, .max_depth = 32U, .max_container_entries = 4096U,
+                                 .max_string_bytes = 1U << 20U, .allow_fractions = true};
+
+const JsonValue* member(const JsonValue& object, const std::string_view key) {
+  const auto* members = object.if_object();
+  if (members == nullptr) return nullptr;
+  for (const auto& entry : *members) {
+    if (entry.key == key) return &entry.value;
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 std::optional<std::string> render_deepseek_text_prompt(const std::vector<ChatMessage>& messages, const std::optional<int> effort) {
@@ -108,6 +143,117 @@ std::optional<std::string> render_deepseek_text_prompt(const std::vector<ChatMes
   }
   if (expect_user) return std::nullopt;  // the conversation ends in a user turn
   return output;
+}
+
+std::optional<std::vector<PromptPiece>> render_deepseek_tool_prompt(const std::vector<ChatMessage>& messages,
+                                                                    const std::span<const std::string> tools,
+                                                                    const std::span<const ToolRound> rounds,
+                                                                    const std::optional<int> effort) {
+  // The conversation obeys every rule of the plain prompt (roles, order, literals, sizes, the effort's range).
+  if (tools.empty() || !render_deepseek_text_prompt(messages, effort)) return std::nullopt;
+  for (const auto& round : rounds) {
+    if (round.calls.empty() || round.results.size() != round.calls.size()) return std::nullopt;
+    for (const auto& call : round.calls) {
+      if (call.name.empty()) return std::nullopt;
+    }
+  }
+  // tools_from_openai_format: each tool's function object, written by to_json (json.dumps, ensure_ascii off)
+  std::vector<std::string> schemas;
+  for (const auto& tool : tools) {
+    auto parsed = parse_json(tool, kToolLimits);
+    const auto* value = std::get_if<JsonValue>(&parsed);
+    if (value == nullptr || value->if_object() == nullptr) return std::nullopt;
+    const JsonValue* wrapped = member(*value, "function");
+    const JsonValue& function = wrapped != nullptr && wrapped->if_object() != nullptr ? *wrapped : *value;
+    const JsonValue* name = member(function, "name");
+    // (a "::" name is a namespace to DeepSeek's encoder; ours have none)
+    if (name == nullptr || name->if_string() == nullptr || name->if_string()->empty() ||
+        name->if_string()->find("::") != std::string::npos) {
+      return std::nullopt;
+    }
+    schemas.push_back(python_json_text(function));
+  }
+  const bool thinking = effort.has_value();
+  const std::array<std::string_view, 3> tags{kDsml, kThinkOpen, kThinkClose};
+  PromptBuilder out;
+  // index 0: the system message the tools ride on (render_message: <｜System｜>, the effort line, its text, the tools)
+  out.marker(kBos);
+  out.marker(kSystem);
+  if (effort) out.text(effort_line(*effort));
+  std::size_t index = 0U;
+  if (messages.front().role == "system") {
+    out.text(messages.front().content);
+    index = 1U;
+  }
+  out.text("\n\n");
+  out.templated(tools_head(), tags);
+  for (std::size_t i = 0; i < schemas.size(); ++i) {
+    if (i != 0U) out.text("\n");
+    out.plain(schemas[i]);
+  }
+  out.text(kToolsTail);
+  // With tools the encoder keeps every turn's thinking: each assistant header opens <think> (thinking) or closes it.
+  const auto header = [&out, thinking] {
+    out.marker(kAssistant);
+    out.marker(thinking ? kThinkOpen : kThinkClose);
+  };
+  for (; index < messages.size(); ++index) {
+    const ChatMessage& message = messages[index];
+    if (message.role == "user") {
+      out.marker(kUser);
+      out.text(message.content);
+      header();
+    } else {  // an earlier assistant turn: its (empty) reasoning closed, its content, EOS
+      if (thinking) out.marker(kThinkClose);
+      out.text(message.content);
+      out.marker(kEos);
+    }
+  }
+  // Each round: the assistant's reasoning and content, its calls in DSML (tool_calls_template), EOS; then its results
+  // as one user turn of <tool_result> blocks (merge_tool_messages) and the next header.
+  const auto dsml_tag = [&out](const std::string_view before, const std::string_view after) {
+    out.text(before);
+    out.marker(kDsml);
+    out.text(after);
+  };
+  for (const auto& round : rounds) {
+    if (thinking) {
+      out.plain(round.reasoning);
+      out.marker(kThinkClose);
+    }
+    out.plain(round.content);
+    dsml_tag("\n\n<", " calls>\n");
+    for (std::size_t c = 0; c < round.calls.size(); ++c) {
+      const ToolCall& call = round.calls[c];
+      if (c != 0U) out.text("\n");
+      dsml_tag("<", " invoke name=\"");
+      out.plain(call.name);
+      out.text("\">\n");
+      for (std::size_t a = 0; a < call.arguments.size(); ++a) {
+        const ToolArgument& argument = call.arguments[a];
+        const std::string* text = argument.value.if_string();
+        if (a != 0U) out.text("\n");
+        dsml_tag("<", " parameter name=\"");
+        out.plain(argument.name);
+        out.text(text != nullptr ? "\" string=\"true\">" : "\" string=\"false\">");
+        out.plain(text != nullptr ? *text : python_json_text(argument.value));
+        dsml_tag("</", " parameter>");
+      }
+      dsml_tag("\n</", " invoke>");
+    }
+    dsml_tag("\n</", " calls>");
+    out.marker(kEos);
+    out.marker(kUser);
+    for (std::size_t r = 0; r < round.results.size(); ++r) {
+      if (r != 0U) out.text("\n\n");
+      out.text("<tool_result>");
+      out.plain(round.results[r]);
+      out.text("</tool_result>");
+    }
+    header();
+  }
+  if (out.bytes() > kMaximumPromptBytes) return std::nullopt;
+  return out.take();
 }
 
 }  // namespace secure_frontend

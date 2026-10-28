@@ -1,0 +1,297 @@
+{
+ "generator": "tools/generate_deepseek_tool_call_fixture.py",
+ "tool": {
+  "name": "web_search",
+  "description": "Search the web.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string"
+    },
+    "max_results": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ "cases": [
+  {
+   "name": "a_call_after_the_thinking",
+   "reply": "I need to search.</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">world cup 2026</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "I need to search."
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "world cup 2026"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "content_before_a_call",
+   "reply": "ok</think>Let me check.\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">x</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"max_results\" string=\"false\">3</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "ok"
+    },
+    {
+     "kind": "content",
+     "text": "Let me check."
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "x",
+       "max_results": 3
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "two_calls_in_one_block",
+   "reply": "x</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">a</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">b</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "a"
+      }
+     }
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "b"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "json_values",
+   "reply": "x</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">q</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"max_results\" string=\"false\">5</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"list\" string=\"false\">[1, 2.5, \"z\"]</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"flag\" string=\"false\">true</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"opts\" string=\"false\">{\"k\": \"v\"}</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q",
+       "max_results": 5,
+       "list": [
+        1,
+        2.5,
+        "z"
+       ],
+       "flag": true,
+       "opts": {
+        "k": "v"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_string_that_looks_like_json_stays_a_string",
+   "reply": "x</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">[1, 2]</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"n\" string=\"true\">7</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "[1, 2]",
+       "n": "7"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_value_keeps_its_newlines_and_angles",
+   "reply": "x</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">\nline <one>\na < b\n</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "\nline <one>\na < b\n"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_dsml_tag_inside_a_value_is_data",
+   "reply": "x</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">see <｜DSML｜ invoke name=\"y\"> and </｜DSML｜ para</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "see <｜DSML｜ invoke name=\"y\"> and </｜DSML｜ para"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "text_after_the_calls",
+   "reply": "x</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">q</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nDone.",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q"
+      }
+     }
+    },
+    {
+     "kind": "content",
+     "text": "\n\nDone."
+    }
+   ]
+  },
+  {
+   "name": "an_unclosed_block_still_gives_its_call",
+   "reply": "x</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">q</｜DSML｜ parameter>\n</｜DSML｜ invoke>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_cut_value_at_the_end",
+   "reply": "x</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">half",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {}
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_call_in_the_reasoning_is_reasoning",
+   "reply": "Like \n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">q</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls> then.</think>Answer.",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "Like \n\n<tool_call>web_search<arg_key>query</arg_key><arg_value>\"q\"</arg_value></tool_call> then."
+    },
+    {
+     "kind": "content",
+     "text": "Answer."
+    }
+   ]
+  },
+  {
+   "name": "plain_angles_are_text",
+   "reply": "x</think>If a < b and c > d, then <b>bold</b>.",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "kind": "content",
+     "text": "If a < b and c > d, then <b>bold</b>."
+    }
+   ]
+  },
+  {
+   "name": "unicode_around_a_call",
+   "reply": "思考。</think>答え：\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">日本 été</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "思考。"
+    },
+    {
+     "kind": "content",
+     "text": "答え："
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "日本 été"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "python_whitespace_in_the_tags",
+   "reply": "x</think>\n\n<｜DSML｜　calls>\n<｜DSML｜ invoke name=\"web_search\">　\n<｜DSML｜ parameter name=\"query\" string=\"true\">q</｜DSML｜ parameter>\n</｜DSML｜　invoke>\n</｜DSML｜ calls>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q"
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

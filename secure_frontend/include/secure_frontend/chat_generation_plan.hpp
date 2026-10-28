@@ -182,6 +182,16 @@ using ChatGenerationPlanResult = std::variant<ChatGenerationPlan, ChatGeneration
 // "medium" and "high" 75 (Maya's default, "high").
 [[nodiscard]] std::optional<int> deepseek_effort_budget(std::string_view level);
 
+// Web search for DeepSeek-V4.1 (owner 2026-10-28): make_deepseek_chat_generation_plan's plan with the server's tools and
+// the search loop's rounds (render_deepseek_tool_prompt, encoded by encode_prompt_pieces), and ｜DSML｜ - a special token
+// in a maya-ds4 pack - output as its text (literal_tokens) for the DSML call parser. The same reasoning split, start
+// and server stops as the text plan. A pack without the markers, the think pair, both turn ends or ｜DSML｜ is
+// tokenization_failed (the chat is then served without the tool); an image part is invalid_request.
+[[nodiscard]] ChatGenerationPlanResult make_deepseek_tool_generation_plan(
+    const ChatCompletionRequest& request, const TokenizerPack& tokenizer, std::span<const std::string> tools,
+    std::span<const ToolRound> rounds, std::size_t maximum_prompt_tokens, std::size_t default_max_tokens,
+    const SamplingDefaults& defaults, std::optional<int> effort);
+
 [[nodiscard]] ChatGenerationPlanResult make_deepseek_chat_generation_plan(
     const ChatCompletionRequest& request, const TokenizerPack& tokenizer,
     std::size_t maximum_prompt_tokens = static_cast<std::size_t>(config_defaults::kChatMaxPromptTokens),

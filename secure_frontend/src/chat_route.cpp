@@ -70,8 +70,8 @@ std::optional<ToolFormat> search_tool_format(const NativeChatProfile profile) {
     case NativeChatProfile::raon1: return ToolFormat::raon1;  // raon-1-mini's template writes Qwen's calls
     case NativeChatProfile::flint: return ToolFormat::flint;  // flint's writes GLM's
     case NativeChatProfile::gemma4: return ToolFormat::gemma4;  // its own <|tool_call>call:NAME{...} (owner 2026-10-28)
-    case NativeChatProfile::deepseek:
-    case NativeChatProfile::minimax: break;  // (no tool form wired for these yet)
+    case NativeChatProfile::deepseek: return ToolFormat::deepseek;  // DSML, as Maya renders and reads it (owner 2026-10-28)
+    case NativeChatProfile::minimax: break;  // (no tool form wired for it yet)
   }
   return std::nullopt;
 }

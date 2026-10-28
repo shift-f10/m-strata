@@ -51,6 +51,18 @@ namespace secure_frontend {
 
 [[nodiscard]] inline std::string_view python_strip(const std::string_view text) { return python_rstrip(python_lstrip(text)); }
 
+// str.split(None, 1)[0] of a text that is not all whitespace: its first run of non-whitespace (empty when there is none).
+[[nodiscard]] inline std::string_view python_first_word(const std::string_view text) {
+  const std::size_t start = python_space_end(text);
+  std::size_t end = start;
+  while (end < text.size()) {
+    const auto [c, width] = utf8_code_point(text, end);
+    if (python_space(c)) break;
+    end += width;
+  }
+  return text.substr(start, end - start);
+}
+
 // The number of code points (Python's len) of valid UTF-8.
 [[nodiscard]] inline std::size_t python_length(const std::string_view text) {
   std::size_t count = 0U;

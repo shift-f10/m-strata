@@ -1,8 +1,11 @@
 #pragma once
 
 #include "secure_frontend/chat_schema.hpp"
+#include "secure_frontend/prompt_piece.hpp"
+#include "secure_frontend/tool_calls.hpp"
 
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -24,5 +27,27 @@ namespace secure_frontend {
 // or mid-conversation system messages.
 [[nodiscard]] std::optional<std::string> render_deepseek_text_prompt(const std::vector<ChatMessage>& messages,
                                                                      std::optional<int> effort);
+
+// Web search for DeepSeek-V4.1 (owner 2026-10-28: "deepseek does not seem to have mcp search access"): the prompt
+// DeepSeek's encoder writes for a chat with the server's tools and the search loop's rounds, as Maya v1.1.30's
+// ChatTemplate hands them to it (the tools on the system message - an empty one first when the chat has none - and
+// each round appended as Maya's run_with_mcp appends DeepSeek's: content and reasoning as the parser gave them, the
+// calls, then one tool result each, merged into a user turn):
+//
+//   <BOS><｜System｜>{effort line}{system}\n\n## Tools ... {tool schemas} ...<｜User｜>{user}<｜Assistant｜><think>
+//   {reasoning}</think>{content}\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name="N">\n<｜DSML｜ parameter name="K"
+//   string="true|false">V</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><EOS><｜User｜><tool_result>{result}
+//   </tool_result><｜Assistant｜><think>
+//
+// With tools DeepSeek's encoder keeps every turn's thinking (drop_thinking off): each assistant header opens <think> in
+// thinking mode, an earlier assistant turn is "</think>{content}<EOS>". The markers, ｜DSML｜, <think> and </think> the
+// encoder writes are markers; the model's words, the results and the calls' names and values are plain (Maya's literal
+// marking); the client's messages follow render_deepseek_text_prompt's rules. Each tool is its function object or the
+// OpenAI form carrying it; it is written as DeepSeek's to_json writes it. nullopt: no tools, a tool that is not an
+// object with a name, a round without calls or with a result missing, an unnamed call, or what the text prompt refuses.
+[[nodiscard]] std::optional<std::vector<PromptPiece>> render_deepseek_tool_prompt(const std::vector<ChatMessage>& messages,
+                                                                                  std::span<const std::string> tools,
+                                                                                  std::span<const ToolRound> rounds,
+                                                                                  std::optional<int> effort);
 
 }  // namespace secure_frontend

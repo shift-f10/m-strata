@@ -872,8 +872,8 @@ void cards_say_whether_their_profile_takes_reasoning_effort() {
 }
 
 // Owner 2026-10-28 ("a toggle in the card that can enable search"): with the server's web search on, every card whose
-// profile has the tool (qwen, glm53, raon1, flint, gemma4) offers a Web search checkbox, on by default, even when its card
-// file lists no options; deepseek does not. Without the server's search no card shows it.
+// profile has the tool (qwen, glm53, raon1, flint, gemma4, deepseek) offers a Web search checkbox, on by default, even when
+// its card file lists no options; minimax does not yet. Without the server's search no card shows it.
 void cards_offer_web_search_when_the_server_has_it() {
   struct NoTool final : secure_frontend::ToolRunner {
     std::optional<secure_frontend::ToolOffer> offer() override { return std::nullopt; }
@@ -884,7 +884,8 @@ void cards_offer_web_search_when_the_server_has_it() {
     for (const auto& [name, profile] : std::vector<std::pair<std::string, secure_frontend::EngineProfile>>{
              {"Q", secure_frontend::EngineProfile::qwen}, {"G", secure_frontend::EngineProfile::glm53},
              {"R", secure_frontend::EngineProfile::raon1}, {"F", secure_frontend::EngineProfile::flint},
-             {"E", secure_frontend::EngineProfile::gemma4}, {"D", secure_frontend::EngineProfile::deepseek}}) {
+             {"E", secure_frontend::EngineProfile::gemma4}, {"D", secure_frontend::EngineProfile::deepseek},
+             {"M", secure_frontend::EngineProfile::minimax}}) {
       secure_frontend::ModelCard card;
       card.name = name;
       card.profile = profile;
@@ -903,12 +904,12 @@ void cards_offer_web_search_when_the_server_has_it() {
     return from == std::string::npos ? std::string{} : listed.substr(from, listed.find("\"calibration\":", from) - from);
   };
   const std::string on = listing(&tool);
-  for (const char* name : {"Q", "G", "R", "F", "E"}) {
+  for (const char* name : {"Q", "G", "R", "F", "E", "D"}) {
     expect(options_of(on, name).find(R"({"name":"web_search","kind":"boolean","label":"Web search",)") != std::string::npos &&
                options_of(on, name).find(R"("default":true,"value":true})") != std::string::npos,
            std::string{name} + " offers Web search, on: " + options_of(on, name));
   }
-  for (const char* name : {"D"}) {
+  for (const char* name : {"M"}) {
     expect(options_of(on, name).find("web_search") == std::string::npos, std::string{name} + " has no tool to offer: " + on);
   }
   const std::string off = listing(nullptr);

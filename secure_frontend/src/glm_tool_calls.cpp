@@ -130,7 +130,34 @@ std::optional<ToolCall> parse_glm_tool_call(const std::string_view raw_body, con
   return call;
 }
 
-GlmToolCallParser::GlmToolCallParser(std::vector<ToolDeclaration> tools) : tools_(std::move(tools)) {}
+std::string maya_json_escaped(const std::string_view text) {
+  std::string out;
+  for (const char c : text) {
+    switch (c) {
+      case '"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      case '\b': out += "\\b"; break;
+      case '\f': out += "\\f"; break;
+      case '<': out += "\\u003c"; break;
+      default:
+        if (static_cast<unsigned char>(c) < 0x20U) {
+          constexpr char kHex[] = "0123456789abcdef";
+          out += "\\u00";
+          out += kHex[(static_cast<unsigned char>(c) >> 4U) & 0xFU];
+          out += kHex[static_cast<unsigned char>(c) & 0xFU];
+        } else {
+          out += c;
+        }
+    }
+  }
+  return out;
+}
+
+GlmToolCallParser::GlmToolCallParser(std::vector<ToolDeclaration> tools, const bool rewritten)
+    : tools_(std::move(tools)), rewritten_(rewritten) {}
 
 const ToolDeclaration* GlmToolCallParser::declared(const std::string_view name) const {
   for (const auto& tool : tools_) {
@@ -196,7 +223,7 @@ void GlmToolCallParser::run(std::vector<ToolParseEvent>& out) {
       }
       continue;
     }
-    if (lead_) {  // the newlines right after </think> or a call
+    if (lead_ && !rewritten_) {  // the newlines right after </think> or a call (GLM's and Qwen's rule only)
       const std::size_t first = buf_.find_first_not_of('\n');
       if (first == kNpos) {
         buf_.clear();
@@ -224,7 +251,11 @@ void GlmToolCallParser::run(std::vector<ToolParseEvent>& out) {
       buf_.erase(0U, i + kCallStart.size());
       continue;
     }
-    if (i > 0U && !python_strip(std::string_view{buf_}.substr(0U, i)).empty()) {
+    if (rewritten_) {  // a rewriter's call: the template's "\n\n" before its calls block goes, the rest is text
+      std::string before_call = buf_.substr(0U, i);
+      if (before_call.ends_with("\n\n")) before_call.resize(before_call.size() - 2U);
+      emit(out, ToolParseEvent::Kind::content, std::move(before_call));
+    } else if (i > 0U && !python_strip(std::string_view{buf_}.substr(0U, i)).empty()) {
       std::string before_call = buf_.substr(0U, i);
       while (!before_call.empty() && before_call.back() == '\n') before_call.pop_back();
       emit(out, ToolParseEvent::Kind::content, std::move(before_call));

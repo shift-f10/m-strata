@@ -730,6 +730,17 @@ Peasant Smith and the Project Maya contributors"; read from `G:\Project-maya`'s 
   `tests/fixtures/gemma4_tool_prompts.json` holds our inputs and what upstream's `ChatTemplate` rendered from the GGUF's
   template over that path (`secure_frontend/tools/generate_gemma4_tool_prompt_fixture.py`); the template is not
   committed (its SHA-256 is in the file).
+- **DeepSeek-V4.1 tool calls (2026-10-28)**: `render_deepseek_tool_prompt` writes what DeepSeek's encoder as Maya
+  vendors it (`serve/ds41_encoding.py`, MIT, "Copyright (c) 2023 DeepSeek") writes for a chat with tools:
+  - `render_tools` with `TOOLS_TEMPLATE`, kept verbatim because the model was trained on it;
+  - an assistant turn's calls by `tool_calls_template` and `encode_arguments_to_dsml`;
+  - the results as `<tool_result>` blocks.
+
+  It is ported to C++ and checked byte for byte. `deepseek_tool_calls.cpp` ports Maya's `DsmlRewriter`
+  (`serve/frontend.py`), which turns DSML calls into GLM's form for the GLM port above, as Maya's server reads them.
+  `tests/fixtures/deepseek_tool_prompts.json` and `deepseek_tool_calls.json` hold our inputs and what Maya's own code
+  gave for them (`secure_frontend/tools/generate_deepseek_tool_{prompt,call}_fixture.py`, run on the byte-exact copy of
+  Maya's `serve` folder). The pack's chat template is not committed (its SHA-256 is in the prompt file).
 
 ## Pictures on model cards (2026-10-28): upstream's strata-vision, built as it is
 

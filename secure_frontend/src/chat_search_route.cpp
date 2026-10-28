@@ -33,6 +33,10 @@ ChatGenerationPlanResult search_plan(const SearchLimits& limits, const SearchTur
     case ToolFormat::gemma4:
       return make_gemma4_tool_generation_plan(turn.request, tokenizer, tools, rounds, limits.max_prompt_tokens, 1U, limits.sampling,
                                               turn.thinking);
+    case ToolFormat::deepseek:  // thinking is the effort line at the level's budget, as the text plan's (select_chat_generation_plan)
+      return make_deepseek_tool_generation_plan(
+          turn.request, tokenizer, tools, rounds, limits.max_prompt_tokens, 1U, limits.sampling,
+          turn.thinking ? deepseek_effort_budget(turn.effort.effort == QwenEffort::low ? "low" : "high") : std::nullopt);
     case ToolFormat::qwen: break;
   }
   return make_qwen_tool_generation_plan(turn.request, tokenizer, tools, rounds, limits.max_prompt_tokens, 1U, limits.sampling,
