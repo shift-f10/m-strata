@@ -6,7 +6,9 @@
 #include "secure_frontend/flint_prompt_renderer.hpp"
 #include "secure_frontend/deepseek_prompt_renderer.hpp"
 
+#include <algorithm>
 #include <array>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -341,6 +343,45 @@ ChatGenerationPlanResult make_glm53_chat_generation_plan(
   return ChatGenerationPlan{request.model, *token_ids, request.max_tokens.value_or(default_max_tokens),
                             merge_sampling(request.sampling, defaults), think_tokens, think_tokens.has_value(),
                             find_glm53_end_of_turn_tokens(tokenizer), std::nullopt, {}, {}};
+}
+
+ChatGenerationPlanResult make_gemma4_tool_generation_plan(const ChatCompletionRequest& request, const TokenizerPack& tokenizer,
+                                                          const std::span<const std::string> tools, const std::span<const ToolRound> rounds,
+                                                          const std::size_t maximum_prompt_tokens, const std::size_t default_max_tokens,
+                                                          const SamplingDefaults& defaults, const bool thinking) {
+  if (request.model.empty() || request.messages.empty() || maximum_prompt_tokens == 0U ||
+      (request.max_tokens.has_value() && *request.max_tokens == 0U)) {
+    return error(ChatGenerationPlanErrorCode::invalid_request, "chat generation request is outside native serving limits");
+  }
+  if (count_image_parts(request) != 0U) return error(ChatGenerationPlanErrorCode::invalid_request, "the Gemma 4 profile cannot serve image parts");
+  // Gemma's pack: its markers, its two turn ends and the seven tool tags the prompt and the reply use
+  const auto markers = find_gemma4_markers(tokenizer);
+  auto stops = find_gemma4_end_of_turn_tokens(tokenizer);
+  std::vector<std::optional<std::size_t>> tags;
+  for (const std::string_view tag : {"<|tool>", "<tool|>", "<|tool_call>", "<tool_call|>", "<|tool_response>", "<tool_response|>", "<|\"|>"}) {
+    tags.push_back(find_special_token(tokenizer, tag));
+  }
+  if (!markers.has_value() || stops.size() != 2U ||
+      std::any_of(tags.begin(), tags.end(), [](const std::optional<std::size_t>& id) { return !id.has_value(); })) {
+    return error(ChatGenerationPlanErrorCode::tokenization_failed, "the local tokenizer pack does not carry Gemma 4's tool tags");
+  }
+  const auto pieces = render_gemma4_tool_prompt(request.messages, tools, rounds, thinking);
+  if (!pieces) {
+    return error(ChatGenerationPlanErrorCode::prompt_render_failed, "chat messages cannot be represented by the fixed Gemma 4 template");
+  }
+  const auto encoded = encode_prompt_pieces(tokenizer, *pieces);
+  const auto* token_ids = std::get_if<std::vector<std::size_t>>(&encoded);
+  if (token_ids == nullptr) {
+    return error(ChatGenerationPlanErrorCode::tokenization_failed, "rendered Gemma 4 prompt cannot be encoded by the local tokenizer pack");
+  }
+  if (token_ids->empty() || token_ids->size() > maximum_prompt_tokens) {
+    return error(ChatGenerationPlanErrorCode::prompt_too_large, "encoded chat prompt exceeds native serving limits");
+  }
+  // as the text plan, plus the call's tags as their text and the server's stop on <|tool_response>
+  std::vector<std::pair<std::size_t, std::string>> literals{{*tags[2], "<|tool_call>"}, {*tags[3], "<tool_call|>"}, {*tags[6], "<|\"|>"}};
+  return ChatGenerationPlan{request.model, *token_ids, request.max_tokens.value_or(default_max_tokens),
+                            merge_sampling(request.sampling, defaults), ThinkTokens{markers->channel_open, markers->channel_close},
+                            false, std::move(stops), std::string{"thought"}, std::vector<std::size_t>{*tags[4]}, std::move(literals)};
 }
 
 ChatGenerationPlanResult make_gemma4_chat_generation_plan(const ChatCompletionRequest& request, const TokenizerPack& tokenizer,

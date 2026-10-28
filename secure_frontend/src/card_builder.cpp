@@ -24,6 +24,8 @@ constexpr std::int64_t kDefaultContext = 65536;
 // kCustomProfiles qwen36), the model's own context the most (its dropdown runs past 256K with YaRN; never offered here).
 constexpr std::int64_t kQwen36DefaultContext = 32768;
 constexpr std::string_view kCodeAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+// the MTP draft layer's runtime files as upstream's setup leaves them in mtp/rt (tools/mtp_rt.py, refresh_draft_vocab)
+constexpr std::array<std::string_view, 3> kMtpRuntimeFiles{"dense.bin", "experts.bin", "draft_vocab.bin"};
 
 std::string decimal(const double value) {
   char buffer[32];
@@ -216,13 +218,31 @@ CardText card_for_pack(const PackedCardRequest& request) {
   std::string args = "[\"--pack\"," + text(path_to_utf8(request.pack));
   if (request.ple_gguf) args += ",\"--ple-gguf\"," + text(*request.ple_gguf);
   if (request.expert_profile) args += ",\"--expert-profile\"," + text(path_to_utf8(*request.expert_profile));
+  // the MTP draft layer as upstream's setup runs it (--spec 4 --spec-min-p 0.5 --mtp <rt>; the options set the first two)
+  if (request.mtp) args += ",\"--mtp\"," + text(path_to_utf8(*request.mtp));
+  const std::string mtp_options = request.mtp ? "\"mtp\":{\"default\":true},\"spec_min_p\":{\"default\":0.5}," : "";
   const std::string json =
       head + text(request.model_id) + ",\"args\":" + args + "]},\"roots\":{\"models\":" + text(path_to_utf8(request.folder)) +
       "},\"limits\":{\"chat\":{\"max_prompt_tokens\":1048576,\"max_completion_tokens\":1048576}}}," +
       "\"options\":{\"max_context\":{\"default\":131072,\"min\":4096,\"max\":1048576},\"kv\":{\"default\":\"int8\"}," +
-      "\"kv_resident\":{\"default\":32768,\"max\":262144},\"spec\":{\"default\":4},\"expert_cache\":{\"default\":\"auto\"}," +
+      "\"kv_resident\":{\"default\":32768,\"max\":262144}," + mtp_options + "\"spec\":{\"default\":4},\"expert_cache\":{\"default\":\"auto\"}," +
       "\"prefill\":{\"default\":\"auto\"},\"thinking\":{\"default\":\"high\"}}}\n";
   return CardText{request.name, EngineProfile::qwen, json};
+}
+
+std::optional<std::filesystem::path> find_mtp_runtime(const std::filesystem::path& folder) {
+  std::filesystem::path at = folder;
+  for (int up = 0; up < 3 && !at.empty(); ++up) {
+    const auto rt = at / "mtp" / "rt";
+    std::error_code ec;
+    const bool whole = std::all_of(kMtpRuntimeFiles.begin(), kMtpRuntimeFiles.end(), [&rt, &ec](const std::string_view file) {
+      return std::filesystem::is_regular_file(rt / file, ec) && !std::filesystem::is_symlink(rt / file, ec);
+    });
+    if (whole) return rt;
+    if (at == at.parent_path()) break;
+    at = at.parent_path();
+  }
+  return std::nullopt;
 }
 
 bool write_glm_pack_marker(const std::filesystem::path& pack) { return write_pack_marker(pack, kGlmModelName); }

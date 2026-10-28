@@ -69,6 +69,9 @@ struct PackedCardRequest final {
   std::string model_id;
   std::optional<std::string> ple_gguf;       // UTF-8
   std::optional<std::filesystem::path> expert_profile;
+  // qwen38: the MTP draft layer's runtime folder (upstream's mtp/rt: dense.bin, experts.bin, draft_vocab.bin), when one
+  // was found (find_mtp_runtime); the card then runs it as upstream's setup does and lists its settings
+  std::optional<std::filesystem::path> mtp;
 };
 // The card of a model whose pack strata-prepare built. qwen38: profile qwen, the folder and first shard as the model,
 // --pack / --ple-gguf / --expert-profile, the options upstream's setup gives a pack (128K, int8 KV, 32K resident, spec
@@ -92,6 +95,11 @@ struct PackedCardRequest final {
 [[nodiscard]] std::string card_name_for_file(std::string_view stem);
 // Whether a model file's stem is a whole model's or a split model's first shard (-00001-of-NNNNN).
 [[nodiscard]] bool first_shard_or_whole(std::string_view stem);
+
+// Upstream's MTP draft layer for a Qwen3.8 model in `folder`: the first of folder/mtp/rt, its parent's and its
+// grandparent's holding dense.bin, experts.bin and draft_vocab.bin as regular files (not links) - upstream's setup keeps
+// it at <data>/mtp/rt beside models/ and packs/. nullopt: none. Its privacy is the caller's to check.
+[[nodiscard]] std::optional<std::filesystem::path> find_mtp_runtime(const std::filesystem::path& folder);
 
 // A card's text with roots.models set to `folder` (the model moved); everything else as it was.
 [[nodiscard]] std::variant<std::string, CardError> card_with_folder(std::string_view card_json, const std::filesystem::path& folder);

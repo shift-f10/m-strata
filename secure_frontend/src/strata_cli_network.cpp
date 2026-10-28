@@ -11,6 +11,7 @@
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/sha256.hpp"
 #include "secure_frontend/strata_cli.hpp"
+#include "secure_frontend/token_reader.hpp"
 #include "doctor_checks.hpp"
 #include "release_manifest.hpp"
 #include "service_ops.hpp"
@@ -587,7 +588,21 @@ int verb_doctor(const FrontendConfig& config, const std::filesystem::path& confi
   };
   bundle.file_mode = regular_file_mode;
   bundle.program_dir = self_program_dir();
+  // where the engine loads cuBLAS from: its own folder (a cards config names it models.default_engine), then
+  // engine.lib_dirs (the README audit, owner 2026-10-28)
+  if (config.models.default_engine) bundle.engine_dirs.push_back(config.models.default_engine->parent_path());
+  if (!config.engine.executable.path().empty()) bundle.engine_dirs.push_back(config.engine.executable.path().parent_path());
+  for (const auto& folder : config.engine.lib_dirs) bundle.engine_dirs.push_back(folder);
   bundle.token_file = token_file_below_secret(config);
+#if defined(_WIN32)
+  bundle.file_modes_apply = false;  // the token file is private by its ACL: ask the store, as the server reads it
+  bundle.token_store_error = [&config]() -> std::optional<std::string> {
+    if (!config.roots.secret) return std::string{"roots.secret is not configured"};
+    const auto read = read_token(config.token, *config.roots.secret);
+    if (const auto* error = std::get_if<TokenReadError>(&read)) return error->message;
+    return std::nullopt;
+  };
+#endif
   bundle.roots = root_probes(config);
   bundle.port_free = [&config] { return listener_port_free(config); };
   bundle.memlock_limit = current_memlock;

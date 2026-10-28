@@ -280,6 +280,67 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 w (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+The owner: "while I am still downloading, do not swap my server yet but begin working on the rest of the issues and
+features". Then: the licence is AGPL-3.0 and nothing may say otherwise, with `main`'s published history replaced ("I
+don't care if we delete github history for it"); and his DeepSeek Maya-XS download "Failed ... strata-prepare said
+missing_gguf". His window choices, asked: a native shell with the page inside (tray menu: Exit, each model's start and
+stop), and a Configuration tab for the API key, the listener and LAN access, limits and timeouts, and the folders.
+
+- **The licence**: every line that described the repository's licence other than as AGPL-3.0 is rewritten (NOTICE.md,
+  README, PROVENANCE, the 2026-10-13 layout spec and plan, the SP7 report, sbom.py's docstring, a test docstring);
+  third-party notices (Strata's, Maya's, ggml's) stay. `main` is one root commit, `8e9cef95`, force-pushed with a lease
+  after the guard passed; the earlier commits are only in the local branch `backup-main-before-scrub`, never pushed.
+- **Options start from the data folder** (`uses_data_folder`, server_cli): `strata-secure-server --port 9090` read no
+  `data/` and failed ("roots.models: is required"). Now every start without `--config` uses the data folder, the options
+  on top of its config, except a bring-up start that names its model by flags (`--expert`, `--models-root`, `--engine`,
+  `--model-id`, `--profile`, `--tokenizer-pack`). README, README.txt and `--help` say so. Test RED first:
+  `options_alone_start_from_the_data_folder`.
+- **`strata doctor` in an out folder**: `cuda` also passes with cuBLAS and cuBLASLt of one version in the engine's folder
+  (`models.default_engine`, `engine.executable`) or `engine.lib_dirs`, the multiengine layout; on Windows `token` asks the
+  store's own rules (`read_token`: the ACL) instead of POSIX mode bits. Tests RED first:
+  `doctor_check_cuda_finds_cublas_beside_the_engine`, `doctor_check_token_uses_the_store_rules_where_modes_do_not_apply`;
+  the rebuilt `strata doctor` on a scratch data folder: cuda ok, token ok (port fails while the owner's server runs).
+- **`auth04_no_switch_disables_auth`** lists `listener.login_link`, `roots.allow_untrusted_media`, `alerts.email.enabled`
+  and `search.enabled`, each reviewed in its comment (none reads, skips or replaces the key); **`test_make.py`**'s helper
+  names a build folder that never exists, so the cases describe a fresh build whatever `out/make-build` holds.
+- **Web search for Gemma 4** (`ToolFormat::gemma4`): `render_gemma4_tool_prompt` writes the GGUF template's tool macros
+  (format_function_declaration, format_parameters, format_argument) and llama.cpp 3cf03257's message path
+  (convert_tool_responses_gemma4: a round is one open model turn of its calls and their responses);
+  `Gemma4ToolCallParser` reads `<|tool_call>call:NAME{...}<tool_call|>` by llama.cpp's PEG rules; the plan stops the
+  engine on `<|tool_response>` (llama.cpp's Gemma 4 end of generation; our engine ends on `<turn|>`/`<eos>` only) and
+  outputs the three call tags as text; Gemma cards get the Web search switch. Tests RED first:
+  `secure_frontend_gemma4_tool_calls_tests` (12 fixture prompts byte for byte in both tool forms against upstream's
+  `ChatTemplate` over the GGUF's template, `tools/generate_gemma4_tool_prompt_fixture.py`; llama.cpp's
+  `tests/test-chat.cpp` Gemma 4 replies; the plan; the route; the real vocabulary through
+  `SECURE_FRONTEND_GEMMA4_PACK`, built with `secure_tokenizer.py --profile gemma4` into a scratch folder, never
+  committed), `web_search_is_a_checkbox_of_the_tool_profiles`, `cards_offer_web_search_when_the_server_has_it`. Not run
+  on the GPU (the owner's server holds it).
+- **MTP on Qwen3.8 cards** (`find_mtp_runtime`, `PackedCardRequest::mtp`): Add a model finds upstream's draft layer
+  (`mtp/rt` with dense.bin, experts.bin, draft_vocab.bin) in the model folder, its parent or its grandparent, private by
+  the folders' rule, and the card runs it as upstream's setup does (`--mtp <rt>`, spec 4, spec_min_p 0.5) with the
+  MTP draft layer, Draft window and Draft confidence settings. GLM-5.3's Maya engine drafts with its pack's MTP block by
+  itself (no flag; only a request's spec=1 turns it off), so its cards have none; the owner's existing Qwen3.8 card
+  predates this (re-adding it, or editing its card, gives it MTP). Making the draft layer here (upstream's
+  `mtp_fetch.py`, `mtp_pack.py`, `mtp_rt.py`, natively) is open. Tests RED first:
+  `a_qwen38_pack_with_its_draft_layer_offers_mtp`, `a_qwen38_model_finds_its_draft_layer`.
+- **Downloads keep the catalog's subfolder** (`stored_file`): the store keeps a file at `<version>/<its catalog path>`
+  (`Maya-XS/...-00001-of-00005.gguf`), but the native pack steps and the GGUF-direct card took the name alone - the
+  owner's DeepSeek Maya-XS failed with `missing_gguf`, and GLM-5.3 and MiniMax downloads would have failed the same way
+  (GLM's links: "could not be linked"). Every branch now uses the stored path, and a Qwen3.8 or GGUF card's model folder
+  is the file's own folder. The tests' fake stores had the same flattened layout; they are corrected to the store's.
+  Tests RED first: the five `a_downloaded_*` cases. The owner's DeepSeek card exists already: his Add a model on that
+  folder built its pack.
+- Tests on this PC, 0 build errors and warnings. Email and search on, the real packs named (Gemma 4's too): 1,265, the
+  two release-binary checks fail as in every hooks build. Off: 1,235, the same and the idle-unload flake. (That run came
+  before the store-path fix; `secure_frontend_download_manager_tests` passes 20/20 after it.) `tools/secure`: 115 passed,
+  7 failed (the release-bundle cases need a cross build this PC has not got).
+- **The owner's server** runs this build since his "Yes" after his download: the out folder's contents replaced, his
+  `data/` kept, `limits.engine.generation_timeout_s` 1800 in its config (`--check` shows it), restarted on the dev key;
+  `/health` ok, its six cards loaded, Gemma 4's with Web search. (A shell whose working folder is the out folder holds
+  it open on Windows: the folder could not be renamed, so its contents were moved.)
+
 ### Claude Code session, 2026-10-28 v (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 After entry u's push the owner asked why MiniMax had no download cards (it waited on his licence decision, strata-prepare

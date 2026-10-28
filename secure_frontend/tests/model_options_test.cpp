@@ -189,7 +189,7 @@ void option_tables_per_profile() {
                                                   "web_search"},
          "the qwen options in display order: " + joined(names_of(EngineProfile::qwen)));
   expect(names_of(EngineProfile::gemma4) ==
-             Strings{"max_context", "chunk", "expert_vram", "thinking", "temperature", "top_p", "top_k", "min_p"},
+             Strings{"max_context", "chunk", "expert_vram", "thinking", "temperature", "top_p", "top_k", "min_p", "web_search"},
          "the gemma4 options in display order: " + joined(names_of(EngineProfile::gemma4)));
   // D10 met (owner 2026-10-27): Maya's own GLM choices - its context menu, the engine's --kv, the sampling defaults
   expect(names_of(EngineProfile::glm53) == Strings{"max_context", "kv", "temperature", "top_p", "top_k", "min_p", "web_search"},
@@ -676,7 +676,8 @@ void flint_options_follow_the_flint_engine() {
 // server's tool (qwen, glm53, raon1, flint). It writes no flag and no row: the launcher reads it at a start to hand the
 // model the tool or not. A card may list it with its own default.
 void web_search_is_a_checkbox_of_the_tool_profiles() {
-  for (const auto profile : {EngineProfile::qwen, EngineProfile::glm53, EngineProfile::raon1, EngineProfile::flint}) {
+  // gemma4 since 2026-10-28 (the owner: "gemma4 did not use search")
+  for (const auto profile : {EngineProfile::qwen, EngineProfile::glm53, EngineProfile::raon1, EngineProfile::flint, EngineProfile::gemma4}) {
     const auto* spec = secure_frontend::find_model_option(profile, "web_search");
     expect(spec != nullptr && spec->kind == ModelOptionKind::boolean && spec->label == "Web search" && !spec->help.empty(),
            "a tool profile has the Web search checkbox");
@@ -686,9 +687,9 @@ void web_search_is_a_checkbox_of_the_tool_profiles() {
     secure_frontend::apply_option_values(profile, ModelOptionValues{{"web_search", true}}, draft);
     expect(draft.entries.empty(), "it writes no config row");
   }
-  expect(secure_frontend::find_model_option(EngineProfile::gemma4, "web_search") == nullptr &&
-             secure_frontend::find_model_option(EngineProfile::deepseek, "web_search") == nullptr,
-         "gemma4 and deepseek have no tool to offer");
+  expect(secure_frontend::find_model_option(EngineProfile::deepseek, "web_search") == nullptr &&
+             secure_frontend::find_model_option(EngineProfile::minimax, "web_search") == nullptr,
+         "deepseek and minimax have no tool to offer");
   expect(secure_frontend::is_model_option_name("web_search"), "a fixed option name (kept in the remembered file)");
   const auto listed = limits_of(EngineProfile::raon1, R"({"web_search": {"default": false}})");
   expect(listed.size() == 1U && std::get_if<bool>(&listed[0].default_value) != nullptr && !std::get<bool>(listed[0].default_value),

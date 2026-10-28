@@ -414,6 +414,17 @@ HttpResponse CardRoutes::add_packed(const PackedFamily family, const GgufMetadat
     if (profile != nullptr && std::filesystem::is_regular_file(settings_.engine->parent_path() / "profiles" / profile, ec)) {
       request.expert_profile = settings_.engine->parent_path() / "profiles" / profile;
     }
+    // the MTP draft layer upstream's setup made (owner 2026-10-28: MTP settings on the cards), held to the model
+    // folder's rule: private, unless model folders are used as they are
+    if (const auto rt = find_mtp_runtime(root.path())) {
+      if (std::holds_alternative<CanonicalRoot>(open_root(*rt, shared_folders_ ? RootPolicy::external : RootPolicy::existing))) {
+        request.mtp = *rt;
+        log("[strata] models: " + name + ": the MTP draft layer in " + path_to_utf8(*rt) + " is used");
+      } else {
+        log("[strata] models: " + name + ": the MTP draft layer in " + path_to_utf8(*rt) +
+            " is not private (other users of this PC can change it): the card runs without it");
+      }
+    }
   } else if (family == PackedFamily::deepseek || family == PackedFamily::minimax) {
     // Maya's DeepSeek layout: <folder>/maya-ds4 (maya.py ds4_pack_step), or maya-ds4-<name>/ when that one indexes
     // another model's shards; the shipped profile beside the engine for strata-prepare to seed (ds4_seed_profile).

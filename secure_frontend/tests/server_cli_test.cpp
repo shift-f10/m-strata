@@ -367,7 +367,11 @@ void auth04_no_switch_disables_auth() {
       // 16: listener.monitor serves GET /metrics, a keyed route like the rest; it reads no key.
       // Model launcher (owner decisions D1-D10, 2026-10-23): models.control serves the keyed
       // model-control routes and models.control_remote opens them to non-loopback key holders;
-      // neither reads, skips or replaces the key.
+      // neither reads, skips or replaces the key. GUI-first start-up (2026-10-27), reviewed when the owner asked for
+      // the open issues on 2026-10-28: listener.login_link prints a one-time link that hands the page the key from
+      // this PC only (it needs a token.source and the key stays required on every route); roots.allow_untrusted_media
+      // uses model folders as they are; alerts.email.enabled sends email alerts; search.enabled lets a model search
+      // through SearXNG. None of them reads, skips or replaces the key.
       if (path == "listener.loopback_without_key") {
         expect(key.flag.empty() && key.default_string.empty(), "the keyless switch has no flag and is off by default");
         continue;
@@ -381,10 +385,13 @@ void auth04_no_switch_disables_auth() {
                  path == "session.codex_thread_titles" || path == "session.codex_compaction_cache" ||
                  path == "vision.enabled" || path == "vision.no_flash_attn" || path == "vision.resident" ||
                  path == "glm.fit_max_tokens" || path == "glm.experimental_speed_projection" ||
-                 path == "models.control" || path == "models.control_remote" || path == "models.downloads",
+                 path == "models.control" || path == "models.control_remote" || path == "models.downloads" ||
+                 path == "listener.login_link" || path == "roots.allow_untrusted_media" || path == "alerts.email.enabled" ||
+                 path == "search.enabled",
              "the only switches are the two bind opt-ins, the page and the Monitor, the engine's NNP opt-out, "
              "the pull address opt-in, request logging and the SP5 behaviour, lifecycle, vram/turn, answer-room, "
-             "session and vision opt-ins, and the model launcher's two control switches: " + path);
+             "session and vision opt-ins, the model launcher's two control switches, the login link, model folders "
+             "as they are, email alerts and web search: " + path);
     }
   }
   expect(flags.count("--allow-remote") == 1U && flags.count("--token-env") == 1U && flags.count("--check") == 1U,
@@ -443,7 +450,7 @@ void usage_names_the_three_profiles() {
          "the usage text names every engine.profile value");
   expect(usage.find("Streaming, tools, downloads") == std::string::npos && usage.find("streamed or not") != std::string::npos,
          "the usage text says chat streams and no longer calls downloads and MCP disabled");
-  expect(usage.find("--data-dir DIR [options]") != std::string::npos, "the usage shows options after --data-dir");
+  expect(usage.find("[--data-dir DIR] [options]") != std::string::npos, "the usage shows options on the data folder");
 }
 
 // --- SP5 M1 Task 13: `strata serve` (foreground) -------------------------------------

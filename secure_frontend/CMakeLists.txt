@@ -427,6 +427,7 @@ target_include_directories(secure_frontend_qwen_prompt_renderer
 target_link_libraries(secure_frontend_qwen_prompt_renderer PUBLIC secure_frontend_chat_schema secure_frontend_json)
 # Web search (spec 2026-10-27-web-search-design.md, phase 3): the calls a Qwen reply writes, read as upstream reads them.
 secure_frontend_add_library(secure_frontend_tool_calls SOURCES src/tool_calls.cpp src/qwen_tool_calls.cpp src/glm_tool_calls.cpp
+    src/gemma4_tool_calls.cpp
     LINKS secure_frontend_json)
 target_compile_features(secure_frontend_glm_prompt_renderer PUBLIC cxx_std_20)
 target_include_directories(secure_frontend_glm_prompt_renderer
@@ -441,7 +442,7 @@ target_include_directories(secure_frontend_gemma4_prompt_renderer
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(secure_frontend_gemma4_prompt_renderer PUBLIC secure_frontend_chat_schema)
+target_link_libraries(secure_frontend_gemma4_prompt_renderer PUBLIC secure_frontend_chat_schema secure_frontend_json)
 target_compile_features(secure_frontend_flint_prompt_renderer PUBLIC cxx_std_20)
 target_include_directories(secure_frontend_flint_prompt_renderer
     PUBLIC
@@ -1788,6 +1789,17 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     # The real vocabularies (SECURE_FRONTEND_FLINT_PACK / SECURE_FRONTEND_RAON1_PACK; a pack not named is skipped).
     secure_frontend_add_cases(secure_frontend_raon1_flint_tool_calls_tests the_real_packs_plan_their_searches LABELS flint-real-pack)
 
+    # Web search for Gemma 4 (owner 2026-10-28): the GGUF template's tool prompt over llama.cpp's message path
+    # (tools/generate_gemma4_tool_prompt_fixture.py), llama.cpp's Gemma 4 call cases, the plan, the route.
+    secure_frontend_add_test_executable(secure_frontend_gemma4_tool_calls_tests tests/gemma4_tool_calls_test.cpp
+        secure_frontend_chat_generation_plan secure_frontend_tool_calls secure_frontend_chat_route)
+    secure_frontend_add_cases(secure_frontend_gemma4_tool_calls_tests renders_the_templates_tool_prompts
+        ARGS ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gemma4_tool_prompts.json)
+    secure_frontend_add_cases(secure_frontend_gemma4_tool_calls_tests
+        refuses_what_the_tool_prompt_cannot_say reads_calls_as_llama_cpp_does plans_with_its_tags the_route_plans_gemma4_searches)
+    # The real vocabulary (SECURE_FRONTEND_GEMMA4_PACK; unset, skipped).
+    secure_frontend_add_cases(secure_frontend_gemma4_tool_calls_tests the_real_pack_plans_its_search LABELS flint-real-pack)
+
     secure_frontend_add_test_executable(secure_frontend_glm_profile_tests tests/glm_profile_test.cpp
         secure_frontend_chat_generation_plan)
     secure_frontend_add_cases(secure_frontend_glm_profile_tests
@@ -1948,7 +1960,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_first_start_tests
         config_writer_renders_decimals first_start_creates_the_data_folder a_later_start_keeps_everything
         card_less_server_config_comes_from_the_main_config install_folder_is_made_owner_only login_link_is_used_once
-        data_dir_flag_is_parsed LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+        data_dir_flag_is_parsed options_alone_start_from_the_data_folder LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # GUI-first start-up (spec 2026-10-27 §5a): the email alerts' SMTP dialogue, queue and password (with the option only).
     if(SECURE_FRONTEND_EMAIL_ALERTS)
@@ -2015,6 +2027,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_test_paths(secure_frontend_card_routes_tests)
     secure_frontend_add_cases(secure_frontend_card_routes_tests
         card_routes_answer_loopback_clients_only folders_list_the_drives_and_one_folder a_card_is_added_from_a_folder qwen38_and_glm_models_are_added_with_their_packs
+        a_qwen38_model_finds_its_draft_layer
         a_deepseek_model_is_added_with_mayas_ds4_pack a_minimax_model_is_added_with_mayas_mm3_pack
         a_card_follows_its_moved_folder a_new_private_folder_is_made delete_needs_the_code_the_key_and_permanent
         a_running_card_is_not_deleted a_downloaded_model_leaves_its_store_too listed_remote_clients_use_the_file_routes
@@ -2059,7 +2072,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_card_builder)
     secure_frontend_add_cases(secure_frontend_card_builder_tests
         a_flint_gguf_makes_a_flint_card a_qwen36_gguf_makes_a_qwen_card names_are_made_valid_and_splits_named_once
-        other_architectures_are_not_addable_yet packed_families_and_their_cards a_deepseek_pack_makes_a_deepseek_card
+        other_architectures_are_not_addable_yet packed_families_and_their_cards a_qwen38_pack_with_its_draft_layer_offers_mtp a_deepseek_pack_makes_a_deepseek_card
         a_minimax_pack_makes_a_minimax_card
         a_raon1_pack_makes_a_raon1_card repointing_rewrites_only_the_folder delete_codes_are_one_time
         deleting_removes_only_the_model_files
@@ -2153,7 +2166,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_doctor_tests
         doctor_check_config_names_rejected_keys doctor_check_config_valid_passes doctor_check_token_modes
         doctor_check_roots_report_named_failures doctor_check_port_busy_fails_with_fix
-        doctor_check_gpu_and_driver doctor_check_cuda_runtime doctor_check_memlock
+        doctor_check_gpu_and_driver doctor_check_cuda_runtime doctor_check_cuda_finds_cublas_beside_the_engine
+        doctor_check_token_uses_the_store_rules_where_modes_do_not_apply doctor_check_memlock
         doctor_deep_digests_and_run_order doctor_human_fix_never_carries_install_commands)
 
     # SP7 M1 Task 4: the D-6 uninstall plan; the probe case runs a canned HTTP

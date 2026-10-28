@@ -57,6 +57,14 @@ CheckResult check_token(const ProbeBundle& bundle) {
   if (!bundle.token_file.has_value()) {
     return CheckResult{"token", true, ""};  // token.source env: — no local file mode to check (CFG-06)
   }
+  if (!bundle.file_modes_apply) {  // Windows: the ACL the store itself checks, which mode bits do not show
+    const auto refused = bundle.token_store_error ? bundle.token_store_error()
+                                                  : std::optional<std::string>{"the token store could not be checked"};
+    if (!refused.has_value()) return CheckResult{"token", true, ""};
+    return CheckResult{"token", false,
+                       "token: the token file below roots.secret cannot be used (" + *refused +
+                           "); replace it with strata key rotate, which writes it private to you"};
+  }
   const auto mode = bundle.file_mode ? bundle.file_mode(*bundle.token_file) : std::nullopt;
   if (!mode.has_value()) {
     return CheckResult{"token", false,
@@ -118,12 +126,26 @@ CheckResult check_cuda_runtime(const ProbeBundle& bundle) {
       return CheckResult{"cuda", true, ""};
     }
   }
+  // the multiengine layout: cuBLAS and its cuBLASLt together in one of the folders the engine loads from
+  for (const auto& folder : bundle.engine_dirs) {
+    for (const auto& set : bundle.profile.cublas_sets) {
+      const bool whole = !set.empty() && bundle.file_mode &&
+                         std::all_of(set.begin(), set.end(), [&](const std::string& lib) { return bundle.file_mode(folder / lib).has_value(); });
+      if (whole) return CheckResult{"cuda", true, ""};
+    }
+  }
   std::vector<std::string> names;
   for (const auto& lib : bundle.profile.cuda_runtime_libs) names.push_back(lib);
+  std::vector<std::string> cublas;
+  for (const auto& set : bundle.profile.cublas_sets) cublas.push_back(join(set, " and "));
+  std::vector<std::string> folders;
+  for (const auto& folder : bundle.engine_dirs) folders.push_back(folder.generic_string());
   return CheckResult{"cuda", false,
-                     "cuda: none of the CUDA runtime libraries (" + join(names, ", ") +
-                         ") sits next to the program; re-extract the strata release bundle over the install — strata "
-                         "never downloads anything itself"};
+                     "cuda: no CUDA libraries were found: neither cuBLAS (" + join(cublas, ", or ") +
+                         ") in the engine's folder or engine.lib_dirs (" + (folders.empty() ? std::string{"none known"} : join(folders, ", ")) +
+                         ") nor the CUDA runtime (" + join(names, ", ") +
+                         ") next to the program; copy the whole out folder again (make bundles cuBLAS in engine/), or "
+                         "list a CUDA toolkit's library folder in engine.lib_dirs — strata never downloads anything itself"};
 }
 
 CheckResult check_memlock(const ProbeBundle& bundle) {

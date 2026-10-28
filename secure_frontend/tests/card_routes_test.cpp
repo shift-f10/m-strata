@@ -219,6 +219,55 @@ std::string value_after(const std::vector<std::string>& arguments, const std::st
 // from its folder has its pack built first by strata-prepare - the Qwen pack in the server's own packs folder (the
 // model folder is left as it is), the GLM pack beside the shards in pack/ (where Maya's engine reads them, as Maya's
 // setup puts it), or pack-<name>/ when pack/ holds another model's - then its card, as a download's.
+// Owner 2026-10-28 ("I don't see MTP settings in the cards"): a Qwen3.8 model added from its folder runs the MTP draft
+// layer upstream's setup made (its data folder's mtp/rt: dense.bin, experts.bin, draft_vocab.bin) when the model folder,
+// its parent or its grandparent holds one that is private; an incomplete one is not used.
+void a_qwen38_model_finds_its_draft_layer() {
+  const auto added_args = [](const bool complete) {
+    Fixture f;
+    const auto profiles = f.engine.parent_path() / "profiles";
+    secure_frontend_test::make_private_directory(profiles);
+    secure_frontend_test::write_file(profiles / "expert-profile.bin", "profile");
+    const auto rt = f.root / "mtp" / "rt";
+    secure_frontend_test::make_private_directory(f.root / "mtp");
+    secure_frontend_test::make_private_directory(rt);
+    for (const char* file : {"dense.bin", "experts.bin", "draft_vocab.bin"}) {
+      if (complete || std::string_view{file} != "draft_vocab.bin") secure_frontend_test::write_file(rt / file, "x");
+    }
+    const std::string first = "Qwen3.8-Test-IQ3_S-00001-of-00002.gguf";
+    secure_frontend_test::write_file(f.models / first, test_support::gguf_with_tokenizer(test_support::byte_tokenizer(), "gpt2", "qwen4exp")
+                                                           .u32("qwen4exp.expert_count", 512U)
+                                                           .bytes());
+    secure_frontend_test::write_file(f.models / "Qwen3.8-Test-IQ3_S-00002-of-00002.gguf", "shard two");
+    f.on_prepare = [&f](const std::vector<std::string>& a) {
+      const auto out = secure_frontend::path_from_utf8(value_after(a, "--out"));
+      std::filesystem::create_directories(out / "tokenizer");
+      secure_frontend_test::write_file(out / "native_experts.txt", "# strata native experts v3: ... absolute offsets in Qwen3.8-Test-IQ3_S-00001-of-00002.gguf\n");
+      secure_frontend_test::write_file(out / "prepared.json", "{\"pack\": " + json_path(out) + ", \"tokenizer\": null, \"ple\": " +
+                                                                  json_path(f.models / "Qwen3.8-Test-IQ3_S-00002-of-00002.gguf") + ", \"shards\": 2}\n");
+    };
+    const auto added = f.add(f.models, first);
+    expect(added.status == 201, "the Qwen3.8 model is added: " + shown(added));
+    const auto held = f.launcher->card("Qwen3.8-Test-IQ3_S");
+    std::string all;
+    if (held) {
+      const auto found = held->card.config.entries.find("engine.args");
+      if (found != held->card.config.entries.end()) {
+        for (const auto& a : std::get<std::vector<std::string>>(found->second.value)) all += " " + a;
+      }
+      for (const auto& limit : held->card.options) all += " option:" + std::string{limit.spec->name};
+    }
+    return std::pair{all, secure_frontend::path_to_utf8(rt)};
+  };
+  const auto [complete, rt] = added_args(true);
+  expect(complete.find(" --mtp " + rt) != std::string::npos && complete.find(" option:mtp") != std::string::npos &&
+             complete.find(" option:spec_min_p") != std::string::npos,
+         "upstream's mtp/rt beside the models folder: --mtp and the MTP settings:" + complete);
+  const auto [partial, unused] = added_args(false);
+  expect(partial.find("--mtp") == std::string::npos && partial.find(" option:mtp") == std::string::npos,
+         "an incomplete draft layer is not used:" + partial);
+}
+
 void qwen38_and_glm_models_are_added_with_their_packs() {
   Fixture f;
   const auto profiles = f.engine.parent_path() / "profiles";
@@ -726,6 +775,7 @@ int main(int argc, char** argv) {
       {"folders_list_the_drives_and_one_folder", folders_list_the_drives_and_one_folder},
       {"a_card_is_added_from_a_folder", a_card_is_added_from_a_folder},
       {"qwen38_and_glm_models_are_added_with_their_packs", qwen38_and_glm_models_are_added_with_their_packs},
+      {"a_qwen38_model_finds_its_draft_layer", a_qwen38_model_finds_its_draft_layer},
       {"a_deepseek_model_is_added_with_mayas_ds4_pack", a_deepseek_model_is_added_with_mayas_ds4_pack},
       {"a_minimax_model_is_added_with_mayas_mm3_pack", a_minimax_model_is_added_with_mayas_mm3_pack},
       {"a_card_follows_its_moved_folder", a_card_follows_its_moved_folder},

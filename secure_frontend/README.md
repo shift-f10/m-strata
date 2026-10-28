@@ -168,7 +168,7 @@ builds it into an out folder. On Linux it links the system's OpenSSL
 
 **Web search is a build option**, `SECURE_FRONTEND_WEB_SEARCH`, **off by default**
 (spec [`docs/superpowers/specs/2026-10-27-web-search-design.md`](../docs/superpowers/specs/2026-10-27-web-search-design.md)).
-With it, a qwen, GLM-5.3, raon1 or flint model may call one tool, `web_search`, when it is unsure
+With it, a qwen, GLM-5.3, raon1, flint or Gemma 4 model may call one tool, `web_search`, when it is unsure
 of a fact or the answer needs recent information: the server runs `strata-search`
 (an MCP server on stdio, beside the server) and talks to it with upstream's MCP
 client; `strata-search` asks one SearXNG instance's JSON API and the model answers
@@ -190,13 +190,15 @@ the SearXNG instance: on the page (Models > Settings > Web search) or in `data/c
 next start, so restart the server. "Test search" there shows what a model would read; the server log prints
 `[strata] search: strata-search is running` when the first chat starts it.
 
-**What the model is offered.** Every text chat to a qwen (Qwen3.6, Qwen3.8), GLM-5.3, raon1 or flint model gets one
-tool, each in its own template's form (raon1 writes Qwen's calls, flint GLM's),
+**What the model is offered.** Every text chat to a qwen (Qwen3.6, Qwen3.8), GLM-5.3, raon1, flint or Gemma 4 model gets one
+tool, each in its own template's form (raon1 writes Qwen's calls, flint GLM's, Gemma 4 its own
+`<|tool_call>call:web_search{query:<|"|>...<|"|>}<tool_call|>`, read as llama.cpp reads it; the server stops a Gemma 4
+reply at the `<|tool_response>` it writes after its calls),
 `web_search(query, max_results?)`, described to the model as: "Search the web through a SearXNG instance and get the top
 results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or
 anything after your training data, or when the user asks you to look something up. Then answer from the results and
 cite the URLs you used.", followed by today's date on this PC. The model decides when to call it. A chat with an image,
-and the other profiles (Gemma 4, DeepSeek, MiniMax), are served without it, and so is a model whose card's **Web search** option
+and the other profiles (DeepSeek, MiniMax), are served without it, and so is a model whose card's **Web search** option
 (`web_search`, on by default, listed while the server's search is on) was off when it started.
 
 **Getting the model to search.**
@@ -267,16 +269,21 @@ expert profiles, MiniMax's template in `templates/minimax-m3.1/` and, by default
 cards, state, owner-only), serves `http://127.0.0.1:8080`, and prints a one-time login link
 (`http://127.0.0.1:8080/#login=...`, valid 10 minutes, once, from this PC only). Opening the link shows the API key
 once and signs the page in. Every start prints a fresh link. `--data-dir DIR` keeps the data elsewhere (relative to
-the current folder; `--data-dir data --port 9090` is this folder's data on another port for that start), and
-`--config FILE` runs from a JSON config as before (`data/config.json` is one; every key is in the table below); the
-two exclude each other. Options given with neither start from the built-in defaults and do not read `data/`.
+the current folder), and `--config FILE` runs from a JSON config as before (`data/config.json` is one; every key is in
+the table below); the two exclude each other. Other options (`--port 9090`, `--host`, `--token-env`, ...) apply to
+that start on top of the data folder's config (`uses_data_folder`); only a bring-up start that names its model by
+flags (`--expert`, `--models-root`, `--engine`, `--model-id`, `--profile`, `--tokenizer-pack`) reads no data folder.
 
 **The Models tab** (model control on, loopback clients only):
 
 - **Add a model** from files already on this PC: pick a drive and folder (free space shown), then a GGUF file (a split
   model: its first file). Gemma 4, flint and Qwen3.6 GGUFs become cards; the tokenizer is read from the GGUF. A
   Qwen3.8 or GLM-5.3 GGUF has its pack built first by `strata-prepare` (beside the engine; seconds to minutes): a
-  Qwen3.8 pack in the server's `data/state/packs/`, the model folder left as it is; a GLM-5.3 pack in `pack/` beside
+  Qwen3.8 pack in the server's `data/state/packs/`, the model folder left as it is (and when the model folder, its parent
+  or its grandparent holds upstream's MTP draft layer, `mtp/rt` with `dense.bin`, `experts.bin` and `draft_vocab.bin`,
+  private by the folders' rule, the card runs it as upstream's setup does, `--mtp <rt>` with `--spec 4 --spec-min-p 0.5`,
+  and lists `mtp`, `spec` and `spec_min_p`; GLM-5.3's Maya engine drafts with its pack's MTP block by itself, with no
+  setting); a GLM-5.3 pack in `pack/` beside
   the shards, where Maya's engine reads them (as Maya's own setup puts it; an up-to-date pack there is reused); a
   DeepSeek-V4.1 pack in `maya-ds4/` beside the shards, Maya's shipped DeepSeek profile seeded into it; a MiniMax-M3.1
   pack in `maya-mm3/` with Maya's chat template; a Raon-1-mini pack in `pack/` beside its GGUF, as GLM-5.3's. A

@@ -39,6 +39,12 @@ struct CliError final {
 
 [[nodiscard]] std::string server_usage();
 
+// GUI-first start-up (spec 2026-10-27 §3): whether this start reads (and a serve creates) the data folder: not with
+// --config, and not for a bring-up start that names its model by flags (--expert, or --models-root, --engine,
+// --model-id, --profile, --tokenizer-pack); otherwise yes, and the options given override data/config.json for this
+// start (owner 2026-10-28: "ensure the syntax for configuring and starting it are correct").
+[[nodiscard]] bool uses_data_folder(const ServerInvocation& invocation);
+
 // defaults < config file < flags, then validate(). `overridden` receives the
 // keys set in both the file and on the command line.
 [[nodiscard]] ConfigValidationResult load_server_config(const ServerInvocation& invocation,
