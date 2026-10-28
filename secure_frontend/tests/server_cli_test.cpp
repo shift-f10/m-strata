@@ -357,7 +357,8 @@ void auth04_no_switch_disables_auth() {
       // SP5 M1 Task 9: session.tool_call_recovery, session.env_to_user, session.codex_thread_titles
       // and session.codex_compaction_cache are the pin's opt-in falses (:8043-:8044, :8106, :8110);
       // SP5 M1 Task 11: vision.enabled/no_flash_attn/resident are the pin's image-INPUT
-      // booleans (serve/server.py:2511, :2930). SP5 M2 Task 3: glm.fit_max_tokens and
+      // booleans (serve/server.py:2511, :2930), and vision.gpu (2026-10-28, a card's encoder on the GPU: the
+      // encoder's --gpu) chooses where pictures are encoded. SP5 M2 Task 3: glm.fit_max_tokens and
       // glm.experimental_speed_projection are Maya's file-only GLM booleans
       // (serve/server.py:4077, :3819). None of those touches authentication.
       // Owner decisions 2026-10-21 (session log step 12): listener.web_ui serves the built-in
@@ -383,7 +384,7 @@ void auth04_no_switch_disables_auth() {
                  path == "engine.split_skip_if_fits" || path == "engine.elastic" || path == "engine.uma" ||
                  path == "engine.answer_room" || path == "session.tool_call_recovery" || path == "session.env_to_user" ||
                  path == "session.codex_thread_titles" || path == "session.codex_compaction_cache" ||
-                 path == "vision.enabled" || path == "vision.no_flash_attn" || path == "vision.resident" ||
+                 path == "vision.enabled" || path == "vision.no_flash_attn" || path == "vision.resident" || path == "vision.gpu" ||
                  path == "glm.fit_max_tokens" || path == "glm.experimental_speed_projection" ||
                  path == "models.control" || path == "models.control_remote" || path == "models.downloads" ||
                  path == "listener.login_link" || path == "roots.allow_untrusted_media" || path == "alerts.email.enabled" ||

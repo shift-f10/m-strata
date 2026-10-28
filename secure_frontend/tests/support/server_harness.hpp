@@ -65,6 +65,9 @@ struct CardOptions final {
   std::vector<std::string> engine_args{};                 // the card's fixed engine.args
   std::string options_json{"{}"};                         // the card's "options" object
   std::map<std::string, std::string> config_literals{};   // more card config rows (key path -> JSON literal)
+  // Vision for cards (spec 2026-10-28): a fake mmproj in roots.models, vision.mmproj naming it, and the fake encoder
+  // (strata-fake-vision-child) beside the engine as "strata-vision", upstream's encoder name.
+  bool vision{false};
 };
 
 // Every member has a default initializer, so designated initializers that name

@@ -67,6 +67,36 @@ def test_families_and_cuda_options_follow_the_command_line():
     assert "-DCMAKE_CUDA_COMPILER=C:/CUDA/v13.0/bin/nvcc" in args
 
 
+def test_the_picture_encoder_is_upstreams_built_out_of_source(tmp_path):
+    """Vision for cards (spec 2026-10-28 point 1): upstream's strata-vision (upstream/tools/vision, over llama.cpp's mtmd at
+    the engine's pinned checkout) is built out of source with ggml-cuda for the engine's GPU targets, portable (AVX2, static
+    runtime), into engine/ beside the launcher, where the server looks for it; --without vision leaves it out."""
+    args = make.vision_configure_args(options("--cuda-arch", "86;89"), "windows")
+    assert args[args.index("-S") + 1] == str(ROOT / "upstream" / "tools" / "vision")
+    assert args[args.index("-B") + 1] == str(ROOT / "out" / "dist-test" / "make-build" / "vision")
+    for expected in ("-DCMAKE_BUILD_TYPE=Release", "-DLLAMA_DIR=G:/llama.cpp", "-DSTRATA_VISION_CUDA=ON", "-DSTRATA_PORTABLE=ON",
+                     "-DCUDAToolkit_ROOT=C:/CUDA/v13.0", "-DCMAKE_CUDA_COMPILER=C:/CUDA/v13.0/bin/nvcc.exe",
+                     "-DCMAKE_CUDA_ARCHITECTURES=86;89"):
+        assert expected in args, expected
+    assert args[args.index("-G") + 1] == "Ninja"
+    reused = make.parse_args(["--out", str(tmp_path / "out"), "--build-dir", str(tmp_path), "--ggml-dir", "G:/llama.cpp",
+                              "--cuda-root", "C:/CUDA/v13.0"], platform="linux")
+    (tmp_path / "vision").mkdir()
+    (tmp_path / "vision" / "CMakeCache.txt").write_text("CMAKE_CUDA_COMPILER:FILEPATH=/usr/local/cuda/bin/nvcc\n")
+    assert not any(a.startswith("-DCMAKE_CUDA_COMPILER=") for a in make.vision_configure_args(reused, "linux"))
+    assert "engine/strata-vision.exe" in make.required_files(options(), "windows")
+    assert "engine/strata-vision" in make.required_files(options(platform="linux"), "linux")
+    assert not [f for f in make.required_files(options("--without", "vision"), "windows") if "strata-vision" in f]
+    root = stage(tmp_path / "stage", "windows", skip=("engine/strata-vision.exe",))
+    assert "engine/strata-vision.exe: missing" in "\n".join(make.layout_problems(root, options(), "windows"))
+    assert make.layout_problems(root, options("--without", "vision"), "windows") == []
+    record = make.build_record(options(), "windows", stage(tmp_path / "record", "windows"), commit="x", built="y")
+    encoder = [e for e in record["engines"] if e["library"] == "strata-vision.exe"]
+    assert encoder and "pictures" in encoder[0]["models"] and "upstream Strata" in encoder[0]["source"], record["engines"]
+    lean = make.build_record(options("--without", "vision"), "windows", root, commit="x", built="y")
+    assert not [e for e in lean["engines"] if e["library"].startswith("strata-vision")]
+
+
 def test_unknown_family_is_refused():
     try:
         options("--without", "flint")
@@ -121,7 +151,7 @@ def stage(tmp_path: Path, platform: str, extra: tuple[str, ...] = (), skip: tupl
     exe = ".exe" if platform == "windows" else ""
     lib = (lambda n: n + ".dll") if platform == "windows" else (lambda n: "lib" + n + ".so")
     files = [f"strata-secure-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
-             "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin", "engine/build.json",
+             f"engine/strata-vision{exe}", "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin", "engine/build.json",
              "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + ["engine/profiles/" + p for p in MAYA_PROFILES] + \
         list(MINIMAX_FILES)
     files += ["engine/" + lib(n) for n in ("multiengine_strata", "multiengine_gemma4", "multiengine_flint",
@@ -238,14 +268,15 @@ def test_the_build_record_names_each_engine_and_its_source(tmp_path):
     assert record["ggml"] == ggml and record["cuda_arch"] == "native" and record["features"] == []
     engines = {e["library"]: e for e in record["engines"]}
     assert list(engines) == ["multiengine_strata.dll", "multiengine_gemma4.dll", "multiengine_flint.dll", "multiengine_raon1.dll",
-                             "multiengine_maya.dll", "multiengine_maya_ds4.dll", "multiengine_maya_mm3.dll"]
+                             "multiengine_maya.dll", "multiengine_maya_ds4.dll", "multiengine_maya_mm3.dll", "strata-vision.exe"]
     assert engines["multiengine_maya.dll"]["source"] == "Project Maya " + maya and "GLM-5.3" in engines["multiengine_maya.dll"]["models"]
     assert engines["multiengine_strata.dll"]["source"].startswith("upstream Strata, engine 0.")
     assert "Raon-1-mini" in engines["multiengine_raon1.dll"]["models"] and "Project Maya" in engines["multiengine_raon1.dll"]["source"]
     assert all(e["bytes"] == len(b"binary") for e in record["engines"])
     lean = make.build_record(options("--without", "maya,raon1", "--with", "search", platform="linux"), "linux",
                              stage(tmp_path / "linux", "linux"), commit="x", built="y")
-    assert [e["library"] for e in lean["engines"]] == ["libmultiengine_strata.so", "libmultiengine_gemma4.so", "libmultiengine_flint.so"]
+    assert [e["library"] for e in lean["engines"]] == ["libmultiengine_strata.so", "libmultiengine_gemma4.so", "libmultiengine_flint.so",
+                                                       "strata-vision"]
     assert lean["features"] == ["search"]
     assert "engine/build.json" in make.required_files(options(), "windows")
     json.dumps(record)   # it is written as JSON

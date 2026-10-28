@@ -2,6 +2,7 @@
 #include "secure_frontend/engine_arguments.hpp"
 #include "secure_frontend/launch_composition.hpp"
 #include "support/cli_harness.hpp"
+#include "support/config_json.hpp"
 #include "support/test_support.hpp"
 
 #include <algorithm>
@@ -257,6 +258,46 @@ void vision_compose_rules() {
     const auto* failure = std::get_if<secure_frontend::LaunchFailure>(&expert);
     expect(failure != nullptr && failure->messages.front().find("vision") != std::string::npos,
            "vision needs a managed model; --expert fails by name");
+  }
+  {  // Vision for cards (spec 2026-10-28): an expert launch - every card's - reads images with the card's own encoder
+     // file (vision.mmproj): the engine gets --vision, the encoder the mmproj and the model's GGUF. Another profile, or
+     // an encoder file that is not there, is refused by name.
+    secure_frontend_test::cli::CliHarness h;
+    secure_frontend_test::write_file(h.models_path / "m.gguf", "GGUF");
+    secure_frontend_test::write_file(h.models_path / "mmproj-F16.gguf", "GGUF");
+    const auto mmproj = std::filesystem::canonical(h.models_path / "mmproj-F16.gguf");
+    const auto with_vision = [&](const std::string& engine_members) {
+      h.write_config("");
+      std::string text = secure_frontend_test::read_file(h.config);
+      const std::string from = "\"model_id\": \"m\"";
+      text.replace(text.find(from), from.size(), from + engine_members);
+      secure_frontend_test::write_file(h.config, text);
+      enable_vision(h, "{\"enabled\": true, \"gpu\": true, \"mmproj\": " +
+                           secure_frontend_test::json_literal(secure_frontend::path_to_utf8(mmproj)) + "}");
+      return h.validated_config();
+    };
+    const auto config = with_vision("");
+    const auto composed = secure_frontend::compose_engine_launch(config.get(), true);
+    const auto* launch = std::get_if<secure_frontend::ComposedLaunch>(&composed);
+    expect(launch != nullptr, "an expert qwen launch with vision.mmproj composes");
+    if (launch == nullptr) {
+      for (const auto& m : std::get<secure_frontend::LaunchFailure>(composed).messages) std::cerr << "  " << m << '\n';
+      return;
+    }
+    expect(launch->vision_mmproj == secure_frontend::path_to_utf8(std::filesystem::path{mmproj}.make_preferred()) &&
+               launch->vision_model == secure_frontend::path_to_utf8((config.get().roots.models.path() / "m.gguf").make_preferred()),
+           "the card's encoder file and the model's own GGUF reach the encoder");
+    expect(std::count(launch->engine_args.begin(), launch->engine_args.end(), "--vision") == 1, "the engine receives --vision");
+    const auto gemma = secure_frontend::compose_engine_launch(with_vision(", \"profile\": \"gemma4\"").get(), true);
+    const auto* refused = std::get_if<secure_frontend::LaunchFailure>(&gemma);
+    expect(refused != nullptr && refused->messages.front().find("only a qwen model") != std::string::npos,
+           "only a qwen card reads images");
+    const auto ready = with_vision("");
+    std::filesystem::remove(mmproj);
+    const auto missing = secure_frontend::compose_engine_launch(ready.get(), true);
+    const auto* gone = std::get_if<secure_frontend::LaunchFailure>(&missing);
+    expect(gone != nullptr && gone->messages.front().find("vision.mmproj") != std::string::npos,
+           "an encoder file that is not there is refused by name");
   }
 }
 

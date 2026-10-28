@@ -59,6 +59,8 @@ struct HfFile final {
   std::uint64_t size{0};
   std::string sha256;        // 64 lowercase hex
   bool mmproj{false};        // the vision encoder file (role mmproj)
+  std::string repo{};        // its own repository and commit (an encoder pinned in another repository); empty: the download's
+  std::string commit{};
 };
 struct HfDownload final {
   std::string name;          // the SP4 model name (is_valid_model_name)

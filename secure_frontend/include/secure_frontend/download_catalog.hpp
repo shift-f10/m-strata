@@ -19,6 +19,9 @@ struct CatalogFile final {
   std::string path;                     // in the repository, a .gguf
   std::optional<std::uint64_t> size{};  // unset for Maya's entries (read from Hugging Face at start)
   std::string sha256;                   // 64 lowercase hex: the pin every download is checked against
+  // an mmproj's own repository and revision (upstream's pins name another repository for some quants); empty: the entry's
+  std::string repo{};
+  std::string revision{};
 };
 
 struct DownloadEntry final {

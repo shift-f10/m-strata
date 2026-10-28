@@ -10,7 +10,9 @@
 #include <filesystem>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 
 namespace {
@@ -123,6 +125,66 @@ void a_qwen36_gguf_makes_a_qwen_card() {
   expect(plain_card != nullptr && plain_card->json.find("--mtp") == std::string::npos &&
              plain_card->json.find("\"mtp\": {\"default\": false}") != std::string::npos,
          "no MTP block: no draft layer");
+}
+
+// Vision for cards (spec 2026-10-28 point 3): a qwen card made with the model's picture encoder (a Qwen3.6 GGUF's or a
+// Qwen3.8 pack's) names it (vision.mmproj) and lists the Pictures option, on the GPU by default, as upstream's setup
+// runs it; without one, or for a family that reads no pictures here, neither. find_mmproj: the folder's one
+// mmproj*.gguf file (none or two: none, so a card never guesses between encoders).
+void cards_name_their_picture_encoder() {
+  using secure_frontend::PackedFamily;
+  const auto folder = secure_frontend_test::make_scratch_directory();
+  const auto encoder = folder / "mmproj-F16.gguf";
+  const auto rows_and_option = [&folder](const std::string& json) {
+    std::pair<std::optional<std::string>, std::optional<std::string>> out;
+    auto parsed = secure_frontend::parse_model_card(json, folder);
+    const auto* card = std::get_if<secure_frontend::ModelCard>(&parsed);
+    std::string why;
+    if (const auto* issues = std::get_if<secure_frontend::ConfigErrors>(&parsed)) {
+      for (const auto& issue : *issues) why += secure_frontend::format_issue(issue) + "; ";
+    }
+    expect(card != nullptr, "a valid card file: " + why);
+    if (card == nullptr) return out;
+    if (const auto row = card->config.entries.find("vision.mmproj"); row != card->config.entries.end()) out.first = std::get<std::string>(row->second.value);
+    for (const auto& limit : card->options) {
+      if (limit.spec != nullptr && limit.spec->name == "vision") out.second = std::get<std::string>(limit.default_value);
+    }
+    return out;
+  };
+  const auto qwen36 = secure_frontend::card_for_gguf(metadata("qwen35moe"), {.folder = folder, .file = "Qwen3.6-Q8_0.gguf",
+                                                                            .engine = folder / "multiengine.exe", .source = "folder",
+                                                                            .mmproj = encoder});
+  const auto* qwen36_card = std::get_if<secure_frontend::CardText>(&qwen36);
+  expect(qwen36_card != nullptr, "a Qwen3.6 card with its encoder is made");
+  if (qwen36_card != nullptr) {
+    const auto [row, option] = rows_and_option(qwen36_card->json);
+    expect(row == std::optional<std::string>{secure_frontend::path_to_utf8(encoder)} && option == std::optional<std::string>{"gpu"},
+           "the Qwen3.6 card names its encoder and reads pictures on the GPU by default: " + qwen36_card->json);
+  }
+  const auto gemma = secure_frontend::card_for_gguf(metadata("gemma4"), {.folder = folder, .file = "gemma-4.gguf", .engine = folder / "e.exe",
+                                                                        .source = "folder", .mmproj = encoder});
+  const auto* gemma_card = std::get_if<secure_frontend::CardText>(&gemma);
+  expect(gemma_card != nullptr && rows_and_option(gemma_card->json) == decltype(rows_and_option(gemma_card->json)){},
+         "Gemma 4 reads no pictures here: no encoder row, no Pictures option");
+  secure_frontend::PackedCardRequest request{.family = PackedFamily::qwen38, .name = "Q", .engine = folder / "multiengine.exe",
+                                             .source = "folder", .pack = folder / "packs" / "Q", .folder = folder / "models",
+                                             .model_id = "q-00001-of-00002"};
+  expect(rows_and_option(secure_frontend::card_for_pack(request).json) == decltype(rows_and_option(std::string{})){},
+         "a pack card without an encoder reads no pictures");
+  request.mmproj = encoder;
+  const auto [pack_row, pack_option] = rows_and_option(secure_frontend::card_for_pack(request).json);
+  expect(pack_row == std::optional<std::string>{secure_frontend::path_to_utf8(encoder)} && pack_option == std::optional<std::string>{"gpu"},
+         "a Qwen3.8 pack card names its encoder and lists Pictures");
+  // find_mmproj
+  const auto models = folder / "models";
+  secure_frontend_test::make_private_directory(models);
+  secure_frontend_test::write_file(models / "q-00001-of-00002.gguf", "GGUF");
+  expect(!secure_frontend::find_mmproj(models), "no encoder in the folder: none");
+  secure_frontend_test::write_file(models / "mmproj-Qwen3.8-Flash-Next-BF16.gguf", "GGUF");
+  expect(secure_frontend::find_mmproj(models) == std::optional<std::filesystem::path>{models / "mmproj-Qwen3.8-Flash-Next-BF16.gguf"},
+         "the folder's one mmproj*.gguf");
+  secure_frontend_test::write_file(models / "MMPROJ-F16.gguf", "GGUF");
+  expect(!secure_frontend::find_mmproj(models), "two encoders: none (never a guess)");
 }
 
 void names_are_made_valid_and_splits_named_once() {
@@ -445,6 +507,7 @@ int main(int argc, char** argv) {
       {"a_flint_gguf_makes_a_flint_card", a_flint_gguf_makes_a_flint_card},
       {"a_qwen36_gguf_makes_a_qwen_card", a_qwen36_gguf_makes_a_qwen_card},
       {"names_are_made_valid_and_splits_named_once", names_are_made_valid_and_splits_named_once},
+      {"cards_name_their_picture_encoder", cards_name_their_picture_encoder},
       {"other_architectures_are_not_addable_yet", other_architectures_are_not_addable_yet},
       {"packed_families_and_their_cards", packed_families_and_their_cards},
       {"a_qwen38_pack_with_its_draft_layer_offers_mtp", a_qwen38_pack_with_its_draft_layer_offers_mtp},

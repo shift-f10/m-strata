@@ -163,7 +163,6 @@ void card_refusals_name_the_rule() {
   for (const auto& [row, literal] : std::vector<std::pair<std::string, std::string>>{{"listener.port", "8081"},
                                                                                      {"engine.lazy_load", "true"},
                                                                                      {"engine.idle_unload_s", "5"},
-                                                                                     {"vision.enabled", "true"},
                                                                                      {"limits.chat.max_body_bytes", "1000"},
                                                                                      {"models.control", "true"},
                                                                                      {"engine.profile", "\"qwen\""},
@@ -183,10 +182,21 @@ void card_refusals_name_the_rule() {
                                                                                      {"limits.chat.max_completion_tokens", "8192"},
                                                                                      {"limits.chat.default_max_tokens", "0"},
                                                                                      {"defaults.sampling.top_k", "40"},
-                                                                                     {"reasoning.effort", "\"none\""}}) {
+                                                                                     {"reasoning.effort", "\"none\""},
+                                                                                     // vision for cards (2026-10-28): the card's own encoder file
+                                                                                     {"vision.enabled", "true"},
+                                                                                     {"vision.gpu", "true"},
+                                                                                     {"vision.mmproj", json_literal((f.dir / "mmproj.gguf").string())}}) {
     expect(std::holds_alternative<ModelCard>(parse(card_text("A", "qwen", card_config_object(f, {{row, literal}})))),
            "a card row is accepted: " + row);
   }
+  // the main config may not set them while cards are in use: each card says whether its model reads images
+  secure_frontend::FrontendConfigDraft main;
+  for (const char* row : {"vision.enabled", "vision.gpu", "vision.mmproj"}) {
+    main.entries[row] = secure_frontend::ConfigDraftEntry{true, secure_frontend::ConfigSource::file};
+  }
+  const auto issues = secure_frontend::main_config_card_issues(main);
+  expect(issues.size() == 3U, "the vision rows are a card's, never the main config's under models.cards");
 }
 
 // D9: a bad card is refused by its place in the list (and its name when it had one); a second

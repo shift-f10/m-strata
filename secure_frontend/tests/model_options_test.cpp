@@ -15,6 +15,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -186,7 +187,7 @@ bool engine_accepts(const secure_frontend::EngineArgumentsProfile profile, const
 void option_tables_per_profile() {
   expect(names_of(EngineProfile::qwen) == Strings{"max_context", "kv", "kv_resident", "kv_grow", "mtp", "spec", "spec_min_p",
                                                   "expert_cache", "prefill", "thinking", "temperature", "top_p", "top_k", "min_p",
-                                                  "web_search"},
+                                                  "vision", "web_search"},
          "the qwen options in display order: " + joined(names_of(EngineProfile::qwen)));
   expect(names_of(EngineProfile::gemma4) ==
              Strings{"max_context", "chunk", "expert_vram", "thinking", "temperature", "top_p", "top_k", "min_p", "web_search"},
@@ -1016,6 +1017,29 @@ void deepseek_options_are_mayas() {
 // level (MM3_EFFORT "auto": MiniMax's adaptive thinking with no effort named; none, low, medium, high) and MiniMax's
 // sampling (temperature, top_p; it names no top_k or min_p). The context and the cache are maya-mm3's --max-context and
 // --kv-cache in engine.args; thinking auto writes no row, any other level reasoning.effort.
+// Vision for cards (spec 2026-10-28-vision-for-cards-design.md): a qwen card whose model has a picture encoder lists
+// "vision" - off, gpu or cpu - which writes vision.enabled and vision.gpu (the card's own rows), never an engine flag.
+void the_vision_option_writes_the_encoder_rows() {
+  const auto* spec = secure_frontend::find_model_option(EngineProfile::qwen, "vision");
+  expect(spec != nullptr && spec->kind == ModelOptionKind::choice && spec->choices.size() == 3U && spec->choices[0] == "off" &&
+             spec->choices[1] == "gpu" && spec->choices[2] == "cpu",
+         "qwen lists Pictures: off, gpu, cpu");
+  expect(secure_frontend::find_model_option(EngineProfile::gemma4, "vision") == nullptr &&
+             secure_frontend::find_model_option(EngineProfile::glm53, "vision") == nullptr,
+         "only qwen reads pictures here");
+  expect(secure_frontend::option_flags(EngineProfile::qwen, "vision").empty(), "it sets no engine flag");
+  for (const auto& [choice, enabled, gpu] : std::vector<std::tuple<std::string, bool, bool>>{{"gpu", true, true}, {"cpu", true, false},
+                                                                                              {"off", false, false}}) {
+    secure_frontend::FrontendConfigDraft draft;
+    secure_frontend::apply_option_values(EngineProfile::qwen, ModelOptionValues{{"vision", choice}}, draft);
+    const auto on = draft.entries.find("vision.enabled");
+    const auto where = draft.entries.find("vision.gpu");
+    expect(on != draft.entries.end() && std::get<bool>(on->second.value) == enabled && where != draft.entries.end() &&
+               std::get<bool>(where->second.value) == gpu,
+           "vision " + choice + ": vision.enabled " + (enabled ? "true" : "false") + ", vision.gpu " + (gpu ? "true" : "false"));
+  }
+}
+
 void minimax_options_are_mayas() {
   expect(names_of(EngineProfile::minimax) == Strings{"max_context", "kv", "thinking", "temperature", "top_p"},
          "the minimax options in display order: " + joined(names_of(EngineProfile::minimax)));
@@ -1093,5 +1117,6 @@ int main(int argc, char** argv) {
       {"glm_options_write_the_glm_rows", glm_options_write_the_glm_rows},
       {"deepseek_options_are_mayas", deepseek_options_are_mayas},
       {"minimax_options_are_mayas", minimax_options_are_mayas},
+      {"the_vision_option_writes_the_encoder_rows", the_vision_option_writes_the_encoder_rows},
   }, failures);
 }

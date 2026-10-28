@@ -103,6 +103,14 @@ std::optional<DownloadEntry> read_entry(const JsonValue& value) {
   if (const auto* mmproj = member(value, "mmproj"); mmproj != nullptr && mmproj->kind() != JsonKind::null) {
     auto file = read_file(*mmproj);
     if (!file) return std::nullopt;
+    if (const auto own_repo = text(*mmproj, "repo")) {
+      if (!is_hf_repo(*own_repo)) return std::nullopt;
+      file->repo = *own_repo;
+    }
+    if (const auto own_revision = text(*mmproj, "revision")) {
+      if (!is_hf_commit(*own_revision) && *own_revision != "main") return std::nullopt;
+      file->revision = *own_revision;
+    }
     e.mmproj = std::move(*file);
   }
   return e;

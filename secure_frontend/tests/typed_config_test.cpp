@@ -2077,10 +2077,12 @@ void models_keys_typed_and_described() {
   expect(has_issue(with_literals(f, {{"models.cards", string_array({card_a})}, {"models.start", "\"has space\""}}), "models.start",
                    ConfigIssueCode::invalid_value),
          "models.start is a model name");
-  // The launcher starts and stops engines itself: the lifecycle rows and the vision family
-  // have no meaning beside it and are refused by name.
+  // The launcher starts and stops engines itself: the lifecycle rows have no meaning beside it and are refused by
+  // name. (Vision for cards, spec 2026-10-28: vision.enabled, vision.mmproj and vision.gpu are a card's own rows now; a
+  // main config that sets them beside models.cards is refused as card-owned rows - model_cards_test's
+  // card_refusals_name_the_rule and the launcher's bad_card_refused_at_boot_and_main_rows_refused.)
   for (const auto& [row, literal] : std::vector<std::pair<std::string, std::string>>{
-           {"engine.lazy_load", "true"}, {"engine.idle_unload_s", "30"}, {"vision.enabled", "true"}}) {
+           {"engine.lazy_load", "true"}, {"engine.idle_unload_s", "30"}}) {
     expect(has_issue(with_literals(f, {{"models.cards", string_array({card_a})}, {row, literal}}), row,
                      ConfigIssueCode::conflicting_values),
            "refused with models.cards: " + row);

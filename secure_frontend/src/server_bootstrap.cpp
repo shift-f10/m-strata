@@ -263,7 +263,6 @@ int server_run_impl(const FrontendConfig& config, const bool expert) {
     return failure->exit_code;
   }
   auto& model = std::get<secure_frontend::ComposedModel>(composed_result);
-  const auto& launch = model.launch;
   const std::string& model_id = model.model_id;
   const secure_frontend::SupervisorConfig& supervisor_config = model.supervisor;
   const std::filesystem::path& state_dir = *config.roots.state;
@@ -287,86 +286,27 @@ int server_run_impl(const FrontendConfig& config, const bool expert) {
   secure_frontend::SupervisorPort port(supervisor);
   secure_frontend::GenerationGate gate({.max_queued = config.limits.concurrency.max_queued_generations,
                                         .queue_timeout = config.limits.concurrency.queue_timeout});
-  // SP5 M1 Task 11 (D-9 vision split; Rulings T11-y/T11-ee/T11-z) and Task 12 (C-9):
-  // the supervised maya-vision child and the route's encoder service. Construction
-  // spawns nothing — the resident start below runs only after bind, so a listener that
-  // cannot bind still never leaves an encoder child behind (CFG-01 family). The exe is
-  // OUR distribution's — maya-vision beside the engine executable (the pin's
-  // vision-exe-from-config stays kRejected, spec §4); the mmproj artifact and the
-  // weights come from compose (the manifest's launch.mmproj).
-  std::optional<secure_frontend::VisionSupervisor> vision;
-  std::optional<secure_frontend::VisionService> vision_service;
+  // SP5 M1 Task 11 (D-9 vision split; Rulings T11-y/T11-ee/T11-z) and Task 12 (C-9): the supervised encoder child and
+  // the route's encoder service, from compose_model's plan (model_runtime.cpp plan_vision, shared with the cards since
+  // 2026-10-28: upstream's strata-vision beside the engine, else maya-vision; the mmproj artifact and the weights from
+  // the manifest's launch.mmproj; the scratch <state>/vision). Construction spawns nothing - the resident start below
+  // runs only after bind, so a listener that cannot bind still never leaves an encoder child behind (CFG-01 family).
+  secure_frontend::VisionRole vision_role;
   if (config.vision.enabled) {
-    if (!launch.vision_mmproj.has_value() || !launch.vision_model.has_value()) {  // compose guards; fail closed twice
+    if (!model.vision.has_value()) {  // compose guards; fail closed twice
       std::cerr << "vision: this model declares no mmproj artifact.\n";
       return EXIT_FAILURE;
     }
-    // Ruling T12-j: ENC/QUIT names ride protocol lines space-separated, and the GENI
-    // line names the combined file by absolute path — the pin's own #480 shows names
-    // with spaces corrupt that split. A state path holding whitespace can never host
-    // the scratch dir: boot fails closed instead of corrupting the protocol.
-    if (state_dir.string().find_first_of(" \t") != std::string::npos) {
-      std::cerr << "vision: the state directory path must not contain spaces.\n";
-      return EXIT_FAILURE;
-    }
-    // Ruling T12-c: image scratch is <state>/vision, owner-only, and IS the child's
-    // cwd — every ENC/QUIT name is relative to it, as at the pin (#480 again).
-    const std::filesystem::path vision_scratch = state_dir / "vision";
-    if (!secure_frontend::create_owner_only_directory(vision_scratch)) {
-      std::cerr << "vision: unable to prepare the image scratch directory.\n";
-      return EXIT_FAILURE;
-    }
-    // SP5-P2 Task 6 (issue 27): the engine distribution's vision encoder is named
-    // `maya-vision` at 451f9cb6 (maya.py:86 VEXE); the kit places it beside the engine
-    // executable, where the supervisor looks.
-    std::filesystem::path vision_exe = config.engine.executable.path().parent_path() / "maya-vision";
-#if defined(_WIN32)
-    vision_exe += L".exe";
-#endif
-    if (std::error_code ec; !std::filesystem::exists(vision_exe, ec) || ec) {
-      std::cerr << "vision: no maya-vision beside the engine executable.\n";
-      return EXIT_FAILURE;
-    }
-    const auto argv = secure_frontend::compose_vision_arguments(secure_frontend::VisionChildSpec{
-        .mmproj = *launch.vision_mmproj, .model = *launch.vision_model, .threads = config.vision.threads,
-        .max_tokens = config.engine.max_tokens,
-        .no_flash_attn = config.vision.no_flash_attn});
-    // The engine's confinement family minus the per-generation cgroup delegation
-    // (recorded M1 gap, AGENT_HANDOFF); the environment stays an empty allowlist and
-    // the cwd is the scratch dir (T11-ee, image half landed with Task 12).
-    const std::filesystem::path exe = std::move(vision_exe);
-    const std::filesystem::path vision_cwd = vision_scratch;
-    const bool nnp = secure_frontend::config_defaults::kNoNewPrivilegesDefault && !config.engine.allow_new_privileges;
-    secure_frontend::ProcessFactory vision_factory = [exe, argv, vision_cwd, nnp](std::uint64_t) -> secure_frontend::SpawnResult {
-      auto child = std::make_unique<secure_frontend::EngineStdioProcess>();
-      secure_frontend::EngineCommand command{.executable = exe,
-                                             .arguments = argv,
-                                             .environment = {},
-                                             .working_directory = vision_cwd,
-                                             .no_new_privileges = nnp,
-                                             .kill_exit_code = secure_frontend::kVisionKillExitCode,
-                                             .insert_serve = false};  // the pin's reader_args carry no --serve (T11-ff)
-      if (const auto error = child->start(command)) return secure_frontend::SpawnFailure{error->message};
-      return child;
-    };
-    secure_frontend::VisionLimits vision_limits;
-    // The STRATA_VISION_READY_S counterpart, typed (vision.ready_timeout_s; 0 = wait
-    // for ever, the pin's :291 rule) — and the STRATA_VISION_ENCODE_S row
-    // (vision.encode_timeout_s, :328; 0 = for ever) for one ENC round trip.
-    vision_limits.policy.ready_timeout = std::chrono::milliseconds{std::chrono::seconds{config.vision.ready_timeout_s}};
-    vision_limits.encode_timeout = std::chrono::milliseconds{std::chrono::seconds{config.vision.encode_timeout_s}};
-    vision.emplace(std::move(vision_factory), std::move(vision_limits));
-    secure_frontend::VisionService::Limits service_limits;
-    service_limits.payload.max_side = config.vision.max_side;  // vision.max_side, the pre-decode probe (T12-c)
-    service_limits.scratch_dir = vision_scratch;
-    vision_service.emplace(*vision, std::move(service_limits));
+    vision_role = secure_frontend::make_vision_role(*model.vision, secure_frontend::vision_process_factory(*model.vision));
   }
+  secure_frontend::VisionSupervisor* const vision = vision_role.supervisor.get();
+  secure_frontend::VisionService* const vision_service = vision_role.service.get();
   // listener.monitor (session log step 16): the Monitor's meter. The chat route tells it about
   // each generation, the host sampler below adds a reading a second, GET /metrics renders it.
   std::optional<secure_frontend::ServeMonitor> monitor;
   if (config.listener.monitor) monitor.emplace();
   secure_frontend::ChatRouteConfig chat_config = model.chat;
-  chat_config.vision = vision_service.has_value() ? &*vision_service : nullptr;
+  chat_config.vision = vision_service;
   chat_config.monitor = monitor.has_value() ? &*monitor : nullptr;
 #if defined(SECURE_FRONTEND_WEB_SEARCH)
   std::optional<secure_frontend::SearchService> search;  // outlives the route

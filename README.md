@@ -33,6 +33,8 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   cache formats, KV streaming for long contexts, and contexts up to 1M tokens where the model allows it.
 - **`strata-prepare`** builds the packs Qwen3.8, GLM-5.3, DeepSeek-V4.1, MiniMax-M3.1 and Raon-1-mini need, natively
   (no Python), with the same bytes as upstream's and Project Maya's tools.
+- **Pictures** on Qwen3.8 and Qwen3.6: upstream's picture encoder, `strata-vision` (llama.cpp's mtmd), runs beside the
+  engine and turns each picture into the embeddings the engine reads, on the GPU (about 1 GB of VRAM) or the CPU.
 
 **Model selection and engine swap**
 
@@ -46,6 +48,8 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 - **Calibrate** tunes the settings that depend on this PC by timing real engine starts, once per card (today flint's
   CPU expert lane, PCIe share and CPU threads, and Gemma 4's CPU threads; the other engines tune themselves).
 - **Add a model** from files already on this PC (a folder and its `.gguf`); the pack is built when the family needs one.
+  A Qwen model whose folder holds its picture encoder (one `mmproj*.gguf`) gets a card that reads pictures, with a
+  **Pictures** option (GPU, CPU or off).
   Each card shows its folder (move the files and point the card there); the **danger zone** deletes a model's files,
   card and calibration after three confirmations.
 
@@ -59,6 +63,8 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 - **16 connections at once** for a large file (`pull.connections`, 1-32), a progress line with speed and time left,
   **Pause** and **Resume** (it continues from the pieces already fetched), **Cancel** (deletes the partial files), and a
   queue: one download runs, the next starts when it ends.
+- **Vision files:** a Qwen entry's checkbox also fetches its picture encoder (about 0.9 GB, pinned like the model);
+  its card then reads pictures.
 - When the files are verified, the model is packed if it needs it and appears as a card, ready to start.
 - The transfer is a separate confined process (`strata pull`): HTTPS to Hugging Face only; the server itself has no
   network code.
@@ -83,7 +89,8 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 
 **The page and the API**
 
-- **Chat** with Markdown, the model's reasoning in its own block, text-file attachments, saving a chat as Markdown, and
+- **Chat** with Markdown, the model's reasoning in its own block, text-file and picture attachments (PNG, JPEG, WebP,
+  while the running card reads pictures), saving a chat as Markdown, and
   the sampling drawer (thinking, temperature, top-p, max tokens, seed). **Monitor:** GPU load, VRAM, temperature, power,
   PCIe, CPU and RAM, decode and prefill speed, the context fill, the experts in each tier, and the recent requests (never
   their text). **About:** the engines this folder was built with and this PC's hardware. Light and dark; fits a phone.
@@ -187,7 +194,7 @@ On Linux:
 | `--cuda-root DIR` | The CUDA toolkit (default: `CUDA_PATH` / `CUDA_HOME`). |
 | `--cuda-arch native` | GPU targets: `native` (this PC's GPU) or a list such as `"86;89;120"`. |
 | `--with email,search` | Optional features, off otherwise: email alerts, and web search for the models. |
-| `--without maya,raon1` | Leave those engine families out (strata, Gemma 4 and flint are always built). |
+| `--without maya,raon1,vision` | Leave those engine families, or the picture encoder (`vision`), out (strata, Gemma 4 and flint are always built). |
 | `--no-cuda-runtime` | Do not bundle cuBLAS (the PC running it then needs a CUDA toolkit). |
 | `--jobs N` | Parallel compile jobs (default: the CPU count). |
 | `--build-dir DIR` | Where the builds are kept (default `out/make-build`). |
@@ -195,7 +202,8 @@ On Linux:
 
 The first build compiles the CUDA engine and takes a while; later builds are incremental (`out/make-build`). The out
 folder holds only what runs: `strata-secure-server`, `strata`, `strata-search` (with `--with search`), `engine/` (the
-launcher, one library per family, `strata-prepare`, the bundled cuBLAS, the expert profiles and, with the Maya
+launcher, one library per family, `strata-prepare`, `strata-vision` (upstream's picture encoder, built from
+`upstream/tools/vision` with the same pinned llama.cpp), the bundled cuBLAS, the expert profiles and, with the Maya
 families, `templates/minimax-m3.1/`), `README.txt`, `config.example.json`, `LICENSE` and `NOTICE.md`. It is made
 owner-only. Copy or move the whole folder anywhere.
 
@@ -236,9 +244,11 @@ On the page, open **Models**:
   Raon-1-mini GGUFs have their pack built first by `strata-prepare` (seconds to minutes; a pack already beside the file
   and still matching it is reused). A Qwen3.8 model whose data folder holds upstream's MTP draft layer (`mtp/rt`, from
   upstream's setup) runs it, and its card shows the MTP settings (draft layer on/off, draft window, draft confidence).
+  A Qwen3.8 or Qwen3.6 model with its picture encoder beside it (one `mmproj*.gguf` in the folder) reads pictures.
 - **Download** fetches a model from the built-in catalog (every file pinned by its SHA-256) or a Hugging Face link
   into a drive or folder you choose; the free space is checked first. A large file comes over 16 connections at once
-  (`pull.connections`, 1-32; 1 is one stream). When it is verified, it is packed if needed and appears as a card.
+  (`pull.connections`, 1-32; 1 is one stream). A Qwen entry's **Vision files** box also fetches its picture encoder.
+  When it is verified, it is packed if needed and appears as a card.
 - **Start a model** starts and stops a card, with its options (context length, cache format, thinking, sampling).
   **Calibrate** tunes the engine settings that depend on this PC, once per card; it reruns after a settings change if
   you ask it to.
@@ -394,6 +404,10 @@ for chunk in stream:
   back as `strata_search` events; `"strata_search": false` answers that request without searching. Do not send
   `tools`: the server refuses it. Details:
   [`secure_frontend/README.md`, "Web search from the API"](secure_frontend/README.md#web-search-from-the-api).
+- **Pictures:** while the running card's Pictures option is on, a user message's `content` may be a list of parts:
+  `{"type": "text", "text": "..."}` and `{"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}`
+  (PNG, JPEG or WebP; up to `vision.max_n` per request, each side up to `vision.max_side`). An `http(s)` picture
+  address is refused, never fetched.
 - `/health` and `/metrics` (with the Monitor on) also take the key.
 
 ### For development
@@ -449,10 +463,11 @@ for a real install, which makes its own key at the first start.
   library per family (upstream Strata `v0.2.6`, Project Maya `v1.1.30`, raon1, Gemma 4, flint); native `strata-prepare`
   packers; GLM-5.3, DeepSeek-V4.1, MiniMax-M3.1 and Qwen3.6 in the server; optional web search over MCP and SearXNG for
   Qwen, GLM, raon1, flint and Gemma 4, with a switch on each card and in the chat; Qwen's and GLM's prompts tokenized exactly as
-  upstream's and Maya's tokenizers do.
+  upstream's and Maya's tokenizers do; pictures on Qwen cards (upstream's `strata-vision` beside the engine, the Vision
+  files download, picture attachments in the chat; to be checked on the GPU with a real model).
 - **Open:** DeepSeek and MiniMax end-to-end runs; GLM speed tuning; making Qwen3.8's MTP draft layer here (upstream's
-  three Python tools, natively; today it comes from upstream's setup); downloading
-  a model's vision files and serving images where the model can read them; web search for DeepSeek and MiniMax;
+  three Python tools, natively; today it comes from upstream's setup); pictures on the other families; web search
+  for DeepSeek and MiniMax;
   long-prompt speed and long-context drift on raon1; Linux runs of the newest work; the server as a window with a
   tray icon (model start and stop, the Monitor, a configuration tab).
 
@@ -470,7 +485,7 @@ the MiniMax Community License. Third-party code keeps its own license (below).
 | [Niko1221/Strata](https://github.com/Niko1221/Strata) | The engine this project's engine is built from (`engine/` carries its tree), its Python serve layer, and the expert-tiering design. Also the unmodified submodule `upstream/`. This project started as a fork of it. | engine tree `v0.2.6` (`4b9e05a2`); submodule `v0.2.4.2` (`dfa3f402`) | MIT, Copyright (c) 2026 Niko1221 and the Strata contributors (its notice kept in [`NOTICE.md`](NOTICE.md)) |
 | [mw00/project-maya](https://github.com/mw00/project-maya) | Its GLM-5.3, DeepSeek-V4.1 and MiniMax-M3.1 engines (`engine/third_party/maya`), its packers and tokenizer (ported), and the read-only submodule `engines/maya-ref`. | engine tree `v1.1.30` (`8621e331`); submodule `v1.1.27` (`4615f346`) | MIT, Copyright (c) 2026 Peasant Smith and the Project Maya contributors, Copyright (c) 2026 Niko1221 and the Strata contributors |
 | [MiniMaxAI/MiniMax-M3.1-Flash](https://huggingface.co/MiniMaxAI/MiniMax-M3.1-Flash) | Its chat template's text (through Maya's copy, `engine/third_party/maya/tools/mm3/chat_template.jinja`; shipped in `engine/templates/minimax-m3.1/`), which our MiniMax prompt writes; the model itself is downloaded, never in the tree. Commercial use needs "Built with MiniMax M3.1-Flash" shown and a notice to MiniMax. | revision `54e4e69` | MiniMax Community License, Copyright (c) 2026 MiniMax (`engine/third_party/maya/LICENSE.minimax-m31`) |
-| [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) / ggml | Linked into the engine: ggml and ggml-cuda's quantized matrix kernels (MMQ), from the pinned checkout. Also the test oracle for Gemma 4 and flint. | commit `3cf03257f219afbe7334045ff7c6a06ac68c627d` | MIT |
+| [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) / ggml | Linked into the engine: ggml and ggml-cuda's quantized matrix kernels (MMQ), from the pinned checkout; and its `mtmd` library, which upstream's `strata-vision` (`upstream/tools/vision`, built as it is) encodes pictures with. Also the test oracle for Gemma 4 and flint. | commit `3cf03257f219afbe7334045ff7c6a06ac68c627d` | MIT |
 | [robertkarl/UnbiasedStrata](https://github.com/robertkarl/UnbiasedStrata) | Security-design ideas only (a smaller, offline-verifiable runtime; a reduced attack surface). No code. | commit `46c46ecfc11d2315512f21f7549b0a7792ccd2ae` | MIT |
 | [lighttransport/Strata](https://github.com/lighttransport/Strata/tree/glm53f) | GLM-5.3 compatibility reference (the GLM serving profile and tokenizer behaviour). | branch `glm53f`, commit `4894c9967f5754a2052d7b05f10a01b6071bb6e4` | MIT |
 | [ikawrakow/ik_llama.cpp](https://github.com/ikawrakow/ik_llama.cpp) PR #2733 and KRAFTON's llama.cpp (`raon-1-mini-preview`) | raon1 references: the model's math and pre-tokenizer, and the official graph our raon1 output is checked against (a test oracle, not shipped). | - | MIT |

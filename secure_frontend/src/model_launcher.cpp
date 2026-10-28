@@ -25,6 +25,7 @@ namespace {
 constexpr std::string_view kStateDirFailed = "the state directory could not be prepared";
 constexpr std::string_view kSupervisorFailed = "the engine supervisor could not start";
 constexpr std::string_view kEndedBeforeReady = "the engine ended before it was ready (see the server log)";
+constexpr std::string_view kVisionFailed = "the picture encoder did not start (see the server log)";
 constexpr std::string_view kExhausted = "the engine stopped after repeated failures (see the server log)";
 constexpr std::string_view kCalibrationFailed = "the engine did not start for the calibration (see the server log)";
 constexpr std::string_view kCalibrationNotSaved = "the calibration could not be saved (see the server log)";
@@ -735,6 +736,7 @@ void ModelLauncher::retire_running(std::unique_lock<std::mutex>& lock) {
     old->raise_stop();
     (void)wait_idle(settings_.cut_wait);
   }
+  old->stop_vision();  // the encoder role first: spawned last, stopped first
   old->supervisor().shutdown(settings_.stop_bound);
   const bool unreaped = old->supervisor().engine_left_unreaped();
   lock.lock();
@@ -795,7 +797,10 @@ void ModelLauncher::run_start(const Job& job) {
   model.chat.tool_rounds = settings_.tool_rounds;
   // The Monitor's engine readings belong to the engine that ran before.
   if (settings_.monitor != nullptr) settings_.monitor->engine_changed();
-  auto runtime = std::make_shared<ModelRuntime>(std::move(model), settings_.factory(std::move(plan)), settings_.gate, settings_.monitor);
+  ProcessFactory vision_factory;  // a card that reads images: its encoder (unset: the production one)
+  if (model.vision.has_value() && settings_.vision_factory) vision_factory = settings_.vision_factory(*model.vision);
+  auto runtime = std::make_shared<ModelRuntime>(std::move(model), settings_.factory(std::move(plan)), settings_.gate, settings_.monitor,
+                                                std::make_shared<SteadySupervisorClock>(), std::move(vision_factory));
   if (!runtime->supervisor().start()) {
     fail(kSupervisorFailed);
     return;
@@ -835,6 +840,19 @@ void ModelLauncher::run_start(const Job& job) {
     fail(kEndedBeforeReady);
     return;
   }
+  if (!runtime->start_vision()) {
+    runtime->stop_vision();
+    runtime->supervisor().shutdown(settings_.stop_bound);
+    {
+      std::lock_guard lock(mutex_);
+      if (runtime->supervisor().engine_left_unreaped()) unreaped_ = true;
+      running_.reset();
+      running_card_.reset();
+    }
+    fail(kVisionFailed);
+    return;
+  }
+  if (runtime->vision() != nullptr) log("[strata] models: " + card.name + ": the picture encoder is running");
   {
     std::lock_guard lock(mutex_);
     status_[job.card] = CardStatus{CardState::running, {}};
@@ -1041,6 +1059,7 @@ void ModelLauncher::shutdown() {
     running_card_.reset();
   }
   if (runtime == nullptr) return;
+  runtime->stop_vision();  // the encoder role first: spawned last, stopped first
   runtime->supervisor().shutdown(settings_.stop_bound);
   if (runtime->supervisor().engine_left_unreaped()) {
     std::lock_guard lock(mutex_);

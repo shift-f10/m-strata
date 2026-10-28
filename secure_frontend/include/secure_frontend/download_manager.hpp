@@ -111,7 +111,10 @@ class DownloadManager final {
   // Starts (queues) a catalog or custom card. `folder` (spec 2026-10-27 §4.3): the drive or folder the model goes to,
   // an existing owner-only folder that becomes its store (strata pull --store); its own volume's free space is
   // checked; unset, the card's earlier folder or models.downloads_root. The choice is kept for a resume.
-  [[nodiscard]] std::optional<Refusal> start(std::string_view id, const std::optional<std::filesystem::path>& folder = std::nullopt);
+  // `vision` (spec 2026-10-28, the "Vision files" checkbox): the entry's picture encoder comes too, and the card reads
+  // pictures with it; 400 invalid_request for an entry with none (vision_bytes 0). The choice is kept for a resume.
+  [[nodiscard]] std::optional<Refusal> start(std::string_view id, const std::optional<std::filesystem::path>& folder = std::nullopt,
+                                             bool vision = false);
   // A pasted link (O3): the lookup through `strata hf-info`; the confirm object, or a refusal and
   // a fixed reason for the page.
   struct LinkAnswer final {
@@ -152,6 +155,7 @@ class DownloadManager final {
     std::string current_file;
     double rate_bps{0.0};
     std::filesystem::path store{};   // the folder it goes to (empty: models.downloads_root)
+    bool vision{false};              // its picture encoder comes too (spec 2026-10-28)
   };
   struct PendingLink final {
     DownloadEntry entry;
@@ -185,11 +189,14 @@ class DownloadManager final {
                                                                           const std::optional<std::filesystem::path>& folder) const;
   void load_destinations();
   void save_destinations();
+  // vision.json: the downloads whose picture encoder comes too ({"ids": [...]}), for a resume after a restart.
+  void load_vision();
+  void save_vision();
   [[nodiscard]] std::optional<std::string> hf_info(std::string_view url, std::string& error);
   void discard_partials(std::string_view id, const std::filesystem::path& store);
   [[nodiscard]] std::unique_ptr<LineChild> spawn(std::vector<std::string> arguments, const std::filesystem::path& executable);
   [[nodiscard]] std::optional<DiskSpace> disk(const std::filesystem::path& store) const;
-  [[nodiscard]] std::uint64_t total_of(const DownloadEntry& entry) const;
+  [[nodiscard]] std::uint64_t total_of(const DownloadEntry& entry, bool vision = false) const;
   [[nodiscard]] std::optional<std::size_t> find(std::string_view id) const;
   void set_state(std::size_t index, State state, std::string error = {});
   void log(std::string_view line) const;

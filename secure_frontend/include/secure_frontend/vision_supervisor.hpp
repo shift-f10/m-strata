@@ -43,6 +43,10 @@ struct VisionChildSpec final {
   std::int64_t threads{0};                  // vision.threads (0: the pin's truthy skip, :2562)
   std::optional<std::int64_t> max_tokens;   // engine.max_tokens, when set (:2564-2565)
   bool no_flash_attn{false};                // vision.no_flash_attn (added; spec §5.1)
+  bool gpu{false};                          // vision.gpu: upstream's --gpu (spec 2026-10-28-vision-for-cards)
+  // upstream's strata-vision (upstream/tools/vision, the out folder's encoder): flash attention is its
+  // --flash-attn off; false: maya-vision's grammar (--no-flash-attn)
+  bool upstream_encoder{false};
 };
 
 [[nodiscard]] std::vector<std::string> compose_vision_arguments(const VisionChildSpec& spec);

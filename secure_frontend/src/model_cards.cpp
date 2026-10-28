@@ -64,9 +64,10 @@ std::string_view profile_name(const EngineProfile profile) noexcept {
 
 bool is_card_owned_key(const std::string_view path) noexcept {
   if (path == "engine.profile" || path == "engine.lazy_load" || path == "engine.idle_unload_s") return false;
-  static constexpr std::array<std::string_view, 6> kExact{
+  // vision.*: a card reads images with its own encoder file (spec 2026-10-28-vision-for-cards-design.md)
+  static constexpr std::array<std::string_view, 9> kExact{
       "model.aliases", "roots.models", "roots.tokenizer_pack", "limits.chat.max_prompt_tokens",
-      "limits.chat.max_completion_tokens", "limits.chat.default_max_tokens"};
+      "limits.chat.max_completion_tokens", "limits.chat.default_max_tokens", "vision.enabled", "vision.mmproj", "vision.gpu"};
   if (std::find(kExact.begin(), kExact.end(), path) != kExact.end()) return true;
   return starts_with(path, "engine.") || starts_with(path, "defaults.sampling.") || starts_with(path, "reasoning.");
 }

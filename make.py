@@ -2,12 +2,13 @@
 """make.py - build every binary and engine into one folder that holds only what runs them (Windows and Linux).
 
     python make.py --out DIR [--ggml-dir DIR] [--cuda-root DIR] [--cuda-arch native|"86;89"]
-                   [--without maya,raon1] [--with email,search] [--no-cuda-runtime] [--build-dir DIR] [--engine-build-dir DIR]
+                   [--without maya,raon1,vision] [--with email,search] [--no-cuda-runtime] [--build-dir DIR] [--engine-build-dir DIR]
                    [--jobs N] [--cmake EXE] [--plan]
 
 make.bat (Windows) and make.sh (Linux) run it. It configures and builds the engine (engine/: the multiengine launcher
-and one library per model family) and the frontend (secure_frontend/: strata-secure-server and the strata CLI, a
-release build without test hooks), installs only their `runtime` CMake components (and `cuda`, the bundled cuBLAS)
+and one library per model family), upstream's picture encoder (upstream/tools/vision: engine/strata-vision, built out
+of source) and the frontend (secure_frontend/: strata-secure-server and the strata CLI, a release build without test
+hooks), installs only their `runtime` CMake components (and `cuda`, the bundled cuBLAS)
 into a staging folder, checks that folder holds runtime files and nothing else, writes README.txt and
 config.example.json, moves it to --out and makes it owner-only. The first start of strata-secure-server creates its
 data/ folder there (docs/superpowers/specs/2026-10-27-gui-first-install-design.md).
@@ -30,6 +31,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 OPTIONAL_FAMILIES = ("maya", "raon1")   # the families a build may leave out; strata, gemma4 and flint are always built
+# what --without takes: those families, and the picture encoder (strata-vision: a Qwen card reads pictures with it)
+LEAVE_OUT = OPTIONAL_FAMILIES + ("vision",)
 # built only when asked (off by default): email alerts (SECURE_FRONTEND_EMAIL_ALERTS) and web search through a SearXNG
 # instance (SECURE_FRONTEND_WEB_SEARCH: strata-search, an MCP server beside the server)
 OPTIONAL_FEATURES = ("email", "search")
@@ -68,7 +71,7 @@ def parse_args(argv: list[str], platform: str | None = None) -> Options:
     ap.add_argument("--cuda-root", default=os.environ.get("CUDA_PATH", os.environ.get("CUDA_HOME", "")),
                     help="the CUDA toolkit (env CUDA_PATH / CUDA_HOME)")
     ap.add_argument("--cuda-arch", default="native", help='GPU targets: "native" (this PC\'s GPU) or e.g. "86;89;120"')
-    ap.add_argument("--without", default="", help="families to leave out: " + ", ".join(OPTIONAL_FAMILIES))
+    ap.add_argument("--without", default="", help="families (or the picture encoder) to leave out: " + ", ".join(LEAVE_OUT))
     ap.add_argument("--with", dest="with_features", default="",
                     help="optional features to build in (off otherwise): " + ", ".join(OPTIONAL_FEATURES))
     ap.add_argument("--no-cuda-runtime", action="store_true", help="do not bundle cuBLAS (the PC needs a CUDA toolkit)")
@@ -79,10 +82,10 @@ def parse_args(argv: list[str], platform: str | None = None) -> Options:
     ap.add_argument("--plan", action="store_true", help="print the commands and stop")
     args = ap.parse_args(argv)
     without = tuple(sorted({w.strip() for w in args.without.split(",") if w.strip()}))
-    unknown = [w for w in without if w not in OPTIONAL_FAMILIES]
+    unknown = [w for w in without if w not in LEAVE_OUT]
     if unknown:
         raise SystemExit("make: --without takes only %s (strata, gemma4 and flint are part of every engine), not %s"
-                         % (", ".join(OPTIONAL_FAMILIES), ", ".join(unknown)))
+                         % (", ".join(LEAVE_OUT), ", ".join(unknown)))
     with_features = tuple(sorted({w.strip() for w in args.with_features.split(",") if w.strip()}))
     unknown = [w for w in with_features if w not in OPTIONAL_FEATURES]
     if unknown:
@@ -121,6 +124,18 @@ def engine_configure_args(opts: Options, platform: str) -> list[str]:
             *compiler, "-DCMAKE_CUDA_ARCHITECTURES=" + opts.cuda_arch]
 
 
+def vision_configure_args(opts: Options, platform: str) -> list[str]:
+    """upstream's picture encoder (upstream/tools/vision, read in place and built out of source: upstream/ is never
+    changed) over llama.cpp's mtmd from the engine's pinned checkout, with ggml-cuda for the engine's GPU targets;
+    portable (AVX2, the static MSVC runtime) as upstream ships it. A reused folder keeps its compiler, as the engine's."""
+    build = opts.build_dir / "vision"
+    nvcc = opts.cuda_root + ("/bin/nvcc.exe" if platform == "windows" else "/bin/nvcc")
+    compiler = [] if (build / "CMakeCache.txt").is_file() else ["-DCMAKE_CUDA_COMPILER=" + nvcc]
+    return ["-S", str(ROOT / "upstream" / "tools" / "vision"), "-B", str(build), "-G", "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release", "-DLLAMA_DIR=" + opts.ggml_dir, "-DSTRATA_VISION_CUDA=ON", "-DSTRATA_PORTABLE=ON",
+            "-DCUDAToolkit_ROOT=" + opts.cuda_root, *compiler, "-DCMAKE_CUDA_ARCHITECTURES=" + opts.cuda_arch]
+
+
 def frontend_configure_args(opts: Options, platform: str) -> list[str]:
     """The frontend's configure line: a release build with no tests and no test hooks (the shipped configuration)."""
     del platform
@@ -153,10 +168,12 @@ def required_files(opts: Options, platform: str) -> list[str]:
             ["engine/templates/minimax-m3.1/chat_template.jinja", "engine/templates/minimax-m3.1/LICENSE.minimax-m31"])
     # web search: strata-search, the MCP server the server runs beside itself for it
     search = [f"strata-search{exe}"] if "search" in opts.with_features else []
+    # the picture encoder beside the launcher, where the server looks for it (spec 2026-10-28)
+    vision = [] if "vision" in opts.without else [f"engine/strata-vision{exe}"]
     # engine/build.json: the build record the server's About shows (build_record)
     return ([f"strata-secure-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
              "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin", "engine/build.json",
-             "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + search + maya +
+             "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + search + vision + maya +
             ["engine/" + lib(n) for n in _families(opts)])
 
 
@@ -205,6 +222,12 @@ def build_record(opts: Options, platform: str, stage: Path, commit: str | None =
         path = stage / "engine" / lib(name)
         models, source = sources[name]
         engines.append({"library": lib(name), "models": models, "source": source,
+                        "bytes": path.stat().st_size if path.is_file() else 0})
+    if "vision" not in opts.without:   # the picture encoder, a program beside them
+        program = "strata-vision" + (".exe" if platform == "windows" else "")
+        path = stage / "engine" / program
+        engines.append({"library": program, "models": "pictures for the Qwen3.8-Flash family and Qwen3.6",
+                        "source": "upstream Strata tools/vision, llama.cpp's mtmd at the pinned ggml",
                         "bytes": path.stat().st_size if path.is_file() else 0})
     return {"schema_version": 1, "built": built, "commit": commit,
             "ggml": (_tree_text("engine/third_party/ggml/VERSION.txt").split() or ["?"])[0][:12],
@@ -300,7 +323,7 @@ Config:     data/config.json (to keep a port, set listener.port there). An answe
 Key:        {strata} --config data/config.json key show   (or key rotate)
 
 Contents:   strata-secure-server and strata, the frontend{search}
-            engine/: multiengine (the launcher), one library per model family, strata-prepare, the expert
+            engine/: multiengine (the launcher), one library per model family, strata-prepare{vision}, the expert
             profiles{templates}{cuda}
             LICENSE and NOTICE.md
             Nothing else is needed; move or copy the whole folder.
@@ -327,8 +350,10 @@ def readme_text(opts: Options, platform: str) -> str:
     minimax = (",\n            and the permission to combine it with MiniMax-M3.1-Flash's template and model, which stay under"
                "\n            the MiniMax Community License (engine/templates/minimax-m3.1/)" if maya else "")
     nvidia = NVIDIA_TEXT.format(cublas="cublas" if windows else "libcublas") if opts.cuda_runtime else ""
+    vision = "" if "vision" in opts.without else ",\n            strata-vision (a Qwen model's picture encoder)"
     return README_TEXT.format(server=server, shell=shell, strata=".\\strata.exe" if windows else "./strata", cuda=cuda,
-                              search=search, settings=settings, templates=templates, minimax=minimax, nvidia=nvidia)
+                              search=search, settings=settings, templates=templates, minimax=minimax, nvidia=nvidia,
+                              vision=vision)
 
 
 def owner_only_commands(path: Path, platform: str, user: str) -> list[list[str]]:
@@ -426,6 +451,15 @@ def main(argv: list[str] | None = None) -> int:
     if opts.cuda_runtime:
         run([cmake, "--install", str(opts.engine_build_dir), "--prefix", str(stage), "--component", "cuda"], env,
             opts.plan)
+    if "vision" not in opts.without:
+        # upstream's picture encoder, into engine/ beside the launcher (it has no install rules: its one program is copied)
+        run([cmake, *vision_configure_args(opts, platform), *make_program_args(opts.build_dir / "vision", ninja)], env,
+            opts.plan)
+        run([cmake, "--build", str(opts.build_dir / "vision"), "--target", "strata-vision", *jobs], env, opts.plan)
+        program = "strata-vision" + (".exe" if platform == "windows" else "")
+        print(f"+ copy {opts.build_dir / 'vision' / 'bin' / program} {stage / 'engine' / program}", flush=True)
+        if not opts.plan:
+            shutil.copy2(opts.build_dir / "vision" / "bin" / program, stage / "engine" / program)
     run([cmake, *frontend_configure_args(opts, platform), *make_program_args(opts.build_dir / "frontend", ninja)],
         env, opts.plan)
     run([cmake, "--build", str(opts.build_dir / "frontend"), "--target", "strata-secure-server", "strata", *jobs], env,

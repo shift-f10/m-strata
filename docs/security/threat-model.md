@@ -192,6 +192,14 @@ Trust boundaries:
   resolver or socket — and every cap (images per request, base64 length, 32 MiB
   decoded, the side-length probe) is answered before any scratch file is
   written; the refusal is the fixed 400 naming `image_url`.
+- (2026-10-28) A model card reads pictures only with its own encoder file
+  (`vision.mmproj`, a card row the main config refuses): absolute, a regular
+  file and not a link, in a folder that passes the model folders' rule (no
+  other user may change it, unless the owner set `roots.allow_untrusted_media`),
+  checked at each launch. Only the qwen profile opens the content-parts gate;
+  every other card's launch refuses `vision.enabled` by name. The same `data:`
+  URL rule and caps as above hold, and the page sends pictures only while the
+  running card says it reads them.
 
 ### Configuration and filesystem
 
@@ -409,7 +417,12 @@ Trust boundaries:
   typed ready/encode timeouts, and a resident encoder that fails the boot if it
   cannot reach READY. **Recorded gap:** in M1 the encoder role receives no
   per-generation cgroup delegation (the PROC-05 residual above applies to it
-  too, one role smaller). Lifecycle timers are typed frontend decisions —
+  too, one role smaller). (2026-10-28) A model card's encoder is the same
+  confined child, owned by that card's runtime: started after the engine's
+  READY, stopped with the engine (on a stop, a swap and the server's exit), and
+  a card whose encoder fails to start does not start. It is upstream's
+  `strata-vision` from the out folder's `engine/` (beside the launcher), never a
+  path the config names. Lifecycle timers are typed frontend decisions —
   `engine.lazy_load` defers the engine start, `engine.idle_unload_s` reaps an
   idle engine child, the MTP rows compose argv — they hand no control to the
   engine.

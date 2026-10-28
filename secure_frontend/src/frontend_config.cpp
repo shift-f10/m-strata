@@ -36,7 +36,7 @@ std::string decimal_text(const double value) {
   return ec == std::errc{} ? std::string{buffer, end} : std::string{"?"};
 }
 
-constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 + 1 + 2 + 1 + 1 + 2 + 4 + 5 + 1 + 1 /* roots.allow_untrusted_media */ + 1 /* glm.kv */ + 3 /* listener.login_link, models.default_engine, models.default_root */ + 8 /* alerts.email.* */ + 1 /* models.control_remote_networks */ + 5 /* search.* */> kSchema{{
+constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 + 1 + 2 + 1 + 1 + 2 + 4 + 5 + 1 + 1 /* roots.allow_untrusted_media */ + 1 /* glm.kv */ + 3 /* listener.login_link, models.default_engine, models.default_root */ + 8 /* alerts.email.* */ + 1 /* models.control_remote_networks */ + 5 /* search.* */ + 2 /* vision.mmproj, vision.gpu */> kSchema{{
     {"schema_version", T::integer, false, 1, 1, d::kSchemaVersion, false, "", "",
      "Config format version; must be 1. Required in a config file."},
     {"listener.host", T::string, false, 0, 0, 0, false, "127.0.0.1", "--host",
@@ -324,6 +324,11 @@ constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 
     // (gate default 300 s, server.py:328; 0 = wait for ever, :291; bound added, C-1).
     {"vision.encode_timeout_s", T::integer, false, 0, 86400, 300, false, "", "",
      "Seconds one image encoding may take (0: wait for ever, as at the pin)."},
+    // Vision for model cards (spec 2026-10-28-vision-for-cards-design.md): the card's own encoder file and where it runs.
+    {"vision.mmproj", T::string, false, 0, 0, 0, false, "", "",
+     "Absolute path of the picture encoder (an mmproj GGUF) a model card's engine reads images with; a card row."},
+    {"vision.gpu", T::boolean, false, 0, 0, 0, false, "", "",
+     "Encode pictures on the GPU (the encoder's --gpu; off: the CPU); a card row."},
     // SP5 M2 Task 3 (spec §D-2; C-3 keeps Maya's names): the engine-side GLM
     // knobs. Kinds and defaults are Maya v1.1.21's verbatim (parity table rows
     // cite the vendored pin); the caps and closed sets are added (C-1). The
@@ -1347,6 +1352,11 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
   vision.threads = read.integer("vision.threads");
   vision.ready_timeout_s = read.integer("vision.ready_timeout_s");
   vision.encode_timeout_s = read.integer("vision.encode_timeout_s");
+  vision.gpu = read.boolean("vision.gpu");
+  if (const auto mmproj = read.string("vision.mmproj")) {
+    if (is_absolute_store_path(*mmproj)) vision.mmproj = path_from_utf8(*mmproj);
+    else add(errors, "vision.mmproj", ConfigIssueCode::invalid_value, "must be an absolute path");
+  }
 
   // SP5 M2 Task 3 (spec §D-2): the glm.* family. Kinds and defaults are the
   // vendored pin's (serve/server.py:4090/:4077/:3819/:1274-1277, validators
@@ -1561,7 +1571,8 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
         ConfigIssueCode::conflicting_values, "needs both models.prepare_python and models.prepare_tools");
   }
   if (launcher) {
-    for (const std::string_view row : {"engine.lazy_load", "engine.idle_unload_s", "vision.enabled"}) {
+    // vision.* rows are a card's (main_config_card_issues refuses them in the main config)
+    for (const std::string_view row : {"engine.lazy_load", "engine.idle_unload_s"}) {
       if (draft.entries.contains(row)) {
         add(errors, std::string{row}, ConfigIssueCode::conflicting_values,
             "is not supported with models.cards (the launcher starts and stops each engine)");
@@ -1777,6 +1788,8 @@ std::string describe(const FrontendConfig& c) {
   line("vision.resident", c.vision.resident ? "true" : "false");
   line("vision.threads", std::to_string(c.vision.threads));
   line("vision.ready_timeout_s", std::to_string(c.vision.ready_timeout_s));
+  line("vision.mmproj", c.vision.mmproj.has_value() ? json_quoted(path_to_utf8(*c.vision.mmproj)) : std::string{"(unset)"});
+  line("vision.gpu", c.vision.gpu ? "true" : "false");
   // SP5 M2 Task 3: the glm.* family (spec §D-2).
   line("glm.thinking_budget", std::to_string(c.glm.thinking_budget));
   line("glm.max_context", std::to_string(c.glm.max_context));

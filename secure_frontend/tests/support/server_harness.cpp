@@ -310,6 +310,9 @@ std::unique_ptr<ServerProcess> ServerProcess::start(const ServerOptions& options
       write_spm_tokenizer_pack(tokenizer);  // 0600 files
     } else if (options.tool_tokenizer) {
       write_tool_tokenizer_pack(tokenizer);  // web search: the reasoning and tool tags too
+    } else if (std::any_of(options.model_cards.begin(), options.model_cards.end(), [](const CardOptions& card) { return card.vision; })) {
+      // a card that reads pictures: the byte pack with the three Qwen vision markers (the image plan's marker runs)
+      for (const auto& [name, bytes] : tokenizer_pack_files(vision_byte_tokenizer())) secure_frontend_test::write_file(tokenizer / name, bytes, 0600);
     } else {
       write_tokenizer_pack(tokenizer);  // 0600 files
     }
@@ -350,31 +353,37 @@ std::unique_ptr<ServerProcess> ServerProcess::start(const ServerOptions& options
     secure_frontend_test::write_file(bin / kFakeEngineOptionsFile, lines, 0600);
   }
   server->port_ = secure_frontend_test::pick_free_port();  // SP1's helper (support/http_client.hpp)
-  if (options.managed_vision) {
-    // Ruling T11-y: the encoder exe is OUR distribution's — maya-vision beside the
-    // engine executable. The fake child stands in, copied under that exact name.
-    const auto vision_source = fake_vision_child_path();
-    const auto vision_exe = bin / "maya-vision";
+  // The fake encoder beside the engine under `name` (the server looks there; Windows needs the .exe suffix).
+  const auto place_encoder = [&bin](const std::string& name) {
+    const auto vision_exe = bin / name;
     std::error_code vision_error;
-    std::filesystem::copy_file(vision_source, vision_exe, std::filesystem::copy_options::overwrite_existing, vision_error);
+    std::filesystem::copy_file(fake_vision_child_path(), vision_exe, std::filesystem::copy_options::overwrite_existing, vision_error);
     if (vision_error) {
-      std::cerr << "harness: could not copy maya-vision into " << utf8_path(bin) << ": " << vision_error.message() << '\n';
-      return nullptr;
+      std::cerr << "harness: could not copy " << name << " into " << utf8_path(bin) << ": " << vision_error.message() << '\n';
+      return false;
     }
 #if defined(_WIN32)
-    // The server looks for maya-vision.exe; Windows execution needs the suffix.
     std::error_code rename_error;
     std::filesystem::rename(vision_exe, vision_exe.string() + ".exe", rename_error);
     if (rename_error) {
-      std::cerr << "harness: could not name maya-vision.exe\n";
-      return nullptr;
+      std::cerr << "harness: could not name " << name << ".exe\n";
+      return false;
     }
 #else
     if (chmod(vision_exe.c_str(), 0700) != 0) {
-      std::cerr << "harness: chmod 0700 failed on the maya-vision copy\n";
-      return nullptr;
+      std::cerr << "harness: chmod 0700 failed on the " << name << " copy\n";
+      return false;
     }
 #endif
+    return true;
+  };
+  // Ruling T11-y: the encoder exe is OUR distribution's - maya-vision beside the engine executable for the managed
+  // model; upstream's strata-vision for a card that reads pictures (spec 2026-10-28).
+  if (options.managed_vision && !place_encoder("maya-vision")) return nullptr;
+  const bool card_vision = std::any_of(options.model_cards.begin(), options.model_cards.end(), [](const CardOptions& c) { return c.vision; });
+  if (card_vision) {
+    if (!place_encoder("strata-vision")) return nullptr;
+    secure_frontend_test::write_file(models / "mmproj-fake.gguf", "GGUF fake picture encoder", 0600);
   }
   const std::filesystem::path state_dir = options.state_dir.value_or(server->root_ / "state");
   if (!options.state_dir) secure_frontend_test::make_owner_private_directory(state_dir);  // 0700; Windows owner = the user
@@ -398,6 +407,7 @@ std::unique_ptr<ServerProcess> ServerProcess::start(const ServerOptions& options
         for (std::size_t a = 0; a < card.engine_args.size(); ++a) args += (a ? "," : "") + secure_frontend_test::json_literal(card.engine_args[a]);
         rows["engine.args"] = args + "]";
       }
+      if (card.vision) rows["vision.mmproj"] = secure_frontend_test::json_literal(utf8_path(models / "mmproj-fake.gguf"));
       for (const auto& [key, literal] : card.config_literals) rows[key] = literal;
       const std::string text = "{\"schema_version\": 1, \"name\": " + secure_frontend_test::json_literal(card.name) +
                                ", \"profile\": " + secure_frontend_test::json_literal(card.profile) +
