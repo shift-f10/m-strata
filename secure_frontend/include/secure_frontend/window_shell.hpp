@@ -32,6 +32,10 @@ namespace secure_frontend::window {
 // Whether a server line may be written to the window's log: every line but the sign-in link's (it signs in once,
 // from this PC; the server prints it to its console only, never to a log).
 [[nodiscard]] bool loggable(std::string_view line);
+// Where the window opens the page: the server's one-time link or, with none, the page's origin (its own sign-in) -
+// on the Monitor the first time (the owner: "the open window shows the Monitor statistics"; the page's
+// #view=monitor / &view=monitor); later loads (a restart) leave the view to the page.
+[[nodiscard]] std::string page_address(const std::optional<std::string>& sign_in, std::string_view origin, bool first);
 
 // --------------------------------------------------------------------------- the web view
 // Where a navigation may go: the page's own origin stays in the window; another http(s) address opens in the default

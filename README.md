@@ -108,7 +108,7 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 **The window app**
 
 - **`strata-window`** (a build with `window`) is the server in a window. It runs the server as its child, signs you
-  in with the one-time link and shows the page. Closing the window keeps the server running in the tray; the tray
+  in with the one-time link and shows the page, opening on the Monitor. Closing the window keeps the server running in the tray; the tray
   icon's menu opens the window, starts or stops a model, restarts the server and exits (the model stops in order
   first). Windows uses Microsoft Edge WebView2, part of Windows 10 and 11; Linux uses WebKitGTK and a tray icon
   (Ayatana AppIndicator).
@@ -427,7 +427,7 @@ this PC's CPU, memory, GPU and system.
 
 A build with `--with window` has `strata-window` beside the server. Start it instead of the server, with the same
 options (`.\strata-window.exe`, `.\strata-window.exe --port 9090`, ...): it starts the server without a console,
-opens the page signed in, and puts an icon in the tray. Closing the window hides it; the server keeps running. The
+opens the page signed in on the Monitor, and puts an icon in the tray. Closing the window hides it; the server keeps running. The
 tray icon's menu (right-click; on Linux, its menu) opens the window, starts or stops a model, restarts the server
 (how saved settings take effect) and exits. The server's output goes to `data/logs/server.log` (two files of at most
 4 MiB; the one-time login link is never written there). Starting it a second time shows the running window.

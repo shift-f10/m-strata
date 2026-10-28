@@ -196,6 +196,11 @@ std::optional<std::string> listening_origin(const std::string_view line) {
 
 bool loggable(const std::string_view line) { return line.find("#login=") == std::string_view::npos; }
 
+std::string page_address(const std::optional<std::string>& sign_in, const std::string_view origin, const bool first) {
+  if (sign_in) return *sign_in + (first ? "&view=monitor" : "");
+  return std::string{origin} + (first ? "/#view=monitor" : "/");
+}
+
 // --------------------------------------------------------------------------- the web view
 Navigation navigation_for(const std::string_view url, const std::string_view origin) {
   const auto scheme_end = url.find("://");

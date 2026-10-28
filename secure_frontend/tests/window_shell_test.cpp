@@ -68,6 +68,19 @@ void the_sign_in_link_is_read_and_never_logged() {
   expect(w::loggable("[strata] models: no model started (models.start is unset); waiting for the page"), "other lines are");
 }
 
+// The window opens the page on the Monitor the first time (the owner: "the open window shows the Monitor
+// statistics"), through the one-time link or, with none, the page's own sign-in; later loads (a restart) leave the
+// view to the page.
+void the_window_opens_on_the_monitor_first() {
+  const std::string link = "http://127.0.0.1:8080/#login=" + std::string{kCode};
+  expect(w::page_address(link, "http://127.0.0.1:8080", true) == link + "&view=monitor", "the link, on the Monitor");
+  expect(w::page_address(link, "http://127.0.0.1:8080", false) == link, "a restart's link as it is");
+  expect(w::page_address(std::nullopt, "http://127.0.0.1:8080", true) == "http://127.0.0.1:8080/#view=monitor",
+         "no link: the page's sign-in, on the Monitor");
+  expect(w::page_address(std::nullopt, "http://127.0.0.1:8080", false) == "http://127.0.0.1:8080/", "no link later");
+  expect(w::navigation_for(link + "&view=monitor", "http://127.0.0.1:8080") == w::Navigation::stay, "it stays in the window");
+}
+
 // The page's origin from the listening line; a wildcard bind is opened on this PC's own address.
 void the_listening_line_names_the_pages_origin() {
   const auto origin = [](const std::string& authority) {
@@ -358,6 +371,7 @@ int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"the_sign_in_link_is_read_and_never_logged", the_sign_in_link_is_read_and_never_logged},
       {"the_listening_line_names_the_pages_origin", the_listening_line_names_the_pages_origin},
+      {"the_window_opens_on_the_monitor_first", the_window_opens_on_the_monitor_first},
       {"navigation_stays_on_the_pages_origin", navigation_stays_on_the_pages_origin},
       {"the_tray_lists_the_launchers_cards", the_tray_lists_the_launchers_cards},
       {"requests_carry_the_key_only_in_its_header", requests_carry_the_key_only_in_its_header},

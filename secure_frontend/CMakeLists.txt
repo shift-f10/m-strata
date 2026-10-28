@@ -1478,7 +1478,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         alert_routes_need_their_handler_and_the_key search_routes_need_their_handler_and_the_key
         config_routes_need_their_handler_and_the_key
         web_ui_cards_from_this_pc_and_the_danger_zone web_ui_downloads_go_to_a_chosen_folder
-        web_ui_models_tab_calibrates web_ui_has_email_alert_settings web_ui_has_server_settings web_ui_claims_a_login_link_at_load_and_on_hashchange
+        web_ui_models_tab_calibrates web_ui_has_email_alert_settings web_ui_has_server_settings web_ui_claims_a_login_link_at_load_and_on_hashchange web_ui_opens_the_view_its_address_names
         web_ui_has_web_search_settings web_ui_has_model_folder_setting
         web_ui_monitor_shows_stopped_and_the_model web_ui_about_lists_the_engines_and_this_pc
         web_ui_search_box_limit_note_and_engine_table web_ui_chat_can_turn_search_off
@@ -2157,7 +2157,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_window_shell secure_frontend_first_start secure_frontend_token_reader)
     secure_frontend_add_cases(secure_frontend_window_shell_tests
         the_sign_in_link_is_read_and_never_logged the_listening_line_names_the_pages_origin
-        navigation_stays_on_the_pages_origin the_tray_lists_the_launchers_cards requests_carry_the_key_only_in_its_header
+        the_window_opens_on_the_monitor_first navigation_stays_on_the_pages_origin the_tray_lists_the_launchers_cards requests_carry_the_key_only_in_its_header
         the_log_rotates_at_its_bound the_window_starts_the_server_beside_it)
     secure_frontend_add_cases(secure_frontend_window_shell_tests
         the_servers_key_is_read_as_key_show_reads_it LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})

@@ -152,6 +152,7 @@
   }
 
   function showView(name) {
+    state.view = name;
     ["login", "chat", "models", "monitor", "settings", "about"].forEach(function (view) { $("view-" + view).hidden = view !== name; });
     var signedIn = name !== "login";
     $("tabs").hidden = !signedIn;
@@ -179,12 +180,12 @@
     showView("login");
     $("key").focus();
   }
-  function enterApp(models) {
+  function enterApp(models, view) {
     state.models = models;
     state.model = models.length ? models[0] : "";
     $("sign-out-row").hidden = state.keyless;
     renderChat();
-    showView("chat");
+    showView(view || "chat");
     startPolling();
     refreshLauncher();  // a server with model control off answers 404 and the page stays as it was
     refreshDownloads();  // likewise with downloads off; a transfer already running is followed
@@ -192,7 +193,7 @@
     loadHostGpus();      // the cards' GPUs choice lists this PC's GPUs
   }
 
-  async function signIn(key) {
+  async function signIn(key, view) {
     state.key = key;
     $("sign-in").disabled = true;
     var models;
@@ -201,7 +202,7 @@
     if (models === null) { state.key = null; save(SLOT_KEY, null); showLogin("That API key was not accepted."); return; }
     save(SLOT_KEY, key);
     state.keyless = false;
-    enterApp(models);
+    enterApp(models, view);
   }
   // GUI-first start-up: the server prints a one-time login link (<this page>/#login=<code>) at every start; the code
   // is exchanged once, from this PC, for the API key (POST /v1/strata/login-link, no key needed). null: refused.
@@ -3085,17 +3086,25 @@
     $("sign-out").addEventListener("click", function () { signOut(""); });
   }
 
+  // The view an address asks for - #view=<name>, or #login=<code>&view=<name> - among the views every server has
+  // (strata-window opens the page on the Monitor, as the owner asked); null: none.
+  function addressView(hash) {
+    var asked = /(?:^#|&)view=(chat|monitor|about)$/.exec(hash || "");
+    return asked ? asked[1] : null;
+  }
+
   // A one-time login link in the address - at load, or opened later in this tab (strata-window does so after a server
   // restart: a fragment change, no reload) - the code leaves the address bar at once, then buys this tab the key. true
   // when there was one. A failed link while signed in keeps the session (a notice only).
   async function claimFromAddress(signedIn) {
-    var link = /^#login=([A-Za-z0-9_-]{16,128})$/.exec(window.location.hash || "");
+    var link = /^#login=([A-Za-z0-9_-]{16,128})(?:&view=[a-z]+)?$/.exec(window.location.hash || "");
     if (!link) { return false; }
+    var view = addressView(window.location.hash) || (signedIn ? state.view : null);
     try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) { /* kept */ }
     var before = state.key;
     var claimed = await claimLoginLink(link[1]);
     if (claimed) {
-      await signIn(claimed);
+      await signIn(claimed, view);
       // shown once when new to this tab (a first sign-in, a rotation's new key), not for a restart's same key
       if (state.key === claimed && claimed !== before) { showKeyOnce(claimed); }
       return true;
@@ -3120,10 +3129,10 @@
     window.addEventListener("hashchange", function () { claimFromAddress(!!state.key || state.keyless); });
     if (await claimFromAddress(false)) { return; }
     var key = load(SLOT_KEY, null);
-    if (typeof key === "string" && key) { await signIn(key); return; }
+    if (typeof key === "string" && key) { await signIn(key, addressView(window.location.hash)); return; }
     try {
       var models = await listModels();  // keyless loopback server: the list answers without a key
-      if (models !== null) { state.keyless = true; enterApp(models); return; }
+      if (models !== null) { state.keyless = true; enterApp(models, addressView(window.location.hash)); return; }
     } catch (e) {
       showLogin("Cannot reach the server: " + e.message);
       return;

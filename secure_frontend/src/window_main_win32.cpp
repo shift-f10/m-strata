@@ -183,6 +183,7 @@ struct App final {
   bool exiting{false};
   bool restarting{false};
   bool told_about_tray{false};
+  bool first_page{true};  // the first page opens on the Monitor; a restart's leaves the view to the page
 };
 App app;
 
@@ -368,7 +369,8 @@ void on_server_line(std::string line) {
   if (!w::loggable(line)) {
     if (const auto link = w::sign_in_url(line)) {
       KillTimer(app.window, kSignInTimer);
-      navigate(*link);
+      navigate(w::page_address(link, app.origin, app.first_page));
+      app.first_page = false;
     }
     return;  // the one-time link goes to the view only: never to the log, the recent lines or the screen
   }
@@ -517,7 +519,10 @@ LRESULT CALLBACK window_procedure(HWND window, UINT message, WPARAM wparam, LPAR
     case WM_TIMER:
       if (wparam == kSignInTimer) {
         KillTimer(window, kSignInTimer);
-        if (!app.origin.empty()) navigate(app.origin + "/");  // no link: the page's own sign-in
+        if (!app.origin.empty()) {  // no link: the page's own sign-in
+          navigate(w::page_address(std::nullopt, app.origin, app.first_page));
+          app.first_page = false;
+        }
       }
       return 0;
     case kTrayMessage:

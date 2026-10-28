@@ -353,8 +353,10 @@ refuses `init`, `--check` and `--help`, which stay with `strata-secure-server`.
 - **The server.** It runs `strata-secure-server` beside it as a child: no console window, the environment the window
   started with (a `--token-env` variable included, on every start), and its stdout and stderr read as lines.
 - **The page.** It opens the server's one-time login link in its own view, and the page's own sign-in when the server
-  prints no link. A restarted server's new link is claimed in place: the page claims a link on `hashchange` too, and
-  shows the key once only when it is new to the tab.
+  prints no link, the first time on the Monitor: an address may name a view (`#view=monitor`, or
+  `#login=<code>&view=monitor`; chat, monitor or about, the views every server has). A restarted server's new link is
+  claimed in place, and the page stays on the view it showed: the page claims a link on `hashchange` too, and shows the
+  key once only when it is new to the tab.
 - **The log.** Every other line goes to `<data>/logs/server.log` (two files of at most 4 MiB); the link never does.
 - **The tray.** Its menu offers Open M-Strata, Start or Stop for each card (`GET /v1/strata/models`, then
   `POST .../start` with the card's name only, so its remembered options apply, or `.../stop`), Restart the server and

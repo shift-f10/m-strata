@@ -55,6 +55,7 @@ struct App final {
   bool exiting{false};
   bool restarting{false};
   bool told_about_tray{false};
+  bool first_page{true};  // the first page opens on the Monitor; a restart's leaves the view to the page
   guint sign_in_timer{0};
   guint menu_timer{0};
   std::mutex models_mutex;          // the tray's model list, refreshed on a thread of its own
@@ -160,7 +161,8 @@ void on_server_line(std::string line) {
     if (const auto link = w::sign_in_url(line)) {
       if (app.sign_in_timer != 0) g_source_remove(app.sign_in_timer);
       app.sign_in_timer = 0;
-      navigate(*link);
+      navigate(w::page_address(link, app.origin, app.first_page));
+      app.first_page = false;
     }
     return;  // the one-time link goes to the view only: never to the log, the recent lines or the screen
   }
@@ -180,7 +182,10 @@ void on_server_line(std::string line) {
     // the sign-in line follows at once when the server prints one; without it, the page's own sign-in
     app.sign_in_timer = g_timeout_add(1500, [](gpointer) -> gboolean {
       app.sign_in_timer = 0;
-      if (!app.origin.empty()) navigate(app.origin + "/");
+      if (!app.origin.empty()) {  // no link: the page's own sign-in
+        navigate(w::page_address(std::nullopt, app.origin, app.first_page));
+        app.first_page = false;
+      }
       return G_SOURCE_REMOVE;
     }, nullptr);
   }
