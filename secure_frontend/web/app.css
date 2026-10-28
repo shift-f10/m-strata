@@ -328,4 +328,21 @@ main { flex: 1; min-height: 0; display: flex; }
   .folder-picker, .delete-dialog { padding: var(--st-s-4); }
   .model-folder__row, .folder-picker__path { flex-wrap: wrap; }
   .alerts-grid { grid-template-columns: 1fr; }
+  /* A folder path on its own line, smaller, its button below (it wrapped into a narrow column beside the button). */
+  .model-folder__row { flex-direction: column; align-items: stretch; gap: var(--st-s-2); }
+  .model-folder__row code { font-size: var(--st-fs-sm); }
+  .model-folder__row .st-btn { align-self: flex-start; }
+  /* The About's engines: one block per engine, each value labelled (the table hid two columns behind a sideways scroll). */
+  .about-engines thead { display: none; }
+  .about-engines, .about-engines tbody, .about-engines tr, .about-engines td { display: block; width: 100%; }
+  .about-engines tr { padding: var(--st-s-2) 0; border-bottom: 1px solid var(--st-line); }
+  .about-engines td, .about-engines td:first-child, .about-engines td:nth-child(3) { min-width: 0; padding: 2px 0; border: 0; }
+  .about-engines td:first-child { color: var(--st-ink); font-weight: var(--st-fw-bold); }
+  .about-engines td.num { text-align: left; }
+  .about-engines code { white-space: normal; overflow-wrap: anywhere; }
+  .about-engines td[data-label]::before { content: attr(data-label); display: block; font-size: var(--st-fs-xs); color: var(--st-ink-muted); }
+  .about-engines td:first-child::before { display: none; }
+  /* Toasts across the width, clear of both edges. */
+  .st-toasts { left: var(--st-s-3); right: var(--st-s-3); bottom: var(--st-s-3); }
+  .st-toast { max-width: none; }
 }
