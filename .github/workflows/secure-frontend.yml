@@ -1,0 +1,202 @@
+name: secure-frontend
+
+# Blocking: linux-gcc, linux-clang, linux-release, windows-llvm-mingw-cross,
+# windows-msys2-clang, top-level-integration. Non-blocking: windows-msvc (informational),
+# linux-clang-tsan (data races in the SP3 pool, gate, port and logger).
+# Upstream Strata is the git submodule upstream/ (gitlink 011c9e60, tag v0.2.2).
+# Jobs that run pytest or configure our root CMakeLists.txt check it out with
+# `submodules: true` (depth 1: about a 19.7 MB pack, 50.7 MB and 2,976 files
+# checked out); preset-only jobs build secure_frontend/ alone and do not.
+# Network fetches, exactly: the GitHub actions used below; the upstream submodule
+# (linux, top-level-integration); the pip wheels pinned in
+# scripts/dev/requirements-dev.txt (cmake, ninja, regex, pytest and its
+# dependencies) via scripts/dev/bootstrap-linux.sh, plus a pip wheel when the
+# venv has no pip; MSYS2 packages via msys2/setup-msys2; and the pinned,
+# sha256-checked llvm-mingw tarball (scripts/dev/bootstrap-llvm-mingw.sh).
+# No models are downloaded and no GPU backend is enabled. Our root seeds
+# STRATA_NATIVE_EXPERTS=OFF, so no llama.cpp clone (FetchContent) occurs.
+# Privilege use, exactly: the Linux ctest step sets STRATA_TEST_SECOND_UID_SUDO=1
+# so proc03_other_uid_cannot_open_engine_fd (SP2 R2) runs `sudo -n -u nobody`
+# to try to open the engine's /proc/<pid>/fd/0 as another uid. Nothing else in
+# this workflow uses sudo, and the test never runs it outside CI.
+on:
+  push:
+    paths: ["secure_frontend/**", "CMakeLists.txt", "scripts/**", "pytest.ini", "conftest.py", "tools/**", "upstream", "upstream.version", ".gitmodules", ".github/workflows/secure-frontend.yml"]
+  pull_request:
+    paths: ["secure_frontend/**", "CMakeLists.txt", "scripts/**", "pytest.ini", "conftest.py", "tools/**", "upstream", "upstream.version", ".gitmodules", ".github/workflows/secure-frontend.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: ${{ matrix.preset }}
+    runs-on: ubuntu-24.04  # pinned: `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19; re-verify the bootstrap before unpinning
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [linux-gcc, linux-clang]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: scripts/dev/bootstrap-linux.sh
+      - run: echo "$GITHUB_WORKSPACE/.venv-dev/bin" >> "$GITHUB_PATH"
+      - name: pytest collects tools/secure only
+        if: matrix.preset == 'linux-gcc'
+        run: |
+          collected="$(.venv-dev/bin/pytest -q --collect-only)"
+          printf '%s\n' "$collected"
+          if printf '%s\n' "$collected" | grep '::' | grep -v '^tools/secure/'; then
+            echo "pytest -q collected tests outside tools/secure/" >&2
+            exit 1
+          fi
+      - name: pytest (repo root)
+        if: matrix.preset == 'linux-gcc'
+        run: .venv-dev/bin/pytest -q
+      - run: cmake --preset ${{ matrix.preset }}
+        working-directory: secure_frontend
+      - run: cmake --build --preset ${{ matrix.preset }} --parallel
+        working-directory: secure_frontend
+      - run: ctest --preset ${{ matrix.preset }}
+        working-directory: secure_frontend
+        env:
+          # PROC-03: proc03_other_uid_cannot_open_engine_fd uses `sudo -n -u nobody` (allowed on GitHub runners).
+          STRATA_TEST_SECOND_UID_SUDO: "1"
+      - name: upstream submodule pinned and unmodified
+        run: |
+          git submodule status
+          if git submodule status | grep -qE '^[-+U]'; then
+            echo "upstream/ is not at the recorded gitlink" >&2
+            exit 1
+          fi
+          test -z "$(git -C upstream status --porcelain)"
+
+  linux-clang-tsan:
+    name: linux-clang-tsan (non-blocking)
+    runs-on: ubuntu-24.04  # pinned like the other Linux jobs
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: ThreadSanitizer needs fewer mmap random bits on 6.x kernels
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: bootstrap .venv-dev (cmake, ninja)
+        run: scripts/dev/bootstrap-linux.sh
+      - run: echo "$GITHUB_WORKSPACE/.venv-dev/bin" >> "$GITHUB_PATH"
+      - run: cmake --preset linux-clang -DCMAKE_CXX_FLAGS="-fsanitize=thread -g" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=thread"
+        working-directory: secure_frontend
+      - run: cmake --build --preset linux-clang --parallel
+        working-directory: secure_frontend
+      - run: ctest --preset linux-clang -R '(concurrency_tests|api_server_tests|http_socket_server_tests)' -E 'egress_interposer'
+        working-directory: secure_frontend
+
+  linux-release:
+    name: linux-gcc-release (SECURE_FRONTEND_TEST_HOOKS OFF, the shipped configuration)
+    runs-on: ubuntu-24.04  # pinned: `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19; re-verify the bootstrap before unpinning
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/dev/bootstrap-linux.sh
+      - run: echo "$GITHUB_WORKSPACE/.venv-dev/bin" >> "$GITHUB_PATH"
+      - run: cmake --preset linux-gcc-release
+        working-directory: secure_frontend
+      - run: cmake --build --preset linux-gcc-release --parallel
+        working-directory: secure_frontend
+      - run: ctest --preset linux-gcc-release
+        working-directory: secure_frontend
+      - name: no test hooks in the shipped binaries (marker scan; --release needs SP7's manifest/SBOM)
+        run: |
+          mkdir -p "$RUNNER_TEMP/stage/bin"
+          cp secure_frontend/out/build/linux-gcc-release/strata secure_frontend/out/build/linux-gcc-release/strata-secure-server "$RUNNER_TEMP/stage/bin/"
+          python3 -I scripts/secure_distribution_check.py --package-dir "$RUNNER_TEMP/stage"
+
+  windows-cross:
+    name: windows-llvm-mingw-cross (compile+link on Linux)
+    runs-on: ubuntu-24.04  # pinned: `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19; re-verify the bootstrap before unpinning
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/dev/bootstrap-linux.sh && scripts/dev/bootstrap-llvm-mingw.sh
+      - run: echo "$GITHUB_WORKSPACE/.venv-dev/bin" >> "$GITHUB_PATH"
+      - run: cmake --preset windows-llvm-mingw-cross
+        working-directory: secure_frontend
+      - run: cmake --build --preset windows-llvm-mingw-cross --parallel
+        working-directory: secure_frontend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64-llvm-mingw
+          path: secure_frontend/out/build/windows-llvm-mingw-cross/*.exe
+          if-no-files-found: error
+
+  windows-msys2:
+    name: windows-msys2-clang (runtime tests on Windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: false
+          install: mingw-w64-clang-x86_64-clang mingw-w64-clang-x86_64-cmake mingw-w64-clang-x86_64-ninja
+      - run: cmake --preset windows-msys2-clang
+        working-directory: secure_frontend
+      - run: cmake --build --preset windows-msys2-clang --parallel
+        working-directory: secure_frontend
+      - run: ctest --preset windows-msys2-clang
+        working-directory: secure_frontend
+
+  windows-msvc:
+    name: windows-msvc (informational, non-blocking)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake --preset windows-msvc
+        working-directory: secure_frontend
+      - run: cmake --build --preset windows-msvc --parallel
+        working-directory: secure_frontend
+      - run: ctest --preset windows-msvc
+        working-directory: secure_frontend
+
+  top-level-integration:
+    name: top-level-integration (our root CMake + upstream/ engine)
+    runs-on: ubuntu-24.04  # pinned: `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19; re-verify the bootstrap before unpinning
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: scripts/dev/bootstrap-linux.sh
+      - run: echo "$GITHUB_WORKSPACE/.venv-dev/bin" >> "$GITHUB_PATH"
+      # Our root's own defaults, with no -D flags: the three seeds must be OFF,
+      # the build type Release, and the configure must fetch nothing.
+      - name: root defaults (configure only, no -D flags)
+        run: |
+          cmake -S . -B out/root-defaults -G Ninja
+          grep -q '^STRATA_NATIVE_EXPERTS:BOOL=OFF' out/root-defaults/CMakeCache.txt
+          grep -q '^STRATA_ENABLE_CUDA:BOOL=OFF' out/root-defaults/CMakeCache.txt
+          grep -q '^STRATA_ENABLE_HIP:BOOL=OFF' out/root-defaults/CMakeCache.txt
+          grep -q '^CMAKE_BUILD_TYPE:STRING=Release' out/root-defaults/CMakeCache.txt
+          test ! -e out/root-defaults/_deps
+      - run: cmake -S . -B out/root -G Ninja -DSTRATA_ENABLE_CUDA=OFF -DSTRATA_ENABLE_HIP=OFF -DSTRATA_NATIVE_EXPERTS=OFF -DSTRATA_BUILD_SECURE_FRONTEND_TESTS=ON
+      - run: cmake --build out/root --target strata-secure-server secure_frontend_config_tests strata-plan --parallel
+      # --no-tests=error stops a vacuous pass if the frontend tests stop registering.
+      - run: ctest --test-dir out/root -R secure_frontend_config_tests --no-tests=error --output-on-failure
+      - name: no FetchContent download
+        run: test ! -e out/root/_deps
+      - name: upstream submodule pinned and unmodified
+        run: |
+          git submodule status
+          if git submodule status | grep -qE '^[-+U]'; then
+            echo "upstream/ is not at the recorded gitlink" >&2
+            exit 1
+          fi
+          test -z "$(git -C upstream status --porcelain)"

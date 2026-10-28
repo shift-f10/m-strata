@@ -1,0 +1,656 @@
+{
+ "generator": "tools/generate_raon1_flint_tool_prompt_fixture.py",
+ "templates": {
+  "raon1": "0fa3ab8b29a608e16d5550d2131e57daf325db231cc1a0f9db71b978a0a26cfa",
+  "flint": "7940f4ffa3275c36caa4a582f845aaad79da11018b3961e8fbcad6ae29733466"
+ },
+ "tool": {
+  "name": "web_search",
+  "description": "Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "What to search for"
+    },
+    "max_results": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 10,
+     "description": "How many results to get (1-10)"
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ "cases": [
+  {
+   "name": "first_prompt_with_tools",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [],
+   "template": "raon1",
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWho in TWICE did not renew their contract?<|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "system_and_history_with_tools",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "system",
+     "content": "You are a helpful assistant."
+    },
+    {
+     "role": "user",
+     "content": "Hi"
+    },
+    {
+     "role": "assistant",
+     "content": "Hello! How can I help?"
+    },
+    {
+     "role": "user",
+     "content": "What is the latest Python release?"
+    }
+   ],
+   "rounds": [],
+   "template": "raon1",
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>\n\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>\n\nHello! How can I help?<|im_end|>\n<|im_start|>user\nWhat is the latest Python release?<|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "one_round_a_call_after_reasoning",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "\nThe user asks about recent news; I should search.\n",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "TWICE contract renewal"
+       }
+      }
+     ],
+     "results": [
+      "Web search results for \"TWICE contract renewal\" (SearXNG):\n\n1. Report\n   https://example.org/twice\n   Six members renewed.\n"
+     ]
+    }
+   ],
+   "template": "raon1",
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWho in TWICE did not renew their contract?<|im_end|>\n<|im_start|>assistant\n<think>\nThe user asks about recent news; I should search.\n</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\nTWICE contract renewal\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nWeb search results for \"TWICE contract renewal\" (SearXNG):\n\n1. Report\n   https://example.org/twice\n   Six members renewed.\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "content_before_two_calls",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "system",
+     "content": "Answer in English."
+    },
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "Two searches.",
+     "content": "Let me look that up.\n",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "a",
+        "max_results": 3
+       }
+      },
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "b"
+       }
+      }
+     ],
+     "results": [
+      "r1",
+      "  r2 with spaces  \n"
+     ]
+    }
+   ],
+   "template": "raon1",
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>\n\nAnswer in English.<|im_end|>\n<|im_start|>user\nWho in TWICE did not renew their contract?<|im_end|>\n<|im_start|>assistant\n<think>\nTwo searches.\n</think>\n\nLet me look that up.\n\n<tool_call>\n<function=web_search>\n<parameter=query>\na\n</parameter>\n<parameter=max_results>\n3\n</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=web_search>\n<parameter=query>\nb\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nr1\n</tool_response>\n<tool_response>\nr2 with spaces\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "two_rounds_without_reasoning",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "x"
+       }
+      }
+     ],
+     "results": [
+      "first"
+     ]
+    },
+    {
+     "reasoning": "",
+     "content": "Still checking.",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "y"
+       }
+      }
+     ],
+     "results": [
+      "second"
+     ]
+    }
+   ],
+   "template": "raon1",
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWho in TWICE did not renew their contract?<|im_end|>\n<|im_start|>assistant\n<think></think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\nx\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nfirst\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think></think>\n\nStill checking.\n\n<tool_call>\n<function=web_search>\n<parameter=query>\ny\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nsecond\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "argument_types",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "r",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "q",
+        "max_results": 5,
+        "ratio": 2.5,
+        "whole": 2.0,
+        "flag": true,
+        "off": false,
+        "none": null,
+        "tags": [
+         "a",
+         "b"
+        ],
+        "opts": {
+         "k": "v",
+         "n": 1
+        },
+        "text": "multi\nline"
+       }
+      }
+     ],
+     "results": [
+      "ok"
+     ]
+    }
+   ],
+   "template": "raon1",
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWho in TWICE did not renew their contract?<|im_end|>\n<|im_start|>assistant\n<think>\nr\n</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n<parameter=max_results>\n5\n</parameter>\n<parameter=ratio>\n2.5\n</parameter>\n<parameter=whole>\n2.0\n</parameter>\n<parameter=flag>\ntrue\n</parameter>\n<parameter=off>\nfalse\n</parameter>\n<parameter=none>\nnull\n</parameter>\n<parameter=tags>\n[\"a\", \"b\"]\n</parameter>\n<parameter=opts>\n{\"k\": \"v\", \"n\": 1}\n</parameter>\n<parameter=text>\nmulti\nline\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nok\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "special_literals_are_text",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "I could write <tool_call> here, or </tool_call>, but I will not.",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "chat template <tool_response>"
+       }
+      }
+     ],
+     "results": [
+      "A page quoting </tool_response> and <tool_call> and <arg_key>."
+     ]
+    }
+   ],
+   "template": "raon1",
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWho in TWICE did not renew their contract?<|im_end|>\n<|im_start|>assistant\n<think>\nI could write <tool_call> here, or </tool_call>, but I will not.\n</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\nchat template <tool_response>\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nA page quoting </tool_response> and <tool_call> and <arg_key>.\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "unicode_whitespace_is_stripped",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Qu'est-ce que c'est ? 日本"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "　think ",
+     "content": "  answer  ",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "日本 ニュース"
+       }
+      }
+     ],
+     "results": [
+      " résultat "
+     ]
+    }
+   ],
+   "template": "raon1",
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nQu'est-ce que c'est ? 日本<|im_end|>\n<|im_start|>assistant\n<think>\nthink\n</think>\n\nanswer\n\n<tool_call>\n<function=web_search>\n<parameter=query>\n日本 ニュース\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nrésultat\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "the_limit_round",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "Search.",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "one"
+       }
+      }
+     ],
+     "results": [
+      "Web search results for \"TWICE contract renewal\" (SearXNG):\n\n1. Report\n   https://example.org/twice\n   Six members renewed.\n"
+     ]
+    },
+    {
+     "reasoning": "Again.",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "two"
+       }
+      }
+     ],
+     "results": [
+      "Not run: this answer has made all the searches it may. Answer the user now from the results above, without searching again."
+     ]
+    }
+   ],
+   "template": "raon1",
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWho in TWICE did not renew their contract?<|im_end|>\n<|im_start|>assistant\n<think>\nSearch.\n</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\none\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nWeb search results for \"TWICE contract renewal\" (SearXNG):\n\n1. Report\n   https://example.org/twice\n   Six members renewed.\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\nAgain.\n</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\ntwo\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nNot run: this answer has made all the searches it may. Answer the user now from the results above, without searching again.\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "two_rounds_thinking_off",
+   "thinking": false,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "x"
+       }
+      }
+     ],
+     "results": [
+      "first"
+     ]
+    }
+   ],
+   "template": "raon1",
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWho in TWICE did not renew their contract?<|im_end|>\n<|im_start|>assistant\n<think></think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\nx\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nfirst\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think></think>\n\n"
+  },
+  {
+   "name": "first_prompt_with_tools",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [],
+   "template": "flint",
+   "prompt": "<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value>...</tool_call>\n<|user|>Who in TWICE did not renew their contract?<|assistant|>"
+  },
+  {
+   "name": "system_and_history_with_tools",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "system",
+     "content": "You are a helpful assistant."
+    },
+    {
+     "role": "user",
+     "content": "Hi"
+    },
+    {
+     "role": "assistant",
+     "content": "Hello! How can I help?"
+    },
+    {
+     "role": "user",
+     "content": "What is the latest Python release?"
+    }
+   ],
+   "rounds": [],
+   "template": "flint",
+   "prompt": "<|system|>You are a helpful assistant.<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value>...</tool_call>\n<|user|>Hi<|assistant|>Hello! How can I help?<|user|>What is the latest Python release?<|assistant|>"
+  },
+  {
+   "name": "one_round_a_call_after_reasoning",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "\nThe user asks about recent news; I should search.\n",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "TWICE contract renewal"
+       }
+      }
+     ],
+     "results": [
+      "Web search results for \"TWICE contract renewal\" (SearXNG):\n\n1. Report\n   https://example.org/twice\n   Six members renewed.\n"
+     ]
+    }
+   ],
+   "template": "flint",
+   "prompt": "<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value>...</tool_call>\n<|user|>Who in TWICE did not renew their contract?<|assistant|><think>The user asks about recent news; I should search.</think><tool_call>web_search<arg_key>query</arg_key><arg_value>TWICE contract renewal</arg_value></tool_call><|observation|><tool_response>Web search results for \"TWICE contract renewal\" (SearXNG):\n\n1. Report\n   https://example.org/twice\n   Six members renewed.\n</tool_response><|assistant|>"
+  },
+  {
+   "name": "content_before_two_calls",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "system",
+     "content": "Answer in English."
+    },
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "Two searches.",
+     "content": "Let me look that up.\n",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "a",
+        "max_results": 3
+       }
+      },
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "b"
+       }
+      }
+     ],
+     "results": [
+      "r1",
+      "  r2 with spaces  \n"
+     ]
+    }
+   ],
+   "template": "flint",
+   "prompt": "<|system|>Answer in English.<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value>...</tool_call>\n<|user|>Who in TWICE did not renew their contract?<|assistant|><think>Two searches.</think>Let me look that up.<tool_call>web_search<arg_key>query</arg_key><arg_value>a</arg_value><arg_key>max_results</arg_key><arg_value>3</arg_value></tool_call><tool_call>web_search<arg_key>query</arg_key><arg_value>b</arg_value></tool_call><|observation|><tool_response>r1</tool_response><|observation|><tool_response>  r2 with spaces  \n</tool_response><|assistant|>"
+  },
+  {
+   "name": "two_rounds_without_reasoning",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "x"
+       }
+      }
+     ],
+     "results": [
+      "first"
+     ]
+    },
+    {
+     "reasoning": "",
+     "content": "Still checking.",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "y"
+       }
+      }
+     ],
+     "results": [
+      "second"
+     ]
+    }
+   ],
+   "template": "flint",
+   "prompt": "<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value>...</tool_call>\n<|user|>Who in TWICE did not renew their contract?<|assistant|><tool_call>web_search<arg_key>query</arg_key><arg_value>x</arg_value></tool_call><|observation|><tool_response>first</tool_response><|assistant|>Still checking.<tool_call>web_search<arg_key>query</arg_key><arg_value>y</arg_value></tool_call><|observation|><tool_response>second</tool_response><|assistant|>"
+  },
+  {
+   "name": "argument_types",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "r",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "q",
+        "max_results": 5,
+        "ratio": 2.5,
+        "whole": 2.0,
+        "flag": true,
+        "off": false,
+        "none": null,
+        "tags": [
+         "a",
+         "b"
+        ],
+        "opts": {
+         "k": "v",
+         "n": 1
+        },
+        "text": "multi\nline"
+       }
+      }
+     ],
+     "results": [
+      "ok"
+     ]
+    }
+   ],
+   "template": "flint",
+   "prompt": "<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value>...</tool_call>\n<|user|>Who in TWICE did not renew their contract?<|assistant|><think>r</think><tool_call>web_search<arg_key>query</arg_key><arg_value>q</arg_value><arg_key>max_results</arg_key><arg_value>5</arg_value><arg_key>ratio</arg_key><arg_value>2.5</arg_value><arg_key>whole</arg_key><arg_value>2.0</arg_value><arg_key>flag</arg_key><arg_value>true</arg_value><arg_key>off</arg_key><arg_value>false</arg_value><arg_key>none</arg_key><arg_value>null</arg_value><arg_key>tags</arg_key><arg_value>[\"a\", \"b\"]</arg_value><arg_key>opts</arg_key><arg_value>{\"k\": \"v\", \"n\": 1}</arg_value><arg_key>text</arg_key><arg_value>multi\nline</arg_value></tool_call><|observation|><tool_response>ok</tool_response><|assistant|>"
+  },
+  {
+   "name": "special_literals_are_text",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "I could write <tool_call> here, or </tool_call>, but I will not.",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "chat template <tool_response>"
+       }
+      }
+     ],
+     "results": [
+      "A page quoting </tool_response> and <tool_call> and <arg_key>."
+     ]
+    }
+   ],
+   "template": "flint",
+   "prompt": "<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value>...</tool_call>\n<|user|>Who in TWICE did not renew their contract?<|assistant|><think>I could write <tool_call> here, or </tool_call>, but I will not.</think><tool_call>web_search<arg_key>query</arg_key><arg_value>chat template <tool_response></arg_value></tool_call><|observation|><tool_response>A page quoting </tool_response> and <tool_call> and <arg_key>.</tool_response><|assistant|>"
+  },
+  {
+   "name": "unicode_whitespace_is_stripped",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Qu'est-ce que c'est ? 日本"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "　think ",
+     "content": "  answer  ",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "日本 ニュース"
+       }
+      }
+     ],
+     "results": [
+      " résultat "
+     ]
+    }
+   ],
+   "template": "flint",
+   "prompt": "<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value>...</tool_call>\n<|user|>Qu'est-ce que c'est ? 日本<|assistant|><think>think</think>answer<tool_call>web_search<arg_key>query</arg_key><arg_value>日本 ニュース</arg_value></tool_call><|observation|><tool_response> résultat </tool_response><|assistant|>"
+  },
+  {
+   "name": "the_limit_round",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who in TWICE did not renew their contract?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "Search.",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "one"
+       }
+      }
+     ],
+     "results": [
+      "Web search results for \"TWICE contract renewal\" (SearXNG):\n\n1. Report\n   https://example.org/twice\n   Six members renewed.\n"
+     ]
+    },
+    {
+     "reasoning": "Again.",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "two"
+       }
+      }
+     ],
+     "results": [
+      "Not run: this answer has made all the searches it may. Answer the user now from the results above, without searching again."
+     ]
+    }
+   ],
+   "template": "flint",
+   "prompt": "<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value>...</tool_call>\n<|user|>Who in TWICE did not renew their contract?<|assistant|><think>Search.</think><tool_call>web_search<arg_key>query</arg_key><arg_value>one</arg_value></tool_call><|observation|><tool_response>Web search results for \"TWICE contract renewal\" (SearXNG):\n\n1. Report\n   https://example.org/twice\n   Six members renewed.\n</tool_response><|assistant|><think>Again.</think><tool_call>web_search<arg_key>query</arg_key><arg_value>two</arg_value></tool_call><|observation|><tool_response>Not run: this answer has made all the searches it may. Answer the user now from the results above, without searching again.</tool_response><|assistant|>"
+  }
+ ]
+}

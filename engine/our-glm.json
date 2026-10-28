@@ -1,0 +1,20 @@
+{
+  "_comment": "Serve OUR engine (build/multiengine.exe) on GLM-5.3-Flash via the strata_glm family DLL, Maya-data pack. --glm-pack routes to Maya's glm_pack_generate driver; serve.server speaks the shared GEN/T protocol.",
+  "exe": "C:\\multi-strata\\engine\\build\\multiengine.exe",
+  "args": [
+    "--glm-pack", "G:\\Maya-data\\models\\Maya-S-v2-IQ2_XXS\\pack",
+    "--max-context", "32768",
+    "--expert-cache", "auto",
+    "--prefill", "auto",
+    "--kv-streaming", "on",
+    "--expert-profile", "G:\\Project-maya\\data\\expert-profile-glm.bin"
+  ],
+  "cwd": "C:\\multi-strata\\engine\\build",
+  "tokenizer": "G:\\Maya-data\\models\\Maya-S-v2-IQ2_XXS\\pack\\tokenizer",
+  "model_name": "glm-5.3-flash",
+  "host": "0.0.0.0",
+  "port": 8080,
+  "gpu": 0,
+  "api_key": "strata-secret-key",
+  "log": "C:\\multi-strata\\engine\\our-glm.log"
+}

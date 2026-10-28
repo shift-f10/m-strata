@@ -1,0 +1,6 @@
+#pragma once
+// Generated at configure time (SP4 §2.3). Do not edit.
+#include <string_view>
+namespace secure_frontend::generated {
+inline constexpr std::string_view kEngineVersionText = "@SECURE_FRONTEND_ENGINE_VERSION_TEXT@";
+}

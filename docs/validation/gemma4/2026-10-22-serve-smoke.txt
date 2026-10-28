@@ -1,0 +1,27 @@
+
+  [engine] strata-gemma4: loaded in 11.0 s; 56 expert slots a layer (43.8% resident), VRAM 15756 of 16376 MiB, pinned 
+RAM 23.49 GiB, ring 2048 rows, context 8192
+  [engine] strata-gemma4 serve: prompt 25 tokens = 0 reused + 25 read in 602 ms (41.5 tok/s), 8 generated in 162 ms 
+(49.5 tok/s) (stop)
+  [engine] strata-gemma4 serve: prompt 37 tokens = 32 reused + 5 read in 189 ms (26.4 tok/s), 16 generated in 406 ms 
+(39.4 tok/s) (length)
+  [engine] strata-gemma4 serve: prompt 25 tokens = 24 reused + 1 read in 11 ms (89.9 tok/s), 4 generated in 41 ms 
+(96.7 tok/s) (cancel)
+  INFO engine=strata-gemma4 slots_per_layer=56 experts_resident_pct=43.8 vram_used_mib=15756 vram_total_mib=16376 
+pinned_gib=23.49 load_s=11.0
+PASS READY <ctx> stop: READY 8192 stop
+PASS PP shape: PP 25 25 602 41.5
+PASS DONE layout: DONE 8 25 602.3 161.6 stop 0 0 0 0 0 0 0 0.0 25 0
+PASS DONE counts the T lines
+PASS a prompt longer than 4 tokens prints PP
+PASS the answer ends on an end-of-turn id: [106]
+  answer ids: 818,5279,529,7001,563,9079,236761,106
+PASS PP shape: PP 5 5 189 26.4
+PASS a follow-up reuses the held tokens: reused 32
+  follow-up in 0.60 s
+PASS STOP ends the answer as cancel: DONE 4 25 11.1 41.4 cancel
+PASS an out-of-vocabulary id gets ERR: ERR a token id is outside the vocabulary
+PASS QUIT exits 0
+ALL PASS
+
+

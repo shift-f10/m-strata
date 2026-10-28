@@ -1,0 +1,108 @@
+{
+  "format": "strata-model-manifest",
+  "schema_version": 1,
+  "name": "qwen3.8-flash-next",
+  "tag": "iq2_xs-local",
+  "version": "2026.10.14.1",
+  "sequence": 1,
+  "profile": "qwen",
+  "engine": {
+    "family": "strata",
+    "min_version": "0.1.44.1"
+  },
+  "license": {
+    "id": "Apache-2.0",
+    "url": "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+    "bundle_allowed": true,
+    "notice": "Test notice."
+  },
+  "hosts": [
+    "huggingface.co"
+  ],
+  "redirect_hosts": [
+    "*.aws.cdn.hf.co",
+    "cas-bridge.xethub.hf.co"
+  ],
+  "files": [
+    {
+      "path": "weights/M-IQ2_XS-00001-of-00002.gguf",
+      "role": "weights",
+      "size": 9,
+      "sha256": "96af8b4933b944bc61107844c9cd0e6986f4add076f2db54982e868cf0630c96",
+      "sources": [
+        "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/ed59f92082b1e93c0e96d60a8b11aab089b52f09/IQ2_XS/M-IQ2_XS-00001-of-00002.gguf"
+      ]
+    },
+    {
+      "path": "weights/M-IQ2_XS-00002-of-00002.gguf",
+      "role": "weights",
+      "size": 9,
+      "sha256": "0fea3322e99e4fd7c9c9ca6a6bded8163add6b14de3380ee6ac335857c29682e",
+      "sources": [
+        "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/ed59f92082b1e93c0e96d60a8b11aab089b52f09/IQ2_XS/M-IQ2_XS-00002-of-00002.gguf"
+      ]
+    },
+    {
+      "path": "pack/conversions.json",
+      "role": "pack",
+      "size": 3,
+      "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+      "sources": []
+    },
+    {
+      "path": "pack/dense.bin",
+      "role": "pack",
+      "size": 5,
+      "sha256": "d6a98598212ed729f5b9a4d1b7ff4dcc1341bbfc740993325b9107298521422f",
+      "sources": []
+    },
+    {
+      "path": "pack/index.txt",
+      "role": "pack",
+      "size": 6,
+      "sha256": "f816b480f87144ec4de5862adf028ff66cc6964250325d53fd22bf8922824b6f",
+      "sources": []
+    },
+    {
+      "path": "pack/native_experts.txt",
+      "role": "pack",
+      "size": 8,
+      "sha256": "9d2ebcc371b886fe688fe5a5ec6064b57a72c2caad5dbb2a4dcc5ac59ef6b67e",
+      "sources": []
+    },
+    {
+      "path": "pack/tokenizer/merges.txt",
+      "role": "tokenizer",
+      "size": 4,
+      "sha256": "01186fcf04b4b447f393e552964c08c7b419c1ad7a25c342a0b631b1967d3a27",
+      "sources": []
+    },
+    {
+      "path": "pack/tokenizer/token_type.json",
+      "role": "tokenizer",
+      "size": 7,
+      "sha256": "9e07ab64261fb6803c6572f7b5c3098ea68fb45873128af820d42a2262eb900b",
+      "sources": []
+    },
+    {
+      "path": "pack/tokenizer/tokenizer.json",
+      "role": "tokenizer",
+      "size": 3,
+      "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+      "sources": []
+    },
+    {
+      "path": "pack/tokenizer/vocab.json",
+      "role": "tokenizer",
+      "size": 20,
+      "sha256": "9cc249bbd29928e1d8dc56817e46c1763a53486bd82e86b357c272fb09e94904",
+      "sources": []
+    }
+  ],
+  "launch": {
+    "native": "weights/M-IQ2_XS-00001-of-00002.gguf",
+    "ple_gguf": "weights/M-IQ2_XS-00002-of-00002.gguf",
+    "pack": "pack",
+    "tokenizer_pack": "pack/tokenizer"
+  }
+}

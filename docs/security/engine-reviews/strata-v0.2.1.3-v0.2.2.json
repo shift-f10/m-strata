@@ -1,0 +1,416 @@
+{
+ "engine": "Niko1221/Strata",
+ "old": "v0.2.1.3",
+ "old_commit": "cbfd5b926b794b356195d3cb600191b0c3567540",
+ "new": "v0.2.2",
+ "new_commit": "011c9e600a93bbc9fd451c563501b5831c32bbca",
+ "rulings": {
+  "28f6e73e06cf0f40": {
+   "ruling": "benign",
+   "why": "version bump of upstream's own desktop/host apps (0.2.1 -> 0.2.2); no new dependency",
+   "where": "apps/desktop/package.json:0",
+   "rule": "deps",
+   "text": ""
+  },
+  "5b1230e2cbcf0de9": {
+   "ruling": "benign",
+   "why": "version bump of upstream's own desktop/host apps (0.2.1 -> 0.2.2); no new dependency",
+   "where": "apps/desktop/src-tauri/Cargo.lock:0",
+   "rule": "deps",
+   "text": ""
+  },
+  "419793c74411379a": {
+   "ruling": "benign",
+   "why": "version bump of upstream's own desktop/host apps (0.2.1 -> 0.2.2); no new dependency",
+   "where": "apps/desktop/src-tauri/Cargo.toml:0",
+   "rule": "deps",
+   "text": ""
+  },
+  "577933c401dfcb1e": {
+   "ruling": "benign",
+   "why": "version bump of upstream's own desktop/host apps (0.2.1 -> 0.2.2); no new dependency",
+   "where": "apps/host/package-lock.json:0",
+   "rule": "deps",
+   "text": ""
+  },
+  "daa0dc613a0ca55c": {
+   "ruling": "benign",
+   "why": "version bump of upstream's own desktop/host apps (0.2.1 -> 0.2.2); no new dependency",
+   "where": "apps/host/package.json:0",
+   "rule": "deps",
+   "text": ""
+  },
+  "403a7c0449e658ca": {
+   "ruling": "benign",
+   "why": "desktop host app tests spawn node/subst/cmd; apps/host is neither built nor run by this project",
+   "where": "apps/host/tests/host-ports.test.mjs:4",
+   "rule": "js-exec",
+   "text": "import { spawn } from 'node:child_process';"
+  },
+  "60968bca6c7b018c": {
+   "ruling": "benign",
+   "why": "desktop host app tests spawn node/subst/cmd; apps/host is neither built nor run by this project",
+   "where": "apps/host/tests/host-ports.test.mjs:36",
+   "rule": "js-exec",
+   "text": "const child = spawn(process.execPath, ['server/index.mjs'], { cwd, env: { ...process.env, STRATA_HOME: home, STRATA_PORT: String(port), STRATA_MODELS_DIR: join(home, 'm') } });"
+  },
+  "64bbd7f2ae5278d5": {
+   "ruling": "benign",
+   "why": "desktop host app tests spawn node/subst/cmd; apps/host is neither built nor run by this project",
+   "where": "apps/host/tests/model-folder.test.mjs:3",
+   "rule": "js-exec",
+   "text": "import { execFileSync, spawnSync } from 'node:child_process';"
+  },
+  "3a73e6d503777468": {
+   "ruling": "benign",
+   "why": "desktop host app tests spawn node/subst/cmd; apps/host is neither built nor run by this project",
+   "where": "apps/host/tests/model-folder.test.mjs:73",
+   "rule": "js-exec",
+   "text": "execFileSync('subst', [`${letter}:`, dir]);"
+  },
+  "04dbad885786fa0e": {
+   "ruling": "benign",
+   "why": "desktop host app tests spawn node/subst/cmd; apps/host is neither built nor run by this project",
+   "where": "apps/host/tests/model-folder.test.mjs:74",
+   "rule": "js-exec",
+   "text": "t.after(() => { try { execFileSync('subst', [`${letter}:`, '/D']); } catch { /* gone */ } });"
+  },
+  "eae68b627a33a727": {
+   "ruling": "benign",
+   "why": "desktop host app tests spawn node/subst/cmd; apps/host is neither built nor run by this project",
+   "where": "apps/host/tests/model-folder.test.mjs:85",
+   "rule": "js-exec",
+   "text": "function readdirNames(dir) { return execFileSync('cmd', ['/c', 'dir', '/b', dir]).toString().split(/\\r?\\n/).filter(Boolean); }"
+  },
+  "bd34ef2445873f08": {
+   "ruling": "benign",
+   "why": "desktop host app tests spawn node/subst/cmd; apps/host is neither built nor run by this project",
+   "where": "apps/host/tests/model-folder.test.mjs:94",
+   "rule": "js-exec",
+   "text": "const run = spawnSync(process.execPath, ['--input-type=module', '-e', `const store=await import('./server/store.mjs');console.log(store.validateModelsDirectory(${JSON.stringify(drive)}));`],"
+  },
+  "32020116b57556b2": {
+   "ruling": "benign",
+   "why": "desktop host app tests spawn node/subst/cmd; apps/host is neither built nor run by this project",
+   "where": "apps/host/tests/model-folder.test.mjs:129",
+   "rule": "js-exec",
+   "text": "const readdirSyncSafe = folder => execFileSync(process.execPath, ['-e', `console.log(require('fs').readdirSync(${JSON.stringify(folder)}).length)`]).toString().trim() * 1;"
+  },
+  "d1b9176f8a546950": {
+   "ruling": "benign",
+   "why": "desktop host app tests spawn node/subst/cmd; apps/host is neither built nor run by this project",
+   "where": "apps/host/tests/models-directory-fallback.test.mjs:3",
+   "rule": "js-exec",
+   "text": "import { spawnSync } from 'node:child_process';"
+  },
+  "b247c19d1b07a830": {
+   "ruling": "benign",
+   "why": "desktop host app tests spawn node/subst/cmd; apps/host is neither built nor run by this project",
+   "where": "apps/host/tests/models-directory-fallback.test.mjs:13",
+   "rule": "js-exec",
+   "text": "const run = spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd, encoding: 'utf8', env: { ...process.env, ...env } });"
+  },
+  "30486dff2251e553": {
+   "ruling": "benign",
+   "why": "benchmark provenance manifests; no build or install reads them",
+   "where": "bench/results/2026-10-20-0.2.1-bench/p2003-rtx3060/run1-release-archive-as-shipped/provenance/corpus-manifest.sha256:0",
+   "rule": "digest",
+   "text": ""
+  },
+  "d5c3f616e5cf3f0f": {
+   "ruling": "benign",
+   "why": "benchmark provenance manifests; no build or install reads them",
+   "where": "bench/results/2026-10-20-0.2.1-bench/p2003-rtx3060/run2-with-commit-and-optional-concurrency/provenance/corpus-manifest.sha256:0",
+   "rule": "digest",
+   "text": ""
+  },
+  "e2aee1224059e8a1": {
+   "ruling": "benign",
+   "why": "benchmark provenance manifests; no build or install reads them",
+   "where": "bench/results/2026-10-20-0.2.1-bench/p2003-rtx3060/run3-with-fixes/provenance/corpus-manifest.sha256:0",
+   "rule": "digest",
+   "text": ""
+  },
+  "8a15ab2aee605b1d": {
+   "ruling": "benign",
+   "why": "benchmark provenance manifests; no build or install reads them",
+   "where": "bench/results/2026-10-20-0.2.1-bench/z440-2xa4000/run1-release-archive-as-shipped/provenance/corpus-manifest.sha256:0",
+   "rule": "digest",
+   "text": ""
+  },
+  "139e4a3aadaaccd4": {
+   "ruling": "benign",
+   "why": "benchmark provenance manifests; no build or install reads them",
+   "where": "bench/results/2026-10-20-0.2.1-bench/z440-2xa4000/run2-with-commit-and-optional-concurrency/provenance/corpus-manifest.sha256:0",
+   "rule": "digest",
+   "text": ""
+  },
+  "2336b9b534421f19": {
+   "ruling": "benign",
+   "why": "benchmark provenance manifests; no build or install reads them",
+   "where": "bench/results/2026-10-20-0.2.1-bench/z440-2xa4000/run3-with-fixes/provenance/corpus-manifest.sha256:0",
+   "rule": "digest",
+   "text": ""
+  },
+  "c81b5fc742bc8fce": {
+   "ruling": "benign",
+   "why": "false positive: 'socket' is a CPU socket (NUMA split) in a status string; no network code",
+   "where": "include/strata/kernels/cpu/pool_plan.hpp:97",
+   "rule": "net",
+   "text": "else if (span) p.limit = \"every CPU socket (STRATA_NUMA_SPLIT)\";"
+  },
+  "105a861b31725515": {
+   "ruling": "benign",
+   "why": "release packaging reads `git rev-parse HEAD`; packaging is never run by this project",
+   "where": "packaging/package_terminal.py:292",
+   "rule": "py-exec",
+   "text": "out = subprocess.run([\"git\", \"-C\", str(ROOT), \"rev-parse\", \"HEAD\"], capture_output=True, text=True).stdout.strip().lower()"
+  },
+  "df23ca57813f5ce1": {
+   "ruling": "accepted",
+   "why": "torch 2.14.1 for Python >= 3.14 in the optional NVFP4 tooling (older Pythons keep 2.9.1); not installed by our runbook",
+   "where": "requirements-nvfp4-local.txt:0",
+   "rule": "deps",
+   "text": ""
+  },
+  "ba58663e4f196c0c": {
+   "ruling": "accepted",
+   "why": "upstream installer: ranged repair of a broken model download from the same source URL (no new host); setup.py is never run by this project, whose acquisition is the confined downloader",
+   "where": "setup.py:2463",
+   "rule": "py-net",
+   "text": "req = urllib.request.Request(url, headers={\"User-Agent\": \"strata-setup\", \"Range\": f\"bytes={pos}-{end}\"})"
+  },
+  "54e2897755b943ca": {
+   "ruling": "accepted",
+   "why": "upstream installer: ranged repair of a broken model download from the same source URL (no new host); setup.py is never run by this project, whose acquisition is the confined downloader",
+   "where": "setup.py:2485",
+   "rule": "py-net",
+   "text": "except urllib.error.HTTPError as e:"
+  },
+  "c5b2b0d20bc82846": {
+   "ruling": "accepted",
+   "why": "upstream installer: ranged repair of a broken model download from the same source URL (no new host); setup.py is never run by this project, whose acquisition is the confined downloader",
+   "where": "setup.py:2492",
+   "rule": "py-net",
+   "text": "except (OSError, http.client.HTTPException):"
+  },
+  "539021aaa9a9fc02": {
+   "ruling": "accepted",
+   "why": "upstream installer: ranged repair of a broken model download from the same source URL (no new host); setup.py is never run by this project, whose acquisition is the confined downloader",
+   "where": "setup.py:2500",
+   "rule": "py-net",
+   "text": "except (OSError, http.client.HTTPException) as e:"
+  },
+  "ccef38f1be8d38d5": {
+   "ruling": "accepted",
+   "why": "upstream installer: ranged repair of a broken model download from the same source URL (no new host); setup.py is never run by this project, whose acquisition is the confined downloader",
+   "where": "setup.py:2517",
+   "rule": "py-net",
+   "text": "except (_NoRange, _Changed, OSError, http.client.HTTPException):"
+  },
+  "631ce9c80e658b14": {
+   "ruling": "accepted",
+   "why": "upstream installer runs `strata.py update` to fetch a ready-made engine from upstream's signed feed; never run by this project (we build the engine from the reviewed source)",
+   "where": "setup.py:4111",
+   "rule": "py-exec",
+   "text": "run = subprocess.run([sys.executable, str(ROOT / \"strata.py\"), \"update\", \"--no-control\", \"--output\", \"json\"],"
+  },
+  "08c3299f4d2eb3f4": {
+   "ruling": "accepted",
+   "why": "upstream installer runs `strata.py update` to fetch a ready-made engine from upstream's signed feed; never run by this project (we build the engine from the reviewed source)",
+   "where": "setup.py:4113",
+   "rule": "py-exec",
+   "text": "except (OSError, subprocess.SubprocessError) as e:"
+  },
+  "bf668f29e17cc445": {
+   "ruling": "benign",
+   "why": "GetProcAddress(kernel32, \"SetThreadDescription\") to name worker threads; no other library or symbol",
+   "where": "src/kernels/cpu/pool.cpp:1460",
+   "rule": "load",
+   "text": "static const SetDesc fn = (SetDesc) GetProcAddress(GetModuleHandleW(L\"kernel32.dll\"), \"SetThreadDescription\");"
+  },
+  "e27e0ad332ac7554": {
+   "ruling": "benign",
+   "why": "false positive: CPU-socket wording in a test comment and printf; test binary not built (STRATA_BUILD_TESTS OFF)",
+   "where": "src/kernels/cpu/pool_tasks_test.cpp:246",
+   "rule": "net",
+   "text": "// the DEFAULT worker count under the split spans every socket (pool_plan.hpp span_packages): on a 2-socket"
+  },
+  "97da707ca1cac6a6": {
+   "ruling": "benign",
+   "why": "false positive: CPU-socket wording in a test comment and printf; test binary not built (STRATA_BUILD_TESTS OFF)",
+   "where": "src/kernels/cpu/pool_tasks_test.cpp:254",
+   "rule": "net",
+   "text": "std::printf(\"pool tasks: default pool under the split: %d workers on %d socket(s), split %s%s (%s)\\n\","
+  },
+  "f63abbedc39c4592": {
+   "ruling": "benign",
+   "why": "read-only GPU enumeration: PowerShell `Get-CimInstance Win32_VideoController`, fixed command, 15 s timeout; upstream control plane, not used by our product",
+   "where": "strata_control/engine_component.py:554",
+   "rule": "py-exec",
+   "text": "done = subprocess.run([shell, \"-NoProfile\", \"-NonInteractive\", \"-Command\","
+  },
+  "7e80c5057ce12d49": {
+   "ruling": "benign",
+   "why": "read-only GPU enumeration: PowerShell `Get-CimInstance Win32_VideoController`, fixed command, 15 s timeout; upstream control plane, not used by our product",
+   "where": "strata_control/engine_component.py:556",
+   "rule": "py-exec",
+   "text": "capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL,"
+  },
+  "2e9d370f8b5fd8c6": {
+   "ruling": "benign",
+   "why": "read-only GPU enumeration: PowerShell `Get-CimInstance Win32_VideoController`, fixed command, 15 s timeout; upstream control plane, not used by our product",
+   "where": "strata_control/engine_component.py:558",
+   "rule": "py-exec",
+   "text": "except (OSError, subprocess.SubprocessError):"
+  },
+  "967c5caa207d67bb": {
+   "ruling": "benign",
+   "why": "child Python calls the CUDA driver API (cuInit/cuDeviceGetCount/cuDeviceGetAttribute) to read SM count and clock; read-only, fixed code string",
+   "where": "strata_control/gpu_roles.py:434",
+   "rule": "py-load",
+   "text": "code = (\"import ctypes,sys,os\\n\""
+  },
+  "21b4fea5e2e3a777": {
+   "ruling": "benign",
+   "why": "child Python calls the CUDA driver API (cuInit/cuDeviceGetCount/cuDeviceGetAttribute) to read SM count and clock; read-only, fixed code string",
+   "where": "strata_control/gpu_roles.py:436",
+   "rule": "py-load",
+   "text": "\"lib=ctypes.CDLL('nvcuda.dll' if os.name=='nt' else 'libcuda.so.1')\\n\""
+  },
+  "e35918425f55d057": {
+   "ruling": "benign",
+   "why": "child Python calls the CUDA driver API (cuInit/cuDeviceGetCount/cuDeviceGetAttribute) to read SM count and clock; read-only, fixed code string",
+   "where": "strata_control/gpu_roles.py:438",
+   "rule": "py-load",
+   "text": "\"n=ctypes.c_int()\\n\""
+  },
+  "9429383d88cc9ed4": {
+   "ruling": "benign",
+   "why": "child Python calls the CUDA driver API (cuInit/cuDeviceGetCount/cuDeviceGetAttribute) to read SM count and clock; read-only, fixed code string",
+   "where": "strata_control/gpu_roles.py:439",
+   "rule": "py-load",
+   "text": "\"assert lib.cuDeviceGetCount(ctypes.byref(n))==0\\n\""
+  },
+  "36b0991d79dfa2e6": {
+   "ruling": "benign",
+   "why": "child Python calls the CUDA driver API (cuInit/cuDeviceGetCount/cuDeviceGetAttribute) to read SM count and clock; read-only, fixed code string",
+   "where": "strata_control/gpu_roles.py:441",
+   "rule": "py-load",
+   "text": "\"    d=ctypes.c_int()\\n\""
+  },
+  "30f344b6eabc32bd": {
+   "ruling": "benign",
+   "why": "child Python calls the CUDA driver API (cuInit/cuDeviceGetCount/cuDeviceGetAttribute) to read SM count and clock; read-only, fixed code string",
+   "where": "strata_control/gpu_roles.py:442",
+   "rule": "py-load",
+   "text": "\"    assert lib.cuDeviceGet(ctypes.byref(d),i)==0\\n\""
+  },
+  "3fdee6638166bc17": {
+   "ruling": "benign",
+   "why": "child Python calls the CUDA driver API (cuInit/cuDeviceGetCount/cuDeviceGetAttribute) to read SM count and clock; read-only, fixed code string",
+   "where": "strata_control/gpu_roles.py:443",
+   "rule": "py-load",
+   "text": "\"    sm=ctypes.c_int(); mhz=ctypes.c_int()\\n\""
+  },
+  "8d4e276779b8ef9a": {
+   "ruling": "benign",
+   "why": "child Python calls the CUDA driver API (cuInit/cuDeviceGetCount/cuDeviceGetAttribute) to read SM count and clock; read-only, fixed code string",
+   "where": "strata_control/gpu_roles.py:444",
+   "rule": "py-load",
+   "text": "\"    lib.cuDeviceGetAttribute(ctypes.byref(sm),16,d)\\n\""
+  },
+  "be5af9297746570d": {
+   "ruling": "benign",
+   "why": "child Python calls the CUDA driver API (cuInit/cuDeviceGetCount/cuDeviceGetAttribute) to read SM count and clock; read-only, fixed code string",
+   "where": "strata_control/gpu_roles.py:445",
+   "rule": "py-load",
+   "text": "\"    lib.cuDeviceGetAttribute(ctypes.byref(mhz),13,d)\\n\""
+  },
+  "6ee381f20ba3e0b2": {
+   "ruling": "benign",
+   "why": "runs the fixed read-only GPU probe above in a child interpreter",
+   "where": "strata_control/gpu_roles.py:451",
+   "rule": "py-exec",
+   "text": "r = subprocess.run([sys.executable, \"-c\", code], capture_output=True, text=True, timeout=timeout, env=env)"
+  },
+  "567794e9dfe5c218": {
+   "ruling": "benign",
+   "why": "runs the fixed read-only GPU probe above in a child interpreter",
+   "where": "strata_control/gpu_roles.py:458",
+   "rule": "py-exec",
+   "text": "except (OSError, ValueError, subprocess.SubprocessError):"
+  },
+  "46c62e85ff35c34b": {
+   "ruling": "benign",
+   "why": "ctypes QueryFullProcessImageNameW: reads a process's image path for upstream's process-identity checks",
+   "where": "strata_control/winproc.py:49",
+   "rule": "py-load",
+   "text": "ctypes.POINTER(wintypes.DWORD)]"
+  },
+  "97d52408d8778430": {
+   "ruling": "benign",
+   "why": "ctypes QueryFullProcessImageNameW: reads a process's image path for upstream's process-identity checks",
+   "where": "strata_control/winproc.py:109",
+   "rule": "py-load",
+   "text": "buffer = ctypes.create_unicode_buffer(size.value)"
+  },
+  "0792c089185534a7": {
+   "ruling": "benign",
+   "why": "ctypes QueryFullProcessImageNameW: reads a process's image path for upstream's process-identity checks",
+   "where": "strata_control/winproc.py:110",
+   "rule": "py-load",
+   "text": "if not _k32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):"
+  },
+  "ca7a99c6d09e36fb": {
+   "ruling": "accepted",
+   "why": "upstream test runs its own install .ps1 with -ExecutionPolicy Bypass; tests/terminal is not part of our gates and is never run here",
+   "where": "tests/terminal/test_install_scripts_env.py:45",
+   "rule": "py-exec",
+   "text": "done = subprocess.run([\"powershell\", \"-NoProfile\", \"-ExecutionPolicy\", \"Bypass\", \"-File\", str(PS1)],"
+  },
+  "e1f90396a54fd21e": {
+   "ruling": "benign",
+   "why": "developer A/B tool polling nvidia-smi and starting the engine with --serve; never run by this project",
+   "where": "tools/idle_gpu_ab.py:29",
+   "rule": "py-exec",
+   "text": "self.proc = subprocess.Popen([\"nvidia-smi\", \"--query-gpu=index,utilization.gpu,power.draw\", \"--format=csv,noheader,nounits\","
+  },
+  "04a9136c75414d5e": {
+   "ruling": "benign",
+   "why": "developer A/B tool polling nvidia-smi and starting the engine with --serve; never run by this project",
+   "where": "tools/idle_gpu_ab.py:30",
+   "rule": "py-exec",
+   "text": "\"-lms\", \"200\"], stdout=subprocess.PIPE, text=True)"
+  },
+  "9d90d977310dfd58": {
+   "ruling": "benign",
+   "why": "developer A/B tool polling nvidia-smi and starting the engine with --serve; never run by this project",
+   "where": "tools/idle_gpu_ab.py:236",
+   "rule": "py-exec",
+   "text": "p = subprocess.Popen([exe, \"--serve\", *args], cwd=cfg.get(\"cwd\"), stdin=subprocess.PIPE, stdout=subprocess.PIPE,"
+  },
+  "a7bc41ea0f4e7841": {
+   "ruling": "benign",
+   "why": "upstream test runs its docker entrypoint script with a stub backend; the script diff has no fetch (no sh-fetch finding)",
+   "where": "tools/test_docker_entrypoint.py:231",
+   "rule": "py-exec",
+   "text": "r = subprocess.run([SH, str(self.script)], env=self.env(STUB_BACKEND=\"cuda\", STRATA_DEV_DIR=str(dev), MODEL=\"Q2_0\"),"
+  },
+  "6f43fb11c09cc55b": {
+   "ruling": "benign",
+   "why": "upstream test runs its docker entrypoint script with a stub backend; the script diff has no fetch (no sh-fetch finding)",
+   "where": "tools/test_docker_entrypoint.py:243",
+   "rule": "py-exec",
+   "text": "r = subprocess.run([SH, str(self.script)], env=self.env(MODEL=\"IQ3_XXS\", MODEL_PATH=str(missing)), capture_output=True, text=True, timeout=30)"
+  },
+  "dbe28a5cb8c90c60": {
+   "ruling": "benign",
+   "why": "upstream test runs its docker entrypoint script with a stub backend; the script diff has no fetch (no sh-fetch finding)",
+   "where": "tools/test_docker_entrypoint.py:249",
+   "rule": "py-exec",
+   "text": "r = subprocess.run([SH, str(self.script)], env=self.env(MODEL=\"IQ3_XXS\", MODEL_PATH=str(empty)), capture_output=True, text=True, timeout=30)"
+  }
+ },
+ "reviewer": "Claude (agent) for the owner, 2026-10-21", "sign_off": "owner, 2026-10-21, in chat: \"yes commit and push\""
+}

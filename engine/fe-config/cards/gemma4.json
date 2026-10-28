@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "name": "Gemma-4-26B-A4B-it",
+  "profile": "gemma4",
+  "config": {
+    "engine": {
+      "executable": "C:\\multi-strata\\engine\\frontend-engine-gemma4\\multiengine.exe",
+      "model_id": "gemma-4-26B-A4B-it-UD-Q8_K_XL",
+      "gpu": "0",
+      "lib_dirs": [
+        "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin",
+        "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin\\x64"
+      ]
+    },
+    "roots": {
+      "models": "G:\\Strata-data\\models\\gemma4_q8",
+      "tokenizer_pack": "C:\\multi-strata\\out\\gemma4-pack\\tokenizer"
+    },
+    "limits": {
+      "chat": {
+        "max_prompt_tokens": 262144,
+        "max_completion_tokens": 262144
+      }
+    }
+  },
+  "options": {
+    "max_context": {"default": 65536, "min": 4096, "max": 262144},
+    "expert_vram": {"default": "auto", "max": 15},
+    "thinking": {"default": "off"},
+    "temperature": {"default": 1.0},
+    "top_p": {"default": 0.95},
+    "top_k": {"default": 64},
+    "min_p": {"default": 0.05}
+  }
+}

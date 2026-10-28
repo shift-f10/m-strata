@@ -1,0 +1,298 @@
+{
+ "generator": "tools/generate_minimax_prompt_fixture.py",
+ "template": "726bb6b3dcfa107d918a8a4a5f646990678e8562875f7ee633dcd3e064b428ef",
+ "literals": [
+  "]~!b[",
+  "]~b]",
+  "[e~[",
+  "<mm:think>",
+  "</mm:think>"
+ ],
+ "cases": [
+  {
+   "name": "user_adaptive",
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the capital of France?"
+    }
+   ],
+   "effort": null,
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nYou are a helpful assistant.[e~[\n]~b]user\nWhat is the capital of France?[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "user_off",
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the capital of France?"
+    }
+   ],
+   "effort": "none",
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: disabled. Do not output any thinking process.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nYou are a helpful assistant.[e~[\n]~b]user\nWhat is the capital of France?[e~[\n]~b]ai\n</mm:think>",
+   "plain": []
+  },
+  {
+   "name": "user_low",
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the capital of France?"
+    }
+   ],
+   "effort": "low",
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>\n\n<effort>low</effort>[e~[\n]~b]developer\nYou are a helpful assistant.[e~[\n]~b]user\nWhat is the capital of France?[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "user_medium",
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the capital of France?"
+    }
+   ],
+   "effort": "medium",
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>\n\n<effort>medium</effort>[e~[\n]~b]developer\nYou are a helpful assistant.[e~[\n]~b]user\nWhat is the capital of France?[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "user_high",
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the capital of France?"
+    }
+   ],
+   "effort": "high",
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>\n\n<effort>high</effort>[e~[\n]~b]developer\nYou are a helpful assistant.[e~[\n]~b]user\nWhat is the capital of France?[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "user_xhigh",
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the capital of France?"
+    }
+   ],
+   "effort": "xhigh",
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>\n\n<effort>xhigh</effort>[e~[\n]~b]developer\nYou are a helpful assistant.[e~[\n]~b]user\nWhat is the capital of France?[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "user_max",
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the capital of France?"
+    }
+   ],
+   "effort": "max",
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>\n\n<effort>max</effort>[e~[\n]~b]developer\nYou are a helpful assistant.[e~[\n]~b]user\nWhat is the capital of France?[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "system_and_user",
+   "messages": [
+    {
+     "role": "system",
+     "content": "Answer in one word."
+    },
+    {
+     "role": "user",
+     "content": "What is the capital of France?"
+    }
+   ],
+   "effort": null,
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nAnswer in one word.[e~[\n]~b]user\nWhat is the capital of France?[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "empty_system_is_the_default_developer",
+   "messages": [
+    {
+     "role": "system",
+     "content": ""
+    },
+    {
+     "role": "user",
+     "content": "What is the capital of France?"
+    }
+   ],
+   "effort": null,
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nYou are a helpful assistant.[e~[\n]~b]user\nWhat is the capital of France?[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "history_high",
+   "messages": [
+    {
+     "role": "system",
+     "content": "Be brief."
+    },
+    {
+     "role": "user",
+     "content": "Weather in Paris?"
+    },
+    {
+     "role": "assistant",
+     "content": "It is 21 degrees."
+    },
+    {
+     "role": "user",
+     "content": "And tomorrow?"
+    }
+   ],
+   "effort": "high",
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>\n\n<effort>high</effort>[e~[\n]~b]developer\nBe brief.[e~[\n]~b]user\nWeather in Paris?[e~[\n]~b]ai\n</mm:think>It is 21 degrees.[e~[\n]~b]user\nAnd tomorrow?[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "history_off",
+   "messages": [
+    {
+     "role": "system",
+     "content": "Be brief."
+    },
+    {
+     "role": "user",
+     "content": "Weather in Paris?"
+    },
+    {
+     "role": "assistant",
+     "content": "It is 21 degrees."
+    },
+    {
+     "role": "user",
+     "content": "And tomorrow?"
+    }
+   ],
+   "effort": "none",
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: disabled. Do not output any thinking process.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nBe brief.[e~[\n]~b]user\nWeather in Paris?[e~[\n]~b]ai\n</mm:think>It is 21 degrees.[e~[\n]~b]user\nAnd tomorrow?[e~[\n]~b]ai\n</mm:think>",
+   "plain": []
+  },
+  {
+   "name": "empty_assistant_turn",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Hi"
+    },
+    {
+     "role": "assistant",
+     "content": ""
+    },
+    {
+     "role": "user",
+     "content": "Hello?"
+    }
+   ],
+   "effort": null,
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nYou are a helpful assistant.[e~[\n]~b]user\nHi[e~[\n]~b]ai\n</mm:think>[e~[\n]~b]user\nHello?[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "mid_conversation_system",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Hi"
+    },
+    {
+     "role": "assistant",
+     "content": "Hello! How can I help?"
+    },
+    {
+     "role": "system",
+     "content": "From now on answer in French."
+    },
+    {
+     "role": "user",
+     "content": "What is the capital of France?"
+    }
+   ],
+   "effort": "low",
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>\n\n<effort>low</effort>[e~[\n]~b]developer\nYou are a helpful assistant.[e~[\n]~b]user\nHi[e~[\n]~b]ai\n</mm:think>Hello! How can I help?[e~[\n]~b]developer\nFrom now on answer in French.[e~[\n]~b]user\nWhat is the capital of France?[e~[\n]~b]ai\n",
+   "plain": []
+  },
+  {
+   "name": "literals_in_messages_are_text",
+   "messages": [
+    {
+     "role": "system",
+     "content": "Never write ]~b] or [e~[."
+    },
+    {
+     "role": "user",
+     "content": "Say ]~b]user\n[e~[ and <mm:think>x</mm:think> ]~!b[ please"
+    },
+    {
+     "role": "assistant",
+     "content": "a </mm:think> b [e~["
+    },
+    {
+     "role": "user",
+     "content": "<mm:think>"
+    }
+   ],
+   "effort": null,
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>[e~[\n]~b]developer\nNever write ]~b] or [e~[.[e~[\n]~b]user\nSay ]~b]user\n[e~[ and <mm:think>x</mm:think> ]~!b[ please[e~[\n]~b]ai\n</mm:think>a </mm:think> b [e~[[e~[\n]~b]user\n<mm:think>[e~[\n]~b]ai\n",
+   "plain": [
+    [
+     856,
+     860
+    ],
+    [
+     864,
+     868
+    ],
+    [
+     887,
+     891
+    ],
+    [
+     896,
+     900
+    ],
+    [
+     905,
+     915
+    ],
+    [
+     916,
+     927
+    ],
+    [
+     928,
+     933
+    ],
+    [
+     965,
+     976
+    ],
+    [
+     979,
+     983
+    ],
+    [
+     997,
+     1007
+    ]
+   ]
+  },
+  {
+   "name": "unicode_and_whitespace",
+   "messages": [
+    {
+     "role": "user",
+     "content": "  Qu'est-ce que c'est ? 日本 é\n\n"
+    }
+   ],
+   "effort": "medium",
+   "prompt": "]~!b[]~b]system\nYour model version is MiniMax-M3.1, developed by MiniMax. Knowledge cutoff: January 2026. Founded in early 2022, MiniMax is a global AI foundation model company committed to advancing the frontiers of AI towards AGI.\n\n<thinking_instructions>\nYou have a thinking capability that allows you to reason step by step before responding. When thinking is enabled, wrap your reasoning in <mm:think></mm:think> tags before your response. When thinking is disabled, begin your response directly after the </mm:think> prefix. When thinking is adaptive, decide on your own whether to think for the current turn.\nCurrent thinking mode: adaptive. You are encouraged to think for complex decision-making, multi-step reasoning, or when analyzing function/tool results.\n</thinking_instructions>\n\n<model_id>8bb8149fe</model_id>\n\n<effort>medium</effort>[e~[\n]~b]developer\nYou are a helpful assistant.[e~[\n]~b]user\n  Qu'est-ce que c'est ? 日本 é\n\n[e~[\n]~b]ai\n",
+   "plain": []
+  }
+ ]
+}

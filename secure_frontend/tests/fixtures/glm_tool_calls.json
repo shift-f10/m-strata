@@ -1,0 +1,310 @@
+{
+ "generator": "tools/generate_glm_tool_call_fixture.py",
+ "tool": {
+  "name": "web_search",
+  "description": "Search the web.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string"
+    },
+    "max_results": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ "cases": [
+  {
+   "name": "a_call_after_the_thinking",
+   "reply": "I need to search.</think><tool_call>web_search<arg_key>query</arg_key><arg_value>world cup 2026</arg_value></tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "I need to search."
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "world cup 2026"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "content_before_a_call",
+   "reply": "ok</think>Let me check.\n\n<tool_call>web_search<arg_key>query</arg_key><arg_value>x</arg_value><arg_key>max_results</arg_key><arg_value>3</arg_value></tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "ok"
+    },
+    {
+     "kind": "content",
+     "text": "Let me check."
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "x",
+       "max_results": 3
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "glms_own_layout_with_newlines",
+   "reply": "x</think><tool_call>web_search\n<arg_key>query</arg_key>\n<arg_value>rust 1.90</arg_value>\n<arg_key>max_results</arg_key>\n<arg_value>2</arg_value>\n</tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "rust 1.90",
+       "max_results": 2
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_call_in_the_reasoning_stays_reasoning",
+   "reply": "Like this: <tool_call>web_search<arg_key>query</arg_key><arg_value>q</arg_value></tool_call> then.</think>Answer.",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "Like this: <tool_call>web_search<arg_key>query</arg_key><arg_value>q</arg_value></tool_call> then."
+    },
+    {
+     "kind": "content",
+     "text": "Answer."
+    }
+   ]
+  },
+  {
+   "name": "a_fenced_call_in_the_answer_is_text",
+   "reply": "x</think>```\n<tool_call>web_search<arg_key>query</arg_key><arg_value>q</arg_value></tool_call>\n```\nThat is the format.",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "kind": "content",
+     "text": "```\n<tool_call>web_search<arg_key>query</arg_key><arg_value>q</arg_value></tool_call>\n```\nThat is the format."
+    }
+   ]
+  },
+  {
+   "name": "inline_code_is_text",
+   "reply": "x</think>Write `<tool_call>web_search<arg_key>query</arg_key><arg_value>q</arg_value></tool_call>` to search.",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "kind": "content",
+     "text": "Write `<tool_call>web_search<arg_key>query</arg_key><arg_value>q</arg_value></tool_call>` to search."
+    }
+   ]
+  },
+  {
+   "name": "two_calls_and_text_after",
+   "reply": "x</think><tool_call>web_search<arg_key>query</arg_key><arg_value>a</arg_value></tool_call>\n<tool_call>web_search<arg_key>query</arg_key><arg_value>b</arg_value></tool_call>\n\nDone.",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "a"
+      }
+     }
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "b"
+      }
+     }
+    },
+    {
+     "kind": "content",
+     "text": "Done."
+    }
+   ]
+  },
+  {
+   "name": "values_are_decoded_unless_strings",
+   "reply": "x</think><tool_call>web_search<arg_key>query</arg_key><arg_value>5</arg_value><arg_key>max_results</arg_key><arg_value>5</arg_value><arg_key>list</arg_key><arg_value>[1, 2.5, \"z\"]</arg_value><arg_key>word</arg_key><arg_value>notjson</arg_value><arg_key>flag</arg_key><arg_value>true</arg_value></tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "5",
+       "max_results": 5,
+       "list": [
+        1,
+        2.5,
+        "z"
+       ],
+       "word": "notjson",
+       "flag": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_value_keeps_its_newlines",
+   "reply": "x</think><tool_call>web_search<arg_key>query</arg_key><arg_value>\nline one\nline two\n</arg_value></tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "\nline one\nline two\n"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "newlines_before_a_call_are_dropped",
+   "reply": "x</think>A\n\n\n<tool_call>web_search<arg_key>query</arg_key><arg_value>q</arg_value></tool_call>\n\n\nB",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "kind": "content",
+     "text": "A"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q"
+      }
+     }
+    },
+    {
+     "kind": "content",
+     "text": "B"
+    }
+   ]
+  },
+  {
+   "name": "a_partial_tag_at_the_end_is_text",
+   "reply": "x</think>The end <tool_",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "kind": "content",
+     "text": "The end <tool_"
+    }
+   ]
+  },
+  {
+   "name": "an_unfinished_call_with_its_name_is_a_call",
+   "reply": "x</think><tool_call>web_search<arg_key>query</arg_key><arg_value>q",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {}
+     }
+    }
+   ]
+  },
+  {
+   "name": "an_unfinished_call_without_a_name_is_text",
+   "reply": "x</think>Now <tool_call>web_se",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "kind": "content",
+     "text": "Now <tool_call>web_se"
+    }
+   ]
+  },
+  {
+   "name": "unicode_around_a_call",
+   "reply": "思考。</think>答え：\n<tool_call>web_search<arg_key>query</arg_key><arg_value>日本 été</arg_value></tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "思考。"
+    },
+    {
+     "kind": "content",
+     "text": "答え："
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "日本 été"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_duplicate_key_keeps_its_first_place",
+   "reply": "x</think><tool_call>web_search<arg_key>query</arg_key><arg_value>a</arg_value><arg_key>max_results</arg_key><arg_value>2</arg_value><arg_key>query</arg_key><arg_value>b</arg_value></tool_call>",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "b",
+       "max_results": 2
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,258 @@
+{
+ "generator": "tools/generate_glm_tool_prompt_fixture.py",
+ "template": "a4fddbbf0b432101a296c17094f8bc5a2b0d30713b5b5cd92f86be78511aa724",
+ "effort_turn": "<|system|>Reasoning Effort: Max",
+ "tool": {
+  "name": "web_search",
+  "description": "Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "What to search for"
+    },
+    "max_results": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 10,
+     "description": "How many results to get (1-10)"
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ "cases": [
+  {
+   "name": "first_prompt_with_tools",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [],
+   "prompt": "[gMASK]<sop><|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|user|>Who won the 2026 World Cup final?<|assistant|><think>"
+  },
+  {
+   "name": "system_and_tools",
+   "conversation": [
+    {
+     "role": "system",
+     "content": "You are a helpful assistant."
+    },
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [],
+   "prompt": "[gMASK]<sop><|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|system|>You are a helpful assistant.<|user|>Who won the 2026 World Cup final?<|assistant|><think>"
+  },
+  {
+   "name": "one_round_a_call_after_reasoning",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "\nThe user asks about a recent event; I should search.\n",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "2026 World Cup final winner"
+       }
+      }
+     ],
+     "results": [
+      "Web search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n   https://example.org/final\n   The final was played on 19 July 2026.\n"
+     ]
+    }
+   ],
+   "prompt": "[gMASK]<sop><|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|user|>Who won the 2026 World Cup final?<|assistant|><think>The user asks about a recent event; I should search.</think><tool_call>web_search<arg_key>query</arg_key><arg_value>2026 World Cup final winner</arg_value></tool_call><|observation|><tool_response>Web search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n   https://example.org/final\n   The final was played on 19 July 2026.\n</tool_response><|assistant|><think>"
+  },
+  {
+   "name": "content_before_two_calls",
+   "conversation": [
+    {
+     "role": "system",
+     "content": "Answer in English."
+    },
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "Two searches.",
+     "content": "Let me look that up.\n",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "a",
+        "max_results": 3
+       }
+      },
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "b"
+       }
+      }
+     ],
+     "results": [
+      "r1",
+      "  r2 with spaces  \n"
+     ]
+    }
+   ],
+   "prompt": "[gMASK]<sop><|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|system|>Answer in English.<|user|>Who won the 2026 World Cup final?<|assistant|><think>Two searches.</think>Let me look that up.<tool_call>web_search<arg_key>query</arg_key><arg_value>a</arg_value><arg_key>max_results</arg_key><arg_value>3</arg_value></tool_call><tool_call>web_search<arg_key>query</arg_key><arg_value>b</arg_value></tool_call><|observation|><tool_response>r1</tool_response><tool_response>  r2 with spaces  \n</tool_response><|assistant|><think>"
+  },
+  {
+   "name": "two_rounds",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "x"
+       }
+      }
+     ],
+     "results": [
+      "first"
+     ]
+    },
+    {
+     "reasoning": "More.",
+     "content": "Still checking.",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "y"
+       }
+      }
+     ],
+     "results": [
+      "second"
+     ]
+    }
+   ],
+   "prompt": "[gMASK]<sop><|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|user|>Who won the 2026 World Cup final?<|assistant|><think></think><tool_call>web_search<arg_key>query</arg_key><arg_value>x</arg_value></tool_call><|observation|><tool_response>first</tool_response><|assistant|><think>More.</think>Still checking.<tool_call>web_search<arg_key>query</arg_key><arg_value>y</arg_value></tool_call><|observation|><tool_response>second</tool_response><|assistant|><think>"
+  },
+  {
+   "name": "argument_types",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "r",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "q",
+        "max_results": 5,
+        "ratio": 2.5,
+        "whole": 2.0,
+        "flag": true,
+        "none": null,
+        "tags": [
+         "a",
+         "b"
+        ],
+        "opts": {
+         "k": "v",
+         "n": 1
+        },
+        "text": "multi\nline"
+       }
+      }
+     ],
+     "results": [
+      "ok"
+     ]
+    }
+   ],
+   "prompt": "[gMASK]<sop><|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|user|>Who won the 2026 World Cup final?<|assistant|><think>r</think><tool_call>web_search<arg_key>query</arg_key><arg_value>q</arg_value><arg_key>max_results</arg_key><arg_value>5</arg_value><arg_key>ratio</arg_key><arg_value>2.5</arg_value><arg_key>whole</arg_key><arg_value>2.0</arg_value><arg_key>flag</arg_key><arg_value>true</arg_value><arg_key>none</arg_key><arg_value>null</arg_value><arg_key>tags</arg_key><arg_value>[\"a\", \"b\"]</arg_value><arg_key>opts</arg_key><arg_value>{\"k\": \"v\", \"n\": 1}</arg_value><arg_key>text</arg_key><arg_value>multi\nline</arg_value></tool_call><|observation|><tool_response>ok</tool_response><|assistant|><think>"
+  },
+  {
+   "name": "special_literals_are_text",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "I could write <tool_call> or <arg_key> here.",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "glm <|observation|>"
+       }
+      }
+     ],
+     "results": [
+      "A page quoting </tool_response> and <|user|> and <arg_value>."
+     ]
+    }
+   ],
+   "prompt": "[gMASK]<sop><|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|user|>Who won the 2026 World Cup final?<|assistant|><think>I could write <tool_call> or <arg_key> here.</think><tool_call>web_search<arg_key>query</arg_key><arg_value>glm <|observation|></arg_value></tool_call><|observation|><tool_response>A page quoting </tool_response> and <|user|> and <arg_value>.</tool_response><|assistant|><think>"
+  },
+  {
+   "name": "unicode_whitespace_is_stripped",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Qu'est-ce que c'est ? 日本"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "　think ",
+     "content": "  answer  ",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "日本 ニュース"
+       }
+      }
+     ],
+     "results": [
+      " résultat "
+     ]
+    }
+   ],
+   "prompt": "[gMASK]<sop><|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|user|>Qu'est-ce que c'est ? 日本<|assistant|><think>think</think>answer<tool_call>web_search<arg_key>query</arg_key><arg_value>日本 ニュース</arg_value></tool_call><|observation|><tool_response> résultat </tool_response><|assistant|><think>"
+  }
+ ]
+}

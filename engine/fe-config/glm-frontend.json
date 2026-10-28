@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "listener": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "web_ui": true,
+    "allow_remote": true,
+    "allow_wildcard_bind": true,
+    "host_aliases": ["localhost", "127.0.0.1", "172.16.1.96"]
+  },
+  "token": { "source": "file:token" },
+  "roots": {
+    "models": "G:\\Maya-data\\models",
+    "tokenizer_pack": "G:\\Maya-data\\models\\Maya-S-v2-IQ2_XXS\\pack\\tokenizer",
+    "secret": "C:\\multi-strata\\engine\\glm-secret",
+    "state": "C:\\multi-strata\\engine\\glm-state",
+    "allow_untrusted_media": true
+  },
+  "engine": {
+    "executable": "C:\\multi-strata\\engine\\build\\multiengine.exe",
+    "profile": "glm53",
+    "model_id": "glm-5.3-flash",
+    "lib_dirs": [
+      "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin",
+      "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin\\x64"
+    ]
+  }
+}

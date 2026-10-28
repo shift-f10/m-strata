@@ -1,0 +1,26 @@
+logits: 24 steps compared
+  step   0: KL 0.000005  top1 ours 818 ref 818  top5 overlap 5
+  step   1: KL 0.000000  top1 ours 6789 ref 6789  top5 overlap 5
+  step   2: KL 0.000000  top1 ours 8918 ref 8918  top5 overlap 5
+  step   3: KL 0.003164  top1 ours 528 ref 528  top5 overlap 5
+  step   4: KL 0.000418  top1 ours 3423 ref 3423  top5 overlap 5
+  step   5: KL 0.000000  top1 ours 236743 ref 236743  top5 overlap 5
+  step   6: KL 0.000000  top1 ours 236771 ref 236771  top5 overlap 5
+  step   7: KL 0.000000  top1 ours 563 ref 563  top5 overlap 5
+  step   8: KL 0.000000  top1 ours 138822 ref 138822  top5 overlap 5
+  step   9: KL 0.000000  top1 ours 219396 ref 219396  top5 overlap 5
+  step  10: KL 0.000000  top1 ours 236772 ref 236772  top5 overlap 5
+  step  11: KL 0.000000  top1 ours 236832 ref 236832  top5 overlap 5
+  step  12: KL 0.000000  top1 ours 236761 ref 236761  top5 overlap 5
+  step  13: KL 0.000000  top1 ours 106 ref 106  top5 overlap 5
+  step  14: KL 0.000103  top1 ours 106 ref 106  top5 overlap 4
+  step  15: KL 0.589206  top1 ours 715 ref 106  top5 overlap 3
+  step  16: KL 0.201398  top1 ours 715 ref 715  top5 overlap 4
+  step  17: KL 0.005760  top1 ours 45518 ref 45518  top5 overlap 4
+  step  18: KL 0.000016  top1 ours 107 ref 107  top5 overlap 5
+  step  19: KL 0.014165  top1 ours 101 ref 101  top5 overlap 4
+  step  20: KL 0.000067  top1 ours 818 ref 818  top5 overlap 5
+  step  21: KL 0.000000  top1 ours 6789 ref 6789  top5 overlap 5
+  step  22: KL 0.000000  top1 ours 8918 ref 8918  top5 overlap 4
+  step  23: KL 0.000001  top1 ours 528 ref 528  top5 overlap 5
+  mean KL 0.033929, max KL 0.589206, top-1 agreement 23/24, top-5 overlap 113/120

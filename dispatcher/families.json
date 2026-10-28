@@ -1,0 +1,25 @@
+{
+  "_comment": "Our engine's family registry. The dispatcher (dispatch.py) spins up the matching backend engine per model family and swaps on change. qwen -> Strata lineage; glm/deepseek -> Maya lineage. Each backend is the proven engine launched through its own serve/server.py + venv; the dispatcher is the thin orchestrator. Backends run on their own `port`; the dispatcher fronts `front_port`.",
+  "default_family": "qwen",
+  "front_port": 8080,
+  "families": {
+    "qwen": {
+      "model_name": "qwen3.8-flash-next-iq3_s",
+      "lineage": "strata",
+      "python": "C:\\Strata\\.venv\\Scripts\\python.exe",
+      "cwd": "C:\\Strata",
+      "config": "C:\\Strata\\strata-iq3_s.json",
+      "port": 8181,
+      "aliases": ["qwen", "qwen3.8-flash-next", "qwen3.8-flash-next-iq3_s", "flash-next", "qwen-flash-next"]
+    },
+    "glm": {
+      "model_name": "glm-5.3-flash",
+      "lineage": "maya",
+      "python": "C:\\project-maya\\.venv\\Scripts\\python.exe",
+      "cwd": "C:\\project-maya",
+      "config": "C:\\project-maya\\maya-maya-s-v2-iq2_xxs.json",
+      "port": 8182,
+      "aliases": ["glm", "glm-5.3-flash", "glm53", "maya", "maya-s-v2"]
+    }
+  }
+}

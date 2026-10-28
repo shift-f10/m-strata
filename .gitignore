@@ -1,0 +1,47 @@
+# Secure Strata (ours). Upstream's own ignores live in upstream/.gitignore.
+
+# developer environment (scripts/dev/bootstrap-*.sh); no trailing slash so the
+# symlinks inside .worktrees/<name>/ are ignored too
+/.venv-dev
+/.toolchains
+
+# parallel sub-project worktrees (superpowers finishing skill cleans these)
+/.worktrees/
+# superpowers execution state
+/.superpowers/
+
+# build output: secure_frontend/ presets and our root CMakeLists.txt
+/secure_frontend/out/
+/secure_frontend/build/
+/out/
+
+# Python
+__pycache__/
+.pytest_cache/
+
+# Secure Strata engine: build output, deployed engine copies, secrets and runtime
+# state (regeneratable or private; the source, scripts and configs are tracked).
+/engine/build/
+/engine/build-g/
+/engine/build-*/
+/engine/frontend-engine/
+/engine/frontend-engine-raon/
+/engine/frontend-engine-gemma4/
+/engine/frontend-engine-multi/
+/engine/frontend-engine-flint/
+/engine/glm-secret/
+/engine/raon-secret/
+/engine/raon-state/
+# any secret folder, token file or key, anywhere (the owner's standing rule: nothing sensitive is committed)
+secret/
+secrets/
+*.pem
+*.key
+/engine/*.log
+# build artifacts anywhere
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.o
+*.a
