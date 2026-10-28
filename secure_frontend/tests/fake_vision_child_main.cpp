@@ -16,6 +16,9 @@
 // the set is --mmproj/--model/--gpu/--threads/--max-tokens/--no-flash-attn/--no-warmup/
 // --measure, and any other argument prints "unknown argument X" and exits 2. The
 // test-only options (--record-file=, --mode=) are consumed before that check.
+// Run as "strata-vision" (the name the tests install it under for a model card, upstream's encoder), it speaks
+// upstream's tools/vision/strata_vision.cpp instead: --min-tokens N and --flash-attn on|off|auto join the grammar,
+// and an ENC is answered "OK <tokens> <nx> <ny> <ms>" (the token count first, as upstream's server reads it).
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -35,7 +38,7 @@ std::string option_value(const std::vector<std::string>& args, const std::string
 
 // The maya-vision grammar at the pin: value-taking flags consume their value, the rest
 // are bare. Anything else is the pin's exit-2 path.
-bool grammar_accepts(const std::vector<std::string>& args) {
+bool grammar_accepts(const std::vector<std::string>& args, const bool upstream) {
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& arg = args[i];
     if (arg.starts_with("--record-file=") || arg.starts_with("--mode=")) continue;
@@ -50,6 +53,8 @@ bool grammar_accepts(const std::vector<std::string>& args) {
     if (arg == "--mmproj" || arg == "--model") {
       if (!take_value(arg)) return false;
     } else if (arg == "--threads" || arg == "--max-tokens") {
+      if (!take_value(arg)) return false;
+    } else if (upstream && (arg == "--min-tokens" || arg == "--flash-attn")) {
       if (!take_value(arg)) return false;
     } else if (arg != "--gpu" && arg != "--no-flash-attn" && arg != "--no-warmup" && arg != "--measure") {
       std::cerr << "unknown argument " << arg << "\n";
@@ -67,7 +72,8 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) args.emplace_back(argv[i]);
   const std::string record = option_value(args, "--record-file=");
   const std::string mode = option_value(args, "--mode=");
-  if (!grammar_accepts(args)) return 2;  // the pin's exit-2 path for an unknown argument
+  const bool upstream = argc > 0 && std::filesystem::path(argv[0]).stem() == "strata-vision";
+  if (!grammar_accepts(args, upstream)) return 2;  // the pin's exit-2 path for an unknown argument
 
   if (!record.empty()) {
     // Binary: the tests match "SPAWN\n"; a text stream writes \r\n on Windows.
@@ -102,7 +108,7 @@ int main(int argc, char** argv) {
       std::ofstream out(std::filesystem::path(out_name), std::ios::binary);
       out.write("\x00sve0", 5);  // five bytes including the leading NUL (a << b"..." would stop at it)
       out.flush();
-      std::cout << "OK 5\n" << std::flush;
+      std::cout << (upstream ? "OK 5 8 6 12\n" : "OK 5\n") << std::flush;
       if (mode == "dieenc") return 0;  // the first answer is also the exit
     }
   }

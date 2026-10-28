@@ -178,8 +178,11 @@ VisionEncodeResult VisionSupervisor::encode(const std::string_view image_name, c
     const auto read = process_->transport().read_line(slice);
     if (read.kind == EngineReadKind::line) {
       if (read.line.rfind("OK ", 0) == 0) {
-        // The pin parses `OK (\d+)` (:2777-2778): digits only, positive.
-        const std::string count{read.line.substr(3)};
+        // The pin parses `OK (\d+)` (:2777-2778): digits only, positive. Upstream's strata-vision answers
+        // "OK <tokens> <nx> <ny> <ms>" and its server reads the first field (`int(line.split()[1])`): the count is the
+        // first field, whatever follows it.
+        const std::string rest{read.line.substr(3)};
+        const std::string count{rest.substr(0, rest.find(' '))};
         if (!count.empty() && count.find_first_not_of("0123456789") == std::string::npos && count.size() <= 9U &&
             count != "0") {
           return VisionEncoded{static_cast<std::size_t>(std::stoul(count))};
