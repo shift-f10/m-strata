@@ -180,44 +180,174 @@ by the server's tests (with fake engines where a GPU would be needed), but have 
 | **Other NVIDIA generations** | Every speed and every run is from one RTX 4080 SUPER (compute capability 8.9). Other generations build with `--cuda-arch` but have not been run here; nor have GPUs with less than 16 GB, or PCs with less than 96 GB of RAM. |
 | **Linux** | Every change is written for Linux and Windows, but the newest work (the GUI-first install, the newer engines, web search, pictures, several GPUs, the window app) has been built and run on Windows only. |
 | **The window app on Linux** | `strata-window`'s Linux window (GTK 3, WebKitGTK 4.1, Ayatana AppIndicator) is written but has been neither compiled nor run: the development system has no Linux desktop. The part it shares with Windows (the server child, the sign-in, the log, the tray's requests) is built and tested on both. The Windows window was run here; its tray menu was driven through Windows' own messages and UI Automation, not by hand. |
+| **The install scripts' installs** | `install.bat` was run here end to end, on a PC that already had every dependency, so its winget installs (Git, Python, Build Tools or the C++ workload, CUDA) have not run yet. `install.sh` is syntax-checked only: the development system has no Linux. |
 
 ## Install
 
-### Requirements
+There are two ways: **one script** that installs what is missing and builds (start here), or **the same steps by
+hand**. Either way you end with an *out folder*: everything M-Strata needs to run, which you can move anywhere.
 
-- **Windows 10/11 x64** (the tested system) or **Linux x86_64** - every change is written for both.
-- An **NVIDIA GPU** with CUDA support and as much **RAM** as you can give the model (see above); fast NVMe storage for
-  the model files.
-- To build: **Visual Studio 2022 Build Tools** with the C++ workload (Windows) or GCC 13+ / Clang 17+ (Linux), the
-  **CUDA Toolkit** (13.0 tested), **Python 3.10+** (the build script uses the standard library only), **CMake 3.28+**
-  and **Ninja** (`pip install cmake ninja` is enough), and **Git**. On Linux, email alerts also need OpenSSL's
-  development files, and the window GTK 3's, WebKitGTK 4.1's and libayatana-appindicator3's.
+### What you need
 
-### Get the code
+| | Windows | Linux |
+| --- | --- | --- |
+| System | Windows 10 or 11, 64-bit | x86_64; the script knows Ubuntu 24.04+ and Debian (apt) |
+| GPU | An NVIDIA GPU with a current driver (CUDA 13.0 needs driver 580 or newer); `nvidia-smi` shows it | the same |
+| Memory and disk | As much RAM as you can give the model (see [Models](#models)); about 20 GB free for the tools and the build, plus NVMe space for the model files | the same |
+| Git | [Git for Windows](https://git-scm.com/download/win) | `git` |
+| Python | 3.10 or newer ([python.org](https://www.python.org/downloads/) or the `py` launcher) | `python3`, `python3-venv` |
+| C++ compiler | Visual Studio 2022 **Build Tools with "Desktop development with C++"** (the MSVC v143 x64 compiler and a Windows SDK) | GCC 13+ (`build-essential` on Ubuntu 24.04) |
+| CUDA | CUDA Toolkit **13.0** (the tested version) | `cuda-toolkit-13-0` from NVIDIA's apt repository |
+| CMake and Ninja | CMake 3.28+ and Ninja (`pip install cmake ninja`) | the same |
+| Optional | The window (`--with window`): Microsoft's WebView2 SDK | email alerts: `libssl-dev`; the window: `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, `pkg-config` |
 
-```sh
+The NVIDIA driver is the one thing no script installs: get it from [nvidia.com/drivers](https://www.nvidia.com/drivers)
+(or the NVIDIA App / Windows Update on Windows, your distribution's way on Linux). The build works without it; running a
+model does not.
+
+### Install with one script (Windows)
+
+`install.bat` looks at what the PC has and lists what is missing and what it will do. After you answer `y` it:
+- installs what is missing with winget, Microsoft's package manager that comes with Windows: Git, Python 3.12,
+  Visual Studio Build Tools 2022 with the C++ workload, and the CUDA Toolkit 13.0. If Build Tools are already
+  installed without C++, it adds the C++ workload to them. Each installer asks Windows for administrator rights
+  itself; run the script as yourself, not as administrator;
+- puts CMake and Ninja in the repository's own Python environment (`.venv-dev`);
+- fetches the pinned llama.cpp commit (`.toolchains\llama.cpp`; an existing `llama.cpp` beside the repository at that
+  commit is used as it is) and, for the window, the WebView2 SDK (its SHA-256 checked);
+- runs the build and says how to start the result.
+
+Visual Studio Build Tools and CUDA take about 15 GB and a while to download; the first build compiles the CUDA engine
+(allow an hour or more).
+
+**If Git is installed**, open PowerShell in the folder that should hold the code (for example `D:\`):
+
+```powershell
 git clone --recurse-submodules https://github.com/shift-f10/m-strata.git
-git clone https://github.com/ggml-org/llama.cpp.git llama.cpp
-git -C llama.cpp checkout 3cf03257f219afbe7334045ff7c6a06ac68c627d
+cd m-strata
+.\install.bat
 ```
 
-The engine builds ggml from that pinned llama.cpp checkout (`--ggml-dir`). After a plain clone, run
-`git submodule update --init`.
+**On a PC without Git**, put the two script files in an empty folder and run them. The script installs Git, then
+clones the repository into `m-strata` in that folder:
 
-### Build an out folder
-
-On Windows, from any prompt in the repository folder (`make.bat` finds Visual Studio's x64 build tools itself; an "x64
-Native Tools Command Prompt for VS 2022" works too):
-
-```bat
-make.bat --out D:\SecureStrata --ggml-dir C:\src\llama.cpp --with email,search
+```powershell
+mkdir D:\M-Strata-src; cd D:\M-Strata-src
+curl.exe -LO https://raw.githubusercontent.com/shift-f10/m-strata/main/install.bat
+curl.exe -LO https://raw.githubusercontent.com/shift-f10/m-strata/main/install.ps1
+.\install.bat
 ```
 
-On Linux:
+To see first what it would do, without changing anything, run `.\install.bat -Plan`.
 
-```sh
-./make.sh --out /opt/secure-strata --ggml-dir ~/src/llama.cpp --with email,search
+| Option | What it does |
+| --- | --- |
+| `-Out D:\Apps\M-Strata` | The out folder (default: `M-Strata-app` beside the repository; `M-Strata-app-2` and so on if that one is taken). It must be new or empty. |
+| `-With email,search,window` | The optional features (default `email,search`); `window` adds `strata-window` and its SDK. |
+| `-GgmlDir D:\llama.cpp` | Use this llama.cpp checkout (at the pinned commit) instead of fetching one. |
+| `-Plan` | Only list what it would install, fetch and build; nothing changes. |
+| `-Yes` | Do not ask before installing. |
+
+Running it again is safe: it skips what is there and builds into a new folder.
+
+### Install with one script (Linux)
+
+On Ubuntu 24.04 or newer, or Debian, `install.sh` does the same with apt. It installs the CUDA Toolkit 13.0 from
+NVIDIA's own repository and asks for your password for `sudo`:
+
+```bash
+sudo apt-get update && sudo apt-get install -y git
+git clone --recurse-submodules https://github.com/shift-f10/m-strata.git
+cd m-strata && ./install.sh
 ```
+
+Its options are `--out DIR`, `--with email,search,window`, `--ggml-dir DIR`, `--plan` and `--yes`, as above. On another
+distribution, install the packages of the table above its way and follow the steps by hand below.
+
+### Install by hand (Windows)
+
+1. **NVIDIA driver.** Install a current one (see above). In a terminal, `nvidia-smi` lists your GPU.
+2. **Git.** `winget install --id Git.Git -e`, or the installer from [git-scm.com](https://git-scm.com/download/win).
+3. **Python.** `winget install --id Python.Python.3.12 -e`, or the installer from python.org (tick "Add python.exe to
+   PATH").
+4. **Visual Studio Build Tools 2022 with C++.** From an administrator terminal:
+
+   ```powershell
+   winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+   ```
+
+   Or download Build Tools from [visualstudio.microsoft.com](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+   and tick **Desktop development with C++**. If Build Tools are already installed without it, open **Visual Studio
+   Installer**, choose **Modify** on Build Tools 2022, tick **Desktop development with C++** and choose **Modify**.
+5. **CUDA Toolkit 13.0**, after step 4, so it adds its Visual Studio integration: `winget install --id Nvidia.CUDA -e
+   --version 13.0`, or the 13.0 installer from [developer.nvidia.com](https://developer.nvidia.com/cuda-toolkit-archive).
+6. **Open a new terminal** (the installers changed `PATH`). `git --version`, `py -3 --version` and `nvcc --version`
+   (release 13.0) should all answer.
+7. **The code.** From the folder that should hold it (for example `D:\`), so that `m-strata` and `llama.cpp` end up
+   side by side:
+
+   ```sh
+   git clone --recurse-submodules https://github.com/shift-f10/m-strata.git
+   git clone https://github.com/ggml-org/llama.cpp.git llama.cpp
+   git -C llama.cpp checkout 3cf03257f219afbe7334045ff7c6a06ac68c627d
+   ```
+
+   The checkout ends with "HEAD is now at 3cf03257f" and git's note about a "detached HEAD". That is expected (a fixed
+   commit, not a branch), not an error. After a plain clone, run `git submodule update --init` in `m-strata`.
+8. **CMake and Ninja**, in the repository's own Python environment (`make.bat` uses it when it is there):
+
+   ```powershell
+   cd m-strata
+   py -3 -m venv .venv-dev
+   .\.venv-dev\Scripts\python.exe -m pip install cmake ninja
+   ```
+
+9. **For the window only: the WebView2 SDK** (BSD-3-Clause; its header and static loader), unpacked into
+   `.toolchains\webview2\1.0.4314.35` in the repository folder (or set `SECURE_FRONTEND_WEBVIEW2_DIR`). Its SHA-256 is
+   `90778deb1b77e36292828b4b5833c9255c27533f40e0ddd55891ae718944edc4`. Check it with
+   `certutil -hashfile webview2.zip SHA256` before unpacking:
+
+   ```bat
+   curl.exe -L -o webview2.zip https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4314.35/microsoft.web.webview2.1.0.4314.35.nupkg
+   ```
+
+   ```bat
+   mkdir .toolchains\webview2\1.0.4314.35 && tar -xf webview2.zip -C .toolchains\webview2\1.0.4314.35
+   ```
+
+10. **Build**, from the repository folder, into a folder that does not exist yet. On Windows `D:\M-Strata` is the
+    same folder as `D:\m-strata`, because Windows ignores case in names, so pick a different name. In PowerShell a
+    program in the current folder needs `.\`. `make.bat` finds Visual Studio's x64 build tools itself; an "x64 Native
+    Tools Command Prompt for VS 2022" works too.
+
+    ```powershell
+    .\make.bat --out D:\M-Strata-app --ggml-dir D:\llama.cpp --with email,search
+    ```
+
+### Install by hand (Linux)
+
+On Ubuntu 24.04 (other distributions: the same packages their way):
+
+```bash
+sudo apt-get update && sudo apt-get install -y git python3 python3-venv build-essential pkg-config wget ca-certificates libssl-dev
+```
+
+```bash
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb && sudo dpkg -i cuda-keyring_1.1-1_all.deb && sudo apt-get update && sudo apt-get install -y cuda-toolkit-13-0
+```
+
+For the window, also `sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev`. Then the
+code as in step 7 above, and from `m-strata`:
+
+```bash
+python3 -m venv .venv-dev && .venv-dev/bin/python -m pip install cmake ninja
+```
+
+```bash
+./make.sh --out ~/m-strata-app --ggml-dir ../llama.cpp --cuda-root /usr/local/cuda-13.0 --with email,search
+```
+
+### Build options
 
 | Option | What it does |
 | --- | --- |
@@ -233,25 +363,30 @@ On Linux:
 | `--plan` | Print the commands only. |
 
 The first build compiles the CUDA engine and takes a while; later builds are incremental (`out/make-build`). The out
-folder holds only what runs: `strata-secure-server`, `strata`, `strata-search` (with `--with search`), `strata-window`
-(with `--with window`), `engine/` (the
-launcher, one library per family, `strata-prepare`, `strata-vision` (upstream's picture encoder, built from
-`upstream/tools/vision` with the same pinned llama.cpp), the bundled cuBLAS, the expert profiles and, with the Maya
-families, `templates/minimax-m3.1/`), `README.txt`, `config.example.json`, `LICENSE` and `NOTICE.md`. It is made
-owner-only. Copy or move the whole folder anywhere.
+folder holds only what runs:
+- `strata-secure-server` and `strata`;
+- `strata-search` (with `--with search`) and `strata-window` (with `--with window`);
+- `engine/`: the launcher, one library per family, `strata-prepare`, `strata-vision` (upstream's picture encoder, built
+  from `upstream/tools/vision` with the same pinned llama.cpp), the bundled cuBLAS, the expert profiles and, with the
+  Maya families, `templates/minimax-m3.1/`;
+- `README.txt`, `config.example.json`, `LICENSE` and `NOTICE.md`.
 
-On Windows the window needs Microsoft's WebView2 SDK (BSD-3-Clause; its header and static loader), unpacked into
-`.toolchains\webview2\1.0.4314.35` in the repository folder (or set `SECURE_FRONTEND_WEBVIEW2_DIR`). Its SHA-256 is
-`90778deb1b77e36292828b4b5833c9255c27533f40e0ddd55891ae718944edc4` (check it with
-`certutil -hashfile webview2.zip SHA256` before unpacking):
+It is made owner-only. Copy or move the whole folder anywhere. Then see [First start](#first-start).
 
-```bat
-curl.exe -L -o webview2.zip https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4314.35/microsoft.web.webview2.1.0.4314.35.nupkg
-```
+### If the install stops
 
-```bat
-mkdir .toolchains\webview2\1.0.4314.35 && tar -xf webview2.zip -C .toolchains\webview2\1.0.4314.35
-```
+| What you see | What to do |
+| --- | --- |
+| `fatal: cannot change to 'llama.cpp'` | The checkout was run from inside `llama.cpp`; run it from the folder that holds it. The first checkout already worked if it said "HEAD is now at 3cf03257f". |
+| `'.\make.bat' is not recognized` | Run it from the repository folder (`cd m-strata`); PowerShell needs the `.\`. |
+| `make: ... already exists and is not empty; choose a new folder (make never deletes)` | Pick an out folder that does not exist yet. On Windows names ignore case: `D:\M-Strata` is the `D:\m-strata` checkout. |
+| `make: ... vcvars64.bat did not set up the MSVC x64 environment (cl was not found after it)` | Build Tools are installed without C++: add **Desktop development with C++** (step 4), or run `install.bat`, which adds it. |
+| `make: Visual Studio's C++ build tools (vcvars64.bat) were not found` | Install Build Tools 2022 with C++ (step 4). |
+| `make: --cuda-root (or CUDA_PATH) names the CUDA toolkit` | Install the CUDA Toolkit 13.0 (step 5) and open a new terminal, or pass `--cuda-root`. |
+| `make: cmake was not found` / `ninja was not found` | Step 8: CMake and Ninja in `.venv-dev`. |
+| `make: --ggml-dir (or STRATA_GGML_DIR) names the llama.cpp checkout` | Pass `--ggml-dir` with the llama.cpp folder of step 7. |
+| `winget is not recognized` | Install **App Installer** from the Microsoft Store (it brings winget), or follow the steps by hand. |
+| `running scripts is disabled on this system` | Start the script through `install.bat`, which allows it for that run, not as `install.ps1`. |
 
 ## Configure
 

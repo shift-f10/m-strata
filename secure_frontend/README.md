@@ -254,9 +254,12 @@ Spec: [`docs/superpowers/specs/2026-10-27-gui-first-install-design.md`](../docs/
 **Build an out folder** from the repository root. It holds only what runs, so it can be copied anywhere:
 
 ```sh
-make.bat --out D:\SecureStrata --ggml-dir C:\src\llama.cpp --with email,search     # Windows
+.\make.bat --out D:\M-Strata-app --ggml-dir D:\llama.cpp --with email,search     # Windows (PowerShell needs .\)
 ./make.sh --out /opt/secure-strata --ggml-dir ~/llama.cpp --with email,search      # Linux
 ```
+
+`install.bat` / `install.sh` at the repository root install what the build needs and then run this (the root
+README's Install section lists every dependency and the same steps by hand).
 
 `--with email,search` adds email alerts and web search (each is off otherwise). `--without maya,raon1` leaves those
 engine families out (strata, Gemma 4 and flint are always built). `--no-cuda-runtime` skips bundling cuBLAS; `--jobs N`
