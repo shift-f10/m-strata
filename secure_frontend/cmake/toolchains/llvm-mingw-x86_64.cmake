@@ -1,0 +1,22 @@
+# Cross-compile the secure frontend to x86_64 Windows with llvm-mingw.
+# Usage: cmake --preset windows-llvm-mingw-cross  (expects ../.toolchains/llvm-mingw)
+set(CMAKE_SYSTEM_NAME Windows)
+set(CMAKE_SYSTEM_PROCESSOR x86_64)
+if(NOT DEFINED LLVM_MINGW_ROOT)
+    set(LLVM_MINGW_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../.toolchains/llvm-mingw")
+endif()
+get_filename_component(LLVM_MINGW_ROOT "${LLVM_MINGW_ROOT}" ABSOLUTE)
+set(CMAKE_C_COMPILER   "${LLVM_MINGW_ROOT}/bin/x86_64-w64-mingw32-clang")
+set(CMAKE_CXX_COMPILER "${LLVM_MINGW_ROOT}/bin/x86_64-w64-mingw32-clang++")
+set(CMAKE_RC_COMPILER  "${LLVM_MINGW_ROOT}/bin/x86_64-w64-mingw32-windres")
+set(CMAKE_FIND_ROOT_PATH "${LLVM_MINGW_ROOT}/x86_64-w64-mingw32")
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+# Static runtime so wine and a bare Windows box need no extra DLLs.
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-static")
+# Let ctest run the .exe files under wine when it is present on the build host.
+find_program(SECURE_FRONTEND_WINE wine)
+if(SECURE_FRONTEND_WINE)
+    set(CMAKE_CROSSCOMPILING_EMULATOR "${SECURE_FRONTEND_WINE}")
+endif()

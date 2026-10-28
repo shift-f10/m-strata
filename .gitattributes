@@ -1,0 +1,18 @@
+# Shell scripts keep LF line endings wherever the repository is cloned.
+*.sh text eol=lf
+# Digest-pinned bytes (SP4 §2.5): catalog manifests, fixtures and the engine
+# version file must never be line-ending converted (Windows runners use autocrlf).
+/upstream.version -text
+/secure_frontend/catalog/** -text
+/secure_frontend/tests/fixtures/** -text
+# Supply-chain review records whose SHA-256 is cited in docs/PROVENANCE.md (engine-supply-chain.md, C9).
+/docs/security/engine-reviews/** -text
+/docs/security/engine-binary-allowlist.json -text
+# Project Maya's configure-time MMQ patch is applied byte for byte, as Maya's own .gitattributes keeps it.
+/engine/third_party/maya/third_party/ggml/*.patch -text
+# MiniMax-M3.1's chat template (copied into each pack as Maya ships it), its GGUF manifest and licence: byte for byte.
+/engine/third_party/maya/tools/mm3/** -text
+/engine/third_party/maya/LICENSE.minimax-m31 -text
+# The built-in chat page is embedded byte for byte (cmake/EmbedWebUi.cmake refuses CR).
+/secure_frontend/web/** text eol=lf
+/secure_frontend/web/fonts/*.woff2 binary

@@ -1,0 +1,11 @@
+Controller rulings that bind Task 27 (supersede the brief where they differ):
+- B1: fill_kit (or the equivalent setup before any ConfinedDownloader is built for a probe OR a transfer, including doctor --downloader and pull --bundle) ensures roots.models/.staging exists (ensure_directory, as acquire_pull.cpp does) and then .staging/.cwd (make_read_only_directory, same as acquire_pull.cpp ~427). Spec §3.2 cwd row. Cover with a test (doctor --downloader on a fresh store succeeds).
+- B4: tests/fetch_cli_test.cpp includes "support/fake_curl_support.hpp".
+- R1: in do_pull, under SECURE_FRONTEND_TEST_HOOKS, request.test_cacert = services.test_cacert. No new CLI option.
+- R3: reuse src/strata_cli_internal.hpp helpers (strata_cli_detail::parse_args, usage, report, trust_option, loaded_for, store_for) and its run_network_verb declaration; do not re-create Parsed/parse/usage/report or --trust-manifest parsing.
+- R8: extend fetch.confinement_reduced_when_root_beneath_allowed_dir: (a) config file placed inside the downloader's directory → doctor shows `reduced:readable:config file` (use the merged confinement_label form); (b) a hooks pull through the fake downloader with roots.logs set asserts `confinement=reduced:readable:…` in acquire.log.
+- R11: verb_run for "not installed and not in this release's catalog" → report(io, AcquireError{AcquireReason::model_unknown, ref}) (exit 5), keeping the `strata import` hint as a second line.
+- R12: acquire.log remains one record per transferred file (do not touch Task 22 code for reused/bundle files).
+- I13: put Forward/ForwardProbe test adapters once in tests/support/pull_harness.hpp (used by both test files); factor verb_run's duplicated "ready + gate" tail into one helper.
+- I15: Windows Ctrl-Break DL-04 case: implement as planned; its real-Windows result is pending MSYS2 CI (we do not trigger CI). If it obviously needs a console, use AttachConsole/AllocConsole in the case.
+- Carry-in: secure_frontend_utf8_argv already used by strata — do not re-add.

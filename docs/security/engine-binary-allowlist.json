@@ -1,0 +1,32 @@
+{
+ "comment": "Allowlist for scripts/security/engine_review.py binary (docs/security/engine-supply-chain.md, C5): the Windows CUDA build of upstream Strata's engine (strata.exe, strata_kq.dll). imports: DLLs the binaries may import. loadable: further DLL names they may carry and load at run time. A name outside both lists, any network library, or any process-launch / remote-thread / network / service / registry-write function fails the gate. Recorded 2026-10-21 from the v0.2.2 build (out/engine-cuda-v0.2.2); a change needs a ruling in the bump's review file.",
+ "imports": [
+  "kernel32.dll",
+  "advapi32.dll",
+  "msvcp140.dll",
+  "msvcp140_atomic_wait.dll",
+  "vcruntime140.dll",
+  "vcruntime140_1.dll",
+  "api-ms-win-crt-*.dll",
+  "cublas64_13.dll"
+ ],
+ "loadable": [
+  "nvcuda.dll",
+  "nvcudart_hybrid64.dll",
+  "dxgi.dll",
+  "dbghelp.dll",
+  "strata_kq.dll",
+  "nvldumd.dll",
+  "nvldumdx.dll"
+ ],
+ "loadable_rulings": {
+  "nvcuda.dll": "the NVIDIA driver API, opened by the CUDA runtime",
+  "nvcudart_hybrid64.dll": "named by the statically linked CUDA 13 runtime",
+  "nvldumd.dll": "NVIDIA user-mode driver loader, named by the static CUDA runtime in strata_kq.dll to locate the driver",
+  "nvldumdx.dll": "the same loader's 64-bit name",
+  "dxgi.dll": "GPU adapter enumeration",
+  "dbghelp.dll": "crash-dump / symbol support",
+  "strata_kq.dll": "the engine's own K-quant MMQ library, loaded by full path from the engine folder (engine-protocol-limits.md)"
+ },
+ "allowed_functions": []
+}

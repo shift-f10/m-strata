@@ -1,0 +1,35 @@
+{
+  "_comment": "Serve OUR built engine (C:\\multi-strata\\engine\\build\\multiengine.exe) on the qwen3.8-flash-next IQ3_S model, via the reviewed serve layer. Same recipe as Strata's strata-iq3_s.json, but exe points at our port.",
+  "exe": "C:\\multi-strata\\engine\\build\\multiengine.exe",
+  "args": [
+    "--pack", "G:\\Strata-data\\packs\\iq3_s",
+    "--native", "G:\\Strata-data\\models\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+    "--ple-gguf", "G:\\Strata-data\\models\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf",
+    "--expert-profile", "G:\\Strata\\data\\expert-profile.bin",
+    "--expert-cache", "auto",
+    "--prefill", "auto",
+    "--spec", "4",
+    "--mtp", "G:\\Strata-data\\mtp\\rt",
+    "--max-context", "262144",
+    "--kv", "int8",
+    "--kv-resident", "32768",
+    "--pcie-frac", "0.35",
+    "--spec-min-p", "0.70",
+    "--adapt-every", "1",
+    "--adapt-swaps", "160",
+    "--adapt-decay", "0.97"
+  ],
+  "cwd": "C:\\multi-strata\\engine\\build",
+  "tokenizer": "G:\\Strata-data\\packs\\iq3_s\\tokenizer",
+  "model_name": "qwen3.8-flash-next-iq3_s",
+  "log": "C:\\multi-strata\\engine\\our-qwen.log",
+  "lib_dirs": [
+    "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin",
+    "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin\\x64"
+  ],
+  "host": "0.0.0.0",
+  "port": 8080,
+  "gpu": 0,
+  "api_key": "strata-secret-key",
+  "mtp": true
+}

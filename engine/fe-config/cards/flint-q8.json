@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "name": "flint-Q8_0",
+  "profile": "flint",
+  "config": {
+    "engine": {
+      "executable": "C:\\multi-strata\\engine\\frontend-engine-flint\\multiengine.exe",
+      "model_id": "flint-Q8_0",
+      "gpu": "0",
+      "lib_dirs": [
+        "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin",
+        "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin\\x64"
+      ]
+    },
+    "roots": {
+      "models": "F:\\models\\flint-Q8_0",
+      "tokenizer_pack": "C:\\multi-strata\\out\\flint-pack\\tokenizer"
+    },
+    "limits": {
+      "chat": {
+        "max_prompt_tokens": 262144,
+        "max_completion_tokens": 65536,
+        "default_max_tokens": 16384
+      }
+    }
+  },
+  "options": {
+    "max_context": {"default": 65536, "min": 4096, "max": 262144},
+    "expert_vram": {"default": "auto", "max": 15},
+    "thinking": {"default": "on"},
+    "temperature": {"default": 1.0},
+    "top_p": {"default": 0.95},
+    "top_k": {"default": 20}
+  }
+}

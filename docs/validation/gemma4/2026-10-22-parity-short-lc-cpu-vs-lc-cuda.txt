@@ -1,0 +1,57 @@
+layers: 48 positions compared
+  layer  0: median relative error 0.00188, worst 0.00341 (position 34)
+  layer  1: median relative error 0.00141, worst 0.00239 (position 34)
+  layer  2: median relative error 0.00354, worst 0.00627 (position 30)
+  layer  3: median relative error 0.00387, worst 0.00619 (position 17)
+  layer  4: median relative error 0.00478, worst 0.00636 (position 36)
+  layer  5: median relative error 0.00489, worst 0.00672 (position 35)
+  layer  6: median relative error 0.00600, worst 0.00923 (position 19)
+  layer  7: median relative error 0.00717, worst 0.02975 (position 13)
+  layer  8: median relative error 0.00822, worst 0.05513 (position 20)
+  layer  9: median relative error 0.00854, worst 0.05678 (position 13)
+  layer 10: median relative error 0.00979, worst 0.06265 (position 46)
+  layer 11: median relative error 0.01020, worst 0.05620 (position 23)
+  layer 12: median relative error 0.01063, worst 0.06232 (position 46)
+  layer 13: median relative error 0.01279, worst 0.07376 (position 46)
+  layer 14: median relative error 0.01425, worst 0.07306 (position 46)
+  layer 15: median relative error 0.01484, worst 0.09709 (position 13)
+  layer 16: median relative error 0.02033, worst 0.07601 (position 13)
+  layer 17: median relative error 0.02221, worst 0.13827 (position 26)
+  layer 18: median relative error 0.02687, worst 0.12659 (position 26)
+  layer 19: median relative error 0.02708, worst 0.13103 (position 20)
+  layer 20: median relative error 0.02790, worst 0.11933 (position 20)
+  layer 21: median relative error 0.02961, worst 0.11523 (position 20)
+  layer 22: median relative error 0.03200, worst 0.10468 (position 20)
+  layer 23: median relative error 0.03621, worst 0.10520 (position 15)
+  layer 24: median relative error 0.04161, worst 0.12735 (position 6)
+  layer 25: median relative error 0.03994, worst 0.15469 (position 15)
+  layer 26: median relative error 0.04214, worst 0.18283 (position 6)
+  layer 27: median relative error 0.04564, worst 0.18935 (position 15)
+  layer 28: median relative error 0.04856, worst 0.21391 (position 15)
+  layer 29: median relative error 0.03160, worst 0.64894 (position 23)
+logits: 24 steps compared
+  step   0: KL 0.000000  top1 ours 818 ref 818  top5 overlap 5
+  step   1: KL 0.000000  top1 ours 5279 ref 5279  top5 overlap 5
+  step   2: KL 0.000000  top1 ours 529 ref 529  top5 overlap 4
+  step   3: KL 0.000080  top1 ours 7001 ref 7001  top5 overlap 5
+  step   4: KL 0.000000  top1 ours 563 ref 563  top5 overlap 5
+  step   5: KL 0.000000  top1 ours 9079 ref 9079  top5 overlap 5
+  step   6: KL 0.000000  top1 ours 236761 ref 236761  top5 overlap 3
+  step   7: KL 0.000000  top1 ours 106 ref 106  top5 overlap 4
+  step   8: KL 0.034347  top1 ours 106 ref 106  top5 overlap 4
+  step   9: KL 0.631117  top1 ours 106 ref 715  top5 overlap 4
+  step  10: KL 0.009049  top1 ours 45518 ref 45518  top5 overlap 5
+  step  11: KL 0.000001  top1 ours 107 ref 107  top5 overlap 5
+  step  12: KL 0.011328  top1 ours 101 ref 101  top5 overlap 5
+  step  13: KL 0.004375  top1 ours 818 ref 818  top5 overlap 4
+  step  14: KL 0.001855  top1 ours 5279 ref 5279  top5 overlap 5
+  step  15: KL 0.000000  top1 ours 529 ref 529  top5 overlap 5
+  step  16: KL 0.000032  top1 ours 7001 ref 7001  top5 overlap 5
+  step  17: KL 0.000000  top1 ours 563 ref 563  top5 overlap 4
+  step  18: KL 0.000000  top1 ours 9079 ref 9079  top5 overlap 4
+  step  19: KL 0.000000  top1 ours 236761 ref 236761  top5 overlap 5
+  step  20: KL 0.000000  top1 ours 106 ref 106  top5 overlap 5
+  step  21: KL 0.030984  top1 ours 715 ref 106  top5 overlap 5
+  step  22: KL 0.179480  top1 ours 715 ref 107  top5 overlap 5
+  step  23: KL 0.109273  top1 ours 45518 ref 45518  top5 overlap 5
+  mean KL 0.042163, max KL 0.631117, top-1 agreement 21/24, top-5 overlap 111/120

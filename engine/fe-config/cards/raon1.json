@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "name": "raon1-mini",
+  "profile": "raon1",
+  "config": {
+    "roots": {
+      "models": "G:\\Strata-data\\models\\raon1_q8\\pack",
+      "tokenizer_pack": "G:\\Strata-data\\models\\raon1_q8\\pack\\tokenizer"
+    },
+    "engine": {
+      "executable": "C:\\multi-strata\\engine\\frontend-engine-raon\\multiengine.exe",
+      "model_id": "raon1-mini",
+      "lib_dirs": [
+        "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin",
+        "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin\\x64"
+      ]
+    },
+    "defaults": {
+      "sampling": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "presence_penalty": 0.0,
+        "penalty_last_n": 2048
+      }
+    },
+    "limits": {
+      "chat": {
+        "default_max_tokens": 32768,
+        "max_completion_tokens": 32768,
+        "max_prompt_tokens": 229376
+      }
+    }
+  }
+}

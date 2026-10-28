@@ -1,0 +1,22 @@
+# SP5 parity acceptance corpus (docs/validation/sp5-parity-kit.md).
+# One JSON object per line: {"case","class","request"[,"expect"|"authorised_by"]}.
+# Blank and # lines are ignored — a run without vision comments out the vision
+# case. The SAME file runs on both sides (C-6); strata-api-probe injects its
+# --model and refuses stream:true (streaming is the SP3 kit's ground).
+# text cases: greedy/seeded determinism pairs (the probe runs each request
+# twice and the kit then text-for-text diffs the two sides' recorded sha256).
+{"case":"greedy-hello","class":"text","request":{"messages":[{"role":"user","content":"Say hello in five words."}],"temperature":0,"max_tokens":32}}
+{"case":"seeded-rivers-42","class":"text","request":{"messages":[{"role":"user","content":"Write one sentence about rivers."}],"seed":42,"temperature":0.7,"max_tokens":48}}
+{"case":"seeded-rivers-999","class":"text","request":{"messages":[{"role":"user","content":"Write one sentence about rivers."}],"seed":999,"temperature":0.7,"max_tokens":48}}
+# shape cases: finish_reason/usage agreement on the shared schema (SP3 §7.2).
+{"case":"length-stop-one-token","class":"shape","expect":{"status":200,"finish":"length"},"request":{"messages":[{"role":"user","content":"Count from 1 to 500."}],"max_tokens":1}}
+{"case":"stop-normal","class":"shape","expect":{"status":200,"finish":"stop"},"request":{"messages":[{"role":"user","content":"Say OK."}],"max_tokens":64}}
+# divergent-by-decision cases: the named decision authorizes a different shape
+# on our side; both sides' shapes are RECORDED, never compared for equality.
+{"case":"no-max-tokens","class":"divergent-by-decision","authorised_by":"B1","request":{"messages":[{"role":"user","content":"Say OK."}]}}
+{"case":"huge-max-tokens","class":"divergent-by-decision","authorised_by":"B2","request":{"messages":[{"role":"user","content":"Say OK."}],"max_tokens":999999}}
+{"case":"empty-messages","class":"divergent-by-decision","authorised_by":"SP3-Sec3.1","request":{"messages":[]}}
+{"case":"extension-tools","class":"divergent-by-decision","authorised_by":"EXT-01","request":{"messages":[{"role":"user","content":"Say OK."}],"tools":[]}}
+# vision (owner box; needs vision.enabled on our side and the reference's own
+# vision flow; comment this line out for a text-only run):
+{"case":"vision-one-pixel","class":"shape","expect":{"status":200,"finish":"stop"},"request":{"messages":[{"role":"user","content":[{"type":"text","text":"What is in this picture?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="}}]}],"max_tokens":32}}

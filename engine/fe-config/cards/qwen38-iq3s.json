@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "name": "Qwen3.8-Flash-Next-IQ3_S",
+  "profile": "qwen",
+  "config": {
+    "engine": {
+      "executable": "C:\\multi-strata\\engine\\frontend-engine-multi\\multiengine.exe",
+      "model_id": "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002",
+      "gpu": "0",
+      "lib_dirs": [
+        "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin",
+        "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin\\x64"
+      ],
+      "args": [
+        "--pack", "G:\\Strata-data\\packs\\iq3_s",
+        "--ple-gguf", "G:\\Strata-data\\models\\IQ3_S\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf",
+        "--expert-profile", "G:\\Strata\\data\\expert-profile.bin",
+        "--mtp", "G:\\Strata-data\\mtp\\rt",
+        "--pcie-frac", "0.35",
+        "--adapt-every", "1",
+        "--adapt-swaps", "160",
+        "--adapt-decay", "0.97"
+      ]
+    },
+    "roots": {
+      "models": "G:\\Strata-data\\models\\IQ3_S",
+      "tokenizer_pack": "G:\\Strata-data\\packs\\iq3_s\\tokenizer"
+    },
+    "limits": {
+      "chat": {
+        "max_prompt_tokens": 262144,
+        "max_completion_tokens": 262144
+      }
+    }
+  },
+  "options": {
+    "max_context": {"default": 262144},
+    "kv": {"default": "int8"},
+    "kv_resident": {"default": 32768},
+    "mtp": {"default": true},
+    "spec": {"default": 4},
+    "spec_min_p": {"default": 0.7},
+    "expert_cache": {"default": "auto"},
+    "prefill": {"default": "auto"},
+    "thinking": {"default": "high"},
+    "temperature": {"default": 1.0},
+    "top_p": {"default": 0.95},
+    "top_k": {"default": 20}
+  }
+}

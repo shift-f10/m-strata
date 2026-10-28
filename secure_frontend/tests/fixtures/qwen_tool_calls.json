@@ -1,0 +1,562 @@
+{
+ "generator": "tools/generate_qwen_tool_call_fixture.py",
+ "tool": {
+  "name": "web_search",
+  "description": "Search the web.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string"
+    },
+    "max_results": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ "cases": [
+  {
+   "name": "a_call_after_the_thinking",
+   "thinking": true,
+   "reply": "I need to search.\n</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\nworld cup 2026\n</parameter>\n</function>\n</tool_call>",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "I need to search.\n"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "world cup 2026"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "content_before_a_call",
+   "thinking": true,
+   "reply": "ok</think>\n\nLet me check.\n\n<tool_call>\n<function=web_search>\n<parameter=query>\nx\n</parameter>\n<parameter=max_results>\n3\n</parameter>\n</function>\n</tool_call>",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "ok"
+    },
+    {
+     "kind": "content",
+     "text": "Let me check."
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "x",
+       "max_results": 3
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_call_in_the_reasoning_then_the_end_of_it",
+   "thinking": true,
+   "reply": "I will search.\n<tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>\n</think>\n\n",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "I will search.\n"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_call_in_the_reasoning_then_text_is_a_quote",
+   "thinking": true,
+   "reply": "Like this:\n<tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>\nBut I won't.\n</think>\n\nAnswer.",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "Like this:\n<tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>\nBut I won't.\n"
+    },
+    {
+     "kind": "content",
+     "text": "Answer."
+    }
+   ]
+  },
+  {
+   "name": "a_call_mid_sentence_in_the_reasoning_is_text",
+   "thinking": true,
+   "reply": "I would write <tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call> here.</think>\n\nNo.",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "I would write <tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call> here."
+    },
+    {
+     "kind": "content",
+     "text": "No."
+    }
+   ]
+  },
+  {
+   "name": "a_call_in_the_reasoning_at_a_natural_end",
+   "thinking": true,
+   "reply": "Search:\n<tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "Search:\n"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_call_in_the_reasoning_cut_by_length",
+   "thinking": true,
+   "reply": "Search:\n<tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>",
+   "finish": "length",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "Search:\n<tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>"
+    }
+   ]
+  },
+  {
+   "name": "inline_code_in_the_reasoning_is_a_quote",
+   "thinking": true,
+   "reply": "Use `<tool_call>` like so\n</think>\n\nok",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "Use `<tool_call>` like so\n"
+    },
+    {
+     "kind": "content",
+     "text": "ok"
+    }
+   ]
+  },
+  {
+   "name": "a_fenced_call_in_the_answer_is_text",
+   "thinking": true,
+   "reply": "x</think>\n\n```\n<tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>\n```\nThat is the format.",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "kind": "content",
+     "text": "```\n<tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>\n```\nThat is the format."
+    }
+   ]
+  },
+  {
+   "name": "an_undeclared_tool_is_text",
+   "thinking": true,
+   "reply": "x</think>\n\n<tool_call>\n<function=other_tool>\n<parameter=a>\n1\n</parameter>\n</function>\n</tool_call>",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "kind": "content",
+     "text": "<tool_call>\n<function=other_tool>\n<parameter=a>\n1\n</parameter>\n</function>\n</tool_call>"
+    }
+   ]
+  },
+  {
+   "name": "prose_naming_the_tag_is_text",
+   "thinking": true,
+   "reply": "x</think>\n\nI'll use a <tool_call> block soon.",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "kind": "content",
+     "text": "I'll use a <tool_call> block soon."
+    }
+   ]
+  },
+  {
+   "name": "a_drifted_opener_names_the_tool",
+   "thinking": true,
+   "reply": "x</think>\n\n<tool_call>\n<web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_spaced_opener_names_the_tool",
+   "thinking": true,
+   "reply": "x</think>\n\n<tool_call>\n<function =web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "spaces_around_a_declared_name",
+   "thinking": true,
+   "reply": "x</think>\n\n<tool_call>\n<function= web_search >\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "two_calls_and_text_after",
+   "thinking": true,
+   "reply": "x</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\na\n</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=web_search>\n<parameter=query>\nb\n</parameter>\n</function>\n</tool_call>\n\nDone.",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "a"
+      }
+     }
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "b"
+      }
+     }
+    },
+    {
+     "kind": "content",
+     "text": "Done."
+    }
+   ]
+  },
+  {
+   "name": "a_value_holding_the_closing_tags",
+   "thinking": true,
+   "reply": "x</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\na </parameter> b </tool_call> c </function> d\n</parameter>\n</function>\n</tool_call>",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "a </parameter> b </tool_call> c </function> d"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "an_unterminated_call_is_text",
+   "thinking": true,
+   "reply": "x</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\nq",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "kind": "content",
+     "text": "<tool_call>\n<function=web_search>\n<parameter=query>\nq"
+    }
+   ]
+  },
+  {
+   "name": "thinking_off_text_around_a_call",
+   "thinking": false,
+   "reply": "Sure.\n<tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>\nAfter text.",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "content",
+     "text": "Sure."
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q"
+      }
+     }
+    },
+    {
+     "kind": "content",
+     "text": "After text."
+    }
+   ]
+  },
+  {
+   "name": "an_omitted_closer_before_the_next_call",
+   "thinking": true,
+   "reply": "x</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\na\n</parameter>\n</function>\n<tool_call>\n<function=web_search>\n<parameter=query>\nb\n</parameter>\n</function>\n</tool_call>",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "a"
+      }
+     }
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "b"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "values_are_decoded_unless_strings",
+   "thinking": true,
+   "reply": "x</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\n5\n</parameter>\n<parameter=max_results>\n5\n</parameter>\n<parameter=list>\n[1, 2.5, \"z\"]\n</parameter>\n<parameter=word>\nnotjson\n</parameter>\n<parameter=flag>\ntrue\n</parameter>\n<parameter=nothing>\nnull\n</parameter>\n</function>\n</tool_call>",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "5",
+       "max_results": 5,
+       "list": [
+        1,
+        2.5,
+        "z"
+       ],
+       "word": "notjson",
+       "flag": true,
+       "nothing": null
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "newlines_before_a_call_are_dropped",
+   "thinking": true,
+   "reply": "x</think>\n\nA\n\n\n<tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>\n\n\nB",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "kind": "content",
+     "text": "A"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "q"
+      }
+     }
+    },
+    {
+     "kind": "content",
+     "text": "B"
+    }
+   ]
+  },
+  {
+   "name": "a_partial_tag_at_the_end_is_text",
+   "thinking": true,
+   "reply": "x</think>\n\nThe end <tool_",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "kind": "content",
+     "text": "The end <tool_"
+    }
+   ]
+  },
+  {
+   "name": "a_second_call_in_the_reasoning_waits_too",
+   "thinking": true,
+   "reply": "Two:\n<tool_call>\n<function=web_search>\n<parameter=query>\na\n</parameter>\n</function>\n</tool_call>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\nb\n</parameter>\n</function>\n</tool_call>\n</think>\n\nThanks.",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "Two:\n"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "a"
+      }
+     }
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "b"
+      }
+     }
+    },
+    {
+     "kind": "content",
+     "text": "Thanks."
+    }
+   ]
+  },
+  {
+   "name": "a_call_in_a_reasoning_fence_is_a_quote",
+   "thinking": true,
+   "reply": "Format:\n```xml\n<tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>\n```\nok\n</think>\n\nHi.",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "Format:\n```xml\n<tool_call>\n<function=web_search>\n<parameter=query>\nq\n</parameter>\n</function>\n</tool_call>\n```\nok\n"
+    },
+    {
+     "kind": "content",
+     "text": "Hi."
+    }
+   ]
+  },
+  {
+   "name": "a_duplicate_parameter_keeps_its_first_place",
+   "thinking": true,
+   "reply": "x</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\na\n</parameter>\n<parameter=max_results>\n2\n</parameter>\n<parameter=query>\nb\n</parameter>\n</function>\n</tool_call>",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "x"
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "b",
+       "max_results": 2
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "unicode_around_a_call",
+   "thinking": true,
+   "reply": "思考。\n</think>\n\n答え：\n<tool_call>\n<function=web_search>\n<parameter=query>\n日本 été\n</parameter>\n</function>\n</tool_call>",
+   "finish": "stop",
+   "events": [
+    {
+     "kind": "reasoning",
+     "text": "思考。\n"
+    },
+    {
+     "kind": "content",
+     "text": "答え："
+    },
+    {
+     "call": {
+      "name": "web_search",
+      "arguments": {
+       "query": "日本 été"
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

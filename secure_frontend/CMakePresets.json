@@ -1,0 +1,209 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "secure-frontend-base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "BUILD_TESTING": "ON",
+        "STRATA_BUILD_SECURE_FRONTEND_TESTS": "ON",
+        "SECURE_FRONTEND_TEST_HOOKS": "ON"
+      }
+    },
+    {
+      "name": "linux-gcc",
+      "displayName": "Linux GCC",
+      "inherits": "secure-frontend-base",
+      "generator": "Ninja",
+      "environment": {
+        "CC": "gcc",
+        "CXX": "g++"
+      },
+      "cacheVariables": {
+        "SECURE_FRONTEND_EMAIL_ALERTS": "ON",
+        "SECURE_FRONTEND_WEB_SEARCH": "ON"
+      }
+    },
+    {
+      "name": "linux-gcc-release",
+      "displayName": "Linux GCC, release configuration (SECURE_FRONTEND_TEST_HOOKS OFF)",
+      "inherits": "linux-gcc",
+      "cacheVariables": {
+        "SECURE_FRONTEND_TEST_HOOKS": "OFF",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-clang",
+      "displayName": "Linux Clang",
+      "inherits": "secure-frontend-base",
+      "generator": "Ninja",
+      "environment": {
+        "CC": "clang",
+        "CXX": "clang++"
+      },
+      "cacheVariables": {
+        "SECURE_FRONTEND_EMAIL_ALERTS": "ON",
+        "SECURE_FRONTEND_WEB_SEARCH": "ON"
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "displayName": "Windows MSVC (email alerts on: our builds; the option's default is off)",
+      "inherits": "secure-frontend-base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "cacheVariables": {
+        "SECURE_FRONTEND_EMAIL_ALERTS": "ON",
+        "SECURE_FRONTEND_WEB_SEARCH": "ON"
+      }
+    },
+    {
+      "name": "windows-msvc-release",
+      "displayName": "Windows MSVC, release configuration (SECURE_FRONTEND_TEST_HOOKS OFF)",
+      "inherits": "windows-msvc",
+      "cacheVariables": {
+        "SECURE_FRONTEND_TEST_HOOKS": "OFF"
+      }
+    },
+    {
+      "name": "windows-llvm-mingw-cross",
+      "displayName": "Windows x86_64 (llvm-mingw cross from Linux)",
+      "inherits": "secure-frontend-base",
+      "generator": "Ninja",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/llvm-mingw-x86_64.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "windows-msys2-clang",
+      "displayName": "Windows x86_64 (MSYS2 CLANG64)",
+      "inherits": "secure-frontend-base",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_EXE_LINKER_FLAGS": "-static"
+      },
+      "environment": {
+        "CC": "clang",
+        "CXX": "clang++"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux-gcc",
+      "configurePreset": "linux-gcc"
+    },
+    {
+      "name": "linux-gcc-release",
+      "configurePreset": "linux-gcc-release"
+    },
+    {
+      "name": "linux-clang",
+      "configurePreset": "linux-clang"
+    },
+    {
+      "name": "windows-msvc",
+      "configurePreset": "windows-msvc",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-msvc-release",
+      "configurePreset": "windows-msvc-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-llvm-mingw-cross",
+      "configurePreset": "windows-llvm-mingw-cross"
+    },
+    {
+      "name": "windows-msys2-clang",
+      "configurePreset": "windows-msys2-clang"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "linux-gcc",
+      "configurePreset": "linux-gcc",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "exclude": {
+          "label": "release-only"
+        }
+      }
+    },
+    {
+      "name": "linux-gcc-release",
+      "configurePreset": "linux-gcc-release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "release-only|release-also"
+        }
+      }
+    },
+    {
+      "name": "linux-clang",
+      "configurePreset": "linux-clang",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "exclude": {
+          "label": "release-only"
+        }
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "configurePreset": "windows-msvc",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "exclude": {
+          "label": "release-only"
+        }
+      }
+    },
+    {
+      "name": "windows-llvm-mingw-cross",
+      "configurePreset": "windows-llvm-mingw-cross",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "exclude": {
+          "label": "windows-runtime|release-only"
+        }
+      },
+      "environment": {
+        "WINEPREFIX": "${sourceDir}/out/wineprefix"
+      }
+    },
+    {
+      "name": "windows-msys2-clang",
+      "configurePreset": "windows-msys2-clang",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "exclude": {
+          "label": "release-only"
+        }
+      }
+    }
+  ]
+}

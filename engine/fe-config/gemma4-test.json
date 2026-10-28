@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "listener": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "web_ui": true,
+    "monitor": true,
+    "allow_remote": true,
+    "allow_wildcard_bind": true,
+    "host_aliases": [
+      "localhost:8080",
+      "127.0.0.1:8080",
+      "172.16.1.96:8080",
+      "localhost",
+      "127.0.0.1",
+      "172.16.1.96"
+    ]
+  },
+  "token": {
+    "source": "file:token"
+  },
+  "roots": {
+    "secret": "C:\\multi-strata\\engine\\raon-secret",
+    "state": "C:\\multi-strata\\engine\\raon-state",
+    "allow_untrusted_media": true
+  },
+  "models": {
+    "cards": [
+      "C:\\multi-strata\\engine\\fe-config\\cards\\gemma4.json"
+    ],
+    "control": true,
+    "control_remote": true,
+    "downloads": true,
+    "downloads_root": "C:\\multi-strata\\engine\\downloads"
+  },
+  "limits": {
+    "http": {
+      "max_request_bytes": 8388608
+    },
+    "chat": {
+      "max_body_bytes": 8372224,
+      "max_message_bytes": 8372224
+    },
+    "engine": {
+      "generation_timeout_s": 3600
+    }
+  }
+}

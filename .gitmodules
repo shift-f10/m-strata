@@ -1,0 +1,6 @@
+[submodule "upstream"]
+	path = upstream
+	url = https://github.com/Niko1221/Strata.git
+[submodule "engines/maya-ref"]
+	path = engines/maya-ref
+	url = https://github.com/mw00/project-maya

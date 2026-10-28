@@ -1,0 +1,36 @@
+{
+  "format": "strata-model-manifest",
+  "schema_version": 1,
+  "name": "fixture-qwen",
+  "tag": "t1",
+  "version": "2026.10.14.2",
+  "sequence": 2,
+  "profile": "qwen",
+  "engine": { "family": "strata", "min_version": "0.1.43" },
+  "license": {
+    "id": "Apache-2.0",
+    "url": "https://fixture.example/license",
+    "bundle_allowed": true,
+    "notice": "Test fixture only; never shipped."
+  },
+  "hosts": ["fixture.example"],
+  "redirect_hosts": ["*.cdn.fixture.example"],
+  "files": [
+    { "path": "weights/fx-00001-of-00002.gguf", "role": "weights", "size": 21, "sha256": "7c62bf9882449996afa1b8920b68e566cfa33649d9bba05457872b8b54b201f8", "sources": ["https://fixture.example/fx/weights/fx-00001-of-00002.gguf"] },
+    { "path": "weights/fx-00002-of-00002.gguf", "role": "weights", "size": 21, "sha256": "3bf0aa18f7b21aa67f5f8d4572cf20c48cd7e08bd85b368ff629f79541d49d77", "sources": ["https://fixture.example/fx/weights/fx-00002-of-00002.gguf"] },
+    { "path": "pack/index.txt", "role": "pack", "size": 14, "sha256": "bfae44e79d570c1d217346466bb6a35af2b42b23016ed1082e211d22b4c6d2ca", "sources": ["https://fixture.example/fx/pack/index.txt"] },
+    { "path": "pack/dense.bin", "role": "pack", "size": 14, "sha256": "d9a3181ee8d9840d63df49bfdd193cbee374a43cfc3db0a0a25af26b181bbf88", "sources": ["https://fixture.example/fx/pack/dense.bin"] },
+    { "path": "pack/native_experts.txt", "role": "pack", "size": 23, "sha256": "b70b3112af88cd28fd74cf6019613b75b246e217eb3bf75c1254a6805b45cee4", "sources": ["https://fixture.example/fx/pack/native_experts.txt"] },
+    { "path": "pack/conversions.json", "role": "pack", "size": 3, "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356", "sources": ["https://fixture.example/fx/pack/conversions.json"] },
+    { "path": "pack/tokenizer/vocab.json", "role": "tokenizer", "size": 20, "sha256": "9cc249bbd29928e1d8dc56817e46c1763a53486bd82e86b357c272fb09e94904", "sources": ["https://fixture.example/fx/pack/tokenizer/vocab.json"] },
+    { "path": "pack/tokenizer/merges.txt", "role": "tokenizer", "size": 4, "sha256": "01186fcf04b4b447f393e552964c08c7b419c1ad7a25c342a0b631b1967d3a27", "sources": ["https://fixture.example/fx/pack/tokenizer/merges.txt"] },
+    { "path": "pack/tokenizer/token_type.json", "role": "tokenizer", "size": 7, "sha256": "9e07ab64261fb6803c6572f7b5c3098ea68fb45873128af820d42a2262eb900b", "sources": ["https://fixture.example/fx/pack/tokenizer/token_type.json"] },
+    { "path": "pack/tokenizer/tokenizer.json", "role": "tokenizer", "size": 3, "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356", "sources": ["https://fixture.example/fx/pack/tokenizer/tokenizer.json"] }
+  ],
+  "launch": {
+    "native": "weights/fx-00001-of-00002.gguf",
+    "ple_gguf": "weights/fx-00002-of-00002.gguf",
+    "pack": "pack",
+    "tokenizer_pack": "pack/tokenizer"
+  }
+}
