@@ -33,9 +33,11 @@ ROOT = Path(__file__).resolve().parent
 OPTIONAL_FAMILIES = ("maya", "raon1")   # the families a build may leave out; strata, gemma4 and flint are always built
 # what --without takes: those families, and the picture encoder (strata-vision: a Qwen card reads pictures with it)
 LEAVE_OUT = OPTIONAL_FAMILIES + ("vision",)
-# built only when asked (off by default): email alerts (SECURE_FRONTEND_EMAIL_ALERTS) and web search through a SearXNG
-# instance (SECURE_FRONTEND_WEB_SEARCH: strata-search, an MCP server beside the server)
-OPTIONAL_FEATURES = ("email", "search")
+# built only when asked (off by default): email alerts (SECURE_FRONTEND_EMAIL_ALERTS), web search through a SearXNG
+# instance (SECURE_FRONTEND_WEB_SEARCH: strata-search, an MCP server beside the server) and the server in a window with a
+# tray icon (SECURE_FRONTEND_WINDOW: strata-window; Windows needs the WebView2 SDK in .toolchains/webview2, Linux GTK 3,
+# WebKitGTK 4.1 and Ayatana AppIndicator)
+OPTIONAL_FEATURES = ("email", "search", "window")
 
 
 @dataclass
@@ -143,7 +145,8 @@ def frontend_configure_args(opts: Options, platform: str) -> list[str]:
             "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=OFF", "-DSTRATA_BUILD_SECURE_FRONTEND_TESTS=OFF",
             "-DSECURE_FRONTEND_TEST_HOOKS=OFF", "-DSECURE_FRONTEND_WERROR=ON",
             "-DSECURE_FRONTEND_EMAIL_ALERTS=" + _on_off("email" in opts.with_features),
-            "-DSECURE_FRONTEND_WEB_SEARCH=" + _on_off("search" in opts.with_features)]
+            "-DSECURE_FRONTEND_WEB_SEARCH=" + _on_off("search" in opts.with_features),
+            "-DSECURE_FRONTEND_WINDOW=" + _on_off("window" in opts.with_features)]
 
 
 # ---- the out folder's layout ----------------------------------------------------------------------------------------
@@ -168,12 +171,14 @@ def required_files(opts: Options, platform: str) -> list[str]:
             ["engine/templates/minimax-m3.1/chat_template.jinja", "engine/templates/minimax-m3.1/LICENSE.minimax-m31"])
     # web search: strata-search, the MCP server the server runs beside itself for it
     search = [f"strata-search{exe}"] if "search" in opts.with_features else []
+    # the window: strata-window, which runs the server beside it
+    window = [f"strata-window{exe}"] if "window" in opts.with_features else []
     # the picture encoder beside the launcher, where the server looks for it (spec 2026-10-28)
     vision = [] if "vision" in opts.without else [f"engine/strata-vision{exe}"]
     # engine/build.json: the build record the server's About shows (build_record)
     return ([f"strata-secure-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
              "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin", "engine/build.json",
-             "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + search + vision + maya +
+             "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + search + window + vision + maya +
             ["engine/" + lib(n) for n in _families(opts)])
 
 
@@ -304,7 +309,7 @@ README_TEXT = """M-Strata (Multiengine Strata) - runtime folder
 Start:      {server}{shell}
             The first start creates data/ here (the config, the API key, model cards and state) and prints a
             one-time login link (http://127.0.0.1:8080/#login=...). Open it in a browser on this PC: the page shows
-            your API key once and signs you in. Every later start prints a fresh link.
+            your API key once and signs you in. Every later start prints a fresh link.{window}
 Options:    this folder's data/, on port 9090 for this start:
                 {server} --port 9090
             a data folder elsewhere (made at its first start):
@@ -317,12 +322,13 @@ Options:    this folder's data/, on port 9090 for this start:
                 {server} --help
             Options apply to that start on top of data/config.json; --data-dir and --config exclude each other.
 Models:     the Models tab adds a model from a folder, downloads one into a folder you choose, starts, stops and
-            calibrates it; Models > Settings holds the model folders{settings}.
+            calibrates it.
+            The Settings tab holds {settings}.
 Config:     data/config.json (to keep a port, set listener.port there). An answer cut after about two minutes:
             raise limits.engine.generation_timeout_s (120 s by default), then restart the server.
 Key:        {strata} --config data/config.json key show   (or key rotate)
 
-Contents:   strata-secure-server and strata, the frontend{search}
+Contents:   strata-secure-server and strata, the frontend{search}{window_contents}
             engine/: multiengine (the launcher), one library per model family, strata-prepare{vision}, the expert
             profiles{templates}{cuda}
             LICENSE and NOTICE.md
@@ -341,10 +347,18 @@ def readme_text(opts: Options, platform: str) -> str:
     server = ".\\strata-secure-server.exe" if windows else "./strata-secure-server"
     shell = "   (PowerShell; in cmd: strata-secure-server)" if windows else ""
     cuda = ",\n            NVIDIA's cuBLAS" if opts.cuda_runtime else ""
-    search = ("\n            strata-search: web search through your SearXNG instance (Models > Settings)"
+    search = ("\n            strata-search: web search through your SearXNG instance (the Settings tab)"
               if "search" in opts.with_features else "")
-    settings = {("email", "search"): ", email alerts and web search", ("email",): " and email alerts",
-                ("search",): " and web search"}.get(tuple(f for f in OPTIONAL_FEATURES if f in opts.with_features), "")
+    held = ["the API key", "the server's settings", "the model folders"] + \
+           (["email alerts"] if "email" in opts.with_features else []) + (["web search"] if "search" in opts.with_features else [])
+    settings = ", ".join(held[:-1]) + " and " + held[-1]
+    # strata-window: the same server in a window, with the page inside and an icon in the tray
+    window_exe = ".\\strata-window.exe" if windows else "./strata-window"
+    window = ("\nWindow:     " + window_exe + "   (takes the same options)\n"
+              "            The same server in a window with the page inside, signed in for you, and an icon in the tray.\n"
+              "            Closing the window keeps the server running; the tray icon's menu opens it, starts and stops\n"
+              "            models, restarts the server and exits." if "window" in opts.with_features else "")
+    window_contents = ("\n            strata-window: the server in a window with a tray icon" if "window" in opts.with_features else "")
     maya = "maya" not in opts.without
     templates = ", templates/minimax-m3.1/ (MiniMax's chat template and licence)" if maya else ""
     minimax = (",\n            and the permission to combine it with MiniMax-M3.1-Flash's template and model, which stay under"
@@ -353,7 +367,7 @@ def readme_text(opts: Options, platform: str) -> str:
     vision = "" if "vision" in opts.without else ",\n            strata-vision (a Qwen model's picture encoder)"
     return README_TEXT.format(server=server, shell=shell, strata=".\\strata.exe" if windows else "./strata", cuda=cuda,
                               search=search, settings=settings, templates=templates, minimax=minimax, nvidia=nvidia,
-                              vision=vision)
+                              vision=vision, window=window, window_contents=window_contents)
 
 
 def owner_only_commands(path: Path, platform: str, user: str) -> list[list[str]]:

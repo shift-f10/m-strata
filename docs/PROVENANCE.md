@@ -796,6 +796,30 @@ read side by side.
   objects with the rest of Maya's tree and installed in `engine/profiles/`; the server names the GLM one on every
   GLM-5.3 launch, as Maya's setup writes it into every GLM config.
 
+## The WebView2 SDK (strata-window on Windows, 2026-10-28)
+
+`strata-window` (spec `docs/superpowers/specs/2026-10-28-server-window-design.md`, Part 2) shows the page in Microsoft
+Edge WebView2. Its Windows build compiles against `WebView2.h` and links `WebView2LoaderStatic.lib` from the
+[Microsoft.Web.WebView2][webview2] NuGet package, version `1.0.4314.35`. The package was fetched from nuget.org on
+2026-10-28, with the owner's OK. It is 9,818,548 bytes, sha256
+`90778deb1b77e36292828b4b5833c9255c27533f40e0ddd55891ae718944edc4`, and its SHA-512 matched nuget.org's catalog entry.
+It is unpacked under the git-ignored `/.toolchains/webview2/1.0.4314.35`; nothing from it is in this tree. CMake
+reads it from `SECURE_FRONTEND_WEBVIEW2_DIR`, which defaults there.
+
+- **Licence:** the package's `LICENSE.txt`, BSD-3-Clause ("Copyright (C) Microsoft Corporation"). The static loader
+  becomes part of `strata-window.exe`, so [`NOTICE.md`](../NOTICE.md) carries that notice, as its terms require for
+  binary redistribution.
+- **Not linked:** the package's `NOTICE.txt` names Antlr3.Runtime and StringTemplate4 (BSD-3-Clause). They belong to
+  the package's .NET WinRT projection tooling, which this build never uses or ships.
+- **The runtime:** WebView2 itself (the Evergreen Runtime) is part of Windows 10 and 11 and is not shipped.
+- **Our own code:** the COM handlers in `window_main_win32.cpp` are a small template of our own; the Windows
+  Implementation Library and WRL are not used.
+
+The Linux window links the system's GTK 3, WebKitGTK 4.1 and Ayatana AppIndicator dynamically (each under its own
+LGPL licence), found by pkg-config; nothing of them is vendored or bundled.
+
+[webview2]: https://www.nuget.org/packages/Microsoft.Web.WebView2
+
 ## llvm-mingw (build tool only)
 
 [mstorsjo/llvm-mingw][llvmmingw] release `20261006` is the open-source

@@ -736,6 +736,28 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
   loopback client; settings apply at the next start; a test search runs only when the
   operator presses it.
 
+### The window app (2026-10-28; built only with `SECURE_FRONTEND_WINDOW`)
+
+- **What it is.** `strata-window` runs `strata-secure-server` beside it as a child: the same user, no console window,
+  its own arguments passed through. It shows the page in WebView2 (Windows) or WebKitGTK (Linux) and keeps a tray
+  icon. It listens on nothing; it is a client of the server over loopback. The server ends with it (a kill-on-close
+  Job; on Linux, the parent-death signal).
+- **The one-time link.** The window reads the server's sign-in line from the child's pipe and opens it in its own view
+  only. It takes the line only when it is http on a loopback host with a code of the page's form. The line is never
+  written to its log or shown on screen. The log (`server.log`, every other line, two files of at most 4 MiB) is
+  kept in the data folder's private `logs` folder.
+- **The key.** For the tray's model entries the window reads the key as `strata key show` does (the config and token
+  source of the same arguments) and keeps it in memory. It is sent only in the Authorization header of requests to the
+  server's own loopback address and port. Reading a `--token-env` key scrubs that variable from the window, so the
+  window keeps a copy of the environment it started with and gives that copy to every start of the server, a restart
+  included.
+- **Navigation.** The view stays on the page's origin. Other http(s) addresses open in the default browser; anything
+  else (file:, javascript:, custom schemes, user@host addresses) is refused, and no second window is opened. Developer
+  tools are off. The view's profile (storage, cache) lives in the data folder's private `state/window`.
+- **Stopping.** Exit and Restart stop the server as Ctrl-Break (through its own console) or SIGTERM would, so the
+  model stops in order. After 60 s the server's Job is ended, or SIGKILL is sent. One window runs per data folder
+  (a named mutex; a GApplication unique name).
+
 ### Extensions and MCP
 
 - MCP, tool execution, arbitrary plugins, and remote command execution are
@@ -798,6 +820,11 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
   change that locks that client out takes effect only when the operator restarts. A key holder on this PC can rotate
   the key, which locks every other app out after the restart until it is given the new key; the new key crosses the
   loopback connection once, in the answer.
+- **Window residual (2026-10-28, window builds only):** the window process holds the API key in memory, and after a
+  `--token-env` start it keeps that variable in its copy of the environment. Another program of the same user can read
+  either, as it can read the key file. WebView2 (Microsoft's Edge runtime, updated by Windows) and WebKitGTK (updated by
+  the distribution) render the server's own page; a flaw in them meets only that page, since other navigation is
+  refused or handed to the browser. The Linux window has not been built or run on the development PC.
 - **Model folders as they are residual (2026-10-27, accepted by the owner, opt-in):** with
   `roots.allow_untrusted_media` on, another user of this PC who can write a model folder can
   replace or change its GGUF, tokenizer or pack files, between the page's checks or before a

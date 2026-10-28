@@ -142,6 +142,25 @@ def test_web_search_is_built_only_when_asked(tmp_path):
     assert "strata-search" not in "\n".join(make.layout_problems(root, options(), "windows"))
 
 
+def test_the_window_is_built_only_when_asked(tmp_path):
+    """Owner, 2026-10-28 ("instead of a console application, we should make it into a window application ... minimized
+    into the tray"): strata-window is a build option, off by default (--with window); with it the program sits beside
+    the server, README.txt says to start it, and an out folder without it is incomplete. The page's settings are in
+    its Settings tab."""
+    assert "-DSECURE_FRONTEND_WINDOW=OFF" in make.frontend_configure_args(options(), "windows")
+    assert "-DSECURE_FRONTEND_WINDOW=ON" in make.frontend_configure_args(options("--with", "window"), "windows")
+    assert "strata-window.exe" in make.required_files(options("--with", "window"), "windows")
+    assert "strata-window" in make.required_files(options("--with", "window", platform="linux"), "linux")
+    assert not [f for f in make.required_files(options(), "windows") if "strata-window" in f]
+    root = stage(tmp_path, "windows")
+    assert "strata-window.exe: missing" in "\n".join(make.layout_problems(root, options("--with", "window"), "windows"))
+    windowed = make.readme_text(options("--with", "window"), "windows")
+    plain = make.readme_text(options(), "windows")
+    assert ".\\strata-window.exe" in windowed and "tray" in windowed and "strata-window" not in plain
+    assert "./strata-window" in make.readme_text(options("--with", "window", platform="linux"), "linux")
+    assert "Models > Settings" not in windowed and "Settings tab" in windowed
+
+
 MAYA_PROFILES = ("expert-profile-glm.bin", "expert-profile-ds4.bin", "expert-profile-mm3.bin")
 # MiniMax-M3.1-Flash (owner 2026-10-28): Maya's chat template every MiniMax pack carries, with its licence beside it
 MINIMAX_FILES = ("engine/templates/minimax-m3.1/chat_template.jinja", "engine/templates/minimax-m3.1/LICENSE.minimax-m31")
