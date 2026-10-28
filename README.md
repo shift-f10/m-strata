@@ -128,7 +128,7 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 
 | Model | Engine library | Status |
 | --- | --- | --- |
-| **Qwen3.8-Flash-Next** (IQ3_S and other quants) | `multiengine_strata.dll` | **Works** from a page card (its pack built by `strata-prepare`): about 45 tok/s. |
+| **Qwen3.8-Flash-Next** (IQ3_S and other quants) | `multiengine_strata.dll` | **Works** from a page card (its pack built by `strata-prepare`): about 45 tok/s. **Pictures work** with its picture encoder on the GPU: a test picture answered correctly in about 4 s. |
 | **Qwen3.6-35B-A3B** (Q8_0) | `multiengine_strata.dll` | **Works** from a page card made straight from the GGUF: about 29 tok/s; web search checked end to end. |
 | **GLM-5.3-Flash** (Maya packs) | `multiengine_maya.dll` | **Runs** from a page card (Maya's pack built beside the shards); speed not tuned yet. |
 | **Raon-1-mini** (KRAFTON, Q8_0) | `multiengine_raon1.dll` | **Works, verified** against KRAFTON's llama.cpp (mean KL 0.0009, top-1 100% on short prompts); 74 tok/s short, 52 tok/s at 9K context; 256K context. |
@@ -163,7 +163,7 @@ by the server's tests (with fake engines where a GPU would be needed), but have 
 | Area | What is untested, and why |
 | --- | --- |
 | **Several GPUs** | The GPUs choice on the cards, Qwen's layer split, GLM-5.3's and Raon-1-mini's split, DeepSeek-V4.1's tensor-parallel pairs and MiniMax-M3.1's GPU list are composed as upstream and Project Maya compose them, and checked argument by argument, but never run: the development system has one GPU. Upstream's card order for a split (the faster card last) is not done yet. |
-| **Pictures (vision)** | `strata-vision` is built with CUDA and wired to the Qwen cards, the downloads and the chat, but has not read a real picture with a real model yet: the tests use a fake encoder. Needs a rebuilt out folder and a start with the Pictures option on. |
+| **Pictures (vision)** | Checked on Qwen3.8-Flash-Next IQ3_S with its encoder on the GPU (a red square and a blue circle, named and placed correctly, about 4 s). Not yet run: Qwen3.6, the encoder on the CPU, several pictures in one question, and pictures through the page's attach button (the check used the API). |
 | **DeepSeek-V4.1 and MiniMax-M3.1** | Built and wired, not run end to end yet. Their GGUFs are large (DeepSeek's 277-508 GB, MiniMax's from 93 GB): with 96 GB of RAM most of their experts would come from disk, so a run here shows whether they work, not how fast they can be. |
 | **Other GPU makers** | Only NVIDIA CUDA builds are made and run. Upstream's AMD (HIP) and Intel (SYCL) paths are in the tree but neither built nor tested here. |
 | **Other NVIDIA generations** | Every speed and every run is from one RTX 4080 SUPER (compute capability 8.9). Other generations build with `--cuda-arch` but have not been run here; nor have GPUs with less than 16 GB, or PCs with less than 96 GB of RAM. |
@@ -484,7 +484,7 @@ for a real install, which makes its own key at the first start.
   packers; GLM-5.3, DeepSeek-V4.1, MiniMax-M3.1 and Qwen3.6 in the server; optional web search over MCP and SearXNG for
   Qwen, GLM, raon1, flint and Gemma 4, with a switch on each card and in the chat; Qwen's and GLM's prompts tokenized exactly as
   upstream's and Maya's tokenizers do; pictures on Qwen cards (upstream's `strata-vision` beside the engine, the Vision
-  files download, picture attachments in the chat; to be checked on the GPU with a real model).
+  files download, picture attachments in the chat; checked on Qwen3.8 IQ3_S on the GPU).
 - **Open:** DeepSeek and MiniMax end-to-end runs; GLM speed tuning; making Qwen3.8's MTP draft layer here (upstream's
   three Python tools, natively; today it comes from upstream's setup); pictures on the other families; web search
   for DeepSeek and MiniMax; several GPUs checked on a two-GPU PC, upstream's card order for a layer split (the faster
