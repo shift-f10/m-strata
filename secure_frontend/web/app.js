@@ -904,14 +904,16 @@
       thead.appendChild(headRow);
       table.appendChild(thead);
       var tbody = el("tbody");
+      // each cell names its column: a phone shows the engines as labelled blocks
+      var labelled = function (row, label, cell) { cell.setAttribute("data-label", label); row.appendChild(cell); };
       (b.engines || []).forEach(function (e) {
         var row = el("tr");
-        row.appendChild(el("td", null, e.models || "-"));
+        labelled(row, "Models", el("td", null, e.models || "-"));
         var lib = el("td");
         lib.appendChild(el("code", null, e.library));
-        row.appendChild(lib);
-        row.appendChild(el("td", null, e.source || "-"));
-        row.appendChild(el("td", "num", e.bytes ? fmt(e.bytes / 1048576) + " MB" : "-"));
+        labelled(row, "Library", lib);
+        labelled(row, "Built from", el("td", null, e.source || "-"));
+        labelled(row, "Size", el("td", "num", e.bytes ? fmt(e.bytes / 1048576) + " MB" : "-"));
         tbody.appendChild(row);
       });
       table.appendChild(tbody);

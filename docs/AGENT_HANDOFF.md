@@ -280,6 +280,19 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+The owner: "make sure the front end is mobile responsive". The page was measured, not guessed: a dev server from this
+build (scratch data folder, dev key, a demo card, a copy of an out folder's `build.json`) at 375x812 and 320x640, every
+view and sub-tab (sign-in, Chat, Models: Start a model with a card's options, Download models, Settings; Monitor;
+About; the folder picker; a toast; a long answer), a script listing every visible element past the screen's edge.
+Nothing scrolled sideways, but three things were wrong on a phone, now fixed in the 640 px block: a folder path (the
+card's model folder, "Downloads go to") wrapped into a narrow column of large monospace beside its button - now its own
+line, smaller, the button below; the About's engines table hid Built from and Size behind a sideways scroll - now one
+labelled block per engine (`data-label` on each cell); toasts sat flush against the left edge - now 12 px on both
+sides. Re-measured at both widths: no element past the edge. Test: `web_ui_header_fits_a_phone`'s new checks (RED shown
+by removing a rule). Router tests 49/49.
+
 ### Claude Code session, 2026-10-28 y (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 The owner: "Also ensure our engine supports multi gpu like the upstream". Spec

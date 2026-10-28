@@ -919,6 +919,20 @@ void web_ui_header_fits_a_phone() {
          "the page lays out at the device's width");
   // owner 2026-10-27: the brand is "M-Strata"; its hyphen must not break it over two lines in a narrow header
   expect(css.find(".st-header__brand { white-space: nowrap; flex: none; }") != std::string::npos, "the brand stays on one line");
+  // owner 2026-10-28 ("make sure the front end is mobile responsive"), from a 375 px check of every view: a folder path
+  // takes its own line in a smaller font with its button below; the About's engines are stacked, each row labelled
+  // (the table hid Built from and Size behind a sideways scroll); toasts keep even margins
+  expect(block.find(".model-folder__row { flex-direction: column; align-items: stretch; gap: var(--st-s-2); }") != std::string::npos &&
+             block.find(".model-folder__row code { font-size: var(--st-fs-sm); }") != std::string::npos &&
+             block.find(".model-folder__row .st-btn { align-self: flex-start; }") != std::string::npos,
+         "a folder path on its own line, its button below");
+  expect(block.find(".about-engines thead { display: none; }") != std::string::npos &&
+             block.find(".about-engines td[data-label]::before { content: attr(data-label); ") != std::string::npos,
+         "the engines stack, each value labelled");
+  expect(block.find(".st-toasts { left: var(--st-s-3); right: var(--st-s-3); bottom: var(--st-s-3); }") != std::string::npos,
+         "toasts keep even margins");
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  expect(js.find("cell.setAttribute(\"data-label\", label);") != std::string::npos, "each engine cell carries its column's name");
 }
 
 // Multi-GPU like upstream (owner 2026-10-28): a card's GPUs choice ("devices") is one box per GPU of this PC, as the
