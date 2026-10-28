@@ -553,7 +553,8 @@ void a_downloaded_qwen36_becomes_a_card() {
                                     "BYTES Q36/m.gguf 500 500", "FINISHED Q36/m.gguf ok", "RESULT ok"}});
   const auto installed = f.dir / "installed";
   secure_frontend_test::make_private_directory(installed);
-  secure_frontend_test::write_file(installed / "m.gguf", test_support::gguf_with_tokenizer(test_support::byte_tokenizer(), "gpt2", "qwen35moe")
+  secure_frontend_test::make_private_directory(installed / "Q36");  // the store keeps the catalog's subfolder
+  secure_frontend_test::write_file(installed / "Q36" / "m.gguf", test_support::gguf_with_tokenizer(test_support::byte_tokenizer(), "gpt2", "qwen35moe")
                                                              .u32("qwen35moe.context_length", 262144U)
                                                              .u32("qwen35moe.nextn_predict_layers", 1U)
                                                              .bytes());
@@ -572,8 +573,9 @@ void a_downloaded_qwen36_becomes_a_card() {
   const auto read = secure_frontend::read_model_card(f.dir / "cards" / "qwen36-small.json");
   const auto* card = std::get_if<secure_frontend::ModelCard>(&read);
   expect(card != nullptr && card->profile == secure_frontend::EngineProfile::qwen && card->source == "download:qwen36-small" &&
-             !card->config.entries.contains("roots.tokenizer_pack"),
-         "the card: qwen, from that download, its tokenizer from the GGUF");
+             !card->config.entries.contains("roots.tokenizer_pack") &&
+             std::get<std::string>(card->config.entries.at("roots.models").value) == secure_frontend::path_to_utf8(installed / "Q36"),
+         "the card: qwen, from that download, its tokenizer from the GGUF, the file's own folder");
 }
 
 // Owner 2026-10-27 ("executables to handle what needs to be done so we don't have any other dependencies"): with an
@@ -597,6 +599,8 @@ void a_downloaded_qwen38_is_packed_natively() {
   f.spawner.pulls.push_back(Script{{"STEP pack", "STEP ple", "DONE"}});
   const auto installed = f.dir / "installed";
   secure_frontend_test::make_private_directory(installed);
+  const auto shards = installed / "Q";  // the store keeps the catalog's subfolder (pull_lines: Q/m-...)
+  secure_frontend_test::make_private_directory(shards);
   f.spawner.on_spawn = [&](const secure_frontend::EngineCommand& command) {
     if (command.executable != tool) return;
     const auto& a = command.arguments;
@@ -606,7 +610,7 @@ void a_downloaded_qwen38_is_packed_natively() {
     std::filesystem::create_directories(pack);
     secure_frontend_test::write_file(pack / "prepared.json",
                                      "{\"pack\": " + json_of(pack) + ", \"tokenizer\": null, \"ple\": " +
-                                         json_of(installed / "m-00002-of-00002.gguf") + ", \"shards\": 2}\n");
+                                         json_of(shards / "m-00002-of-00002.gguf") + ", \"shards\": 2}\n");
   };
   f.start(1U << 30U);
   const std::string before = f.manager->list_json();
@@ -625,7 +629,7 @@ void a_downloaded_qwen38_is_packed_natively() {
   const auto& prepare = f.spawner.recorded[1].command;
   const auto pack = f.dir / "downloads" / "packs" / "qwen-small";
   expect(prepare.executable == tool &&
-             prepare.arguments == std::vector<std::string>{"download", "--gguf", secure_frontend::path_to_utf8(installed / "m-00001-of-00002.gguf"),
+             prepare.arguments == std::vector<std::string>{"download", "--gguf", secure_frontend::path_to_utf8(shards / "m-00001-of-00002.gguf"),
                                                            "--out", secure_frontend::path_to_utf8(pack)},
          "strata-prepare download, the first shard, the pack in the download's store");
   const auto read = secure_frontend::read_model_card(f.dir / "cards" / "qwen-small.json");
@@ -637,11 +641,11 @@ void a_downloaded_qwen38_is_packed_natively() {
   expect(card->profile == secure_frontend::EngineProfile::qwen && card->source == "download:qwen-small" &&
              !rows.contains("roots.tokenizer_pack") &&
              std::get<std::string>(rows.at("engine.executable").value) == secure_frontend::path_to_utf8(f.dir / "multiengine.exe") &&
-             std::get<std::string>(rows.at("roots.models").value) == secure_frontend::path_to_utf8(installed) &&
+             std::get<std::string>(rows.at("roots.models").value) == secure_frontend::path_to_utf8(shards) &&
              std::get<std::string>(rows.at("engine.model_id").value) == "m-00001-of-00002",
-         "the card: qwen, from that download, the engine for new cards, the installed folder, the tokenizer from the GGUF");
+         "the card: qwen, from that download, the engine for new cards, the shards' folder, the tokenizer from the GGUF");
   expect(args == std::vector<std::string>{"--pack", secure_frontend::path_to_utf8(pack), "--ple-gguf",
-                                          secure_frontend::path_to_utf8(installed / "m-00002-of-00002.gguf"), "--expert-profile",
+                                          secure_frontend::path_to_utf8(shards / "m-00002-of-00002.gguf"), "--expert-profile",
                                           secure_frontend::path_to_utf8(f.dir / "profiles" / "expert-profile.bin")},
          "its engine arguments: the pack, the PLE shard, the bundled expert profile");
   // the delete takes the pack too
@@ -669,16 +673,17 @@ void a_downloaded_glm_is_packed_with_mayas_step() {
   f.spawner.pulls.push_back(Script{{"STEP pack", "STEP sources", "DONE"}});
   const auto installed = f.dir / "installed";
   secure_frontend_test::make_private_directory(installed);
-  secure_frontend_test::write_file(installed / "g-00001-of-00002.gguf", "shard one");
-  secure_frontend_test::write_file(installed / "g-00002-of-00002.gguf", "shard two");
+  secure_frontend_test::make_private_directory(installed / "S");  // the store keeps the catalog's subfolder
+  secure_frontend_test::write_file(installed / "S" / "g-00001-of-00002.gguf", "shard one");
+  secure_frontend_test::write_file(installed / "S" / "g-00002-of-00002.gguf", "shard two");
   const auto folder = f.dir / "downloads" / "packs" / "glm-maya";
   bool linked = false;
   f.spawner.on_spawn = [&](const secure_frontend::EngineCommand& command) {
     if (command.executable != tool) return;
     std::error_code ec;
-    linked = std::filesystem::equivalent(folder / "g-00001-of-00002.gguf", installed / "g-00001-of-00002.gguf", ec) &&
-             std::filesystem::equivalent(folder / "g-00002-of-00002.gguf", installed / "g-00002-of-00002.gguf", ec) &&
-             std::filesystem::hard_link_count(installed / "g-00001-of-00002.gguf", ec) == 2U;
+    linked = std::filesystem::equivalent(folder / "g-00001-of-00002.gguf", installed / "S" / "g-00001-of-00002.gguf", ec) &&
+             std::filesystem::equivalent(folder / "g-00002-of-00002.gguf", installed / "S" / "g-00002-of-00002.gguf", ec) &&
+             std::filesystem::hard_link_count(installed / "S" / "g-00001-of-00002.gguf", ec) == 2U;
     const auto pack = folder / "pack";
     std::filesystem::create_directories(pack / "tokenizer");
     secure_frontend_test::write_file(pack / "prepared.json", "{\"pack\": " + json_of(pack) + ", \"tokenizer\": " + json_of(pack / "tokenizer") +
@@ -737,7 +742,7 @@ void a_downloaded_glm_is_packed_with_mayas_step() {
          "Maya's GLM options: contexts 8K-128K (32K), the KV format, temperature 1.0 and top_p 0.95");
   f.spawner.pulls.push_back(Script{{"removed glm-maya:download"}});
   expect(!f.manager->remove_installed("glm-maya").has_value() && !std::filesystem::exists(folder) &&
-             std::filesystem::exists(installed / "g-00001-of-00002.gguf"),
+             std::filesystem::exists(installed / "S" / "g-00001-of-00002.gguf"),
          "removed: the links and the pack go, the store's own files are the store's to remove");
 }
 
@@ -762,8 +767,9 @@ void a_downloaded_deepseek_is_packed_with_mayas_step() {
   f.spawner.pulls.push_back(Script{{"STEP pack", "STEP sources", "DONE"}});
   const auto installed = f.dir / "installed";
   secure_frontend_test::make_private_directory(installed);
-  secure_frontend_test::write_file(installed / "d-00001-of-00002.gguf", "shard one");
-  secure_frontend_test::write_file(installed / "d-00002-of-00002.gguf", "shard two");
+  secure_frontend_test::make_private_directory(installed / "D");  // the store keeps the catalog's subfolder
+  secure_frontend_test::write_file(installed / "D" / "d-00001-of-00002.gguf", "shard one");
+  secure_frontend_test::write_file(installed / "D" / "d-00002-of-00002.gguf", "shard two");
   const auto pack = f.dir / "downloads" / "packs" / "ds-maya";
   f.spawner.on_spawn = [&](const secure_frontend::EngineCommand& command) {
     if (command.executable != tool) return;
@@ -787,7 +793,7 @@ void a_downloaded_deepseek_is_packed_with_mayas_step() {
   expect(f.spawner.recorded.size() == 2U, "two children: the pull and strata-prepare");
   if (f.spawner.recorded.size() != 2U) return;
   expect(f.spawner.recorded[1].command.arguments ==
-             std::vector<std::string>{"download", "--maya", "--gguf", secure_frontend::path_to_utf8(installed / "d-00001-of-00002.gguf"),
+             std::vector<std::string>{"download", "--maya", "--gguf", secure_frontend::path_to_utf8(installed / "D" / "d-00001-of-00002.gguf"),
                                       "--out", secure_frontend::path_to_utf8(pack), "--expert-profile",
                                       secure_frontend::path_to_utf8(f.dir / "profiles" / "expert-profile-ds4.bin")},
          "strata-prepare download --maya: the store's first shard in place, the pack in <store>/packs/<id>, the profile to seed");
@@ -808,7 +814,7 @@ void a_downloaded_deepseek_is_packed_with_mayas_step() {
          "the card: deepseek, from that download, the pack and its tokenizer, Maya's model name");
   f.spawner.pulls.push_back(Script{{"removed ds-maya:download"}});
   expect(!f.manager->remove_installed("ds-maya").has_value() && !std::filesystem::exists(pack) &&
-             std::filesystem::exists(installed / "d-00001-of-00002.gguf"),
+             std::filesystem::exists(installed / "D" / "d-00001-of-00002.gguf"),
          "removed: the pack goes, the store's own files are the store's to remove");
 }
 
@@ -833,9 +839,10 @@ void a_downloaded_minimax_is_packed_with_mayas_step() {
   f.spawner.pulls.push_back(Script{{"STEP pack", "STEP sources", "DONE"}});
   const auto installed = f.dir / "installed";
   secure_frontend_test::make_private_directory(installed);
-  secure_frontend_test::write_file(installed / "m-IQ1_S-00001-of-00002.gguf", "shard one");
-  secure_frontend_test::write_file(installed / "m-IQ1_S-00002-of-00002.gguf", "shard two");
-  secure_frontend_test::write_file(installed / "m-maya-indexers.gguf", "indexers");
+  secure_frontend_test::make_private_directory(installed / "M");  // the store keeps the catalog's subfolder
+  secure_frontend_test::write_file(installed / "M" / "m-IQ1_S-00001-of-00002.gguf", "shard one");
+  secure_frontend_test::write_file(installed / "M" / "m-IQ1_S-00002-of-00002.gguf", "shard two");
+  secure_frontend_test::write_file(installed / "M" / "m-maya-indexers.gguf", "indexers");
   const auto pack = f.dir / "downloads" / "packs" / "mm-maya";
   f.spawner.on_spawn = [&](const secure_frontend::EngineCommand& command) {
     if (command.executable != tool) return;
@@ -865,7 +872,7 @@ void a_downloaded_minimax_is_packed_with_mayas_step() {
   expect(f.spawner.recorded.size() == 2U, "two children: the pull and strata-prepare");
   if (f.spawner.recorded.size() != 2U) return;
   expect(f.spawner.recorded[1].command.arguments ==
-             std::vector<std::string>{"download", "--maya", "--gguf", secure_frontend::path_to_utf8(installed / "m-IQ1_S-00001-of-00002.gguf"),
+             std::vector<std::string>{"download", "--maya", "--gguf", secure_frontend::path_to_utf8(installed / "M" / "m-IQ1_S-00001-of-00002.gguf"),
                                       "--out", secure_frontend::path_to_utf8(pack), "--template",
                                       secure_frontend::path_to_utf8(templates / "chat_template.jinja")},
          "strata-prepare download --maya: the store's first shard in place, the pack in <store>/packs/<id>, Maya's template");

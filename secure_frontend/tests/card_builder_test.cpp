@@ -9,6 +9,7 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <string>
 #include <variant>
 
@@ -179,6 +180,42 @@ void packed_families_and_their_cards() {
                std::get<std::string>(card->config.entries.at("engine.model_id").value) == "glm-5.3-flash" && card->options.size() == 4U,
            "the GLM card: the pack, Maya's model name, Maya's four options");
   }
+}
+
+// Owner 2026-10-28 ("I don't see MTP settings in the cards"): a Qwen3.8 pack card runs the MTP draft layer when one is
+// found (upstream's mtp/rt), as upstream's setup writes it (--mtp <rt>, --spec 4, --spec-min-p 0.5), and lists its three
+// settings; without one it keeps prompt lookup's --spec only.
+void a_qwen38_pack_with_its_draft_layer_offers_mtp() {
+  using secure_frontend::PackedFamily;
+  const auto folder = secure_frontend_test::make_scratch_directory();
+  secure_frontend::PackedCardRequest request{.family = PackedFamily::qwen38, .name = "Q", .engine = folder / "multiengine.exe",
+                                             .source = "folder", .pack = folder / "packs" / "Q", .folder = folder / "models",
+                                             .model_id = "q-00001-of-00002"};
+  const auto options_of = [&folder](const secure_frontend::CardText& text) {
+    std::map<std::string, secure_frontend::ModelOptionValue> out;
+    auto parsed = secure_frontend::parse_model_card(text.json, folder);
+    if (const auto* card = std::get_if<secure_frontend::ModelCard>(&parsed)) {
+      for (const auto& limit : card->options) out[std::string{limit.spec->name}] = limit.default_value;
+      const auto args = card->config.entries.find("engine.args");
+      out["args"] = args == card->config.entries.end() ? std::string{} : [&] {
+        std::string all;
+        for (const auto& a : std::get<std::vector<std::string>>(args->second.value)) all += " " + a;
+        return all;
+      }();
+    }
+    return out;
+  };
+  const auto plain = options_of(secure_frontend::card_for_pack(request));
+  expect(!plain.empty() && !plain.contains("mtp") && !plain.contains("spec_min_p") && plain.contains("spec") &&
+             std::get<std::string>(plain.at("args")).find("--mtp") == std::string::npos,
+         "without a draft layer: prompt lookup's --spec, no MTP settings");
+  request.mtp = folder / "mtp" / "rt";
+  const auto with = options_of(secure_frontend::card_for_pack(request));
+  expect(with.contains("mtp") && std::get<bool>(with.at("mtp")) && with.contains("spec") && std::get<std::int64_t>(with.at("spec")) == 4 &&
+             with.contains("spec_min_p") && std::get<double>(with.at("spec_min_p")) == 0.5,
+         "with one: the MTP draft layer on, a window of 4, a confidence of 0.5");
+  expect(std::get<std::string>(with.at("args")).find(" --mtp " + secure_frontend::path_to_utf8(folder / "mtp" / "rt")) != std::string::npos,
+         "and --mtp names its runtime folder: " + std::get<std::string>(with.at("args")));
 }
 
 // DeepSeek-V4.1 (2026-10-27, spec 2026-10-27-strata-prepare-design §7.2): its GGUF needs Maya's pack (maya-ds4), and the
@@ -410,6 +447,7 @@ int main(int argc, char** argv) {
       {"names_are_made_valid_and_splits_named_once", names_are_made_valid_and_splits_named_once},
       {"other_architectures_are_not_addable_yet", other_architectures_are_not_addable_yet},
       {"packed_families_and_their_cards", packed_families_and_their_cards},
+      {"a_qwen38_pack_with_its_draft_layer_offers_mtp", a_qwen38_pack_with_its_draft_layer_offers_mtp},
       {"a_deepseek_pack_makes_a_deepseek_card", a_deepseek_pack_makes_a_deepseek_card},
       {"a_minimax_pack_makes_a_minimax_card", a_minimax_pack_makes_a_minimax_card},
       {"a_raon1_pack_makes_a_raon1_card", a_raon1_pack_makes_a_raon1_card},

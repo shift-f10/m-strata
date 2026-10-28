@@ -142,8 +142,9 @@ constexpr std::array<ModelOptionSpec, 15> kQwenOptions{{
     kWebSearch,
 }};
 
-// Our strata-gemma4-engine (strata_gemma4): the bounds are kGemma4Flags (engine_arguments.cpp).
-constexpr std::array<ModelOptionSpec, 8> kGemmaOptions{{
+// Our strata-gemma4-engine (strata_gemma4): the bounds are kGemma4Flags (engine_arguments.cpp). Web search since
+// 2026-10-28 (Gemma 4's own tool form).
+constexpr std::array<ModelOptionSpec, 9> kGemmaOptions{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (up to the model's trained 256K)",
                           1, 262144),
            kGemmaContexts),
@@ -155,6 +156,7 @@ constexpr std::array<ModelOptionSpec, 8> kGemmaOptions{{
     kTopP,
     kTopK,
     kMinP,
+    kWebSearch,
 }};
 
 // multiengine_flint (strata_flint): the Gemma engine's options, bounded by kFlintFlags (engine_arguments.cpp); its

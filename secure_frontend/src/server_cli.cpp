@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -163,9 +164,9 @@ std::variant<ServerInvocation, CliError> parse_server_command_line(const int arg
 std::string server_usage() {
   std::string text =
       "Usage: strata-secure-server                 (first start: creates data/ beside it, then serves)\n"
-      "       strata-secure-server --data-dir DIR [options]\n"
-      "                                            (that data folder; options such as --port apply\n"
-      "                                            to this start, data/ beside it is --data-dir data)\n"
+      "       strata-secure-server [--data-dir DIR] [options]\n"
+      "                                            (data/ or that data folder; options such as --port\n"
+      "                                            apply to this start on top of its config.json)\n"
       "       strata-secure-server [--config FILE] [options]\n"
       "       strata-secure-server --check [--config FILE] [options]\n"
       "       strata-secure-server init --config FILE [--force] [options]\n"
@@ -223,6 +224,18 @@ std::string server_usage() {
       "chosen only with --gpu, passed as the engine's own --gpu argument (strata\n"
       "family: no GPU variable in the engine environment).\n";
   return text;
+}
+
+bool uses_data_folder(const ServerInvocation& invocation) {
+  if (invocation.config_file.has_value()) return false;
+  if (invocation.data_dir.has_value()) return true;
+  if (invocation.expert) return false;
+  // the keys a flags-only bring-up start names its model with (--models-root, --engine, --model-id, --profile,
+  // --tokenizer-pack); every other option adjusts the data folder's config for this start
+  constexpr std::array<std::string_view, 5U> kModelKeys{"roots.models", "engine.executable", "engine.model_id",
+                                                        "engine.profile", "roots.tokenizer_pack"};
+  return std::none_of(kModelKeys.begin(), kModelKeys.end(),
+                      [&invocation](const std::string_view key) { return invocation.flags.entries.contains(std::string{key}); });
 }
 
 std::variant<FrontendConfigDraft, ConfigErrors> load_server_draft(const ServerInvocation& invocation,

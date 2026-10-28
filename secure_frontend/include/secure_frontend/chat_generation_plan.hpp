@@ -148,6 +148,17 @@ using ChatGenerationPlanResult = std::variant<ChatGenerationPlan, ChatGeneration
     std::size_t default_max_tokens = static_cast<std::size_t>(config_defaults::kChatDefaultMaxTokens),
     const SamplingDefaults& defaults = {}, bool thinking = false);
 
+// Web search for Gemma 4 (owner 2026-10-28): make_gemma4_chat_generation_plan's plan with the server's tools and the
+// rounds (render_gemma4_tool_prompt, encoded by encode_prompt_pieces): the same thought-channel split and turn ends, the
+// call's three tags (<|tool_call>, <tool_call|>, <|"|>) output as their text for the Gemma 4 call parser, and
+// <|tool_response> - the token the model writes after its calls, among llama.cpp's Gemma 4 ends of generation - a
+// server stop (our engine ends its turn on <turn|> and <eos> only). A pack without the Gemma 4 markers, its two turn
+// ends or the seven tool tags is tokenization_failed; an image part is invalid_request.
+[[nodiscard]] ChatGenerationPlanResult make_gemma4_tool_generation_plan(
+    const ChatCompletionRequest& request, const TokenizerPack& tokenizer, std::span<const std::string> tools,
+    std::span<const ToolRound> rounds, std::size_t maximum_prompt_tokens, std::size_t default_max_tokens,
+    const SamplingDefaults& defaults, bool thinking);
+
 // flint: a schema-validated text request through the GGUF's own template (render_flint_text_prompt,
 // encode_flint_prompt). thinking leaves the generation prompt as the template writes it (<|assistant|>: the model opens
 // <think> itself); off closes the block after it (<think></think>). The pack must carry flint's markers

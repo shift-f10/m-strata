@@ -74,7 +74,7 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 **Web search through MCP and SearXNG**
 
 - A build with `search` has `strata-search`, an MCP server the server runs as a private child, which asks **your own
-  SearXNG instance**. Qwen3.6, Qwen3.8, GLM-5.3, Raon-1-mini and flint models get a `web_search` tool, each in its own
+  SearXNG instance**. Qwen3.6, Qwen3.8, GLM-5.3, Raon-1-mini, flint and Gemma 4 models get a `web_search` tool, each in its own
   template's form, and decide when to search.
 - Up to `search.max_rounds` searches per answer (8 by default), then the model answers from what it found; the chat
   shows each search and its results in a box, and the API returns them as `strata_search` events.
@@ -215,17 +215,17 @@ Other ways to start it, from the out folder (in PowerShell type `.\strata-secure
 `./strata-secure-server`; the same for `strata`):
 
 ```text
+strata-secure-server --port 9090                         # this folder's data/, on port 9090 for this start only
 strata-secure-server --data-dir D:\StrataData            # the data folder somewhere else (created at its first start)
-strata-secure-server --data-dir data --port 9090         # this folder's data/, on port 9090 for this start only
 strata-secure-server --config data/config.json           # run from a config file (data/config.json is one)
-strata-secure-server --check --config data/config.json   # validate it and print the settings in effect, then exit
+strata-secure-server --check                             # validate data/config.json, print the settings in effect, exit
 strata-secure-server --help                              # every option
 ```
 
-Give options such as `--port` or `--host` together with `--data-dir` or `--config`: on their own they start from the
-built-in defaults and do not read `data/`. A relative `--data-dir` is taken from the current folder. To keep a port,
-set `listener.port` in `data/config.json`. `--data-dir` and `--config` exclude each other; `config.example.json` shows
-the config file's shape.
+Options such as `--port`, `--host` or `--token-env` apply to that start on top of the data folder's `config.json`; to
+keep a port, set `listener.port` there. A relative `--data-dir` is taken from the current folder. `--data-dir` and
+`--config` exclude each other; `config.example.json` shows the config file's shape. (A start that names its model by
+flags, `--expert`, `--models-root`, `--engine`, `--model-id`, is the older bring-up mode and reads no data folder.)
 
 ### Add a model
 
@@ -234,7 +234,8 @@ On the page, open **Models**:
 - **Add a model** uses files already on this PC: pick the folder and the model's `.gguf` (a split model: its first
   part). Gemma 4, flint and Qwen3.6 GGUFs become cards straight away. Qwen3.8, GLM-5.3, DeepSeek-V4.1, MiniMax-M3.1 and
   Raon-1-mini GGUFs have their pack built first by `strata-prepare` (seconds to minutes; a pack already beside the file
-  and still matching it is reused).
+  and still matching it is reused). A Qwen3.8 model whose data folder holds upstream's MTP draft layer (`mtp/rt`, from
+  upstream's setup) runs it, and its card shows the MTP settings (draft layer on/off, draft window, draft confidence).
 - **Download** fetches a model from the built-in catalog (every file pinned by its SHA-256) or a Hugging Face link
   into a drive or folder you choose; the free space is checked first. A large file comes over 16 connections at once
   (`pull.connections`, 1-32; 1 is one stream). When it is verified, it is packed if needed and appears as a card.
@@ -320,7 +321,7 @@ search:
 ```
 
 Run `docker compose up -d` there, then in Models > Settings > Web search turn it on, enter
-`http://<that machine>:8080`, save, restart the server, and use "Test search". A Qwen, GLM-5.3, raon1 or flint model
+`http://<that machine>:8080`, save, restart the server, and use "Test search". A Qwen, GLM-5.3, raon1, flint or Gemma 4 model
 then gets the `web_search` tool on every text chat; what it searches for leaves your PC through that instance. Each such
 card has a **Web search** switch (on by default; off, that model starts without the tool), and while it is on the chat
 settings have one too (off, the page's chats ask for no search). After the last allowed search the model is told to
@@ -425,7 +426,7 @@ for a real install, which makes its own key at the first start.
 | --- | --- |
 | `strata --config data/config.json key show` | Prints the API key (`--env` prints it as `OPENAI_API_KEY=...`). |
 | `strata --config data/config.json key rotate` | Makes a new key; restart the server and update every app that used the old one. |
-| `strata --config data/config.json doctor` | Checks the GPU, the driver, the config, the folders and the port. In an out folder its `cuda` check (it looks for `libcudart` beside `strata`, while the engine carries the CUDA runtime itself and keeps cuBLAS in `engine/`) and, on Windows, its `token` check (POSIX file modes) report failures that do not apply, and `port` fails while the server runs. |
+| `strata --config data/config.json doctor` | Checks the GPU, the driver, cuBLAS beside the engine (or in `engine.lib_dirs`), the config, the key file, the folders and the port (`port` fails while the server runs). |
 | `strata --config data/config.json list` | Lists the downloaded models in the store. |
 | `strata --help`, `strata-secure-server --help` | Every verb and option. |
 
@@ -439,7 +440,6 @@ for a real install, which makes its own key at the first start.
 | A GLM download shows its size as "read from Hugging Face at the start" | Project Maya's catalog pins each file's SHA-256 but not its size; the server reads the size when the download starts. |
 | A web-search answer is empty | It ran out of tokens while reasoning (`finish_reason` `length`): raise `max_tokens`. If every search found nothing, the search box says why; see "Web search through SearXNG" for more engines. |
 | An answer stops after about two minutes, marked "Max tokens" (`length`), with room left in the context | It reached `limits.engine.generation_timeout_s` (120 s by default). Raise it in `data/config.json` (for example `"limits": {"engine": {"generation_timeout_s": 1800}}`) and restart the server. |
-| `strata-secure-server --port 9090` fails with "roots.models: is required" | Options alone start from the built-in defaults: add `--data-dir data` (or `--config data/config.json`). |
 | The engine takes long to stop with a big model | Freeing tens of GB of pinned RAM takes time; the server waits, then reports it. |
 
 ## Current progress and open items
@@ -448,13 +448,13 @@ for a real install, which makes its own key at the first start.
   downloads into a chosen folder, the danger-zone delete); optional email alerts; the engine as a launcher over one
   library per family (upstream Strata `v0.2.6`, Project Maya `v1.1.30`, raon1, Gemma 4, flint); native `strata-prepare`
   packers; GLM-5.3, DeepSeek-V4.1, MiniMax-M3.1 and Qwen3.6 in the server; optional web search over MCP and SearXNG for
-  Qwen, GLM, raon1 and flint, with a switch on each card and in the chat; Qwen's and GLM's prompts tokenized exactly as
+  Qwen, GLM, raon1, flint and Gemma 4, with a switch on each card and in the chat; Qwen's and GLM's prompts tokenized exactly as
   upstream's and Maya's tokenizers do.
-- **Open:** DeepSeek and MiniMax end-to-end runs; GLM speed tuning and its MTP; MTP settings on the cards; downloading
-  a model's vision files and serving images where the model can read them; web search for Gemma 4, DeepSeek and
-  MiniMax; long-prompt speed and long-context drift on raon1; Linux runs of the newest work; `strata doctor`'s checks
-  for the out folder's layout; a start with options alone reading `data/`; the server as a window with a tray icon
-  (model start and stop, the Monitor, a configuration tab).
+- **Open:** DeepSeek and MiniMax end-to-end runs; GLM speed tuning; making Qwen3.8's MTP draft layer here (upstream's
+  three Python tools, natively; today it comes from upstream's setup); downloading
+  a model's vision files and serving images where the model can read them; web search for DeepSeek and MiniMax;
+  long-prompt speed and long-context drift on raon1; Linux runs of the newest work; the server as a window with a
+  tray icon (model start and stop, the Monitor, a configuration tab).
 
 ## License
 

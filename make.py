@@ -283,16 +283,16 @@ Start:      {server}{shell}
             one-time login link (http://127.0.0.1:8080/#login=...). Open it in a browser on this PC: the page shows
             your API key once and signs you in. Every later start prints a fresh link.
 Options:    this folder's data/, on port 9090 for this start:
-                {server} --data-dir data --port 9090
+                {server} --port 9090
             a data folder elsewhere (made at its first start):
                 {server} --data-dir DIR
             from a config file (config.example.json shows its shape):
                 {server} --config data/config.json
-            check that config and print the settings in effect:
-                {server} --check --config data/config.json
+            check data/config.json and print the settings in effect:
+                {server} --check
             every option:
                 {server} --help
-            Give options with --data-dir or --config: alone they start from the built-in defaults, not data/.
+            Options apply to that start on top of data/config.json; --data-dir and --config exclude each other.
 Models:     the Models tab adds a model from a folder, downloads one into a folder you choose, starts, stops and
             calibrates it; Models > Settings holds the model folders{settings}.
 Config:     data/config.json (to keep a port, set listener.port there). An answer cut after about two minutes:

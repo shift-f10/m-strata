@@ -92,10 +92,11 @@ int main(int argc, char* argv[]) {
     return EXIT_SUCCESS;
   }
   // GUI-first start-up (docs/superpowers/specs/2026-10-27-gui-first-install-design.md §3): with no --config and no
-  // configuration option (or with --data-dir) the server uses its data folder, <the executable's folder>/data by
-  // default; a serve creates it the first time (a --check never creates anything).
+  // flag that names the model (uses_data_folder) the server uses its data folder, <the executable's folder>/data by
+  // default, the options given overriding its config; a serve creates it the first time (a --check never creates
+  // anything).
   secure_frontend::ServerInvocation started = invocation;
-  if (!invocation.config_file.has_value() && (invocation.data_dir.has_value() || invocation.flags.entries.empty())) {
+  if (secure_frontend::uses_data_folder(invocation)) {
     const auto install = secure_frontend::executable_directory();
     const auto folder = secure_frontend::data_folder_layout(invocation.data_dir.value_or(install / "data"));
     if (invocation.command == secure_frontend::ServerCommand::serve) {

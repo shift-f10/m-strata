@@ -32,6 +32,15 @@ struct ProfileExpectations final {
   std::string min_driver{"580"};
   bool memlock_unlimited{true};
   std::vector<std::string> cuda_runtime_libs{"libcudart.so.12", "libcudart.so.13"};
+  // The multiengine build carries the CUDA runtime itself and loads cuBLAS (with its cuBLASLt) from its own folder
+  // or engine.lib_dirs; any one complete set passes (owner 2026-10-28, the README audit).
+#if defined(_WIN32)
+  std::vector<std::vector<std::string>> cublas_sets{{"cublas64_13.dll", "cublasLt64_13.dll"},
+                                                    {"cublas64_12.dll", "cublasLt64_12.dll"}};
+#else
+  std::vector<std::vector<std::string>> cublas_sets{{"libcublas.so.13", "libcublasLt.so.13"},
+                                                    {"libcublas.so.12", "libcublasLt.so.12"}};
+#endif
 };
 [[nodiscard]] const ProfileExpectations& strata_engine_profile_expectations() noexcept;
 
@@ -55,7 +64,12 @@ struct ProbeBundle final {
   // Regular-file stat: the 0777 mode bits, or nullopt when absent/not regular.
   std::function<std::optional<unsigned>(const std::filesystem::path&)> file_mode;
   std::filesystem::path program_dir;  // CUDA runtime libraries live next to the program
+  std::vector<std::filesystem::path> engine_dirs;  // the engine's own folder, then engine.lib_dirs: where cuBLAS loads from
   std::optional<std::filesystem::path> token_file;  // nullopt: an env: token — no local file to check
+  // Windows keeps the token file private by its ACL, which mode bits do not show: the verb sets false and the check
+  // asks the store instead (token_store_error: the store's refusal, nullopt when it reads the token under its rules).
+  bool file_modes_apply{true};
+  std::function<std::optional<std::string>()> token_store_error;
   std::vector<RootProbe> roots;
   std::function<bool()> port_free;  // the bind probe for listener.host:listener.port
   // Current RLIMIT_MEMLOCK in bytes; RLIM_INFINITY arrives as std::numeric_limits<

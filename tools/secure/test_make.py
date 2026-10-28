@@ -20,8 +20,10 @@ HOOK_MARKER = b"SECURE_FRONTEND_TEST_" + b"HOOKS_COMPILED_IN"
 
 
 def options(*extra: str, platform: str = "windows"):
-    return make.parse_args(["--out", str(ROOT / "out" / "dist-test"), "--ggml-dir", "G:/llama.cpp",
-                            "--cuda-root", "C:/CUDA/v13.0", *extra], platform=platform)
+    # A build folder that never exists (inside the --out that is never made): the arguments are a fresh build's
+    # whatever this PC has built in out/make-build (2026-10-28: two cases failed once a real build sat there).
+    return make.parse_args(["--out", str(ROOT / "out" / "dist-test"), "--build-dir", str(ROOT / "out" / "dist-test" / "make-build"),
+                            "--ggml-dir", "G:/llama.cpp", "--cuda-root", "C:/CUDA/v13.0", *extra], platform=platform)
 
 
 def test_engine_configure_is_the_tested_box_build():
@@ -204,14 +206,15 @@ def test_the_license_and_notices_come_with_every_out_folder(tmp_path):
 
 def test_the_folder_readme_names_its_license_and_how_to_start_it():
     """Owner 2026-10-28 ("make sure the readme is up to date and ensure the syntax for configuring and starting it are
-    correct"): README.txt says the folder's licence and files, starts the server as each shell types it, gives options
-    with --data-dir (alone they do not read data/), and names the generation time limit."""
+    correct"): README.txt says the folder's licence and files, starts the server as each shell types it, shows an
+    option on top of data/ (--port alone, since uses_data_folder), and names the generation time limit."""
     windows = make.readme_text(options("--with", "email,search"), "windows")
     linux = make.readme_text(options(platform="linux"), "linux")
     for text in (windows, linux):
         assert "AGPL-3.0" in text and "LICENSE" in text and "NOTICE.md" in text
-        assert "--data-dir data --port" in text and "limits.engine.generation_timeout_s" in text
+        assert "limits.engine.generation_timeout_s" in text and "--data-dir data" not in text
         assert "strata-secure-server --help" in text or "strata-secure-server.exe --help" in text
+    assert ".\\strata-secure-server.exe --port 9090" in windows and "./strata-secure-server --port 9090" in linux
     assert ".\\strata-secure-server.exe" in windows and "./strata-secure-server" in linux
     assert "engine/templates/" in windows and "strata-search" in windows and "strata-search" not in linux
 

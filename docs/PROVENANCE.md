@@ -718,6 +718,18 @@ Peasant Smith and the Project Maya contributors"; read from `G:\Project-maya`'s 
   and what upstream's `ChatTemplate` (`serve/frontend.py`) rendered from each template
   (`secure_frontend/tools/generate_raon1_flint_tool_prompt_fixture.py`, which adds the `{% generation %}` tag raon1's
   template uses); the templates are not committed (their SHA-256 is in the file).
+- **Gemma 4 tool calls (2026-10-28)**: `render_gemma4_tool_prompt` writes what the tool macros of Gemma 4's chat template
+  (Google's, from the UD-Q8_K_XL GGUF; its `general.license` apache-2.0 with Google's Gemma 4 terms linked) write -
+  `format_function_declaration`, `format_parameters`, `format_argument` and the call and response framing - ported to
+  C++ and checked byte for byte. The message path is llama.cpp's at the pinned `3cf03257` (MIT, "Copyright (c)
+  2023-2026 The ggml authors"): `common/parsers/gemma4.cpp`'s `convert_tool_responses_gemma4` (folding a round's calls
+  and results into one model turn) and its "<|turn>model" rule, ported; `gemma4_tool_calls.cpp` reads calls by that
+  file's PEG rules and `common/chat-peg-parser.cpp`'s `gemma4_to_json`, reimplemented by hand; the `<|tool_response>`
+  stop follows `src/llama-vocab.cpp`'s Gemma 4 end-of-generation list. `tests/gemma4_tool_calls_test.cpp` carries the
+  replies of `tests/test-chat.cpp`'s Gemma 4 block with the calls llama.cpp expects for them.
+  `tests/fixtures/gemma4_tool_prompts.json` holds our inputs and what upstream's `ChatTemplate` rendered from the GGUF's
+  template over that path (`secure_frontend/tools/generate_gemma4_tool_prompt_fixture.py`); the template is not
+  committed (its SHA-256 is in the file).
 
 ## strata-prepare (ours, 2026-10-27): upstream's pack tools as a native program
 

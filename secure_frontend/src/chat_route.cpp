@@ -63,6 +63,19 @@ bool gemma4_request_thinks(const std::optional<std::string>& reasoning_effort, c
   return reasoning_effort.has_value() ? *reasoning_effort != "none" : thinking_default;
 }
 
+std::optional<ToolFormat> search_tool_format(const NativeChatProfile profile) {
+  switch (profile) {
+    case NativeChatProfile::qwen: return ToolFormat::qwen;
+    case NativeChatProfile::glm53: return ToolFormat::glm;
+    case NativeChatProfile::raon1: return ToolFormat::raon1;  // raon-1-mini's template writes Qwen's calls
+    case NativeChatProfile::flint: return ToolFormat::flint;  // flint's writes GLM's
+    case NativeChatProfile::gemma4: return ToolFormat::gemma4;  // its own <|tool_call>call:NAME{...} (owner 2026-10-28)
+    case NativeChatProfile::deepseek:
+    case NativeChatProfile::minimax: break;  // (no tool form wired for these yet)
+  }
+  return std::nullopt;
+}
+
 MinimaxThinking minimax_request_thinking(const std::optional<std::string>& reasoning_effort,
                                          const std::optional<std::string>& effort_default) {
   const std::optional<std::string>& level = reasoning_effort.has_value() ? reasoning_effort : effort_default;
@@ -234,18 +247,7 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
   // Web search (spec 2026-10-27-web-search-design §2): a qwen, GLM-5.3, raon1 or flint text chat gets the server's
   // tool, when there is one now, in its family's form - unless the request turned it off ("strata_search": false).
   std::shared_ptr<SearchTurn> search;
-  const std::optional<ToolFormat> tool_format = [&]() -> std::optional<ToolFormat> {
-    switch (config_.profile) {
-      case NativeChatProfile::qwen: return ToolFormat::qwen;
-      case NativeChatProfile::glm53: return ToolFormat::glm;
-      case NativeChatProfile::raon1: return ToolFormat::raon1;  // raon-1-mini's template writes Qwen's calls
-      case NativeChatProfile::flint: return ToolFormat::flint;  // flint's writes GLM's
-      case NativeChatProfile::gemma4:
-      case NativeChatProfile::deepseek:
-      case NativeChatProfile::minimax: break;  // (no tool form wired for these yet)
-    }
-    return std::nullopt;
-  }();
+  const std::optional<ToolFormat> tool_format = search_tool_format(config_.profile);
   if (config_.tools != nullptr && tool_format && !vision_request && request.strata_search != false) {
     if (auto offer = config_.tools->offer()) {
       search = std::make_shared<SearchTurn>(SearchTurn{request, std::move(*offer), thinking, effort, *tool_format});

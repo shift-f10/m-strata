@@ -197,6 +197,13 @@ class StdioLineChild final : public LineChild {
   std::optional<ExitStatus> status_;
 };
 
+// A downloaded file where the store keeps it: <version>/<its catalog path>, the catalog's subfolder kept (Maya's
+// repositories put each quant in one, Maya-XS/...; owner 2026-10-28: a DeepSeek pack failed with "missing_gguf"
+// when only the name was kept), with this system's separators.
+std::filesystem::path stored_file(const std::filesystem::path& version, const std::string& relative) {
+  return (version / path_from_utf8(relative)).make_preferred();
+}
+
 }  // namespace
 
 namespace {
@@ -1442,7 +1449,7 @@ bool DownloadManager::native_prepare(const std::size_t index, std::string& error
     return false;
   }
   const std::string first = gguf_shard_set(entry.files.front().path).front();
-  const std::filesystem::path shard = *version / path_from_utf8(first).filename();
+  const std::filesystem::path shard = stored_file(*version, first);
   const std::filesystem::path pack = store / "packs" / path_from_utf8(entry.id);
   std::vector<std::string> args{"download", "--gguf", path_to_utf8(shard), "--out", path_to_utf8(pack)};
   for (const auto& arg : entry.pack_args) args.push_back("--pack-arg=" + arg);
@@ -1458,7 +1465,7 @@ bool DownloadManager::native_prepare(const std::size_t index, std::string& error
   std::string model_id = path_to_utf8(shard.filename());
   if (model_id.size() > 5U) model_id.resize(model_id.size() - 5U);   // the inventory id is the stem
   PackedCardRequest request{.family = PackedFamily::qwen38, .name = card_name_for(entry), .engine = *settings_.gguf_engine,
-                            .source = "download:" + entry.id, .pack = pack, .folder = *version, .model_id = model_id};
+                            .source = "download:" + entry.id, .pack = pack, .folder = shard.parent_path(), .model_id = model_id};
   if (ple != nullptr && ple->if_string() != nullptr && !ple->if_string()->empty() && shard_count <= 2) request.ple_gguf = *ple->if_string();
   if (entry.expert_profile) request.expert_profile = settings_.gguf_engine->parent_path() / "profiles" / path_from_utf8(*entry.expert_profile);
   const auto card = card_for_pack(request);
@@ -1507,8 +1514,9 @@ bool DownloadManager::maya_prepare(const std::size_t index, std::string& error) 
   }
   if (entry.engine == "deepseek") {
     // DeepSeek-V4.1 (maya.py ds4_pack_step): ds4.txt names the model's folder, so the pack is <store>/packs/<id> and reads
-    // the store's version folder in place; Maya's shipped DeepSeek profile beside the engine seeded into it
-    const auto first = *version / path_from_utf8(gguf_shard_set(entry.files.front().path).front()).filename();
+    // the store's version folder in place; Maya's shipped DeepSeek profile beside the engine seeded into it. The store keeps
+    // the catalog's subfolder (<version>/Maya-XS/...-00001-of-00005.gguf; owner 2026-10-28: "missing_gguf" without it)
+    const auto first = stored_file(*version, gguf_shard_set(entry.files.front().path).front());
     std::vector<std::string> arguments{"download", "--maya", "--gguf", path_to_utf8(first), "--out", path_to_utf8(folder)};
     const auto profile = settings_.gguf_engine->parent_path() / "profiles" / "expert-profile-ds4.bin";
     if (std::filesystem::is_regular_file(profile, ec)) arguments.insert(arguments.end(), {"--expert-profile", path_to_utf8(profile)});
@@ -1535,7 +1543,7 @@ bool DownloadManager::maya_prepare(const std::size_t index, std::string& error) 
       error = "MiniMax's chat template is not beside the engine";
       return false;
     }
-    const auto first = *version / path_from_utf8(gguf_shard_set(entry.files.front().path).front()).filename();
+    const auto first = stored_file(*version, gguf_shard_set(entry.files.front().path).front());
     if (!run_prepare_tool(*tool, {"download", "--maya", "--gguf", path_to_utf8(first), "--out", path_to_utf8(folder), "--template",
                                   path_to_utf8(*chat_template)},
                           error)) {
@@ -1553,10 +1561,16 @@ bool DownloadManager::maya_prepare(const std::size_t index, std::string& error) 
                                      .source = "download:" + entry.id, .pack = folder});
     return write_download_card(entry, card.name, card.json, error);
   }
+  // each shard as the store keeps it (under the catalog's subfolder), linked by its name beside the pack
+  std::vector<std::filesystem::path> stored;
   std::vector<std::filesystem::path> shards;
-  for (const auto& name : gguf_shard_set(entry.files.front().path)) shards.push_back(path_from_utf8(name).filename());
-  for (const auto& file : shards) {
-    const auto target = *version / file;
+  for (const auto& name : gguf_shard_set(entry.files.front().path)) {
+    stored.push_back(stored_file(*version, name));
+    shards.push_back(path_from_utf8(name).filename());
+  }
+  for (std::size_t i = 0; i < shards.size(); ++i) {
+    const auto& file = shards[i];
+    const auto& target = stored[i];
     const auto link = folder / file;
     std::error_code e;
     if (std::filesystem::exists(link, e)) {
@@ -1660,8 +1674,9 @@ bool DownloadManager::gguf_card(const std::size_t index, std::string& error) {
     return false;
   }
   const std::string first = gguf_shard_set(entry.files.front().path).front();
-  const std::string file = path_to_utf8(path_from_utf8(first).filename());
-  auto root = open_root(*version);
+  const auto stored = stored_file(*version, first);  // its own folder in the store: the card's model folder
+  const std::string file = path_to_utf8(stored.filename());
+  auto root = open_root(stored.parent_path());
   const auto relative = parse_relative_path(file);
   if (!std::holds_alternative<CanonicalRoot>(root) || !std::holds_alternative<RelativePath>(relative)) {
     error = "the installed model folder cannot be opened";

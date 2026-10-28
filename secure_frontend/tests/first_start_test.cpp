@@ -215,11 +215,36 @@ void data_dir_flag_is_parsed() {
   expect(std::holds_alternative<secure_frontend::CliError>(refused), "--data-dir and --config exclude each other");
 }
 
+// Owner 2026-10-28 ("ensure the syntax for configuring and starting it are correct"): `strata-secure-server --port 9090`
+// failed with "roots.models: is required" because options alone skipped data/. Options now adjust the data folder's
+// config for that start; only --config and a bring-up start that names its model by flags leave the data folder out.
+void options_alone_start_from_the_data_folder() {
+  const auto uses = [](std::vector<const char*> argv) {
+    argv.insert(argv.begin(), "strata-secure-server");
+    const auto parsed = secure_frontend::parse_server_command_line(static_cast<int>(argv.size()), argv.data());
+    const auto* invocation = std::get_if<secure_frontend::ServerInvocation>(&parsed);
+    expect(invocation != nullptr, "the command line parses");
+    return invocation != nullptr && secure_frontend::uses_data_folder(*invocation);
+  };
+  expect(uses({}), "no option: the data folder");
+  expect(uses({"--port", "9090"}), "--port alone: the data folder on that port");
+  expect(uses({"--host", "127.0.0.1", "--port", "9090", "--token-env", "STRATA_DEV_KEY", "--gpu", "0"}),
+         "listener, key and GPU options: the data folder");
+  expect(uses({"--check", "--port", "9090"}), "--check with an option reads the data folder too");
+  expect(uses({"--data-dir", "D:/a", "--port", "1"}), "--data-dir with options: that data folder");
+  expect(!uses({"--config", "D:/a/config.json", "--port", "1"}), "--config: that file, not the data folder");
+  expect(!uses({"--expert", "--port", "1"}), "--expert is a bring-up start");
+  for (const char* flag : {"--models-root", "--engine", "--model-id", "--profile", "--tokenizer-pack"}) {
+    expect(!uses({flag, "x"}), std::string{flag} + " names the model by flags: a bring-up start");
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"config_writer_renders_decimals", config_writer_renders_decimals},
+      {"options_alone_start_from_the_data_folder", options_alone_start_from_the_data_folder},
       {"first_start_creates_the_data_folder", first_start_creates_the_data_folder},
       {"a_later_start_keeps_everything", a_later_start_keeps_everything},
       {"card_less_server_config_comes_from_the_main_config", card_less_server_config_comes_from_the_main_config},

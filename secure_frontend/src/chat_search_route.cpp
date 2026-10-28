@@ -30,6 +30,9 @@ ChatGenerationPlanResult search_plan(const SearchLimits& limits, const SearchTur
     case ToolFormat::flint:
       return make_flint_tool_generation_plan(turn.request, tokenizer, tools, rounds, limits.max_prompt_tokens, 1U, limits.sampling,
                                              turn.thinking);
+    case ToolFormat::gemma4:
+      return make_gemma4_tool_generation_plan(turn.request, tokenizer, tools, rounds, limits.max_prompt_tokens, 1U, limits.sampling,
+                                              turn.thinking);
     case ToolFormat::qwen: break;
   }
   return make_qwen_tool_generation_plan(turn.request, tokenizer, tools, rounds, limits.max_prompt_tokens, 1U, limits.sampling,

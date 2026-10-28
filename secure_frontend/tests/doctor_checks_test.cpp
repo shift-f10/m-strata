@@ -147,6 +147,56 @@ void doctor_check_cuda_runtime() {
   expect(check_cuda_runtime(bundle).ok, "a candidate found next to the program (or under lib/) passes");
 }
 
+// Owner 2026-10-28 (the README audit: doctor misfired in an out folder): the engine carries the CUDA runtime itself
+// and loads cuBLAS from its own folder (make bundles it in engine/) or from engine.lib_dirs (a --no-cuda-runtime build
+// with the toolkit's folder listed), so the pair found there passes too.
+void doctor_check_cuda_finds_cublas_beside_the_engine() {
+  ProbeBundle bundle;
+  bundle.program_dir = "/opt/out";
+  bundle.engine_dirs = {"/opt/out/engine", "/usr/local/cuda/lib64"};
+  bundle.profile.cublas_sets = {{"libcublas.so.13", "libcublasLt.so.13"}};
+  const auto present = [](std::vector<std::filesystem::path> files) {
+    return [files](const std::filesystem::path& p) -> std::optional<unsigned> {
+      for (const auto& file : files) if (p == file) return 0755U;
+      return std::nullopt;
+    };
+  };
+  bundle.file_mode = present({"/opt/out/engine/libcublas.so.13", "/opt/out/engine/libcublasLt.so.13"});
+  expect(check_cuda_runtime(bundle).ok, "the out folder's engine/ cuBLAS pair passes");
+  bundle.file_mode = present({"/usr/local/cuda/lib64/libcublas.so.13", "/usr/local/cuda/lib64/libcublasLt.so.13"});
+  expect(check_cuda_runtime(bundle).ok, "the pair in an engine.lib_dirs folder passes");
+  bundle.file_mode = present({"/opt/out/engine/libcublas.so.13", "/usr/local/cuda/lib64/libcublasLt.so.13"});
+  const auto split = check_cuda_runtime(bundle);
+  expect(!split.ok, "half of the pair in each folder is not a working cuBLAS");
+  expect(contains(split.human_fix, "libcublas.so.13") && contains(split.human_fix, "engine.lib_dirs") &&
+             contains(split.human_fix, "/opt/out/engine"),
+         "the fix names the libraries, where they were looked for and engine.lib_dirs: " + split.human_fix);
+  const auto& defaults = strata_engine_profile_expectations().cublas_sets;
+#if defined(_WIN32)
+  expect(!defaults.empty() && defaults.front().front() == "cublas64_13.dll", "Windows looks for cublas64_13.dll first");
+#else
+  expect(!defaults.empty() && defaults.front().front() == "libcublas.so.13", "Linux looks for libcublas.so.13 first");
+#endif
+}
+
+// The same audit: on Windows the token file's privacy is its ACL (the store's own rules), not POSIX mode bits, so the
+// verb sets file_modes_apply = false and the check asks the store (read_token) instead.
+void doctor_check_token_uses_the_store_rules_where_modes_do_not_apply() {
+  ProbeBundle bundle;
+  bundle.token_file = "C:/data/secret/token";
+  bundle.file_modes_apply = false;
+  bundle.file_mode = [](const std::filesystem::path&) { return std::optional<unsigned>{0666U}; };  // what Windows reports
+  bundle.token_store_error = [] { return std::optional<std::string>{}; };
+  expect(check_token(bundle).ok, "a token the store reads under its own rules passes whatever the mode bits say");
+  bundle.token_store_error = [] { return std::optional<std::string>{"the token file is not private to this user"}; };
+  const auto refused = check_token(bundle);
+  expect(!refused.ok && contains(refused.human_fix, "not private to this user") &&
+             contains(refused.human_fix, "strata key rotate"),
+         "the store's refusal is the fix's reason: " + refused.human_fix);
+  bundle.token_store_error = nullptr;
+  expect(!check_token(bundle).ok, "no store probe: fail closed");
+}
+
 void doctor_check_memlock() {
   ProbeBundle bundle;
   bundle.memlock_limit = [] { return std::optional<std::uint64_t>{}; };
@@ -211,6 +261,9 @@ int main(int argc, char** argv) {
       {"doctor_check_port_busy_fails_with_fix", doctor_check_port_busy_fails_with_fix},
       {"doctor_check_gpu_and_driver", doctor_check_gpu_and_driver},
       {"doctor_check_cuda_runtime", doctor_check_cuda_runtime},
+      {"doctor_check_cuda_finds_cublas_beside_the_engine", doctor_check_cuda_finds_cublas_beside_the_engine},
+      {"doctor_check_token_uses_the_store_rules_where_modes_do_not_apply",
+       doctor_check_token_uses_the_store_rules_where_modes_do_not_apply},
       {"doctor_check_memlock", doctor_check_memlock},
       {"doctor_deep_digests_and_run_order", doctor_deep_digests_and_run_order},
       {"doctor_human_fix_never_carries_install_commands", doctor_human_fix_never_carries_install_commands},

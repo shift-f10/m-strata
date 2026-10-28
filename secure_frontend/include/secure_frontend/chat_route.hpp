@@ -98,6 +98,9 @@ struct SearchLimits final {
 [[nodiscard]] SearchLimits search_limits(const ChatRouteConfig& config);
 // The first round's plan: the conversation with the server's tool (make_qwen_tool_generation_plan).
 [[nodiscard]] ChatGenerationPlanResult search_first_plan(const ChatRouteConfig& config, const SearchTurn& turn, const TokenizerPack& tokenizer);
+// Which profiles' text chats get the server's tool, in their family's form: qwen, GLM-5.3, raon1 (Qwen's calls in its
+// own prompt), flint (GLM's) and Gemma 4 (its own); nullopt for the others (no tool form wired yet).
+[[nodiscard]] std::optional<ToolFormat> search_tool_format(NativeChatProfile profile);
 class StreamRounds;  // chat_stream.hpp
 struct SseIdentity;  // sse_encoder.hpp
 // The stream's rounds for a chat with the server's tool: the first generation is already begun on `chat`.
