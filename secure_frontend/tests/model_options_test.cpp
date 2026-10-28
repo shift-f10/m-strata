@@ -674,11 +674,13 @@ void flint_options_follow_the_flint_engine() {
 }
 
 // Owner 2026-10-28 ("a toggle in the card that can enable search"): web_search, a checkbox of each profile with the
-// server's tool (qwen, glm53, raon1, flint). It writes no flag and no row: the launcher reads it at a start to hand the
-// model the tool or not. A card may list it with its own default.
+// server's tool (qwen, glm53, raon1, flint, gemma4, deepseek). It writes no flag and no row: the launcher reads it at a
+// start to hand the model the tool or not. A card may list it with its own default.
 void web_search_is_a_checkbox_of_the_tool_profiles() {
-  // gemma4 since 2026-10-28 (the owner: "gemma4 did not use search")
-  for (const auto profile : {EngineProfile::qwen, EngineProfile::glm53, EngineProfile::raon1, EngineProfile::flint, EngineProfile::gemma4}) {
+  // gemma4 since 2026-10-28 (the owner: "gemma4 did not use search"); deepseek since 2026-10-28 (the owner: "deepseek
+  // does not seem to have mcp search access")
+  for (const auto profile : {EngineProfile::qwen, EngineProfile::glm53, EngineProfile::raon1, EngineProfile::flint, EngineProfile::gemma4,
+                             EngineProfile::deepseek}) {
     const auto* spec = secure_frontend::find_model_option(profile, "web_search");
     expect(spec != nullptr && spec->kind == ModelOptionKind::boolean && spec->label == "Web search" && !spec->help.empty(),
            "a tool profile has the Web search checkbox");
@@ -688,9 +690,7 @@ void web_search_is_a_checkbox_of_the_tool_profiles() {
     secure_frontend::apply_option_values(profile, ModelOptionValues{{"web_search", true}}, draft);
     expect(draft.entries.empty(), "it writes no config row");
   }
-  expect(secure_frontend::find_model_option(EngineProfile::deepseek, "web_search") == nullptr &&
-             secure_frontend::find_model_option(EngineProfile::minimax, "web_search") == nullptr,
-         "deepseek and minimax have no tool to offer");
+  expect(secure_frontend::find_model_option(EngineProfile::minimax, "web_search") == nullptr, "minimax has no tool to offer yet");
   expect(secure_frontend::is_model_option_name("web_search"), "a fixed option name (kept in the remembered file)");
   const auto listed = limits_of(EngineProfile::raon1, R"({"web_search": {"default": false}})");
   expect(listed.size() == 1U && std::get_if<bool>(&listed[0].default_value) != nullptr && !std::get<bool>(listed[0].default_value),
@@ -987,7 +987,7 @@ void glm_options_write_the_glm_rows() {
 // high 75, none chat mode), the sampling rows. The context is maya-ds4's own --max-context in engine.args (the maya_ds4
 // allowlist), the thinking level reasoning.effort.
 void deepseek_options_are_mayas() {
-  expect(names_of(EngineProfile::deepseek) == Strings{"max_context", "thinking", "temperature", "top_p", "top_k", "min_p", "gpus"},
+  expect(names_of(EngineProfile::deepseek) == Strings{"max_context", "thinking", "temperature", "top_p", "top_k", "min_p", "web_search", "gpus"},
          "the deepseek options in display order: " + joined(names_of(EngineProfile::deepseek)));
   const auto* context = secure_frontend::find_model_option(EngineProfile::deepseek, "max_context");
   expect(context != nullptr && context->kind == ModelOptionKind::integer && context->minimum == 1 && context->maximum == 1048576 &&

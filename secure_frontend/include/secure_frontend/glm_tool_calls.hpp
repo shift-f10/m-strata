@@ -23,6 +23,10 @@ namespace secure_frontend {
 // nullopt: a malformed body (Maya's ValueError).
 [[nodiscard]] std::optional<ToolCall> parse_glm_tool_call(std::string_view body, const ToolDeclaration* declaration);
 
+// What Maya's rewriters (DsmlRewriter, MinimaxRewriter) write for a string value's piece: json.dumps(text,
+// ensure_ascii=False) without its quotes, "<" as \u003c - byte by byte, so the pieces of a value escape to the whole's.
+[[nodiscard]] std::string maya_json_escaped(std::string_view text);
+
 // Maya's OutputParser for the calls (a ToolCallParser):
 //  - the reasoning is reasoning: Maya reads no call there;
 //  - in the answer, a <tool_call> outside a code fence and inline code (#1058) starts a call - the text before it loses
@@ -33,9 +37,12 @@ namespace secure_frontend {
 // Two rules are ours: a call names a tool the server declared, else it is the text it was (in Maya a call for another
 // tool is the client's, and our clients declare none); and a body that does not parse is text too (Maya's request
 // fails).
+// `rewritten`: calls a rewriter wrote into GLM's form (DeepSeek's DSML, MiniMax's; Maya's OutputParser with a rewriter):
+// no newline is dropped after </think> or a call, and before a call only a trailing "\n\n" goes (the one the template
+// writes before its calls block), the rest of the text staying as it is.
 class GlmToolCallParser final : public ToolCallParser {
  public:
-  explicit GlmToolCallParser(std::vector<ToolDeclaration> tools);
+  explicit GlmToolCallParser(std::vector<ToolDeclaration> tools, bool rewritten = false);
 
   [[nodiscard]] std::vector<ToolParseEvent> feed_reasoning(std::string_view text) override;
   [[nodiscard]] std::vector<ToolParseEvent> end_reasoning() override;
@@ -53,6 +60,7 @@ class GlmToolCallParser final : public ToolCallParser {
   State state_{State::reasoning};
   std::string buf_;
   bool lead_{false};
+  bool rewritten_{false};
   CodeTracking tracking_;
 };
 

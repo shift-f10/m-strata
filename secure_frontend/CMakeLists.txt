@@ -430,7 +430,7 @@ target_include_directories(secure_frontend_qwen_prompt_renderer
 target_link_libraries(secure_frontend_qwen_prompt_renderer PUBLIC secure_frontend_chat_schema secure_frontend_json)
 # Web search (spec 2026-10-27-web-search-design.md, phase 3): the calls a Qwen reply writes, read as upstream reads them.
 secure_frontend_add_library(secure_frontend_tool_calls SOURCES src/tool_calls.cpp src/qwen_tool_calls.cpp src/glm_tool_calls.cpp
-    src/gemma4_tool_calls.cpp
+    src/gemma4_tool_calls.cpp src/deepseek_tool_calls.cpp
     LINKS secure_frontend_json)
 target_compile_features(secure_frontend_glm_prompt_renderer PUBLIC cxx_std_20)
 target_include_directories(secure_frontend_glm_prompt_renderer
@@ -459,7 +459,8 @@ target_include_directories(secure_frontend_deepseek_prompt_renderer
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(secure_frontend_deepseek_prompt_renderer PUBLIC secure_frontend_chat_schema secure_frontend_tokenizer_pack)
+target_link_libraries(secure_frontend_deepseek_prompt_renderer PUBLIC secure_frontend_chat_schema secure_frontend_tokenizer_pack
+    secure_frontend_json)
 target_compile_features(secure_frontend_minimax_prompt_renderer PUBLIC cxx_std_20)
 target_include_directories(secure_frontend_minimax_prompt_renderer
     PUBLIC
@@ -1859,6 +1860,20 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         refuses_what_the_tool_prompt_cannot_say reads_calls_as_llama_cpp_does plans_with_its_tags the_route_plans_gemma4_searches)
     # The real vocabulary (SECURE_FRONTEND_GEMMA4_PACK; unset, skipped).
     secure_frontend_add_cases(secure_frontend_gemma4_tool_calls_tests the_real_pack_plans_its_search LABELS flint-real-pack)
+
+    # Web search for DeepSeek-V4.1 (owner 2026-10-28): Maya's tool prompt (DeepSeek's encoder under Maya's ChatTemplate,
+    # tools/generate_deepseek_tool_prompt_fixture.py), Maya's reading of DSML calls (tools/generate_deepseek_tool_call_fixture.py),
+    # the plan, the route.
+    secure_frontend_add_test_executable(secure_frontend_deepseek_tool_calls_tests tests/deepseek_tool_calls_test.cpp
+        secure_frontend_chat_generation_plan secure_frontend_tool_calls secure_frontend_chat_route secure_frontend_model_options)
+    secure_frontend_add_cases(secure_frontend_deepseek_tool_calls_tests renders_mayas_tool_prompts_byte_for_byte
+        ARGS ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/deepseek_tool_prompts.json)
+    secure_frontend_add_cases(secure_frontend_deepseek_tool_calls_tests reads_calls_as_maya_does
+        ARGS ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/deepseek_tool_calls.json)
+    secure_frontend_add_cases(secure_frontend_deepseek_tool_calls_tests
+        refuses_what_the_tool_prompt_cannot_say plans_with_dsml_as_text the_route_plans_deepseek_searches)
+    # The real vocabulary (SECURE_FRONTEND_DEEPSEEK_PACK, a maya-ds4 pack's tokenizer folder; unset, skipped).
+    secure_frontend_add_cases(secure_frontend_deepseek_tool_calls_tests the_real_pack_plans_its_search LABELS flint-real-pack)
 
     secure_frontend_add_test_executable(secure_frontend_glm_profile_tests tests/glm_profile_test.cpp
         secure_frontend_chat_generation_plan)

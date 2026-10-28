@@ -280,6 +280,52 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z7 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+The owner: "deepseek does not seem to have mcp search access and I believe minimax may have the same issue". Both
+profiles were served without the tool, since neither had a tool form. This entry covers DeepSeek-V4.1; MiniMax-M3.1
+follows.
+
+- **The prompt**: `render_deepseek_tool_prompt` writes DeepSeek's encoder as Maya runs it for a chat with tools
+  (`serve/ds41_encoding.py` under Maya's ChatTemplate):
+  - the tools ride on the system message (an empty one goes first when there is none): `TOOLS_TEMPLATE` verbatim
+    with its DSML names, and each tool's function object as `to_json` writes it;
+  - every assistant header opens `<think>` (thinking) or closes it;
+  - a round is its reasoning and `</think>` (thinking), its content, its calls in DSML (`tool_calls_template`;
+    `string="true"` for a string value, JSON otherwise), EOS, then the results as one user turn of `<tool_result>`
+    blocks.
+
+  As in Maya's `run_with_mcp`, DeepSeek's rounds are not stripped (the other families' are). The prompts are checked
+  byte for byte, markers included, against the 11 that Maya's own code rendered (`tests/fixtures/
+  deepseek_tool_prompts.json`), in both tool forms.
+- **The plan**: `make_deepseek_tool_generation_plan` keeps the text plan's markers and stops. It adds `｜DSML｜` (a
+  user-defined special token in the maya-ds4 pack), output as its text (`literal_tokens`) for the call reader. A pack
+  without that token plans nothing, so the chat is served without the tool (`tokenization_failed`).
+- **The calls**: `DeepseekToolCallParser` runs a port of Maya's `DsmlRewriter` on both channels, then the GLM reader
+  in a new rewritten mode (`GlmToolCallParser(tools, true)`), as Maya's OutputParser reads rewritten DSML. That mode
+  does not strip a leading newline after `</think>` or a call, and before a call drops only a trailing `\n\n`.
+  `maya_json_escaped` (glm_tool_calls) is shared with the MiniMax reader to come. The calls are checked against the
+  events Maya's parser gave for 14 replies, fed whole and one byte at a time (`deepseek_tool_calls.json`).
+- **Python's whitespace**: Maya's rewriter splits a tag's name with `str.split()` and tests blank text with
+  `str.strip()`, and both take Unicode whitespace too. The port now does the same through `python_text.hpp`, with a
+  new `python_first_word`. The new fixture case `python_whitespace_in_the_tags` was RED with the ASCII-only port.
+- **Wiring**: `ToolFormat::deepseek`; `search_tool_format(deepseek)`. The search route plans a DeepSeek turn with the
+  plain chat's effort line (`deepseek_effort_budget`; `none` is chat mode). The card gets the Web search switch
+  (`kDeepseekOptions` 7→8, before GPUs).
+- **Tests**:
+  - `secure_frontend_deepseek_tool_calls_tests`, 6 cases: the prompts, the refusals, the calls, the plan, the route,
+    and the real pack (`SECURE_FRONTEND_DEEPSEEK_PACK`, run here on the owner's maya-ds4 pack).
+  - Updated to the new rule (DeepSeek has the tool, MiniMax not yet): `deepseek_options_are_mayas`,
+    `web_search_is_a_checkbox_of_the_tool_profiles` and `cards_offer_web_search_when_the_server_has_it` (RED with
+    DeepSeek's old option table), and the Gemma 4 route assertion.
+  - The full suite in both configurations failed only those three option tests and the new whitespace case, besides
+    the known three (`idle_unload_respawns_before_the_next_request` and the two release-only tests). After the fixes
+    the affected tests pass, 72/72, in both trees.
+- **Not run on the GPU**: no DeepSeek search has been run on the real engine. The owner's server was in use: first
+  DeepSeek-V4.1 itself, then a MiniMax download, during which he asked that the server not be restarted or replaced.
+  Docs: the READMEs' family lists, PROVENANCE (DeepSeek's encoder and `DsmlRewriter`) and the threat model's web search
+  section.
+
 ### Claude Code session, 2026-10-28 z6 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 The owner tried the README's install on another PC and pasted the errors, then: "make the installation guide full step

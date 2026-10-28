@@ -341,8 +341,10 @@ void the_route_plans_gemma4_searches() {
              secure_frontend::search_tool_format(NativeChatProfile::glm53) == std::optional<ToolFormat>{ToolFormat::glm} &&
              secure_frontend::search_tool_format(NativeChatProfile::raon1) == std::optional<ToolFormat>{ToolFormat::raon1} &&
              secure_frontend::search_tool_format(NativeChatProfile::flint) == std::optional<ToolFormat>{ToolFormat::flint} &&
-             !secure_frontend::search_tool_format(NativeChatProfile::deepseek) && !secure_frontend::search_tool_format(NativeChatProfile::minimax),
-         "a Gemma 4 chat gets the tool in its own form; DeepSeek and MiniMax none yet");
+             // (2026-10-28, the owner: "deepseek does not seem to have mcp search access": DeepSeek's DSML form)
+             secure_frontend::search_tool_format(NativeChatProfile::deepseek) == std::optional<ToolFormat>{ToolFormat::deepseek} &&
+             !secure_frontend::search_tool_format(NativeChatProfile::minimax),
+         "a Gemma 4 chat gets the tool in its own form, DeepSeek in DSML; MiniMax none yet");
   secure_frontend::ChatRouteConfig config{};
   config.max_prompt_tokens = 100000U;
   secure_frontend::ChatCompletionRequest request;

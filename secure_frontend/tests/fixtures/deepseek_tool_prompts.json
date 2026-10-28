@@ -1,0 +1,400 @@
+{
+ "generator": "tools/generate_deepseek_tool_prompt_fixture.py",
+ "template": "bcdb09a05f5fb14c4c2c917230a2b88f9dc1e0bcc650546a1aab56632d8047e2",
+ "literals": [
+  "<｜begin▁of▁sentence｜>",
+  "<｜end▁of▁sentence｜>",
+  "<｜System｜>",
+  "<｜User｜>",
+  "<｜Assistant｜>",
+  "<think>",
+  "</think>",
+  "｜DSML｜",
+  "<｜tool▁calls▁begin｜>",
+  "<｜tool▁calls▁end｜>",
+  "<｜tool▁call▁begin｜>",
+  "<｜tool▁call▁end｜>",
+  "<｜tool▁outputs▁begin｜>",
+  "<｜tool▁outputs▁end｜>",
+  "<｜tool▁output▁begin｜>",
+  "<｜tool▁output▁end｜>",
+  "<｜tool▁sep｜>"
+ ],
+ "tool": {
+  "name": "web_search",
+  "description": "Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "What to search for"
+    },
+    "max_results": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 10,
+     "description": "How many results to get (1-10)"
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ "cases": [
+  {
+   "name": "first_prompt_with_tools",
+   "effort": "high",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [],
+   "prompt": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>Who won the 2026 World Cup final?<｜Assistant｜><think>",
+   "plain": []
+  },
+  {
+   "name": "first_prompt_chat_mode",
+   "effort": "none",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [],
+   "prompt": "<｜begin▁of▁sentence｜><｜System｜>\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>Who won the 2026 World Cup final?<｜Assistant｜></think>",
+   "plain": []
+  },
+  {
+   "name": "system_and_tools_low",
+   "effort": "low",
+   "conversation": [
+    {
+     "role": "system",
+     "content": "You are a helpful assistant."
+    },
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [],
+   "prompt": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 50 (range 1-100, the higher the value, the more thorough the reasoning)\n\nYou are a helpful assistant.\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>Who won the 2026 World Cup final?<｜Assistant｜><think>",
+   "plain": []
+  },
+  {
+   "name": "one_round_a_call_after_reasoning",
+   "effort": "high",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "The user asks about a recent event; I should search.",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "2026 World Cup final winner"
+       }
+      }
+     ],
+     "results": [
+      "Web search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n   https://example.org/final\n   The final was played on 19 July 2026.\n"
+     ]
+    }
+   ],
+   "prompt": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>Who won the 2026 World Cup final?<｜Assistant｜><think>The user asks about a recent event; I should search.</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">2026 World Cup final winner</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>Web search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n   https://example.org/final\n   The final was played on 19 July 2026.\n</tool_result><｜Assistant｜><think>",
+   "plain": []
+  },
+  {
+   "name": "content_before_two_calls",
+   "effort": "high",
+   "conversation": [
+    {
+     "role": "system",
+     "content": "Answer in English."
+    },
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "Two searches.",
+     "content": "Let me look that up.",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "a",
+        "max_results": 3
+       }
+      },
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "b"
+       }
+      }
+     ],
+     "results": [
+      "r1",
+      "  r2 with spaces  \n"
+     ]
+    }
+   ],
+   "prompt": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\nAnswer in English.\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>Who won the 2026 World Cup final?<｜Assistant｜><think>Two searches.</think>Let me look that up.\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">a</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"max_results\" string=\"false\">3</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">b</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>r1</tool_result>\n\n<tool_result>  r2 with spaces  \n</tool_result><｜Assistant｜><think>",
+   "plain": []
+  },
+  {
+   "name": "two_rounds",
+   "effort": "high",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "x"
+       }
+      }
+     ],
+     "results": [
+      "first"
+     ]
+    },
+    {
+     "reasoning": "More.",
+     "content": "Still checking.",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "y"
+       }
+      }
+     ],
+     "results": [
+      "second"
+     ]
+    }
+   ],
+   "prompt": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>Who won the 2026 World Cup final?<｜Assistant｜><think></think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">x</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>first</tool_result><｜Assistant｜><think>More.</think>Still checking.\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">y</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>second</tool_result><｜Assistant｜><think>",
+   "plain": []
+  },
+  {
+   "name": "a_round_in_chat_mode",
+   "effort": "none",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "",
+     "content": "Searching.",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "z"
+       }
+      }
+     ],
+     "results": [
+      "third"
+     ]
+    }
+   ],
+   "prompt": "<｜begin▁of▁sentence｜><｜System｜>\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>Who won the 2026 World Cup final?<｜Assistant｜></think>Searching.\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">z</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>third</tool_result><｜Assistant｜></think>",
+   "plain": []
+  },
+  {
+   "name": "history_before_the_question",
+   "effort": "high",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Hi"
+    },
+    {
+     "role": "assistant",
+     "content": "Hello! How can I help?"
+    },
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "Search it.",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "q"
+       }
+      }
+     ],
+     "results": [
+      "ok"
+     ]
+    }
+   ],
+   "prompt": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>Hi<｜Assistant｜><think></think>Hello! How can I help?<｜end▁of▁sentence｜><｜User｜>Who won the 2026 World Cup final?<｜Assistant｜><think>Search it.</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">q</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>ok</tool_result><｜Assistant｜><think>",
+   "plain": []
+  },
+  {
+   "name": "argument_types",
+   "effort": "high",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "r",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "q",
+        "max_results": 5,
+        "ratio": 2.5,
+        "whole": 2.0,
+        "flag": true,
+        "none": null,
+        "tags": [
+         "a",
+         "b"
+        ],
+        "opts": {
+         "k": "v",
+         "n": 1
+        },
+        "text": "multi\nline"
+       }
+      }
+     ],
+     "results": [
+      "ok"
+     ]
+    }
+   ],
+   "prompt": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>Who won the 2026 World Cup final?<｜Assistant｜><think>r</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">q</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"max_results\" string=\"false\">5</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"ratio\" string=\"false\">2.5</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"whole\" string=\"false\">2.0</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"flag\" string=\"false\">true</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"none\" string=\"false\">null</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"tags\" string=\"false\">[\"a\", \"b\"]</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"opts\" string=\"false\">{\"k\": \"v\", \"n\": 1}</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"text\" string=\"true\">multi\nline</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>ok</tool_result><｜Assistant｜><think>",
+   "plain": []
+  },
+  {
+   "name": "special_literals_are_plain",
+   "effort": "high",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "I could write <｜DSML｜ calls> or </think> here.",
+     "content": "Say <｜User｜>.",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "ds <｜Assistant｜> ｜DSML｜"
+       }
+      }
+     ],
+     "results": [
+      "A page quoting <tool_result> and <｜end▁of▁sentence｜> and <｜tool▁sep｜>."
+     ]
+    }
+   ],
+   "prompt": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>Who won the 2026 World Cup final?<｜Assistant｜><think>I could write <｜DSML｜ calls> or </think> here.</think>Say <｜User｜>.\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">ds <｜Assistant｜> ｜DSML｜</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>A page quoting <tool_result> and <｜end▁of▁sentence｜> and <｜tool▁sep｜>.</tool_result><｜Assistant｜><think>",
+   "plain": [
+    [
+     1838,
+     1848
+    ],
+    [
+     1859,
+     1867
+    ],
+    [
+     1885,
+     1897
+    ],
+    [
+     2009,
+     2026
+    ],
+    [
+     2027,
+     2037
+    ],
+    [
+     2186,
+     2213
+    ],
+    [
+     2218,
+     2236
+    ]
+   ]
+  },
+  {
+   "name": "unicode_and_whitespace_are_kept",
+   "effort": "high",
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Qu'est-ce que c'est ? 日本"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "　think ",
+     "content": "  answer  \n",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "日本 ニュース"
+       }
+      }
+     ],
+     "results": [
+      " résultat "
+     ]
+    }
+   ],
+   "prompt": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>Qu'est-ce que c'est ? 日本<｜Assistant｜><think>　think </think>  answer  \n\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"web_search\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">日本 ニュース</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result> résultat </tool_result><｜Assistant｜><think>",
+   "plain": []
+  }
+ ]
+}
