@@ -295,6 +295,13 @@ original in `data/state/card-backups/`).
   count is the first field, as upstream's server reads it (`int(line.split()[1])`). The test fake answers in
   upstream's form (and takes `--min-tokens`, `--flash-attn`) when it runs as `strata-vision`, as the card tests install
   it: `a_card_reads_pictures_with_its_encoder` was RED with it, GREEN with the fix; 147/147 in the vision-related suites.
+- **The second real picture failed, and why**: the encoder answered at once, but the engine refused the picture's
+  generate line (`killed_by_supervisor(protocol_failed)`, 503). Upstream's engine reads `GENI <max_new> [keys] <file>
+  <id,id,...>` (generate.cpp; its server writes it so, serve/server.py:2199); we wrote the older pin's order, ids then
+  the file. The client now writes the file first. The supervision fake engine reads a `GENI` as upstream's engine does
+  (any mode; out of order: the engine's `ERR`): the protocol test, `enc_round_trip_reaches_the_prompt` and
+  `a_card_reads_pictures_with_its_encoder` were RED with it (503 `engine_error`, as on the box), GREEN with the fix;
+  282/282 in the generation suites.
 
 ### Claude Code session, 2026-10-28 z (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
