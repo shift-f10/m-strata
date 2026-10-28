@@ -630,7 +630,7 @@ asks quoted there.
   checked - and a pack strata-prepare builds beside such files is left as it came out. The page never offers or makes
   a folder private then. Unchanged: the server's own folders (`data/`, the secret folder, state, cards, packs in
   state), the config file and its folder, the install folder, and downloads (still into a private folder). The switch
-  (Models > Settings) is saved by `POST /v1/strata/folders/sharing`, keyed, for the clients the file routes admit (this
+  (Settings > Model folders) is saved by `POST /v1/strata/folders/sharing`, keyed, for the clients the file routes admit (this
   PC, and since 2026-10-28 the hosts and subnets `models.control_remote_networks` lists: the page's "make it private"
   question names the switch, and such a client can already add and delete models), and applies at the next start. It
   already relaxed the engine executable's check (`open_executable`, for a build folder others may write) before
@@ -649,6 +649,16 @@ asks quoted there.
 - **About** (`GET /v1/strata/about`, 2026-10-28): keyed like every API route. It tells a key holder the engine folder's
   build record (`engine/build.json`, read once, schema 1, at most 64 KiB, known fields only, printable text) and this
   PC's CPU, RAM, GPU and operating system - no path, user or host name.
+- **The Settings tab** (2026-10-28, owner: "a configuration tab ... api key, etc"; `POST /v1/strata/config`,
+  `/config/settings`, `/key/rotate`): keyed like every API route, served only with model control. The settings routes
+  answer the clients the file routes admit (`model_files_allowed`); rotation answers a loopback peer only, whatever the
+  remote switches say. The page writes 14 named rows (the listener and LAN access, limits and timeouts, the downloads
+  and default folders) and nothing else: `token.*`, `roots.*`, `engine.*`, cards and any other key are refused by name.
+  Each value is type-checked, then the whole file is checked by the server's own start-up rules; a problem the change
+  brings is refused by name and the file is not touched (the atomic config writer, under one lock with rotation).
+  Changes apply at the next start. No route returns the current key: the page shows the one it already holds. Rotation
+  needs `{"confirm":"ROTATE"}` and a key file (never an environment-variable start), writes it as `strata key rotate`
+  does (CSPRNG bytes, atomic replacement, owner-only), and answers the new key once with `Cache-Control: no-store`.
 - **Downloads into a chosen folder** keep the downloads rules above. The folder must pass the
   same local-folder and `open_root` checks; the `strata` child gets it as `--store <folder>`
   after `--config` (a fixed argv). The 2 GiB margin is checked on that folder's volume.
@@ -782,6 +792,12 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
   model false or steering text (prompt injection); the model has no tool but the search, so
   the effect is a wrong or slanted answer, not an action. A mistyped URL sends the queries
   elsewhere.
+- **Settings tab residual (2026-10-28):** a client the file routes admit (this PC, or a listed host or subnet with
+  `models.control_remote`) can change, for the next start, where the server listens, which PCs may manage it, the
+  limits and the two folders; the start-up rules still hold (a wildcard needs both opt-ins and host aliases), and a
+  change that locks that client out takes effect only when the operator restarts. A key holder on this PC can rotate
+  the key, which locks every other app out after the restart until it is given the new key; the new key crosses the
+  loopback connection once, in the answer.
 - **Model folders as they are residual (2026-10-27, accepted by the owner, opt-in):** with
   `roots.allow_untrusted_media` on, another user of this PC who can write a model folder can
   replace or change its GGUF, tokenizer or pack files, between the page's checks or before a

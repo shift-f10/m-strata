@@ -240,6 +240,17 @@ main { flex: 1; min-height: 0; display: flex; }
 .alerts-events { display: flex; flex-wrap: wrap; gap: var(--st-s-2) var(--st-s-4); border: none; padding: 0; margin: 0; }
 .alerts-events label { display: inline-flex; align-items: center; gap: var(--st-s-2); font-size: var(--st-fs-sm); }
 .alerts-settings[hidden] { display: none; }
+/* The Settings tab (spec 2026-10-28-server-window-design, Part 1) */
+.settings { max-width: 860px; width: 100%; margin: 0 auto; padding: var(--st-s-6); display: flex; flex-direction: column;
+            gap: var(--st-s-4); }
+.config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--st-s-3) var(--st-s-4); }
+.config-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.config-field .option-auto { align-items: flex-start; }
+.config-folder { display: flex; gap: var(--st-s-2); align-items: center; min-width: 0; }
+.config-folder .st-input { flex: 1; min-width: 0; }
+.config-list { min-height: 4.5em; resize: vertical; font-family: var(--st-font-mono); }
+#key-value, #key-new-value { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.key-new { display: flex; flex-direction: column; gap: var(--st-s-2); }
 /* web search: what a test search found, and the searches under a reply */
 .search-output { margin: 0; max-height: 16rem; overflow: auto; white-space: pre-wrap; word-break: break-word;
   font-size: var(--st-fs-sm); padding: 10px 14px; border: 1.5px solid var(--st-line); border-radius: 10px; }
@@ -307,6 +318,14 @@ main { flex: 1; min-height: 0; display: flex; }
   .monitor-row { grid-template-columns: 1fr; }
   .models { grid-template-columns: 1fr; }
 }
+@media (max-width: 900px) {
+  /* Five tabs in one row need about 800 px with their icons: between a phone and that width, text-only tabs. */
+  .st-tab .st-icon { display: none; }
+  .st-tab { padding: 0 10px; }
+  .st-header { padding: 0 var(--st-s-4); }
+  .st-header .st-tabs { margin-left: var(--st-s-2); }
+  .header-model { display: none; }  /* squeezed to a letter here; the status pill stays */
+}
 @media (max-width: 640px) {
   /* Two rows on a phone: the brand and the controls, then the tabs across the full width (the
      signed-in header needs about 480 px in one row). */
@@ -317,7 +336,8 @@ main { flex: 1; min-height: 0; display: flex; }
   #pill-text, .new-label { display: none; }
   .chat { padding: var(--st-s-5) var(--st-s-4); }
   .composer-wrap { padding: 0 var(--st-s-3) var(--st-s-3); }
-  .monitor, .about, .models { padding: var(--st-s-4); }
+  .monitor, .about, .models, .settings { padding: var(--st-s-4); }
+  .config-grid { grid-template-columns: 1fr; }
   .model-options { grid-template-columns: 1fr; }
   .header-model { display: none; }
   .facts { grid-template-columns: 1fr; gap: 2px; }

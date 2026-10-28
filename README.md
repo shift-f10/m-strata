@@ -91,7 +91,7 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 - Up to `search.max_rounds` searches per answer (8 by default), then the model answers from what it found; the chat
   shows each search and its results in a box, and the API returns them as `strata_search` events.
 - On or off per card, per chat (the chat settings' switch) and per request (`"strata_search": false`); a test search
-  in Models > Settings shows what a model reads; a search that found nothing says why.
+  in the Settings tab shows what a model reads; a search that found nothing says why.
 
 **The page and the API**
 
@@ -278,9 +278,23 @@ On the page, open **Models**:
 
 ### Settings
 
-**Models > Settings** holds the server's own settings. They are saved to `data/config.json` and apply when the server
+The **Settings** tab holds the server's own settings. They are saved to `data/config.json` and apply when the server
 restarts. They show in a browser on this PC, and on the other PCs `models.control_remote_networks` lists (the same
 clients that may add and delete models).
+
+- **API key:** the key this page signed in with, hidden until you press Show, and Copy. "Rotate the key" (type ROTATE
+  first; only in a browser on this PC) makes a new key in `data/secret`, shows it once to copy, and works after the
+  server restarts - every app then needs the new key. A server started with `--token-env` (a development start) has no
+  key file to rotate.
+- **Server and network:** the listen address and port, the two opt-ins for serving other PCs, the host names clients
+  use, and which PCs or subnets may manage models.
+- **Limits and timeouts:** the longest answer and model start (seconds), the largest prompt and answer (tokens), and
+  the connections per download.
+- **Folders:** where downloads go, and the folder Add a model opens first.
+
+Each group's Save checks the whole file by the rules the server checks at start, so a setting that would stop the
+server from starting (for example listening on `0.0.0.0` without the opt-ins) is refused with the reason, and the file
+is left as it was. An empty box puts the setting back to its default.
 
 - **Model folders:** "Use model folders as they are, even if other users of this PC can access them" lets the server
   use shared folders without changing their permissions (then other users of the PC can read or change those files).
@@ -321,7 +335,7 @@ The API key is always required. To serve your LAN, set in `data/config.json`, th
 ```
 
 `models.control_remote` with `models.control_remote_networks` (for example `["172.16.1.0/24"]`) also lets those
-machines manage models from the page, and use Models > Settings.
+machines manage models from the page, and use the Settings tab (all but the key's rotation, which is this PC's alone).
 
 ### Web search through SearXNG
 
@@ -350,7 +364,7 @@ search:
   formats: [html, json]   # the server reads the JSON
 ```
 
-Run `docker compose up -d` there, then in Models > Settings > Web search turn it on, enter
+Run `docker compose up -d` there, then in Settings > Web search turn it on, enter
 `http://<that machine>:8080`, save, restart the server, and use "Test search". A Qwen, GLM-5.3, raon1, flint or Gemma 4 model
 then gets the `web_search` tool on every text chat; what it searches for leaves your PC through that instance. Each such
 card has a **Web search** switch (on by default; off, that model starts without the tool), and while it is on the chat
@@ -470,7 +484,7 @@ for a real install, which makes its own key at the first start.
 | --- | --- |
 | No Settings, email or web search on the page | Those sections answer this PC and the machines `models.control_remote_networks` lists; open the page from one of them. A build without `--with email,search` has no email or search sections at all. |
 | A new model family, download or setting is missing | The running server is an older build: rebuild the out folder and restart from it. |
-| "Other users of this PC can change files in this folder" | Make the folder private when the page asks, or turn on Models > Settings > Model folders. |
+| "Other users of this PC can change files in this folder" | Make the folder private when the page asks, or turn on Settings > Model folders. |
 | A GLM download shows its size as "read from Hugging Face at the start" | Project Maya's catalog pins each file's SHA-256 but not its size; the server reads the size when the download starts. |
 | A web-search answer is empty | It ran out of tokens while reasoning (`finish_reason` `length`): raise `max_tokens`. If every search found nothing, the search box says why; see "Web search through SearXNG" for more engines. |
 | An answer stops after about two minutes, marked "Max tokens" (`length`), with room left in the context | It reached `limits.engine.generation_timeout_s` (120 s by default). Raise it in `data/config.json` (for example `"limits": {"engine": {"generation_timeout_s": 1800}}`) and restart the server. |

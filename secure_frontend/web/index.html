@@ -30,6 +30,8 @@
       <svg class="st-icon st-icon--sm"><use href="/ui/sprite.svg#i-layers"/></svg>Models</button>
     <button class="st-tab" role="tab" id="tab-btn-monitor" aria-controls="view-monitor" aria-selected="false" data-tab="monitor">
       <svg class="st-icon st-icon--sm"><use href="/ui/sprite.svg#i-activity"/></svg>Monitor</button>
+    <button class="st-tab" role="tab" id="tab-btn-settings" aria-controls="view-settings" aria-selected="false" data-tab="settings" hidden>
+      <svg class="st-icon st-icon--sm"><use href="/ui/sprite.svg#i-settings"/></svg>Settings</button>
     <button class="st-tab" role="tab" id="tab-btn-about" aria-controls="view-about" aria-selected="false" data-tab="about">
       <svg class="st-icon st-icon--sm"><use href="/ui/sprite.svg#i-info"/></svg>About</button>
   </nav>
@@ -172,7 +174,6 @@
       <nav class="models-subtabs" role="tablist" aria-label="Models">
         <button type="button" class="models-subtab" id="models-subtab-start" role="tab" aria-selected="true">Start a model</button>
         <button type="button" class="models-subtab" id="models-subtab-download" role="tab" aria-selected="false" hidden>Download models</button>
-        <button type="button" class="models-subtab" id="models-subtab-settings" role="tab" aria-selected="false" hidden>Settings</button>
       </nav>
       <div class="models-pane" id="models-pane-start">
       <div class="st-card models-card">
@@ -274,8 +275,55 @@
         </div>
       </div>
       </div>
-      <!-- Settings (GUI-first start-up): model folders, and the email alerts and the web search, each in a build that has it -->
-      <div class="models-pane" id="models-pane-settings" hidden>
+    </div>
+  </section>
+
+  <!-- ============================ Settings (spec 2026-10-28-server-window-design, Part 1) ============================ -->
+  <section class="view view--settings" id="view-settings" role="tabpanel" aria-labelledby="tab-btn-settings" hidden>
+    <div class="settings">
+      <p class="msg-warn" id="settings-restart-note" role="status" hidden>Saved. The server uses the new settings after it restarts.</p>
+      <div class="st-card alerts-settings" id="key-settings" hidden>
+        <div class="models-head"><span class="card-title">API key</span></div>
+        <p class="muted small">Every app that uses this server sends this key; this page signed in with it.</p>
+        <div class="model-folder__row"><code id="key-value"></code>
+          <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="key-show">Show</button>
+          <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="key-copy">Copy</button></div>
+        <label class="st-label" for="key-rotate-confirm">Make a new key: every app then needs the new one, and it works after the
+          server restarts. Type ROTATE to confirm.</label>
+        <div class="model-folder__row">
+          <input class="st-input" id="key-rotate-confirm" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="ROTATE">
+          <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="key-rotate">Rotate the key</button>
+        </div>
+        <p class="muted small" id="key-state"></p>
+        <div class="key-new" id="key-new" hidden>
+          <p class="msg-warn">The new key, shown once: copy it now. After the server restarts, sign in with it.</p>
+          <div class="model-folder__row"><code id="key-new-value"></code>
+            <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="key-new-copy">Copy</button></div>
+        </div>
+        <p class="msg-error" id="key-error" role="alert" hidden></p>
+      </div>
+      <div class="st-card alerts-settings" id="server-settings" hidden>
+        <div class="models-head"><span class="card-title">Server and network</span></div>
+        <p class="muted small">Where the server listens, and which other PCs may use it. These settings apply when the server restarts.</p>
+        <div class="config-grid" data-group="server"></div>
+        <div class="model-actions"><button type="button" class="st-btn st-btn--primary st-btn--sm" data-save="server">Save</button></div>
+        <p class="msg-error" data-error="server" role="alert" hidden></p>
+      </div>
+      <div class="st-card alerts-settings" id="limits-settings" hidden>
+        <div class="models-head"><span class="card-title">Limits and timeouts</span></div>
+        <p class="muted small">How long an answer or a model start may take, how large a prompt or an answer may be, and how
+          many connections a download uses. These settings apply when the server restarts.</p>
+        <div class="config-grid" data-group="limits"></div>
+        <div class="model-actions"><button type="button" class="st-btn st-btn--primary st-btn--sm" data-save="limits">Save</button></div>
+        <p class="msg-error" data-error="limits" role="alert" hidden></p>
+      </div>
+      <div class="st-card alerts-settings" id="paths-settings" hidden>
+        <div class="models-head"><span class="card-title">Folders</span></div>
+        <p class="muted small">Where downloads go, and the folder Add a model opens. These settings apply when the server restarts.</p>
+        <div class="config-grid" data-group="paths"></div>
+        <div class="model-actions"><button type="button" class="st-btn st-btn--primary st-btn--sm" data-save="paths">Save</button></div>
+        <p class="msg-error" data-error="paths" role="alert" hidden></p>
+      </div>
       <div class="st-card alerts-settings" id="folders-settings" hidden>
         <div class="models-head"><span class="card-title">Model folders</span></div>
         <p class="muted small">By default the server uses a model folder only when other users of this PC cannot change it,
@@ -369,7 +417,6 @@
         <p class="muted small" id="search-result" role="status" aria-live="polite"></p>
         <pre class="search-output" id="search-output" hidden></pre>
         <p class="msg-error" id="search-error" role="alert" hidden></p>
-      </div>
       </div>
     </div>
   </section>

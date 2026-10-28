@@ -824,6 +824,12 @@ secure_frontend_add_library(secure_frontend_card_routes SOURCES src/card_routes.
 
 # SP5 M1 Task 13 (Ruling T13-b): the supervised serve path as a library — the one
 # boot `strata-secure-server` and `strata serve` share (server_bootstrap.hpp).
+# The Settings tab's server half (spec 2026-10-28-server-window-design, Part 1): config_routes.hpp. The key rotation is
+# generate_token's (frontend_init.cpp, in secure_frontend_server_cli), as `strata key rotate`.
+secure_frontend_add_library(secure_frontend_config_routes SOURCES src/config_routes.cpp
+    LINKS secure_frontend_server_cli secure_frontend_config_writer secure_frontend_model_cards secure_frontend_token_reader
+          secure_frontend_api_core secure_frontend_paths)
+
 secure_frontend_add_library(secure_frontend_server_bootstrap
     SOURCES src/server_bootstrap.cpp
     LINKS secure_frontend_config secure_frontend_token_reader secure_frontend_secrets
@@ -835,7 +841,7 @@ secure_frontend_add_library(secure_frontend_server_bootstrap
           secure_frontend_socket_io secure_frontend_api_core secure_frontend_connection_pool
           secure_frontend_chat_route secure_frontend_request_log secure_frontend_launch secure_frontend_model_runtime
           secure_frontend_model_launcher secure_frontend_downloads secure_frontend_first_start secure_frontend_card_routes
-          secure_frontend_about_info)
+          secure_frontend_about_info secure_frontend_config_routes)
 if(SECURE_FRONTEND_EMAIL_ALERTS)
     target_link_libraries(secure_frontend_server_bootstrap PUBLIC secure_frontend_alert_routes secure_frontend_email_alerts)
 endif()
@@ -1418,8 +1424,9 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         model_control_routes_need_the_switch_and_the_key model_download_routes_need_the_switch_and_the_key
         model_card_routes_need_the_switch_and_the_key calibration_routes_need_their_handlers_and_the_key
         alert_routes_need_their_handler_and_the_key search_routes_need_their_handler_and_the_key
+        config_routes_need_their_handler_and_the_key
         web_ui_cards_from_this_pc_and_the_danger_zone web_ui_downloads_go_to_a_chosen_folder
-        web_ui_models_tab_calibrates web_ui_has_email_alert_settings web_ui_has_web_search_settings web_ui_has_model_folder_setting
+        web_ui_models_tab_calibrates web_ui_has_email_alert_settings web_ui_has_server_settings web_ui_has_web_search_settings web_ui_has_model_folder_setting
         web_ui_monitor_shows_stopped_and_the_model web_ui_about_lists_the_engines_and_this_pc
         web_ui_search_box_limit_note_and_engine_table web_ui_chat_can_turn_search_off
         login_link_route_answers_without_the_key_only_when_on
@@ -2080,6 +2087,13 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # The page's About (owner 2026-10-27): the engine build record, this PC's hardware, their JSON.
+    # The Settings tab's routes (spec 2026-10-28-server-window-design, Part 1): a data folder's config and key store.
+    secure_frontend_add_test_executable(secure_frontend_config_routes_tests tests/config_routes_test.cpp
+        secure_frontend_config_routes secure_frontend_first_start secure_frontend_http_request_handler)
+    secure_frontend_add_cases(secure_frontend_config_routes_tests
+        the_settings_are_listed_with_their_rules a_save_is_held_to_the_start_up_rules the_key_is_rotated_in_its_store
+        LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+
     secure_frontend_add_test_executable(secure_frontend_about_info_tests tests/about_info_test.cpp secure_frontend_about_info)
     secure_frontend_add_cases(secure_frontend_about_info_tests
         the_build_record_is_read_and_checked this_pcs_hardware_is_named the_about_json_has_both this_pcs_gpus_are_listed

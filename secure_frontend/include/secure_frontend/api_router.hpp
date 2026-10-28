@@ -86,6 +86,7 @@ struct ApiRouterConfig final {
   ModelCardRoutes cards{};
   ModelCardRoutes alerts{};  // kAlertRoutes (a build with email alerts only); empty: not served
   ModelCardRoutes search{};  // kSearchRoutes (a build with web search only); empty: not served
+  ModelCardRoutes settings{};  // kConfigRoutes (the Settings tab: the server's settings, the key); empty: not served
   // GUI-first start-up (spec 2026-10-27 §3, D1; listener.login_link): set, POST /v1/strata/login-link answers without
   // the key (it hands the key out once, to a loopback client with the one-time code; the handler checks both).
   ChatHandler login_link{};

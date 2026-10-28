@@ -114,7 +114,7 @@ constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 
     {"roots.cache", T::string, false, 0, 0, 0, false, "", "",
      "Absolute cache directory (created 0700); when set, it holds the engine's CUDA cache in its cuda subdirectory."},
     {"roots.allow_untrusted_media", T::boolean, false, 0, 0, 0, false, "", "--allow-untrusted-media",
-     "Use model folders as they are, even where other users of this PC can read or change them (shared folders, exFAT/FAT media whose permissions the OS ignores): roots.models and roots.tokenizer_pack open with RootPolicy::external (no owner-only / not-shared-writable check), and the page adds, moves and packs models in such folders without changing their permissions (the Models > Settings switch). Owner opt-in; links below the root are still refused; the server's own folders keep their checks."},
+     "Use model folders as they are, even where other users of this PC can read or change them (shared folders, exFAT/FAT media whose permissions the OS ignores): roots.models and roots.tokenizer_pack open with RootPolicy::external (no owner-only / not-shared-writable check), and the page adds, moves and packs models in such folders without changing their permissions (the Settings tab's Model folders switch). Owner opt-in; links below the root are still refused; the server's own folders keep their checks."},
     {"roots.state", T::string, false, 0, 0, 0, false, "", "--state-dir",
      "Absolute, existing owner-only directory for engine state: the engine's cwd, per-generation temp and (without roots.cache) the CUDA cache. Required to serve."},
     {"token.source", T::string, false, 0, 0, 0, false, "file:token", "--token-file, --token-env",
