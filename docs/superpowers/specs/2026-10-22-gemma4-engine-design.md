@@ -64,12 +64,12 @@ the CPU pool.
 
 0. **One UI, engines behind it** (owner, 2026-10-22: "the point should be 1 UI, different
    engines to run the models, if anything one unified engine"). Gemma is served by
-   `strata-secure-server` and its page on 8080 like every other model; the profile picks
+   `strata-unified-server` and its page on 8080 like every other model; the profile picks
    the engine (§6.1). No second UI or API server is built. A single engine for every model
    is not reachable: the owner's Qwen3.8 Flash Next is `qwen4exp`, which only upstream
    Strata runs, so at least Strata and this engine sit behind the one UI.
 1. Run G4's **UD-Q8_K_XL** GGUF (D8) on the owner's box (16 GB RTX 4080 SUPER, 64 GB RAM,
-   24 threads) through `strata-secure-server`, text chat, streamed and not, thinking on or
+   24 threads) through `strata-unified-server`, text chat, streamed and not, thinking on or
    off, with experts split between VRAM and RAM (§4.2). Smaller UD quants load when their
    types pass §5.5.
 2. Output that matches the reference: teacher-forced KL against LC within the same gate
@@ -98,7 +98,7 @@ the CPU pool.
    cross gates the owner runs).
 2. On the owner's box: the parity gates of §9.3 pass for the chosen quant(s), results
    committed under `docs/validation/gemma4/`.
-3. Plan 4 merged and the acceptance battery (§9.4) run through `strata-secure-server` and
+3. Plan 4 merged and the acceptance battery (§9.4) run through `strata-unified-server` and
    the page. Only then does the handoff say "Gemma 4 verified on <GPU>, <OS>".
 
 ### 1.4 Four plans
@@ -599,7 +599,7 @@ hybrid machinery the fast engine adds. LC runs the same file with its own CPU of
 
 ### 9.4 Acceptance (box)
 
-Through `strata-secure-server` and the page: chat streamed and not, thinking off/on, Stop,
+Through `strata-unified-server` and the page: chat streamed and not, thinking off/on, Stop,
 New chat, long prompt (32K) past several windows, a prompt that reuses a held prefix, the
 Monitor's figures, the SP3 API kit. Hybrid mode with the Q8 file at 32K and at 128K: the
 slot count per layer, the resident share before and after rebalancing, prompt and decode

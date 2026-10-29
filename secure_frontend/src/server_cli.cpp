@@ -163,13 +163,13 @@ std::variant<ServerInvocation, CliError> parse_server_command_line(const int arg
 
 std::string server_usage() {
   std::string text =
-      "Usage: strata-secure-server                 (first start: creates data/ beside it, then serves)\n"
-      "       strata-secure-server [--data-dir DIR] [options]\n"
+      "Usage: strata-unified-server                 (first start: creates data/ beside it, then serves)\n"
+      "       strata-unified-server [--data-dir DIR] [options]\n"
       "                                            (data/ or that data folder; options such as --port\n"
       "                                            apply to this start on top of its config.json)\n"
-      "       strata-secure-server [--config FILE] [options]\n"
-      "       strata-secure-server --check [--config FILE] [options]\n"
-      "       strata-secure-server init --config FILE [--force] [options]\n"
+      "       strata-unified-server [--config FILE] [options]\n"
+      "       strata-unified-server --check [--config FILE] [options]\n"
+      "       strata-unified-server init --config FILE [--force] [options]\n"
       "\n"
       "Configuration comes from built-in defaults, then FILE (strict JSON; see the\n"
       "README's key table), then the options below. An option wins over the file and\n"

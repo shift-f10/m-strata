@@ -108,7 +108,7 @@ struct ServerOptions final {
   bool tool_tokenizer{false};
 };
 
-// strata-secure-server as a test child: fixture models (fake-model.gguf, 0600)
+// strata-unified-server as a test child: fixture models (fake-model.gguf, 0600)
 // and the byte tokenizer pack in 0700 directories, a free port, token from
 // kHarnessTokenEnv; stdout/stderr go to <root>/stdout.log and <root>/stderr.log.
 // The engine (options.engine, default the fake) is copied into a private

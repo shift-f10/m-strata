@@ -1,7 +1,7 @@
 // strata-window on Windows (spec docs/superpowers/specs/2026-10-28-server-window-design.md, Part 2; the owner:
 // "instead of a console application, we should make it into a window application ... minimized into the tray that
 // has the start and stop models menu ... right click it to select exit or select a model to start and stop"). It runs
-// strata-secure-server beside it as its child with no console, signs in with the server's one-time link, shows the
+// strata-unified-server beside it as its child with no console, signs in with the server's one-time link, shows the
 // page in a WebView2 view, and lives in the tray: closing the window hides it; the tray's menu opens it, starts and
 // stops the models, restarts the server and exits (the server stops in order first). window_shell.hpp holds the
 // portable half; this file is the window, the tray and WebView2.

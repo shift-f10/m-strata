@@ -1,5 +1,5 @@
 @echo off
-set FE=C:\multi-strata\secure_frontend\out\build\windows-msvc\Release\strata-secure-server.exe
+set FE=C:\multi-strata\secure_frontend\out\build\windows-msvc\Release\strata-unified-server.exe
 "%FE%" --check --expert ^
   --engine "C:\multi-strata\engine\build\multiengine.exe" ^
   --profile glm53 ^

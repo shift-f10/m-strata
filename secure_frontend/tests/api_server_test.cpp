@@ -33,7 +33,7 @@
 #include <utility>
 #include <vector>
 
-// SP3 DOS-01 / AUTH-01 / §4.6 over TCP against the real strata-secure-server
+// SP3 DOS-01 / AUTH-01 / §4.6 over TCP against the real strata-unified-server
 // (spec §9.3). Every case starts its own server on an ephemeral port.
 namespace {
 using namespace std::chrono_literals;

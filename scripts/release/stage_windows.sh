@@ -52,7 +52,7 @@ if [ -z "$BUILD_DIR" ]; then
             -B out/build/windows-llvm-mingw-release \
             -DSECURE_FRONTEND_TEST_HOOKS=OFF \
         && "$CMAKE" --build out/build/windows-llvm-mingw-release \
-            --target strata strata-secure-server )
+            --target strata strata-unified-server )
 fi
 
 NAME="strata-$VERSION-windows-x86_64"
@@ -63,7 +63,7 @@ if [ -e "$BUNDLE" ]; then
 fi
 mkdir -p "$BUNDLE/bin"
 
-for bin in strata.exe strata-secure-server.exe; do
+for bin in strata.exe strata-unified-server.exe; do
     if [ ! -f "$BUILD_DIR/$bin" ]; then
         echo "stage_windows: required product executable missing: $BUILD_DIR/$bin (cross-build first)" >&2
         exit 1
@@ -106,7 +106,7 @@ RequestExecutionLevel user
 Section "Secure Strata"
     SetOutPath "$INSTDIR\bin"
     File "bin\strata.exe"
-    File "bin\strata-secure-server.exe"
+    File "bin\strata-unified-server.exe"
     SetOutPath "$INSTDIR"
     File "VERSION"
     File "manifest.json"

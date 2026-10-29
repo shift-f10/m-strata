@@ -72,7 +72,7 @@ folder owner-only (Windows: a protected owner-only DACL; POSIX: `go-w` on the tr
 
 ```
 <out>/
-  strata-secure-server(.exe)     the server and its page
+  strata-unified-server(.exe)     the server and its page
   strata(.exe)                   the CLI (downloads child, key show/rotate)
   engine/multiengine(.exe)       the launcher
   engine/multiengine_<family>    one library per family (.dll / .so), strata_kq
@@ -86,7 +86,7 @@ Nothing else: no sources, tests, packs or build trees. The tokenizer packs are n
 
 ## 3. Start-up: run the binary
 
-`strata-secure-server` with no arguments uses `<exe dir>/data` (D2) and, the first time, creates it:
+`strata-unified-server` with no arguments uses `<exe dir>/data` (D2) and, the first time, creates it:
 
 - `data/` owner-only; `data/secret/` with a new key (DPAPI-wrapped on Windows, 0600 on POSIX), `data/state/` (with
   `cards/`, the cards the page and downloads write, and `calibration/`: both under `roots.state`, so a server started

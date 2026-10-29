@@ -1,4 +1,4 @@
-// Windows test launcher: secure_frontend_non_elevated_run <strata-secure-server> <argument>...
+// Windows test launcher: secure_frontend_non_elevated_run <strata-unified-server> <argument>...
 //
 // Runs the server through the shared non-elevated launch (spec G4: the server
 // refuses an elevated token; plan Global Constraint "Elevation in tests (no
@@ -7,7 +7,7 @@
 // server's own output. Exit 125: the launch itself failed.
 
 #if !defined(_WIN32)
-#error "secure_frontend_non_elevated_run is Windows-only; Linux CTest runs strata-secure-server directly"
+#error "secure_frontend_non_elevated_run is Windows-only; Linux CTest runs strata-unified-server directly"
 #endif
 
 #include "secure_frontend/win32_prelude.hpp"
@@ -23,7 +23,7 @@ int main() {
   int argc = 0;
   wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);  // UTF-16, no -municode
   if (argv == nullptr || argc < 2) {
-    std::cerr << "usage: secure_frontend_non_elevated_run <strata-secure-server> <argument>...\n";
+    std::cerr << "usage: secure_frontend_non_elevated_run <strata-unified-server> <argument>...\n";
     return 125;
   }
   std::wstring command = secure_frontend_test::quote_windows_argument(argv[1]);

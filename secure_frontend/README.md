@@ -1,5 +1,6 @@
 # Secure frontend scaffold
 
+Until 2026-10-28 the server was named `strata-secure-server`; an older out folder may still hold that file.
 This is a dependency-free C++20 foundation for the portable Strata frontend.
 It currently provides configuration validation, secret-source metadata,
 protected-file token reading on Linux and Windows, exact Host/Origin/CORS policy checks, a
@@ -265,12 +266,12 @@ README's Install section lists every dependency and the same steps by hand).
 
 `--with email,search` adds email alerts and web search (each is off otherwise). `--without maya,raon1` leaves those
 engine families out (strata, Gemma 4 and flint are always built). `--no-cuda-runtime` skips bundling cuBLAS; `--jobs N`
-sets the compile jobs; `--plan` prints the commands only. The folder gets `strata-secure-server`, `strata`,
+sets the compile jobs; `--plan` prints the commands only. The folder gets `strata-unified-server`, `strata`,
 `strata-search` (with `search`), `engine/` (the `multiengine` launcher, one library per family, `strata-prepare`, the
 expert profiles, MiniMax's template in `templates/minimax-m3.1/` and, by default, NVIDIA's cuBLAS), `README.txt`,
 `config.example.json`, `LICENSE` and `NOTICE.md`, and it is made owner-only.
 
-**First start.** Run `strata-secure-server` with no arguments. It creates `data/` beside itself (config, API key,
+**First start.** Run `strata-unified-server` with no arguments. It creates `data/` beside itself (config, API key,
 cards, state, owner-only), serves `http://127.0.0.1:8080`, and prints a one-time login link
 (`http://127.0.0.1:8080/#login=...`, valid 10 minutes, once, from this PC only). Opening the link shows the API key
 once and signs the page in. Every start prints a fresh link. `--data-dir DIR` keeps the data elsewhere (relative to
@@ -369,9 +370,9 @@ reads. A chat reply notes what it searched for.
 
 `-DSECURE_FRONTEND_WINDOW=ON` (`make.py --with window`) builds `strata-window`
 (spec `docs/superpowers/specs/2026-10-28-server-window-design.md`, Part 2). It takes the server's own options and
-refuses `init`, `--check` and `--help`, which stay with `strata-secure-server`.
+refuses `init`, `--check` and `--help`, which stay with `strata-unified-server`.
 
-- **The server.** It runs `strata-secure-server` beside it as a child: no console window, the environment the window
+- **The server.** It runs `strata-unified-server` beside it as a child: no console window, the environment the window
   started with (a `--token-env` variable included, on every start), and its stdout and stderr read as lines.
 - **The page.** It opens the server's one-time login link in its own view, and the page's own sign-in when the server
   prints no link, the first time on the Monitor: an address may name a view (`#view=monitor`, or
@@ -453,7 +454,7 @@ own `strata-search` for it, the one MCP server and tool there is).
 
 ## Configuration
 
-`strata-secure-server` reads one strict JSON file (`--config FILE`) and the
+`strata-unified-server` reads one strict JSON file (`--config FILE`) and the
 command-line options; an option wins over the file, and `--check` reports every
 key where that happened. Built-in defaults fill the rest. The file is UTF-8
 without BOM, no comments, no trailing commas, no duplicate keys, nesting at most
@@ -463,10 +464,10 @@ other users (its directory too). It never holds the token: `token.source` names
 an environment variable (`env:NAME`) or a file below `roots.secret`
 (`file:token`).
 
-    strata-secure-server init --config ~/.config/strata/config.json \
+    strata-unified-server init --config ~/.config/strata/config.json \
         --models-root ~/models --engine ~/strata/strata --model-id NAME:TAG
-    strata-secure-server --check --config ~/.config/strata/config.json
-    strata-secure-server --config ~/.config/strata/config.json
+    strata-unified-server --check --config ~/.config/strata/config.json
+    strata-unified-server --config ~/.config/strata/config.json
 
 `engine.model_id` names a model installed in `roots.models` (`strata pull` or
 `strata import`; `strata list` shows them). Its manifest supplies the engine
@@ -527,7 +528,7 @@ Every key (generated from the schema; `readme_config_table_matches_schema` keeps
 | `limits.concurrency.queue_timeout_ms` | integer | `300000` | 1000-3600000 | - | Longest wait for the engine before 503 server_busy. |
 | `limits.concurrency.max_connections_per_remote_address` | integer | `derived: min(4, workers); min(6, workers) with listener.web_ui` | 1-256 | - | Workers one non-loopback address may hold; at most max_concurrent_requests. Loopback is exempt. |
 | `roots.models` | string | required | - | `--models-root` | Absolute directory of .gguf files. The root itself may be a symlink; nothing below it may be. |
-| `roots.tokenizer_pack` | string | unset | - | `--tokenizer-pack` | Absolute tokenizer directory; only with strata-secure-server --expert (a managed model brings its own). |
+| `roots.tokenizer_pack` | string | unset | - | `--tokenizer-pack` | Absolute tokenizer directory; only with strata-unified-server --expert (a managed model brings its own). |
 | `roots.secret` | string | unset | - | `--secret-root` | Absolute directory holding the token file. Default: the config file's directory. |
 | `roots.logs` | string | unset | - | - | Absolute log directory (created 0700; unused in SP1). |
 | `roots.cache` | string | unset | - | - | Absolute cache directory (created 0700); when set, it holds the engine's CUDA cache in its cuda subdirectory. |
@@ -1822,7 +1823,7 @@ The engine reads each of these via `getenv`, but none is part of the parity surf
 
 ## Run the native inference server
 
-`strata-secure-server` is the first runnable native chat path. It starts one
+`strata-unified-server` is the first runnable native chat path. It starts one
 local Strata engine as a direct child (never through a shell), communicates
 only through private stdio, and exposes authenticated `GET /health`, `GET
 /v1/models`, `GET /v1/models/<id>`, and text-only `POST /v1/chat/completions`
@@ -1841,7 +1842,7 @@ image URL is refused by name, never fetched.
 `strata serve` (SP5 M1) runs exactly this boot in the foreground from the
 config file alone — no daemonization, no `server.json`, no lock (the pin has
 none, and the PX lifecycle writer has never existed); it serves the installed
-managed model, and `--expert` stays a `strata-secure-server` flag. `strata
+managed model, and `--expert` stays a `strata-unified-server` flag. `strata
 version` prints the frontend and pin versions — the tag version governs, and
 the engine's own self-version is informational only. `strata key show [--env]`
 prints the locally generated API token (only when the store is readable by
@@ -2054,7 +2055,7 @@ download pause and resume functionality". Spec
   --progress-lines` (SP4's confined pull: the downloader child, HTTPS, the host rules, every
   file's size and SHA-256 fixed before a byte moves), and every link lookup
   `strata --config <cfg> hf-info <link>` (one bounded answer, no redirect). `strata` must sit
-  beside `strata-secure-server`. Each child has no shell, a fixed argv, a closed environment
+  beside `strata-unified-server`. Each child has no shell, a fixed argv, a closed environment
   (the system's own variables, a private temp folder under `<roots.state>/downloads/tmp`, and
   `STRATA_GGUF_PY` when the server has it), its working folder `<roots.state>/downloads` and the
   Job. One download runs at a time; the others queue.
@@ -2244,7 +2245,7 @@ The flags below can equally live in the config file (see
 
 ```sh
 export STRATA_API_TOKEN='replace-with-a-long-random-token-of-32-bytes-or-more'
-./out/build/linux-gcc/strata-secure-server --expert \
+./out/build/linux-gcc/strata-unified-server --expert \
   --models-root /absolute/path/to/models \
   --model-id local-model-name \
   --tokenizer-pack /absolute/path/to/tokenizer-pack \
@@ -2290,7 +2291,7 @@ tokenizer pack must match that exact engine/model build and provide the fixed
 GLM framing markers as CONTROL tokens.
 
 ```sh
-./out/build/linux-gcc/strata-secure-server --expert \
+./out/build/linux-gcc/strata-unified-server --expert \
   --profile glm53 \
   --models-root /absolute/path/to/models \
   --model-id glm53-local \
@@ -2350,7 +2351,7 @@ default profile, with the strata family's closed child environment.
   per-family `engine.executables.gemma4` key (plan 4).
 
 ```sh
-./out/build/linux-gcc/strata-secure-server --expert \
+./out/build/linux-gcc/strata-unified-server --expert \
   --profile gemma4 \
   --models-root /absolute/path/to/models \
   --model-id gemma-4-26B-A4B-it-UD-Q8_K_XL \

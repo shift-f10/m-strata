@@ -1,5 +1,5 @@
 // SP5 M1 Task 13 (Ruling T13-b): the supervised serve path moved VERBATIM out of
-// secure_server_main.cpp — the same code strata-secure-server runs and the code
+// secure_server_main.cpp — the same code strata-unified-server runs and the code
 // `strata serve` runs. This file parses no command line and installs no daemon:
 // foreground boot, pinned order, SP3 I1 shutdown (see server_bootstrap.hpp).
 

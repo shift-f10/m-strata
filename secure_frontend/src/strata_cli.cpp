@@ -301,8 +301,8 @@ int verb_rm(const FrontendConfig& config, const Args& args, CliStreams& io, CliS
 }
 
 // SP5 M1 Task 13 (plan :240): `strata serve` — the SAME supervised path as
-// strata-secure-server (server_bootstrap), in the FOREGROUND, for the managed
-// model. Ruling T13-a: no --expert here (that flag stays with strata-secure-server;
+// strata-unified-server (server_bootstrap), in the FOREGROUND, for the managed
+// model. Ruling T13-a: no --expert here (that flag stays with strata-unified-server;
 // the manifest carries profile and pack); no options, no operands. The plan's
 // "minus daemonization/server.json/lock" is what the boot already is — the pin
 // (upstream/serve/server.py) has no daemon, no server.json, no lock file, and the

@@ -12,7 +12,7 @@ namespace secure_frontend {
 // the ANSI code page, which turns any character outside it into '?', so the
 // wide command line (CommandLineToArgvW) is converted instead; argc/argv are
 // ignored there. nullopt: the Windows command line is not valid UTF-16.
-// Shared by strata-secure-server and strata.
+// Shared by strata-unified-server and strata.
 [[nodiscard]] std::optional<std::vector<std::string>> utf8_command_line(int argc, char** argv);
 
 }  // namespace secure_frontend

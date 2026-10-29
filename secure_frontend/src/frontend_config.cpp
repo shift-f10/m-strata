@@ -107,7 +107,7 @@ constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 
     {"roots.models", T::string, true, 0, 0, 0, false, "", "--models-root",
      "Absolute directory of .gguf files. The root itself may be a symlink; nothing below it may be."},
     {"roots.tokenizer_pack", T::string, false, 0, 0, 0, false, "", "--tokenizer-pack",
-     "Absolute tokenizer directory; only with strata-secure-server --expert (a managed model brings its own)."},
+     "Absolute tokenizer directory; only with strata-unified-server --expert (a managed model brings its own)."},
     {"roots.secret", T::string, false, 0, 0, 0, false, "", "--secret-root",
      "Absolute directory holding the token file. Default: the config file's directory."},
     {"roots.logs", T::string, false, 0, 0, 0, false, "", "", "Absolute log directory (created 0700; unused in SP1)."},

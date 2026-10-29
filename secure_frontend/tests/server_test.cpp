@@ -60,7 +60,7 @@ std::string describe(const std::optional<test_support::HttpResult>& result) {
 void harness_server_lifecycle_selftest() {
   expect(test_support::kHarnessToken.size() == 43U, "the harness token is 43 base64url characters (SP1: at least 32 bytes)");
   auto server = ServerProcess::start({});
-  expect(server != nullptr, "the harness must start strata-secure-server");
+  expect(server != nullptr, "the harness must start strata-unified-server");
   if (!server) return;
   expect(server->wait_until_listening(10s), "the listener must answer");
 #if defined(_WIN32)

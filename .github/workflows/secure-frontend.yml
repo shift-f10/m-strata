@@ -110,7 +110,7 @@ jobs:
       - name: no test hooks in the shipped binaries (marker scan; --release needs SP7's manifest/SBOM)
         run: |
           mkdir -p "$RUNNER_TEMP/stage/bin"
-          cp secure_frontend/out/build/linux-gcc-release/strata secure_frontend/out/build/linux-gcc-release/strata-secure-server "$RUNNER_TEMP/stage/bin/"
+          cp secure_frontend/out/build/linux-gcc-release/strata secure_frontend/out/build/linux-gcc-release/strata-unified-server "$RUNNER_TEMP/stage/bin/"
           python3 -I scripts/secure_distribution_check.py --package-dir "$RUNNER_TEMP/stage"
 
   windows-cross:
@@ -187,7 +187,7 @@ jobs:
           grep -q '^CMAKE_BUILD_TYPE:STRING=Release' out/root-defaults/CMakeCache.txt
           test ! -e out/root-defaults/_deps
       - run: cmake -S . -B out/root -G Ninja -DSTRATA_ENABLE_CUDA=OFF -DSTRATA_ENABLE_HIP=OFF -DSTRATA_NATIVE_EXPERTS=OFF -DSTRATA_BUILD_SECURE_FRONTEND_TESTS=ON
-      - run: cmake --build out/root --target strata-secure-server secure_frontend_config_tests strata-plan --parallel
+      - run: cmake --build out/root --target strata-unified-server secure_frontend_config_tests strata-plan --parallel
       # --no-tests=error stops a vacuous pass if the frontend tests stop registering.
       - run: ctest --test-dir out/root -R secure_frontend_config_tests --no-tests=error --output-on-failure
       - name: no FetchContent download

@@ -1,5 +1,6 @@
 # M-Strata (Multiengine Strata)
 
+Until 2026-10-28 the server was named `strata-secure-server`; an older out folder may still hold that file.
 **M-Strata** - Multiengine Strata - is our own inference engine for large mixture-of-experts (MoE) language models on a single consumer GPU, plus a
 security-first server in front of it. The engine keeps a model's hot experts in VRAM and the rest in pinned RAM
 (read from disk when RAM runs out), and computes some of them on the CPU while the GPU works: the expert tiering
@@ -137,7 +138,7 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 | Part | What it is |
 | --- | --- |
 | [`engine/`](engine/) | **The engine.** `multiengine.exe` is a launcher over one library per model family: `multiengine_strata.dll` (upstream Strata's engine, `v0.2.6`: Qwen3.8 and Qwen3.6), `multiengine_maya.dll`, `multiengine_maya_ds4.dll` and `multiengine_maya_mm3.dll` (Project Maya `v1.1.30`: GLM-5.3, DeepSeek-V4.1, MiniMax-M3.1), `multiengine_raon1.dll`, `multiengine_gemma4.dll` and `multiengine_flint.dll`. `strata-prepare.exe` builds the packs some families need. Shared parts: the expert tiers (VRAM slot cache, pinned RAM tier, CPU expert lane, disk reads), the batched prompt path, speculative decoding (MTP), CUDA kernels and llama.cpp's MMQ. Build notes: [`engine/README.md`](engine/README.md). |
-| [`secure_frontend/`](secure_frontend/) | **The server.** A dependency-free C++20 program (`strata-secure-server`) that owns the listener and runs the engine as a private child over standard I/O: an API key on every listener (loopback by default; remote and wildcard binds are separate opt-ins), Host/Origin checks, an OpenAI-compatible `/v1/chat/completions` with streaming, `/v1/models`, health and metrics, a built-in web page (chat, monitor, models), model cards the page adds, starts, stops and calibrates, Hugging Face downloads, optional email alerts and optional web search for the model. It tokenizes prompts itself and refuses user text that spells a model's control tokens. The reference for every setting is [`secure_frontend/README.md`](secure_frontend/README.md). |
+| [`secure_frontend/`](secure_frontend/) | **The server.** A dependency-free C++20 program (`strata-unified-server`) that owns the listener and runs the engine as a private child over standard I/O: an API key on every listener (loopback by default; remote and wildcard binds are separate opt-ins), Host/Origin checks, an OpenAI-compatible `/v1/chat/completions` with streaming, `/v1/models`, health and metrics, a built-in web page (chat, monitor, models), model cards the page adds, starts, stops and calibrates, Hugging Face downloads, optional email alerts and optional web search for the model. It tokenizes prompts itself and refuses user text that spells a model's control tokens. The reference for every setting is [`secure_frontend/README.md`](secure_frontend/README.md). |
 | [`make.py`](make.py), `make.bat`, `make.sh` | Build everything into one folder that holds only what runs. |
 | [`engines/gemma4/`](engines/gemma4/), [`engines/unified/`](engines/unified/) | Earlier standalone engines whose pieces now live in `engine/`. |
 | `serve/`, `strata_cli/`, `strata_control/` | Strata's Python serve layer, kept for reference and older scripts; `secure_frontend` replaces it. |
@@ -373,7 +374,7 @@ python3 -m venv .venv-dev && .venv-dev/bin/python -m pip install cmake ninja
 
 The first build compiles the CUDA engine and takes a while; later builds are incremental (`out/make-build`). The out
 folder holds only what runs:
-- `strata-secure-server` and `strata`;
+- `strata-unified-server` and `strata`;
 - `strata-search` (with `--with search`) and `strata-window` (with `--with window`);
 - `engine/`: the launcher, one library per family, `strata-prepare`, `strata-vision` (upstream's picture encoder, built
   from `upstream/tools/vision` with the same pinned llama.cpp), the bundled cuBLAS, the expert profiles and, with the
@@ -401,7 +402,7 @@ It is made owner-only. Copy or move the whole folder anywhere. Then see [First s
 
 ### First start
 
-1. Run `strata-secure-server` (`strata-secure-server.exe` on Windows) in the out folder, with no arguments.
+1. Run `strata-unified-server` (`strata-unified-server.exe` on Windows) in the out folder, with no arguments.
 2. It creates `data/` beside itself (the config, the API key, model cards and state, all owner-only), listens on
    `http://127.0.0.1:8080`, and prints a **one-time login link** (`http://127.0.0.1:8080/#login=...`, valid for 10
    minutes, once, from this PC only).
@@ -409,15 +410,15 @@ It is made owner-only. Copy or move the whole folder anywhere. Then see [First s
    start prints a fresh link.
 4. To see the key again later: `strata --config data/config.json key show` (`key rotate` makes a new one).
 
-Other ways to start it, from the out folder (in PowerShell type `.\strata-secure-server`, on Linux
-`./strata-secure-server`; the same for `strata`):
+Other ways to start it, from the out folder (in PowerShell type `.\strata-unified-server`, on Linux
+`./strata-unified-server`; the same for `strata`):
 
 ```text
-strata-secure-server --port 9090                         # this folder's data/, on port 9090 for this start only
-strata-secure-server --data-dir D:\StrataData            # the data folder somewhere else (created at its first start)
-strata-secure-server --config data/config.json           # run from a config file (data/config.json is one)
-strata-secure-server --check                             # validate data/config.json, print the settings in effect, exit
-strata-secure-server --help                              # every option
+strata-unified-server --port 9090                         # this folder's data/, on port 9090 for this start only
+strata-unified-server --data-dir D:\StrataData            # the data folder somewhere else (created at its first start)
+strata-unified-server --config data/config.json           # run from a config file (data/config.json is one)
+strata-unified-server --check                             # validate data/config.json, print the settings in effect, exit
+strata-unified-server --help                              # every option
 ```
 
 Options such as `--port`, `--host` or `--token-env` apply to that start on top of the data folder's `config.json`; to
@@ -631,17 +632,17 @@ Every server started for development and tests uses the public development API k
 
 ```bat
 set STRATA_DEV_KEY=strata-secret-key-dev-placeholder
-strata-secure-server --data-dir dev-data --port 18080 --token-env STRATA_DEV_KEY
+strata-unified-server --data-dir dev-data --port 18080 --token-env STRATA_DEV_KEY
 ```
 
 ```powershell
 $env:STRATA_DEV_KEY = 'strata-secret-key-dev-placeholder'
-.\strata-secure-server --data-dir dev-data --port 18080 --token-env STRATA_DEV_KEY
+.\strata-unified-server --data-dir dev-data --port 18080 --token-env STRATA_DEV_KEY
 ```
 
 ```sh
 export STRATA_DEV_KEY=strata-secret-key-dev-placeholder
-./strata-secure-server --data-dir dev-data --port 18080 --token-env STRATA_DEV_KEY
+./strata-unified-server --data-dir dev-data --port 18080 --token-env STRATA_DEV_KEY
 ```
 
 `engine/setup-frontend-raon.bat` writes the same key to the raon dev server's key file. The key is public: never use it
@@ -655,7 +656,7 @@ for a real install, which makes its own key at the first start.
 | `strata --config data/config.json key rotate` | Makes a new key; restart the server and update every app that used the old one. |
 | `strata --config data/config.json doctor` | Checks the GPU, the driver, cuBLAS beside the engine (or in `engine.lib_dirs`), the config, the key file, the folders and the port (`port` fails while the server runs). |
 | `strata --config data/config.json list` | Lists the downloaded models in the store. |
-| `strata --help`, `strata-secure-server --help` | Every verb and option. |
+| `strata --help`, `strata-unified-server --help` | Every verb and option. |
 
 ## Troubleshooting
 

@@ -4,7 +4,7 @@
 // tests/support/test_support.hpp (case runner, owner-only scratch
 // directories). The including target must call secure_frontend_test_paths()
 // in CMake, which defines STRATA_FAKE_ENGINE_PATH and
-// STRATA_SECURE_SERVER_PATH.
+// STRATA_UNIFIED_SERVER_PATH.
 
 #include "support/test_support.hpp"
 
@@ -57,7 +57,7 @@ inline std::filesystem::path fake_engine_path() { return std::filesystem::path(S
 inline constexpr std::string_view kFakeEngineOptionsFile = "fake-engine.options";
 // SP5 M1 Task 11: the test-only maya-vision stand-in (tests/fake_vision_child_main.cpp).
 inline std::filesystem::path fake_vision_child_path() { return std::filesystem::path(STRATA_FAKE_VISION_CHILD_PATH); }
-inline std::filesystem::path server_path() { return std::filesystem::path(STRATA_SECURE_SERVER_PATH); }
+inline std::filesystem::path server_path() { return std::filesystem::path(STRATA_UNIFIED_SERVER_PATH); }
 
 // This test binary's own path. Fails the test loudly if the OS call fails or
 // truncates (K5), instead of returning a garbage path.

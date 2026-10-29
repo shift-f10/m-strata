@@ -31,7 +31,7 @@ PRIVACY_KEYS = [
 # not test fixtures or probe helpers).
 SHIPPED_BINARIES = [
     "strata",
-    "strata-secure-server",
+    "strata-unified-server",
 ]
 
 

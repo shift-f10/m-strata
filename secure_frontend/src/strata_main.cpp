@@ -15,7 +15,7 @@
 #endif
 
 int main(int argc, char** argv) {
-  // Spec §10, as strata-secure-server: Winsock once per process. `strata serve`
+  // Spec §10, as strata-unified-server: Winsock once per process. `strata serve`
   // binds through the same HttpSocketServer::bind, which never calls WSAStartup.
   const secure_frontend::WinsockGuard winsock;
 #if !defined(_WIN32)
@@ -23,7 +23,7 @@ int main(int argc, char** argv) {
   // that must be an EPIPE, never a SIGPIPE death.
   std::signal(SIGPIPE, SIG_IGN);
 #endif
-  // Spec A2 (as strata-secure-server): on Windows every argument is UTF-8 from
+  // Spec A2 (as strata-unified-server): on Windows every argument is UTF-8 from
   // the wide command line, never the ANSI code page; the verbs decode paths
   // with path_from_utf8.
   const auto command_line = secure_frontend::utf8_command_line(argc, argv);

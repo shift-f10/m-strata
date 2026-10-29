@@ -16,7 +16,7 @@ Owner, 2026-10-23, while the launcher's dropdowns were being built:
 
 The threat model ("Privacy and offline operation") says network use happens only through a
 foreground `strata pull`/`update`/`run` the operator confirms, and "None can be invoked by the HTTP
-API". `privacy_test` enforces that `strata-secure-server` links no acquisition or downloader code.
+API". `privacy_test` enforces that `strata-unified-server` links no acquisition or downloader code.
 O1/O3 ask for the opposite: the page starts a download. The design keeps as much as it can:
 
 - **The server stays without network code.** It starts the existing `strata` program as a separate

@@ -26,7 +26,7 @@ ProcessPrivileges current_process_privileges() {
 
 std::optional<std::string_view> privileged_start_error(const ProcessPrivileges& privileges) noexcept {
   if (privileges.posix_root || privileges.windows_elevated) {
-    return "Refusing to run as root or with an elevated token; start strata-secure-server as an unprivileged user.";
+    return "Refusing to run as root or with an elevated token; start strata-unified-server as an unprivileged user.";
   }
   return std::nullopt;
 }

@@ -54,7 +54,7 @@ struct LaunchFailure final {
 // flag in engine.args (`--flag value` and `--flag=value`), and an engine.model_id
 // that is not a name[:tag] reference. --expert: roots.tokenizer_pack must be set.
 // Each message starts with the key path. Shared by compose_engine_launch and
-// strata-secure-server --check (F-8), so --check reports what serve refuses.
+// strata-unified-server --check (F-8), so --check reports what serve refuses.
 [[nodiscard]] std::vector<std::string> launch_config_issues(const FrontendConfig& config, bool expert);
 // launch_config_issues(config, false).
 [[nodiscard]] std::vector<std::string> managed_config_issues(const FrontendConfig& config);

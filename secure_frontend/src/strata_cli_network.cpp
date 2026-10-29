@@ -319,7 +319,7 @@ int model_ready(const FrontendConfig& config, const std::filesystem::path& confi
   auto model = load_installed(config.roots.models, entry);
   if (auto* failure = std::get_if<AcquireError>(&model)) return report(io, *failure);
   if (auto gate = engine_gate(std::get<InstalledModel>(model).manifest.manifest)) return report(io, *gate);
-  io.out << "model ready: " << model_ref_text(entry.name, entry.tag) << "\nstart the server with: strata-secure-server --config "
+  io.out << "model ready: " << model_ref_text(entry.name, entry.tag) << "\nstart the server with: strata-unified-server --config "
          << path_to_utf8(config_file) << '\n';
   return 0;
 }

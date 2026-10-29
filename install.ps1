@@ -309,6 +309,6 @@ if ($LASTEXITCODE -ne 0) { Fail "make stopped (exit code $LASTEXITCODE); its mes
 Step 'Done'
 Say "  M-Strata is in $Out. Start it with:"
 if ($features -contains 'window') { Say "    $Out\strata-window.exe        (a window with the page, and a tray icon)" }
-Say "    $Out\strata-secure-server.exe  (prints a one-time login link: open it in a browser on this PC)"
+Say "    $Out\strata-unified-server.exe  (prints a one-time login link: open it in a browser on this PC)"
 if (-not $driver) { Say '  No NVIDIA driver was found: install it before starting a model.' }
 if ($restartAfter) { Say '  An installer asked for a restart to finish: restart Windows before the first start.' }

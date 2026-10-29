@@ -51,7 +51,7 @@ Net: requirement 3 holds now. §A/§B below make the *models folder* itself a fi
   the models folder, a "Use this folder" button, and a "Re-scan" button. (A browser can't read an OS folder path
   from a native picker for security, so it's a typed/pasted absolute path — matching the frontend's path model. A
   server-side folder browser that lists subdirectories under a root is an optional later add.)
-- New authenticated endpoints on `strata-secure-server`:
+- New authenticated endpoints on `strata-unified-server`:
   - `GET /v1/models/root` → the current `roots.models` + the enumerated models there.
   - `POST /v1/models/root` `{ "path": "<absolute local dir>" }` → validate (same path policy: local, owner-only or
     relaxed), re-open the `CanonicalRoot`, **re-enumerate** (`enumerate_local_models`), remap the served model, and
@@ -70,6 +70,6 @@ Net: requirement 3 holds now. §A/§B below make the *models folder* itself a fi
 
 ## Build order (once paths/box are back)
 1. Config: ensure `roots.models` ≠ `models.downloads_root` by default; document both.
-2. `strata-secure-server`: add `GET`/`POST /v1/models/root` (validate → re-open → re-enumerate → persist).
+2. `strata-unified-server`: add `GET`/`POST /v1/models/root` (validate → re-open → re-enumerate → persist).
 3. WebUI: a settings panel with the models-folder input + "Use this folder" + "Re-scan", wired to the endpoints.
 4. Verify: download → lands in the models folder (not downloads); move files + re-point → models reappear, serve.

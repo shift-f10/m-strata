@@ -88,7 +88,7 @@ background anything, paid services. `upstream/` and `engines/maya-ref/` stay rea
   human fix string, installing nothing (PX §8).
 - **D-8 Packaging builders (`scripts/release/`).** `build_release.sh` (Linux): release
   preset build → bundle dir `strata-<ver>-linux-x86_64/` with `bin/strata`,
-  `bin/strata-secure-server`, engine build outputs, `VERSION`, `SHA256SUMS`,
+  `bin/strata-unified-server`, engine build outputs, `VERSION`, `SHA256SUMS`,
   `manifest.json` (+ signature when `STRATA_SIGNING_KEY` names a key file; unsigned
   otherwise, and the check script then marks it `unsigned: not releasable`), `.deb` via
   `dpkg-deb` when present (the admin path; tarball remains the user path). CUDA runtime

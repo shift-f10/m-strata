@@ -1,7 +1,7 @@
 // strata-window on Linux (spec docs/superpowers/specs/2026-10-28-server-window-design.md, Part 2; the owner:
 // "instead of a console application, we should make it into a window application ... minimized into the tray that
 // has the start and stop models menu ... right click it to select exit or select a model to start and stop"). The
-// Windows window's twin (window_main_win32.cpp): strata-secure-server beside it as its child, signed in with the
+// Windows window's twin (window_main_win32.cpp): strata-unified-server beside it as its child, signed in with the
 // server's one-time link, the page in a WebKitGTK view, a tray icon (Ayatana AppIndicator) whose menu opens the
 // window, starts and stops the models, restarts the server and exits. Closing the window hides it. window_shell.hpp
 // holds the portable half.

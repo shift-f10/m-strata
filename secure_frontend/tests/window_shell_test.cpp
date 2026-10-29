@@ -169,9 +169,9 @@ void the_log_rotates_at_its_bound() {
 void the_window_starts_the_server_beside_it() {
   const std::filesystem::path install = secure_frontend_test::make_scratch_directory();
 #if defined(_WIN32)
-  const auto server = install / "strata-secure-server.exe";
+  const auto server = install / "strata-unified-server.exe";
 #else
-  const auto server = install / "strata-secure-server";
+  const auto server = install / "strata-unified-server";
 #endif
   const auto data = install / "elsewhere";
   const auto setup = w::server_setup({"--data-dir", data.string(), "--port", "9000"}, install);
@@ -322,7 +322,7 @@ void a_server_that_exits_is_reported() {
 
 void a_missing_server_is_a_message() {
   w::ServerChild child;
-  const auto missing = secure_frontend_test::make_scratch_directory() / "strata-secure-server-missing";
+  const auto missing = secure_frontend_test::make_scratch_directory() / "strata-unified-server-missing";
   const auto failed = child.start(missing, {}, w::current_environment(), [](std::string) {}, [](int) {});
   expect(failed.has_value() && failed->find("missing") == std::string::npos, "a message without the path");
   expect(!child.running(), "nothing runs");

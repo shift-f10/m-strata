@@ -495,7 +495,7 @@ LinkSet read_link_set(const std::filesystem::path& path) {
   return set;
 }
 
-// PRIV-04 supplement (§7.1): strata-secure-server does not link acquisition. Positive control: the
+// PRIV-04 supplement (§7.1): strata-unified-server does not link acquisition. Positive control: the
 // same closure of `strata` does contain acquisition and the downloader.
 void priv04_secure_server_does_not_link_acquisition() {
   const auto& args = secure_frontend_test::extra_arguments();  // [0] server link set, [1] strata link set
@@ -505,10 +505,10 @@ void priv04_secure_server_does_not_link_acquisition() {
     expect(strata_links.has(required), std::string{"positive control, strata links "} + required + strata_links.describe());
   }
   const auto links = read_link_set(args.at(0));
-  expect(links.has("strata-secure-server"), "the server link set was generated" + links.describe());
+  expect(links.has("strata-unified-server"), "the server link set was generated" + links.describe());
   for (const auto* forbidden : {"secure_frontend_acquire", "secure_frontend_acquire_core", "secure_frontend_downloader",
                                 "secure_frontend_strata_cli"}) {
-    expect(!links.has(forbidden), std::string{"strata-secure-server does not link "} + forbidden + links.describe());
+    expect(!links.has(forbidden), std::string{"strata-unified-server does not link "} + forbidden + links.describe());
   }
 }
 
@@ -544,7 +544,7 @@ void doctor_warns_on_strata_env_knob() {
 
 void release_binary_lacks_hook_marker() {
   expect(!secure_frontend::kTestHooksEnabled, "runs only hooks-OFF");
-  for (const auto& binary : secure_frontend_test::extra_arguments()) {  // strata and strata-secure-server
+  for (const auto& binary : secure_frontend_test::extra_arguments()) {  // strata and strata-unified-server
     const auto bytes = file_text(binary);
     expect(!bytes.empty(), "the binary was read: " + std::filesystem::path(binary).filename().string());
     expect(!contains(bytes, marker()), "a shipped binary has no hook marker: " + std::filesystem::path(binary).filename().string());

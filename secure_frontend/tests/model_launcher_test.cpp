@@ -1,5 +1,5 @@
 // Model launcher (plan docs/superpowers/plans/2026-10-23-model-launcher.md Tasks 3-4; spec §5):
-// the real strata-secure-server booted with model cards over the supervision fake engine. A
+// the real strata-unified-server booted with model cards over the supervision fake engine. A
 // card starts from the API with typed options, a switch waits for the generation in flight, a
 // failed start leaves the server usable, one switch runs at a time, and the page's options are
 // remembered.

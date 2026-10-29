@@ -2,7 +2,7 @@
 # SP7 M2 Task 6 (spec D-8/D-9): Linux release builder.
 #
 # Release-preset build -> bundle strata-<ver>-linux-x86_64/ carrying
-# bin/strata, bin/strata-secure-server, engine/CUDA outputs when present,
+# bin/strata, bin/strata-unified-server, engine/CUDA outputs when present,
 # VERSION, the profile manifest, the SBOM, the D-3 update manifest (+ signature
 # only when STRATA_SIGNING_KEY names a key file), SHA256SUMS -> tarball, and a
 # .deb via dpkg-deb when present.  The distribution judge
@@ -55,7 +55,7 @@ if [ -e "$BUNDLE" ]; then
 fi
 mkdir -p "$BUNDLE/bin"
 
-for bin in strata strata-secure-server; do
+for bin in strata strata-unified-server; do
     if [ ! -f "$BUILD_DIR/$bin" ]; then
         echo "build_release: required product binary missing: $BUILD_DIR/$bin (build first)" >&2
         exit 1
@@ -132,7 +132,7 @@ if command -v dpkg-deb >/dev/null 2>&1; then
         printf ' Hardened C++ frontend for a locally supplied Strata engine;\n'
         printf ' offline by default; no analytics, telemetry, or downloads.\n'
     } > "$DEB_ROOT/DEBIAN/control"
-    cp "$BUNDLE/bin/strata" "$BUNDLE/bin/strata-secure-server" "$DEB_ROOT/usr/bin/"
+    cp "$BUNDLE/bin/strata" "$BUNDLE/bin/strata-unified-server" "$DEB_ROOT/usr/bin/"
     cp "$BUNDLE/VERSION" "$BUNDLE/secure-release-manifest.json" "$BUNDLE/sbom.spdx.json" \
        "$BUNDLE/manifest.json" "$DEB_ROOT/usr/share/strata-secure/"
     [ -f "$BUNDLE/manifest.json.sig" ] && cp "$BUNDLE/manifest.json.sig" "$DEB_ROOT/usr/share/strata-secure/"

@@ -37,7 +37,7 @@ struct ConfigKey final {
   std::int64_t default_integer;
   bool default_boolean;
   std::string_view default_string;  // empty = no default
-  std::string_view flag;            // strata-secure-server option(s) for the README; empty = file only
+  std::string_view flag;            // strata-unified-server option(s) for the README; empty = file only
   std::string_view description;
   // SP5 M1 Task 4 (decimal rows): bounds below; default_decimal NaN = "unset"
   // (the row stays absent); minimum_exclusive models the pin's open bounds.
