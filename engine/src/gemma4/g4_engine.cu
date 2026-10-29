@@ -4,7 +4,9 @@
 #include "g4_file.hpp"
 #include "g4_kernels.cuh"
 #include "g4_lane.hpp"
+#include "g4_mtp.hpp"
 #include "g4_profile.hpp"
+#include "g4_spec.hpp"
 
 #include "strata/core/expert_cache.hpp"
 #include "strata/core/graph.hpp"
@@ -23,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <map>
 #include <numeric>
 #include <type_traits>
 #include <vector>
@@ -110,10 +113,12 @@ class Gemma4Engine final : public Engine {
  public:
   ~Gemma4Engine() override { release(); }
 
-  bool load(const EngineConfig& cfg, const ModelDesc& m, std::string& error);
+  bool load(const EngineConfig& cfg, const ModelDesc& m, const AssistantDesc* drafter, std::string& error);
 
   int context() const override { return ctx_; }
-  int ring_spare() const override { return ring_ - kWindow; }
+  // with a drafter, a verify window of up to --spec rows writes up to --spec - 1 ring rows past the held tokens (rows it
+  // may reject): a reuse point keeps that much more of the ring intact
+  int ring_spare() const override { return ring_ - kWindow - (drafter_ ? spec_rows_ - 1 : 0); }
   int position() const override { return pos_; }
   void truncate(int p) override { pos_ = std::clamp(p, 0, pos_); }
   int process(const std::int32_t* ids, int n, const std::function<bool(int)>& progress) override;
@@ -124,8 +129,30 @@ class Gemma4Engine final : public Engine {
   void set_layer_sink(std::vector<float>* sink) override { sink_ = sink; }
   bool save_profile(bool force, std::string& error) override;
   LoadReport report() const override { return report_; }
+  bool has_drafter() const override { return drafter_ != nullptr; }
+  int draft(std::int32_t id_last, int n, float p_min, std::int32_t* ids, float* probs) override;
+  int verify(const std::int32_t* ids, int T) override;
+  int window_greedy(std::int32_t* out) override;
+  int row_candidates(int row, int k, float* vals, int* ids) override;
+  bool row_logits(int row, std::vector<float>& out) override;
+  bool accept(int n) override;
+  bool settle() override;
 
  private:
+  // the drafter's tensors from its own file into device memory the engine owns
+  struct DraftUp final : DraftUploader {
+    Gemma4Engine& e;
+    ReadOnlyFile& f;
+    DraftUp(Gemma4Engine& engine, ReadOnlyFile& file) : e(engine), f(file) {}
+    bool matrix(const TensorSpan& t, g4k::Mat& out) override { return e.upload_matrix(f, t, out); }
+    bool vector(const TensorSpan& t, float*& out) override { return e.upload_vector(f, t, out); }
+    bool bytes(void*& out, std::size_t n) override {
+      std::uint8_t* p = nullptr;
+      if (!e.alloc(p, n)) return false;
+      out = p;
+      return true;
+    }
+  };
   bool cuda_ok(cudaError_t e, const char* what);
   bool launch_ok(const char* what) { return cuda_ok(cudaGetLastError(), what); }
   template <typename T>
@@ -136,14 +163,20 @@ class Gemma4Engine final : public Engine {
     p = static_cast<T*>(raw);
     return true;
   }
-  bool upload_vector(const TensorSpan& t, float*& out);
-  bool upload_matrix(const TensorSpan& t, g4k::Mat& out);
+  bool upload_vector(const TensorSpan& t, float*& out) { return upload_vector(file_, t, out); }
+  bool upload_matrix(const TensorSpan& t, g4k::Mat& out) { return upload_matrix(file_, t, out); }
+  bool upload_vector(ReadOnlyFile& f, const TensorSpan& t, float*& out);
+  bool upload_matrix(ReadOnlyFile& f, const TensorSpan& t, g4k::Mat& out);
   bool load_experts(DevLayer& L, const LayerDesc& d);
   bool place_experts(double vram_gib, int forced_slots, const std::string& profile, std::string& error);
   // the layer's experts for T tokens (e_in_ -> yg_ rows, then moe_): Strata's grouped kernel on the native blobs
   bool moe_experts(DevLayer& L, int T);
-  // a decode step's experts through the CPU lane (paper 3.3): VRAM groups, the staged share, the CPU's rows
-  bool moe_lane(DevLayer& L);
+  // a decode step's (T = 1) or a verify window's experts through the CPU lane (paper 3.3): VRAM groups, the staged
+  // share, the CPU's rows; `picks` the step's routing [T][8]
+  bool moe_lane(DevLayer& L, int T, const int* picks);
+  // a verify window's experts without the lane: one group per distinct expert of its rows (spec §12)
+  bool moe_window(DevLayer& L, int T, const int* picks);
+  bool verify_body(int T, bool lane, const std::vector<int>& split_full, const std::vector<int>& split_swa);
   // a prompt chunk's experts on MMQ (paper 3.6): the slots, then the streamed misses group by group
   bool moe_mmq(DevLayer& L, int T);
   // the same chunk's experts on a layer MMQ has no kernel for (BF16): the grouped kernel on the slots and the stream
@@ -171,6 +204,10 @@ class Gemma4Engine final : public Engine {
   void set_res(const DevLayer& L, int e, int slot);         // the lane's residency of expert e (a slot, or -1)
   bool set_ptr(DevLayer& L, int e, unsigned long long p);   // expert e's blob address, host and device table
   void land_swaps();                                        // admit the swaps whose copies have landed
+  bool step_begin(const char* what, bool& lane);
+  // the k highest / the argmax / a copy of the logits at `lg` (a decode step's or a window row's)
+  int candidates_of(const float* lg, int k, float* vals, int* ids);
+  bool copy_logits(const float* lg, std::vector<float>& out);
   bool gemm(const g4k::Mat& w, const float* x, float* y, int T);
   bool sgemm(int rows, int T, int cols, const float* w, const float* x, float* y);
   bool forward_one(std::int32_t id);
@@ -295,6 +332,20 @@ class Gemma4Engine final : public Engine {
 
   std::vector<float>* sink_{nullptr};
   LoadReport report_{};
+
+  // MTP (spec §12): the drafter, and the verify window's buffers - its ids and positions (device words, pinned
+  // staging), each row's normed hidden state (the drafter's h) and logits, each layer's routing (counted for the kept
+  // rows at accept), the rows' argmax - and its graphs, one per window size and attention split pattern
+  std::unique_ptr<Drafter> drafter_;
+  int spec_rows_{1};
+  int* win_d_{};       // device [2 * kSpecMaxRows]: ids, then positions
+  int* win_h_{};       // pinned [3 * kSpecMaxRows]: the same, then the rows' argmax
+  float* win_xn_{};    // [kSpecMaxRows][kEmbd]
+  float* win_logits_{};  // [kSpecMaxRows][kVocab]
+  int* win_picks_{};   // [kLayers][kSpecMaxRows * 8]
+  int* win_argmax_{};  // device [kSpecMaxRows]
+  int win_T_{0}, win_pos_{0};
+  std::map<std::vector<int>, std::unique_ptr<strata::core::CapturedGraph>> win_graphs_;
 };
 
 bool Gemma4Engine::cuda_ok(cudaError_t e, const char* what) {
@@ -313,14 +364,17 @@ void Gemma4Engine::release() {
     const CpuLane::Stats s = lane_->stats();
     if (s.tokens > 0) {
       const long long gpu = s.hits, cpu = s.cpu_entries;
-      std::fprintf(stderr, "strata-gemma4: CPU lane: %lld decode steps; %lld expert entries from VRAM, %lld staged experts, %lld "
-                   "entries (%lld experts) on the CPU pool in %.0f ms\n", s.tokens, gpu, s.staged, cpu, s.cpu_experts, s.pool_ms);
+      std::fprintf(stderr, "strata-gemma4: CPU lane: %lld decode steps (%lld verify windows); %lld expert entries from VRAM, %lld staged "
+                   "experts, %lld entries (%lld experts) on the CPU pool in %.0f ms\n", s.tokens, s.windows, gpu, s.staged, cpu, s.cpu_experts,
+                   s.pool_ms);
     }
     lane_->stop();   // a token still in flight is released before the stream is waited on
   }
   if (st_ != nullptr) cudaStreamSynchronize(st_);
   lane_.reset();
   graph_.reset();
+  win_graphs_.clear();
+  drafter_.reset();
   if (ring_st_ != nullptr) cudaStreamSynchronize(ring_st_);
   for (int k = 0; k < kRingBufs; ++k) {
     if (ring_landed_[k] != nullptr) cudaEventDestroy(ring_landed_[k]);
@@ -352,13 +406,13 @@ void Gemma4Engine::release() {
   st_ = nullptr;
 }
 
-bool Gemma4Engine::upload_vector(const TensorSpan& t, float*& out) {
+bool Gemma4Engine::upload_vector(ReadOnlyFile& file, const TensorSpan& t, float*& out) {
   if (!t.present) {
     out = nullptr;
     return true;
   }
   staging_.resize(static_cast<std::size_t>(t.bytes));
-  if (!file_.read_at(t.file_offset, staging_.data(), staging_.size())) {
+  if (!file.read_at(t.file_offset, staging_.data(), staging_.size())) {
     std::fprintf(stderr, "strata-gemma4: cannot read the model file\n");
     return false;
   }
@@ -366,7 +420,7 @@ bool Gemma4Engine::upload_vector(const TensorSpan& t, float*& out) {
   return cuda_ok(cudaMemcpy(out, staging_.data(), staging_.size(), cudaMemcpyHostToDevice), "upload");
 }
 
-bool Gemma4Engine::upload_matrix(const TensorSpan& t, g4k::Mat& out) {
+bool Gemma4Engine::upload_matrix(ReadOnlyFile& file, const TensorSpan& t, g4k::Mat& out) {
   out.rows = static_cast<int>(t.rows);
   out.cols = static_cast<int>(t.cols);
   const std::size_t rows = static_cast<std::size_t>(t.rows), cols = static_cast<std::size_t>(t.cols);
@@ -379,7 +433,7 @@ bool Gemma4Engine::upload_matrix(const TensorSpan& t, g4k::Mat& out) {
     for (std::size_t r0 = 0; r0 < rows; r0 += step) {
       const std::size_t n = std::min(step, rows - r0);
       staging_.resize(n * rb);
-      if (!file_.read_at(t.file_offset + r0 * rb, staging_.data(), n * rb)) return false;
+      if (!file.read_at(t.file_offset + r0 * rb, staging_.data(), n * rb)) return false;
       if (!cuda_ok(cudaMemcpy(d + r0 * rb, staging_.data(), n * rb, cudaMemcpyHostToDevice), "upload")) return false;
     }
     out.w = d;
@@ -396,7 +450,7 @@ bool Gemma4Engine::upload_matrix(const TensorSpan& t, g4k::Mat& out) {
   for (std::size_t r0 = 0; r0 < rows; r0 += step) {
     const std::size_t n = std::min(step, rows - r0);
     staging_.resize(n * rb);
-    if (!file_.read_at(t.file_offset + r0 * rb, staging_.data(), n * rb)) return false;
+    if (!file.read_at(t.file_offset + r0 * rb, staging_.data(), n * rb)) return false;
     hq.resize(n * cols);
     hs.resize(n * (cols / 32));
     repack_q8(staging_.data(), n, cols, hq.data(), hs.data());
@@ -607,28 +661,42 @@ bool Gemma4Engine::start_lane(const EngineConfig& cfg, std::string& error) {
 // the lane's plan names the VRAM groups (run at once), the staged groups (once the copy engine has landed them) and
 // leaves the rest to the CPU pool, whose rows arrive in mapped memory.  Rows yg_[k] in routing order, then the combine
 // as the GPU-only path's.
-bool Gemma4Engine::moe_lane(DevLayer& L) {
+bool Gemma4Engine::moe_lane(DevLayer& L, const int T, const int* picks) {
   namespace K = strata::kernels;
-  using P = LanePlan;
+  const LanePlan P = LanePlan::at(8 * T);   // at T = 1: the decode step's layout (LanePlan's constants)
   const CpuLane::Device& D = lane_->device();
   const auto ring = static_cast<std::uint32_t>(L.index + 1);
-  K::quantize_q8_1_rows(e_in_, 1, kEmbd, xq_, st_);
-  K::doorbell_publish_res(e_in_, picks_, res_d_ + static_cast<std::size_t>(L.index) * kExperts, kExperts, kEmbd, 8, D.x, D.ids,
-                          D.seq, st_);
+  K::quantize_q8_1_rows(e_in_, T, kEmbd, xq_, st_);
+  K::doorbell_publish_res(e_in_, picks, res_d_ + static_cast<std::size_t>(L.index) * kExperts, kExperts,
+                          static_cast<std::int64_t>(kEmbd) * T, 8 * T, D.x, D.ids, D.seq, st_);
   K::wait_flag_ge(D.flag_a, ring, st_);
-  K::copy_i32_from_mapped(lplan_, D.plan, P::kWords, st_);
-  const auto* ptr = reinterpret_cast<const unsigned long long*>(lplan_ + P::kPtr);
-  const auto* ptr2 = reinterpret_cast<const unsigned long long*>(lplan_ + P::kPtr2);
-  K::native_expert_grouped(L.nl, ptr, lplan_ + P::kStart, lplan_ + P::kCounts, lplan_ + P::kDst, lplan_ + P::kTok, P::kCap, P::kCap,
-                           xq_, escratch_, hit_out_, st_);
+  K::copy_i32_from_mapped(lplan_, D.plan, P.words, st_);
+  const auto* ptr = reinterpret_cast<const unsigned long long*>(lplan_ + P.ptr);
+  const auto* ptr2 = reinterpret_cast<const unsigned long long*>(lplan_ + P.ptr2);
+  K::native_expert_grouped(L.nl, ptr, lplan_ + P.start, lplan_ + P.counts, lplan_ + P.dst, lplan_ + P.tok, P.cap, P.cap, xq_,
+                           escratch_, hit_out_, st_);
   K::wait_flag_ge(D.flag_b, ring, st_);
-  K::native_expert_grouped(L.nl, ptr2, lplan_ + P::kStart2, lplan_ + P::kCounts + 2, lplan_ + P::kDst, lplan_ + P::kTok, P::kCap,
-                           P::kCap, xq_, escratch_, hit_out_, st_);
+  K::native_expert_grouped(L.nl, ptr2, lplan_ + P.start2, lplan_ + P.counts + 2, lplan_ + P.dst, lplan_ + P.tok, P.cap, P.cap, xq_,
+                           escratch_, hit_out_, st_);
   // the CPU's rows (the GPU's own rows written as zeros), then the GPU's rows added into them
-  K::copy_rows_from_mapped_after(D.flag_c, ring, yg_, D.rows, 8, kEmbd, lplan_ + P::kDst, lplan_ + P::kCounts + 1, st_);
-  K::moe_hit_add(yg_, hit_out_, lplan_ + P::kDst, lplan_ + P::kCounts + 1, P::kCap, kEmbd, st_);
-  g4k::moe_combine(yg_, wts_, picks_, L.down_scale, 8, kEmbd, moe_, st_);
+  K::copy_rows_from_mapped_after(D.flag_c, ring, yg_, D.rows, P.cap, kEmbd, lplan_ + P.dst, lplan_ + P.counts + 1, st_);
+  K::moe_hit_add(yg_, hit_out_, lplan_ + P.dst, lplan_ + P.counts + 1, P.cap, kEmbd, st_);
+  // a window's rows are in routing order: the identity's combine is moe_combine's arithmetic per token
+  if (T == 1) g4k::moe_combine(yg_, wts_, picks, L.down_scale, 8, kEmbd, moe_, st_);
+  else g4k::scatter_combine(yg_, ident_, wts_, picks, L.down_scale, T, kEmbd, moe_, st_);
   return launch_ok("experts (CPU lane)");
+}
+
+// A verify window's experts when no lane serves them: the decode step's grouped kernel over the window's 8 T entries,
+// one group per distinct expert (each read once for every row routed to it; per entry the kernel's arithmetic does not
+// depend on its group, so every row is the decode step's), then the per-token combine.
+bool Gemma4Engine::moe_window(DevLayer& L, const int T, const int* picks) {
+  const int A = 8 * T;
+  strata::kernels::quantize_q8_1_rows(e_in_, T, kEmbd, xq_, st_);
+  g4k::plan_window(picks, A, L.ptrtab, plan_ptr_, plan_start_, plan_n_, plan_dst_, plan_tok_, st_);
+  strata::kernels::native_expert_grouped(L.nl, plan_ptr_, plan_start_, plan_n_, plan_dst_, plan_tok_, A, A, xq_, escratch_, yg_, st_);
+  g4k::scatter_combine(yg_, ident_, wts_, picks, L.down_scale, T, kEmbd, moe_, st_);
+  return launch_ok("experts (window)");
 }
 
 bool Gemma4Engine::place_experts(double vram_gib, int forced_slots, const std::string& profile, std::string& error) {
@@ -715,7 +783,7 @@ bool Gemma4Engine::place_experts(double vram_gib, int forced_slots, const std::s
   return true;
 }
 
-bool Gemma4Engine::load(const EngineConfig& cfg, const ModelDesc& m, std::string& error) {
+bool Gemma4Engine::load(const EngineConfig& cfg, const ModelDesc& m, const AssistantDesc* drafter, std::string& error) {
   const auto t0 = Clock::now();
   if (!file_.open(cfg.model)) {
     error = "cannot open the model file";
@@ -813,16 +881,18 @@ bool Gemma4Engine::load(const EngineConfig& cfg, const ModelDesc& m, std::string
   // kMmqMinRows; without the loan one set of C rows serves everything
   borrow_ = mmq_on_ && cfg.prompt_borrow;
   constexpr std::size_t kBigScores = std::size_t(32) << 20;   // 128 MB of prompt-attention scores
-  const std::size_t small_rows = borrow_ ? std::size_t(kMmqMinRows - 1) : C;
+  // the decode rows (and a verify window's: up to kSpecMaxRows tokens, spec §12)
+  const std::size_t W = std::max<std::size_t>(C, kSpecMaxRows);
+  const std::size_t small_rows = borrow_ ? std::size_t(kMmqMinRows - 1) : W;
   const std::size_t small_scores = borrow_ ? std::max<std::size_t>(std::size_t(4) << 20, std::size_t(8) * static_cast<std::size_t>(ctx_))
                                            : kBigScores;
   std::uint8_t* small_mem = nullptr;
   const std::size_t small_bytes = layout_rows(nullptr, small_rows, small_scores, mmq_on_ && !borrow_, small_);
   const bool scratch_ok =
-      alloc(small_mem, small_bytes) && alloc(ids_d_, std::max<std::size_t>(C, 2)) && alloc(wts_, C * 8) && alloc(picks_, C * 8) &&
+      alloc(small_mem, small_bytes) && alloc(ids_d_, std::max<std::size_t>(C, 2)) && alloc(wts_, W * 8) && alloc(picks_, W * 8) &&
       alloc(wdq_, std::size_t(kHeads) * kHeadFull * kEmbd) &&
-      alloc(plan_ptr_, kExperts) && alloc(plan_start_, kExperts + 1) && alloc(plan_n_, 1) && alloc(plan_dst_, C * 8) &&
-      alloc(plan_tok_, C * 8) && alloc(ident_, C * 8) && alloc(dscratch_, std::size_t(kHeads) * max_splits_ * (kHeadFull + 2)) &&
+      alloc(plan_ptr_, kExperts) && alloc(plan_start_, kExperts + 1) && alloc(plan_n_, 1) && alloc(plan_dst_, W * 8) &&
+      alloc(plan_tok_, W * 8) && alloc(ident_, W * 8) && alloc(dscratch_, std::size_t(kHeads) * max_splits_ * (kHeadFull + 2)) &&
       alloc(logits_, kVocab) && alloc(xn_, kEmbd) && alloc(argmax_out_, 1) && alloc(argmax_scratch_, 4096) &&
       alloc(topk_scratch_, g4k::topk_scratch_bytes(kVocab)) &&
       alloc(cand_v_, g4k::kTopkMax) && alloc(cand_i_, g4k::kTopkMax) && alloc(cand_flag_, 1);
@@ -858,7 +928,7 @@ bool Gemma4Engine::load(const EngineConfig& cfg, const ModelDesc& m, std::string
   pinned_.push_back(ppin);
   plan_ptr_h_ = static_cast<unsigned long long*>(ppin);
   {
-    std::vector<int> ident(C * 8);
+    std::vector<int> ident(W * 8);
     std::iota(ident.begin(), ident.end(), 0);
     if (!cuda_ok(cudaMemcpy(ident_, ident.data(), ident.size() * sizeof(int), cudaMemcpyHostToDevice), "ident")) {
       error = "cannot initialise the expert plan";
@@ -903,11 +973,58 @@ bool Gemma4Engine::load(const EngineConfig& cfg, const ModelDesc& m, std::string
     std::size_t max_blob = 0;
     for (const auto& L : layers_) max_blob = std::max(max_blob, L.nl.bytes);
     lstage_bytes_ = 4 * max_blob;
-    if (!alloc(lstage_, lstage_bytes_) || !alloc(lplan_, LanePlan::kWords) || !alloc(hit_out_, std::size_t(LanePlan::kCap) * kEmbd) ||
+    // the plan and the GPU's rows sized for a verify window's 8 x LanePlan::kMaxTok entries (a decode step uses 8)
+    if (!alloc(lstage_, lstage_bytes_) || !alloc(lplan_, kLanePlanMaxWords) || !alloc(hit_out_, std::size_t(LanePlan::kMaxCap) * kEmbd) ||
         !alloc(res_d_, static_cast<std::size_t>(kLayers) * kExperts)) {
       error = "cannot allocate the CPU lane's buffers";
       return false;
     }
+  }
+  // MTP (spec §12): the drafter's weights and buffers and the verify window's, before the expert slots take the free
+  // VRAM (the drafter's VRAM comes out of the expert cache, as every other fixed buffer's)
+  if (drafter != nullptr) {
+    if (!layers_[kLayers - 2].sliding || layers_[kLayers - 1].sliding) {
+      error = "the drafter reads target layers 28 (sliding) and 29 (full): this model's last layers are not those kinds";
+      return false;
+    }
+    spec_rows_ = std::clamp(cfg.spec, 2, kSpecMaxRows);
+    void* wpin = nullptr;
+    if (!alloc(win_d_, 2 * kSpecMaxRows) || !alloc(win_xn_, std::size_t(kSpecMaxRows) * kEmbd) ||
+        !alloc(win_logits_, std::size_t(kSpecMaxRows) * kVocab) || !alloc(win_picks_, std::size_t(kLayers) * kSpecMaxRows * 8) ||
+        !alloc(win_argmax_, kSpecMaxRows) ||
+        !cuda_ok(cudaHostAlloc(&wpin, sizeof(int) * 3 * kSpecMaxRows, cudaHostAllocDefault), "cudaHostAlloc")) {
+      error = "cannot allocate the verify window's buffers";
+      return false;
+    }
+    pinned_.push_back(wpin);
+    win_h_ = static_cast<int*>(wpin);
+    ReadOnlyFile mf;
+    if (!mf.open(cfg.mtp_model)) {
+      error = "cannot open the drafter file";
+      return false;
+    }
+    const DevLayer& Ls = layers_[kLayers - 2];
+    const DevLayer& Lf = layers_[kLayers - 1];
+    DraftTarget t;
+    t.embd = embd_;
+    t.kc_swa = Ls.kc;
+    t.vc_swa = Ls.vc;
+    t.cap_swa = Ls.cap;
+    t.ring = ring_;
+    t.kc_full = Lf.kc;
+    t.vc_full = Lf.vc;
+    t.cap_full = Lf.cap;
+    t.max_splits = max_splits_;
+    t.attn_scratch = dscratch_;
+    drafter_ = std::make_unique<Drafter>();
+    DraftUp up(*this, mf);
+    if (!drafter_->load(*drafter, t, spec_rows_ - 1, up, error)) {
+      drafter_.reset();
+      return false;
+    }
+    mf.close();
+    report_.mtp_layers = drafter_->layers();
+    report_.mtp_mib = drafter_->vram_mib();
   }
   profile_save_ = cfg.expert_profile_save;
   profile_saved_ = Clock::now();
@@ -991,21 +1108,26 @@ bool Gemma4Engine::head(const float* x_row) {
 // that changes per step is device data - the token and its position (ids_h_[0..1], copied in by the graph's first
 // node), the residency the doorbell reads, the lane's plan - so a graph serves every position whose attention
 // splits it was captured with (graph_key_: a new capture each 128 positions, when a split is added).
+// A decode step's or a verify window's start: the last step's (or chunk's) work is done - its copy out of the pinned
+// ids has run before they are rewritten (a prompt tail of 2-4 tokens queues steps back to back), and the lane is idle -
+// the swaps whose copies have landed are admitted (a prompt's refilled slots among them), and the residency the CPU
+// lane plans from (it changes only between steps) reaches the device. `lane`: whether the lane serves the step.
+bool Gemma4Engine::step_begin(const char* what, bool& lane) {
+  if (!cuda_ok(cudaStreamSynchronize(st_), what)) return false;
+  if (!swaps_.empty()) land_swaps();
+  lane = lane_ && lane_->running();
+  if (lane && res_dirty_) {
+    if (!cuda_ok(cudaMemcpyAsync(res_d_, res_h_, sizeof(std::int32_t) * kLayers * kExperts, cudaMemcpyHostToDevice, st_), "residency"))
+      return false;
+    res_dirty_ = false;
+  }
+  return true;
+}
+
 bool Gemma4Engine::forward_one(std::int32_t id) {
   const int pos = pos_;
-  // the last step's (or chunk's) work is done: its copy out of ids_h_ has run before ids_h_ is rewritten below (a
-  // prompt tail of 2-4 tokens queues steps back to back), and the lane is idle
-  if (!cuda_ok(cudaStreamSynchronize(st_), "decode")) return false;
-  if (!swaps_.empty()) land_swaps();   // the swaps (a prompt's refilled slots among them) whose copies have landed
-  // the CPU lane serves this step's layers as they ring; the residency it plans from changes only between steps
-  const bool lane = lane_ && lane_->running();
-  if (lane) {
-    if (res_dirty_) {
-      if (!cuda_ok(cudaMemcpyAsync(res_d_, res_h_, sizeof(std::int32_t) * kLayers * kExperts, cudaMemcpyHostToDevice, st_), "residency"))
-        return false;
-      res_dirty_ = false;
-    }
-  }
+  bool lane = false;
+  if (!step_begin("decode", lane)) return false;
   ids_h_[0] = id;
   ids_h_[1] = pos;
   const int split_full = g4k::attn_decode_splits(g4k::attn_decode_keys(pos, 0));
@@ -1091,7 +1213,7 @@ bool Gemma4Engine::decode_body(int pos, bool lane, int split_full, int split_swa
     g4k::matvec(L.router, rn_, rl_, 1, st_);
     g4k::router_topk(rl_, 1, picks_, wts_, L.counts, st_);
     g4k::rmsnorm(x1_, L.pre_ffw_norm_2, nullptr, 1.0f, e_in_, 1, kEmbd, eps_, st_);
-    if (!(lane ? moe_lane(L) : moe_experts(L, 1))) return false;
+    if (!(lane ? moe_lane(L, 1, picks_) : moe_experts(L, 1))) return false;
     g4k::ffn_end(x1_, dense_, moe_, L.post_ffw_norm_1, L.post_ffw_norm_2, L.post_ffw_norm, L.layer_scale, x_, 1, kEmbd, eps_, st_);
     if (sink_ != nullptr) dump_layer(l, pos, 1);
   }
@@ -1482,14 +1604,203 @@ int Gemma4Engine::process(const std::int32_t* ids, int n, const std::function<bo
   // the prompt's routing to the tier: a rebalance reads the counts the previous one asked for (landed with the sync
   // above), so a prompt of one chunk - whose only rebalance started that read - moves the slots before decode too
   if (n > 4) rebalance(256);
+  // the drafter's next input: the last read row's final normed hidden state (the row whose logits give the next token)
+  if (drafter_ && done == n &&
+      !cuda_ok(cudaMemcpyAsync(drafter_->h_in(), xn_, sizeof(float) * kEmbd, cudaMemcpyDeviceToDevice, st_), "draft input")) {
+    return -1;
+  }
   return done;
 }
 
-bool Gemma4Engine::logits(std::vector<float>& out) {
+// ---- MTP (spec §12) ----
+
+int Gemma4Engine::draft(const std::int32_t id_last, const int n, const float p_min, std::int32_t* ids, float* probs) {
+  if (broken_) return -1;
+  if (!drafter_ || n <= 0 || pos_ < 1) return 0;
+  std::string why;
+  const int got = drafter_->run(id_last, pos_, std::min(n, spec_rows_ - 1), p_min, ids, probs, graph_on_, st_, why);
+  if (got < 0) {
+    std::fprintf(stderr, "strata-gemma4: %s\n", why.c_str());
+    broken_ = true;
+  }
+  return got;
+}
+
+// The verify window: T rows through the decode step's kernels (matvec_rows reading each weight once for the rows, the
+// per-row attention at each row's position, the experts grouped across the rows), as one captured graph per window size
+// and per the rows' attention splits.  The rows' K/V land at their positions; rows a later accept() leaves out are
+// overwritten by the next step and never read before (the attention reads keys up to its own row).
+int Gemma4Engine::verify(const std::int32_t* ids, const int T) {
+  if (broken_) return -1;
+  if (!drafter_ || T < 1 || T > spec_rows_ || pos_ + T > ctx_) return 0;   // not a window this engine reads
+  bool lane = false;
+  if (!step_begin("verify", lane)) return -1;
+  if (!give_back()) return -1;   // the window runs on small_ (its graphs were captured on it)
+  std::vector<int> split_full(static_cast<std::size_t>(T)), split_swa(static_cast<std::size_t>(T));
+  std::vector<int> key{T, lane ? 1 : 0};
+  for (int t = 0; t < T; ++t) {
+    win_h_[t] = ids[t];
+    win_h_[kSpecMaxRows + t] = pos_ + t;
+    split_full[static_cast<std::size_t>(t)] = g4k::attn_decode_splits(g4k::attn_decode_keys(pos_ + t, 0));
+    split_swa[static_cast<std::size_t>(t)] = g4k::attn_decode_splits(g4k::attn_decode_keys(pos_ + t, kWindow));
+    key.push_back(split_full[static_cast<std::size_t>(t)]);
+    key.push_back(split_swa[static_cast<std::size_t>(t)]);
+  }
+  const bool graph = graph_on_ && sink_ == nullptr;
+  bool queued = false;
+  if (graph) {
+    auto it = win_graphs_.find(key);
+    if (it == win_graphs_.end()) {
+      if (win_graphs_.size() >= 64) win_graphs_.clear();
+      auto g = std::make_unique<strata::core::CapturedGraph>();
+      std::string why;
+      bool ok = g->begin(st_, why);
+      if (ok) {
+        const bool body = verify_body(T, lane, split_full, split_swa);
+        (void) cudaGetLastError();
+        ok = g->end(st_, why) && body;
+      }
+      (void) cudaGetLastError();
+      if (broken_) return -1;
+      if (ok) {
+        it = win_graphs_.emplace(key, std::move(g)).first;
+      } else {   // as forward_one: plain launches from here on (a capture that failed once is not retried every step)
+        std::fprintf(stderr, "strata-gemma4: a verify window's graph could not be captured (%s); plain launches from here\n",
+                     why.c_str());
+        graph_on_ = false;
+        win_graphs_.clear();
+      }
+    }
+    if (it != win_graphs_.end()) {
+      if (lane) lane_->begin_token(T);
+      std::string why;
+      if (!it->second->launch(st_, why)) {
+        std::fprintf(stderr, "strata-gemma4: %s\n", why.c_str());
+        if (lane) lane_->abort_token();
+        broken_ = true;
+        return -1;
+      }
+      queued = true;
+    }
+  }
+  if (!queued) {
+    if (lane) lane_->begin_token(T);
+    if (!verify_body(T, lane, split_full, split_swa)) {
+      if (lane) lane_->abort_token();
+      return -1;
+    }
+  }
+  if (!cuda_ok(cudaStreamSynchronize(st_), "verify")) {
+    if (lane) lane_->abort_token();
+    return -1;
+  }
+  if (lane) {
+    std::string why;
+    if (!lane_->end_token(why)) {
+      std::fprintf(stderr, "strata-gemma4: %s\n", why.c_str());
+      broken_ = true;
+      return -1;
+    }
+  }
+  win_T_ = T;
+  win_pos_ = pos_;
+  return T;
+}
+
+bool Gemma4Engine::verify_body(const int T, const bool lane, const std::vector<int>& split_full, const std::vector<int>& split_swa) {
+  const int* dpos = win_d_ + kSpecMaxRows;   // row t's position: dpos[t] (qkv_post reads dpos[0] + t)
+  cudaMemcpyAsync(win_d_, win_h_, 2 * kSpecMaxRows * sizeof(int), cudaMemcpyHostToDevice, st_);
+  g4k::embed_q8(win_d_, T, static_cast<const std::int8_t*>(embd_.w), embd_.s, kEmbd, std::sqrt(float(kEmbd)), x_, st_);
+  for (int l = 0; l < kLayers; ++l) {
+    DevLayer& L = layers_[static_cast<std::size_t>(l)];
+    int* picks = win_picks_ + static_cast<std::size_t>(l) * kSpecMaxRows * 8;
+    const int qw = kHeads * L.hd;   // a row's query width (q, attention out)
+    g4k::rmsnorm(x_, L.attn_norm, nullptr, 1.0f, h_, T, kEmbd, eps_, st_);
+    g4k::matvec_rows(L.q, h_, qraw_, T, st_);
+    g4k::matvec_rows(L.k, h_, kraw_, T, st_);
+    if (L.sliding) g4k::matvec_rows(L.v, h_, vraw_, T, st_);
+    g4k::QkvPost p{qraw_, kraw_, L.sliding ? vraw_ : kraw_, L.q_norm, L.k_norm, L.sliding ? nullptr : rope_freqs_,
+                   L.sliding ? base_swa_ : base_full_, L.hd, kHeads, L.n_kv, 0, T, L.sliding ? ring_ : 0, L.cap, eps_,
+                   qout_, nullptr, L.kc, L.vc, 0.0f, dpos};
+    g4k::qkv_post(p, st_);
+    for (int t = 0; t < T; ++t) {
+      g4k::attn_decode_dev(qout_ + static_cast<std::size_t>(t) * qw, L.kc, L.vc, L.hd, kHeads, L.n_kv, L.cap, L.sliding ? ring_ : 0,
+                           L.sliding ? kWindow : 0, dpos + t, L.sliding ? split_swa[static_cast<std::size_t>(t)] : split_full[static_cast<std::size_t>(t)],
+                           attn_ + static_cast<std::size_t>(t) * qw, dscratch_, max_splits_, st_);
+    }
+    g4k::matvec_rows(L.o, attn_, o_, T, st_);
+    g4k::add_rmsnorm(x_, o_, L.post_attn_norm, x1_, T, kEmbd, eps_, st_);
+    g4k::rmsnorm(x1_, L.ffn_norm, nullptr, 1.0f, h_, T, kEmbd, eps_, st_);
+    g4k::matvec_rows(L.gate, h_, g_, T, st_);
+    g4k::matvec_rows(L.up, h_, u_, T, st_);
+    g4k::geglu(g_, kFf, u_, kFf, m_, T, kFf, st_);
+    g4k::matvec_rows(L.down, m_, dense_, T, st_);
+    g4k::rmsnorm(x1_, nullptr, L.gate_inp_scale, 1.0f / std::sqrt(float(kEmbd)), rn_, T, kEmbd, eps_, st_);
+    g4k::matvec_rows(L.router, rn_, rl_, T, st_);
+    g4k::router_topk(rl_, T, picks, wts_, nullptr, st_);   // the counts: the kept rows' only, at accept()
+    g4k::rmsnorm(x1_, L.pre_ffw_norm_2, nullptr, 1.0f, e_in_, T, kEmbd, eps_, st_);
+    if (!(lane ? moe_lane(L, T, picks) : moe_window(L, T, picks))) return false;
+    g4k::ffn_end(x1_, dense_, moe_, L.post_ffw_norm_1, L.post_ffw_norm_2, L.post_ffw_norm, L.layer_scale, x_, T, kEmbd, eps_, st_);
+  }
+  // head(): per row, the final norm (kept: the drafter's h) and the tied head, soft-capped
+  g4k::rmsnorm(x_, output_norm_, nullptr, 1.0f, win_xn_, T, kEmbd, eps_, st_);
+  g4k::matvec_rows(embd_, win_xn_, win_logits_, T, st_);
+  g4k::softcap(win_logits_, T * kVocab, softcap_, st_);
+  return launch_ok("verify window");
+}
+
+int Gemma4Engine::window_greedy(std::int32_t* out) {
+  if (broken_ || win_T_ <= 0) return -1;
+  for (int t = 0; t < win_T_; ++t)
+    g4k::argmax(win_logits_ + static_cast<std::size_t>(t) * kVocab, kVocab, win_argmax_ + t, argmax_scratch_, st_);
+  int* h = win_h_ + 2 * kSpecMaxRows;
+  if (!cuda_ok(cudaMemcpyAsync(h, win_argmax_, sizeof(int) * static_cast<std::size_t>(win_T_), cudaMemcpyDeviceToHost, st_), "argmax") ||
+      !cuda_ok(cudaStreamSynchronize(st_), "argmax")) {
+    return -1;
+  }
+  std::memcpy(out, h, sizeof(int) * static_cast<std::size_t>(win_T_));
+  return win_T_;
+}
+
+int Gemma4Engine::row_candidates(const int row, const int k, float* vals, int* ids) {
+  if (broken_ || row < 0 || row >= win_T_) return -1;
+  return candidates_of(win_logits_ + static_cast<std::size_t>(row) * kVocab, k, vals, ids);
+}
+
+bool Gemma4Engine::row_logits(const int row, std::vector<float>& out) {
+  if (broken_ || row < 0 || row >= win_T_) return false;
+  return copy_logits(win_logits_ + static_cast<std::size_t>(row) * kVocab, out);
+}
+
+bool Gemma4Engine::accept(const int n) {
+  if (broken_ || win_T_ <= 0 || n < 1 || n > win_T_) return false;
+  // the kept rows' routing, as their decode steps would have counted it (router_topk's counts)
+  g4k::count_picks(win_picks_, kSpecMaxRows * 8, kLayers, 8 * n, counts_all_, st_);
+  if (!launch_ok("routing counts") ||
+      !cuda_ok(cudaMemcpyAsync(drafter_->h_in(), win_xn_ + static_cast<std::size_t>(n - 1) * kEmbd, sizeof(float) * kEmbd,
+                               cudaMemcpyDeviceToDevice, st_),
+               "draft input")) {
+    return false;
+  }
+  pos_ = win_pos_ + n;
+  win_T_ = 0;
+  return true;
+}
+
+bool Gemma4Engine::settle() {
+  if (broken_) return false;
+  if (!cuda_ok(cudaStreamSynchronize(st_), "settle") || !cuda_ok(cudaStreamSynchronize(copy_), "settle")) return false;
+  land_swaps();
+  return swaps_.empty();
+}
+
+bool Gemma4Engine::copy_logits(const float* lg, std::vector<float>& out) {
   out.resize(kVocab);
-  return cuda_ok(cudaMemcpyAsync(out.data(), logits_, sizeof(float) * kVocab, cudaMemcpyDeviceToHost, st_), "logits") &&
+  return cuda_ok(cudaMemcpyAsync(out.data(), lg, sizeof(float) * kVocab, cudaMemcpyDeviceToHost, st_), "logits") &&
          cuda_ok(cudaStreamSynchronize(st_), "logits");
 }
+
+bool Gemma4Engine::logits(std::vector<float>& out) { return copy_logits(logits_, out); }
 
 int Gemma4Engine::greedy() {
   g4k::argmax(logits_, kVocab, argmax_out_, argmax_scratch_, st_);
@@ -1500,10 +1811,12 @@ int Gemma4Engine::greedy() {
   return argmax_h_[0];
 }
 
-int Gemma4Engine::top_candidates(int k, float* vals, int* ids) {
+int Gemma4Engine::top_candidates(int k, float* vals, int* ids) { return candidates_of(logits_, k, vals, ids); }
+
+int Gemma4Engine::candidates_of(const float* lg, int k, float* vals, int* ids) {
   if (k <= 0 || k > g4k::kTopkMax) return -1;
   cudaMemsetAsync(cand_flag_, 0, sizeof(int), st_);
-  g4k::topk(logits_, kVocab, k, cand_v_, cand_i_, cand_flag_, topk_scratch_, st_);
+  g4k::topk(lg, kVocab, k, cand_v_, cand_i_, cand_flag_, topk_scratch_, st_);
   float* hv = reinterpret_cast<float*>(cand_h_ + 1 + g4k::kTopkMax);
   if (!cuda_ok(cudaMemcpyAsync(cand_h_, cand_flag_, sizeof(int), cudaMemcpyDeviceToHost, st_), "candidates") ||
       !cuda_ok(cudaMemcpyAsync(cand_h_ + 1, cand_i_, sizeof(int) * static_cast<std::size_t>(k), cudaMemcpyDeviceToHost, st_), "candidates") ||
@@ -1638,9 +1951,10 @@ void Gemma4Engine::rebalance(int max_swaps) {
 
 }  // namespace
 
-std::unique_ptr<Engine> Engine::create(const EngineConfig& config, const ModelDesc& model, std::string& error) {
+std::unique_ptr<Engine> Engine::create(const EngineConfig& config, const ModelDesc& model, std::string& error,
+                                       const AssistantDesc* drafter) {
   auto e = std::make_unique<Gemma4Engine>();
-  if (!e->load(config, model, error)) {
+  if (!e->load(config, model, drafter, error)) {
     if (error.empty()) error = "the engine could not load the model";
     return nullptr;
   }

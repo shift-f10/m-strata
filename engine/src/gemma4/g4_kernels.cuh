@@ -153,4 +153,25 @@ void set_u64(unsigned long long* dst, int index, unsigned long long value, cudaS
 void plan_decode(const int* picks, int n_pick, const unsigned long long* ptrtab, unsigned long long* grp_ptr,
                  int* grp_start, int* n_groups, int* ent_dst, int* ent_tok, cudaStream_t st);
 
+// ---- MTP (spec §12): the verify window and the drafter ----
+
+// matvec for T <= kMatvecRowsMax rows that reads each weight row once for all of them; row t's arithmetic is matvec's
+// on that row alone (the same chunks in the same order, the same reduction), so y[t] is bitwise matvec's.
+inline constexpr int kMatvecRowsMax = 8;
+void matvec_rows(const Mat& m, const float* x, float* y, int T, cudaStream_t st);
+
+// A verify window's expert plan when no CPU lane serves it (every expert in VRAM, or --cpu-lane off): one group per
+// distinct expert of the n_ent routed entries (n_ent <= 64), in the order the experts first appear, a group's entries
+// ascending; group g's blob at ptrtab[its expert]; entry a writes row a and reads token a / 8.  *n_groups is written.
+void plan_window(const int* picks, int n_ent, const unsigned long long* ptrtab, unsigned long long* grp_ptr, int* grp_start,
+                 int* n_groups, int* ent_dst, int* ent_tok, cudaStream_t st);
+
+// The routing counts of a window's kept rows: counts[l * 128 + picks[l * stride + a]] += 1 for a < n_ent, l < n_layers.
+void count_picks(const int* picks, int stride, int n_layers, int n_ent, int* counts, cudaStream_t st);
+
+// out[r] = (x[r] + rms(y[r]) * w) * (*scale): the drafter's layer end (its FFN sandwich norm, the residual and
+// layer_output_scale, llama.cpp gemma4-assistant.cpp:175-181).
+void add_rmsnorm_scale(const float* x, const float* y, const float* w, const float* scale, float* out, int rows, int n, float eps,
+                       cudaStream_t st);
+
 }  // namespace g4k

@@ -4,10 +4,12 @@
 #include "g4_gguf.hpp"
 #include "g4_model.hpp"
 #include "g4_profile.hpp"
+#include "g4_spec.hpp"
 #include "g4_test.hpp"
 #include "gguf_writer.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -476,6 +478,285 @@ void model_guard_refuses_other_shapes() {
   }
 }
 
+// ---- the MTP drafter guard (spec §12) on synthetic gemma4-assistant headers: the geometry of unsloth's
+// mtp-gemma-4-26B-A4B-it-Q8_0.gguf (read from its header 2026-10-28), no tensor data ----
+
+std::variant<g4::GgufFile, g4::GgufError> assistant_header(const HeaderOptions& o = {}) {
+  GgufBuilder b;
+  const std::string a = "gemma4-assistant.";
+  auto key_u32 = [&](const std::string& k, std::uint32_t v) {
+    if (o.drop_keys.count(k)) return;
+    const auto it = o.u32_overrides.find(k);
+    b.u32(k, it == o.u32_overrides.end() ? v : it->second);
+  };
+  auto key_f32 = [&](const std::string& k, float v) {
+    if (!o.drop_keys.count(k)) b.f32(k, v);
+  };
+  if (!o.drop_keys.count("general.architecture")) b.str("general.architecture", "gemma4-assistant");
+  key_u32(a + "block_count", 4);
+  key_u32(a + "context_length", 262144);
+  key_u32(a + "embedding_length", 1024);
+  key_u32(a + "feed_forward_length", 8192);
+  key_u32(a + "attention.head_count", 16);
+  if (!o.drop_keys.count(a + "attention.head_count_kv")) b.arr_i32(a + "attention.head_count_kv", {8, 8, 8, 2});
+  key_f32(a + "rope.freq_base", 1e6f);
+  key_f32(a + "rope.freq_base_swa", 1e4f);
+  key_f32(a + "attention.layer_norm_rms_epsilon", 1e-6f);
+  key_u32(a + "attention.key_length", 512);
+  key_u32(a + "attention.value_length", 512);
+  key_u32(a + "attention.sliding_window", 1024);
+  key_u32(a + "attention.shared_kv_layers", 4);
+  key_u32(a + "embedding_length_per_layer_input", 0);
+  if (!o.drop_keys.count(a + "attention.sliding_window_pattern")) {
+    b.arr_bool(a + "attention.sliding_window_pattern", {true, true, true, false});
+  }
+  key_u32(a + "attention.key_length_swa", 256);
+  key_u32(a + "attention.value_length_swa", 256);
+  key_u32(a + "rope.dimension_count", 512);
+  key_u32(a + "rope.dimension_count_swa", 256);
+  key_u32(a + "embedding_length_out", 2816);
+  key_u32(a + "nextn_predict_layers", 4);
+  if (!o.drop_keys.count("tokenizer.ggml.model")) b.str("tokenizer.ggml.model", "gemma4");
+  std::vector<std::string> tokens = o.tokens;
+  if (tokens.empty()) {
+    tokens.resize(262144);
+    for (std::size_t i = 0; i < tokens.size(); ++i) tokens[i] = "t" + std::to_string(i);
+    tokens[0] = "<pad>";
+    tokens[1] = "<eos>";
+    tokens[2] = "<bos>";
+    tokens[106] = "<turn|>";
+  }
+  if (!o.drop_keys.count("tokenizer.ggml.tokens")) b.arr_str("tokenizer.ggml.tokens", tokens);
+  if (o.extra_keys) o.extra_keys(b);
+  auto add = [&](const std::string& name, std::vector<std::uint64_t> dims, std::uint32_t type) {
+    if (o.drop_tensors.count(name)) return;
+    if (const auto it = o.dims.find(name); it != o.dims.end()) dims = it->second;
+    if (const auto it = o.types.find(name); it != o.types.end()) type = it->second;
+    b.tensor(name, dims, type, span_bytes(type, dims));
+  };
+  constexpr std::uint32_t F32 = 0, Q8 = 8;
+  add("rope_freqs.weight", {256}, F32);
+  add("token_embd.weight", {1024, 262144}, Q8);
+  for (int i = 0; i < 4; ++i) {
+    const bool full = i == 3;
+    const std::uint64_t hd = full ? 512 : 256;
+    const std::string p = "blk." + std::to_string(i) + ".";
+    add(p + "attn_norm.weight", {1024}, F32);
+    add(p + "layer_output_scale.weight", {1}, F32);
+    add(p + "ffn_down.weight", {8192, 1024}, Q8);
+    add(p + "ffn_gate.weight", {1024, 8192}, Q8);
+    add(p + "ffn_up.weight", {1024, 8192}, Q8);
+    add(p + "post_attention_norm.weight", {1024}, F32);
+    add(p + "post_ffw_norm.weight", {1024}, F32);
+    add(p + "ffn_norm.weight", {1024}, F32);
+    add(p + "attn_output.weight", {16 * hd, 1024}, Q8);
+    add(p + "attn_q_norm.weight", {hd}, F32);
+    add(p + "attn_q.weight", {1024, 16 * hd}, Q8);
+  }
+  add("output_norm.weight", {1024}, F32);
+  add("nextn.post_projection.weight", {1024, 2816}, Q8);
+  add("nextn.pre_projection.weight", {5632, 1024}, Q8);
+  for (const auto& name : o.extra_tensors) b.tensor(name, {4}, F32, 16);
+  const auto image = b.bytes(32, true);
+  return g4::parse_gguf(image.data(), image.size(), image.size() + b.data_size());
+}
+
+std::variant<g4::AssistantDesc, g4::ModelError> assistant_guard(const HeaderOptions& o = {}) {
+  const auto parsed = assistant_header(o);
+  const auto* f = std::get_if<g4::GgufFile>(&parsed);
+  if (f == nullptr) return g4::ModelError{"(header did not parse: " + std::get<g4::GgufError>(parsed).message + ")"};
+  return g4::check_assistant(*f);
+}
+
+void assistant_guard_accepts_the_26b_a4b_drafter() {
+  const auto r = assistant_guard();
+  const auto* d = std::get_if<g4::AssistantDesc>(&r);
+  expect(d != nullptr, "the drafter's header passes the guard" + (d ? std::string{} : ": " + std::get<g4::ModelError>(r).message));
+  if (d == nullptr) return;
+  expect(d->n_embd == 1024 && d->layers.size() == 4, "its own width (1024) and depth (4 layers) are read from the file");
+  if (d->layers.size() != 4) return;
+  const auto& s = d->layers[0];
+  const auto& f = d->layers[3];
+  expect(s.sliding && s.head_dim == 256 && s.kv_heads == 8 && s.target_layer == 28,
+         "a sliding layer: head 256 over the target's 8 KV heads of layer 28 (llama-model.cpp's share map)");
+  expect(!f.sliding && f.head_dim == 512 && f.kv_heads == 2 && f.target_layer == 29,
+         "the full layer: head 512 over the target's 2 KV heads of layer 29");
+  expect(s.n_ff == 8192 && f.n_ff == 8192, "the dense FFN width");
+  expect(d->rms_eps == 1e-6f && d->rope_base_full == 1e6f && d->rope_base_swa == 1e4f, "eps and the two RoPE bases");
+  expect(d->token_embd.rows == 262144 && d->token_embd.cols == 1024 && d->token_embd.type == g4::TensorType::q8_0,
+         "its own tied head: token_embd [262144 x 1024]");
+  expect(d->pre_projection.rows == 1024 && d->pre_projection.cols == 5632, "pre_projection: [embed | h] (2 x 2816) -> 1024");
+  expect(d->post_projection.rows == 2816 && d->post_projection.cols == 1024, "post_projection: 1024 -> the target's 2816");
+  expect(f.attn_q.rows == 8192 && f.attn_output.cols == 8192 && s.attn_q.rows == 4096, "Q-only attention: 16 heads a layer");
+  expect(d->rope_freqs.present && f.layer_output_scale.present && f.post_ffw_norm.present, "rope_freqs and the sandwich norms");
+  {
+    HeaderOptions o;
+    o.drop_keys = {"gemma4-assistant.rope.freq_base_swa"};
+    const auto q = assistant_guard(o);
+    const auto* dq = std::get_if<g4::AssistantDesc>(&q);
+    expect(dq != nullptr && dq->rope_base_swa == 1e6f, "no freq_base_swa: the full base, as llama.cpp defaults it");
+  }
+  {
+    HeaderOptions o;
+    o.extra_tensors = {"masked_embd_centroids.weight", "masked_embd_ordering"};
+    expect(std::holds_alternative<g4::AssistantDesc>(assistant_guard(o)),
+           "the masked-embedding tensors llama.cpp loads as optional (and never reads) are accepted");
+  }
+}
+
+void expect_assistant_refused(const HeaderOptions& o, const std::string& why) {
+  const auto r = assistant_guard(o);
+  const auto* e = std::get_if<g4::ModelError>(&r);
+  expect(e != nullptr, "the drafter guard refuses: " + why);
+  if (e != nullptr) expect(e->message.rfind("gemma4 drafter: ", 0) == 0, "a fixed drafter message: " + e->message);
+}
+
+void assistant_guard_refuses_other_shapes() {
+  {
+    HeaderOptions o;
+    o.drop_keys = {"general.architecture"};
+    o.extra_keys = [](GgufBuilder& b) { b.str("general.architecture", "gemma4"); };
+    expect_assistant_refused(o, "the target model itself (gemma4)");
+  }
+  const std::string a = "gemma4-assistant.";
+  for (const auto& [key, value] : std::vector<std::pair<std::string, std::uint32_t>>{
+           {a + "embedding_length_out", 2048}, {a + "nextn_predict_layers", 3}, {a + "block_count", 0},
+           {a + "block_count", 17}, {a + "attention.key_length", 256}, {a + "attention.value_length", 256},
+           {a + "attention.key_length_swa", 512}, {a + "attention.sliding_window", 512}, {a + "rope.dimension_count", 128},
+           {a + "rope.dimension_count_swa", 64}, {a + "attention.head_count", 8}, {a + "embedding_length", 1000},
+           {a + "feed_forward_length", 100}, {a + "embedding_length_per_layer_input", 256}}) {
+    HeaderOptions o;
+    o.u32_overrides = {{key, value}};
+    expect_assistant_refused(o, key + " = " + std::to_string(value));
+  }
+  for (const std::string& key : {a + "embedding_length_out", a + "nextn_predict_layers", a + "attention.head_count_kv",
+                                a + "attention.sliding_window_pattern", a + "embedding_length", a + "block_count",
+                                a + "attention.layer_norm_rms_epsilon", a + "rope.freq_base"}) {
+    HeaderOptions o;
+    o.drop_keys = {key};
+    expect_assistant_refused(o, "missing " + key);
+  }
+  {
+    HeaderOptions o;
+    o.drop_keys = {a + "attention.head_count_kv"};
+    o.extra_keys = [a](GgufBuilder& b) { b.arr_i32(a + "attention.head_count_kv", {8, 8, 2, 2}); };
+    expect_assistant_refused(o, "a layer whose KV heads are not its target layer's");
+  }
+  {
+    HeaderOptions o;
+    o.drop_keys = {a + "attention.sliding_window_pattern"};
+    o.extra_keys = [a](GgufBuilder& b) { b.arr_bool(a + "attention.sliding_window_pattern", {true, true, true}); };
+    expect_assistant_refused(o, "a sliding pattern of the wrong length");
+  }
+  {
+    HeaderOptions o;
+    o.drop_tensors = {"blk.2.ffn_up.weight"};
+    expect_assistant_refused(o, "a missing tensor");
+  }
+  {
+    HeaderOptions o;
+    o.drop_tensors = {"nextn.pre_projection.weight"};
+    expect_assistant_refused(o, "no pre_projection");
+  }
+  {
+    HeaderOptions o;
+    o.extra_tensors = {"blk.0.attn_k.weight"};
+    expect_assistant_refused(o, "a tensor the drafter does not have (its own K)");
+  }
+  {
+    HeaderOptions o;
+    o.dims = {{"token_embd.weight", {1024, 32000}}};
+    expect_assistant_refused(o, "a head over another vocabulary");
+  }
+  {
+    HeaderOptions o;
+    o.types = {{"blk.1.ffn_gate.weight", 1}};
+    expect_assistant_refused(o, "an F16 matrix");
+  }
+  {
+    HeaderOptions o;
+    o.dims = {{"blk.3.attn_q.weight", {1024, 4096}}};
+    expect_assistant_refused(o, "a full layer's Q at the sliding width");
+  }
+  {
+    HeaderOptions o;
+    o.dims = {{"rope_freqs.weight", {128}}};
+    expect_assistant_refused(o, "rope_freqs of the wrong length");
+  }
+}
+
+void assistant_vocabulary_must_match_the_target() {
+  const auto target = gemma4_header();
+  const auto drafter = assistant_header();
+  const auto* t = std::get_if<g4::GgufFile>(&target);
+  const auto* d = std::get_if<g4::GgufFile>(&drafter);
+  expect(t != nullptr && d != nullptr, "both headers parse");
+  if (t == nullptr || d == nullptr) return;
+  expect(g4::same_vocabulary(*t, *d), "the drafter's vocabulary is the target's, token for token");
+  HeaderOptions o;
+  o.tokens.resize(262144);
+  for (std::size_t i = 0; i < o.tokens.size(); ++i) o.tokens[i] = "t" + std::to_string(i);
+  o.tokens[1] = "<eos>";
+  o.tokens[106] = "<turn|>";
+  o.tokens[5000] = "other";
+  const auto other = assistant_header(o);
+  const auto* x = std::get_if<g4::GgufFile>(&other);
+  expect(x != nullptr && !g4::same_vocabulary(*t, *x), "one token differs: refused");
+  HeaderOptions none;
+  none.drop_keys = {"tokenizer.ggml.tokens"};
+  const auto bare = assistant_header(none);
+  const auto* y = std::get_if<g4::GgufFile>(&bare);
+  expect(y != nullptr && !g4::same_vocabulary(*t, *y), "a drafter without a vocabulary: refused");
+}
+
+// ---- MTP drafting and acceptance (llama.cpp common/speculative.cpp draft-mtp, common/sampling.cpp
+// common_sampler_sample_and_accept_n) ----
+
+void drafts_stop_below_the_min_p() {
+  const float flat[10] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+  expect(std::fabs(g4::draft_top_prob(flat, 10) - 0.1f) < 1e-6f, "ten equal logits: p = 0.1");
+  const float peaked[10] = {10.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+  const float want = 1.0f / (1.0f + 9.0f * std::exp(-10.0f));
+  expect(std::fabs(g4::draft_top_prob(peaked, 10) - want) < 1e-6f, "the softmax of the top ten only");
+  expect(g4::draft_top_prob(peaked, 1) == 1.0f, "one candidate: p = 1");
+  const float probs[4] = {0.9f, 0.8f, 0.4f, 0.95f};
+  expect(g4::drafts_kept(probs, 4, 0.0f) == 4, "p_min 0 (llama.cpp's default) keeps every draft");
+  expect(g4::drafts_kept(probs, 4, 0.5f) == 2, "drafting stops at the first draft below p_min (not kept)");
+  expect(g4::drafts_kept(probs, 4, 0.95f) == 0, "p_min above the first draft: none");
+  expect(g4::drafts_kept(probs, 2, 0.0f) == 2, "at most n");
+}
+
+void acceptance_follows_llama_cpps_sample_and_accept_n() {
+  // rows' samples as the request's sampler gives them; the callback sees rows in order
+  std::vector<int> seen;
+  auto sampler = [&](std::vector<std::int32_t> rows) {
+    return [&seen, rows](int row) {
+      seen.push_back(row);
+      return rows[static_cast<std::size_t>(row)];
+    };
+  };
+  expect(g4::accept_drafts({5, 6, 7}, sampler({5, 6, 7, 8})) == std::vector<std::int32_t>{5, 6, 7, 8},
+         "every draft matches: the three drafts and the bonus row's sample");
+  expect(seen == std::vector<int>{0, 1, 2, 3}, "rows are sampled in order");
+  seen.clear();
+  expect(g4::accept_drafts({5, 6, 7}, sampler({5, 9, 7, 8})) == std::vector<std::int32_t>{5, 9},
+         "the first mismatch ends it: the accepted draft, then the row's own sample");
+  expect(seen == std::vector<int>{0, 1}, "no row is sampled past the mismatch (its draw stays unspent)");
+  seen.clear();
+  expect(g4::accept_drafts({5}, sampler({4, 1})) == std::vector<std::int32_t>{4}, "no draft accepted: one sample");
+  expect(g4::accept_drafts({}, sampler({3})) == std::vector<std::int32_t>{3}, "no drafts: row 0 alone");
+  expect(g4::accept_drafts({5, 6}, sampler({5, -2, 0})) == std::vector<std::int32_t>{5, -2}, "a failure ends the list with it");
+}
+
+void draft_budget_leaves_room_in_the_answer_and_context() {
+  expect(g4::draft_budget(3, 1, 100, 50, 4096) == 3, "room everywhere: n_max");
+  expect(g4::draft_budget(3, 98, 100, 50, 4096) == 1, "two tokens left in the answer: one draft (it emits up to two)");
+  expect(g4::draft_budget(3, 99, 100, 50, 4096) == 0, "one token left: no draft");
+  expect(g4::draft_budget(3, 1, 100, 4093, 4096) == 2, "the window's rows must fit the context: pos + drafts < ctx");
+  expect(g4::draft_budget(3, 1, 100, 4095, 4096) == 0, "the last context row: no draft");
+  expect(g4::draft_budget(7, 1, 1 << 30, 10, 1 << 20) == 7, "a window of eight rows");
+}
+
 // ---- the command line, GEN parsing, the sampler and prefix reuse ----
 
 std::variant<g4::EngineOptions, std::string> cli(std::vector<std::string> args) { return g4::parse_cli(args); }
@@ -540,6 +821,45 @@ void cli_refuses_bad_and_test_only_flags_with_serve() {
   }
   const auto test_mode = cli({"--native", "m.gguf", "--tokens", "2,105", "--n", "8", "--dump-full-logits", "out.f32"});
   expect(std::holds_alternative<g4::EngineOptions>(test_mode), "the test-only flags without --serve");
+}
+
+// The MTP flags (the frontend's contract): --mtp FILE turns drafting on, --spec N is the verify window (2-8 rows, 1 +
+// the drafts; default 4 = llama.cpp's 3 drafts), --spec-min-p P stops drafting below P (default 0).  --spec and
+// --spec-min-p without --mtp change nothing (the frontend drops --mtp when a card's MTP option is off).
+void cli_takes_the_mtp_flags() {
+  const auto r = cli({"--serve", "--native", "m.gguf", "--mtp", "C:/m/mtp.gguf", "--spec", "6", "--spec-min-p", "0.7"});
+  const auto* o = std::get_if<g4::EngineOptions>(&r);
+  expect(o != nullptr, "the MTP flags parse" + (o ? std::string{} : ": " + std::get<std::string>(r)));
+  if (o != nullptr) expect(o->mtp == "C:/m/mtp.gguf" && o->spec == 6 && o->spec_min_p == 0.7, "every value lands");
+  const auto d = cli({"--serve", "--native", "m.gguf", "--mtp", "x.gguf"});
+  const auto* od = std::get_if<g4::EngineOptions>(&d);
+  expect(od != nullptr && od->spec == 4 && od->spec_min_p == 0.0, "defaults: a window of 4 (3 drafts), p_min 0");
+  const auto n = cli({"--serve", "--native", "m.gguf", "--spec", "4", "--spec-min-p", "0.5"});
+  const auto* on = std::get_if<g4::EngineOptions>(&n);
+  expect(on != nullptr && on->mtp.empty(), "--spec and --spec-min-p without --mtp are accepted and draft nothing");
+  const auto plain = cli({"--serve", "--native", "m.gguf"});
+  const auto* op = std::get_if<g4::EngineOptions>(&plain);
+  expect(op != nullptr && op->mtp.empty() && !op->settle && op->spec_check == 0, "no MTP by default");
+  for (const auto& args : std::vector<std::vector<std::string>>{
+           {"--native", "m.gguf", "--serve", "--spec", "1"},
+           {"--native", "m.gguf", "--serve", "--spec", "9"},
+           {"--native", "m.gguf", "--serve", "--spec", "zz"},
+           {"--native", "m.gguf", "--serve", "--spec-min-p", "1.5"},
+           {"--native", "m.gguf", "--serve", "--spec-min-p", "-0.1"},
+           {"--native", "m.gguf", "--serve", "--mtp"},
+           {"--native", "m.gguf", "--serve", "--mtp", ""},
+           {"--native", "m.gguf", "--serve", "--mtp", "a.gguf", "--mtp", "b.gguf"},
+           {"--native", "m.gguf", "--serve", "--spec-check", "4"},
+           {"--native", "m.gguf", "--serve", "--settle"}}) {
+    std::string joined;
+    for (const auto& x : args) joined += x + " ";
+    const auto e = cli(args);
+    expect(std::holds_alternative<std::string>(e), "refused: " + joined);
+    if (const auto* m = std::get_if<std::string>(&e)) expect(m->find("zz") == std::string::npos, "the message echoes nothing: " + *m);
+  }
+  const auto check = cli({"--native", "m.gguf", "--mtp", "x.gguf", "--tokens", "2,105", "--spec-check", "16", "--settle"});
+  const auto* oc = std::get_if<g4::EngineOptions>(&check);
+  expect(oc != nullptr && oc->spec_check == 16 && oc->settle, "the test-only window check and --settle without --serve");
 }
 
 void gen_lines_follow_the_q36_grammar() {
@@ -759,5 +1079,12 @@ int main(int argc, char** argv) {
       {"unseeded_requests_draw_fresh_seeds", unseeded_requests_draw_fresh_seeds},
       {"info_line_reports_the_expert_split", info_line_reports_the_expert_split},
       {"profile_fills_each_layer_with_its_top_experts", profile_fills_each_layer_with_its_top_experts},
+      {"assistant_guard_accepts_the_26b_a4b_drafter", assistant_guard_accepts_the_26b_a4b_drafter},
+      {"assistant_guard_refuses_other_shapes", assistant_guard_refuses_other_shapes},
+      {"assistant_vocabulary_must_match_the_target", assistant_vocabulary_must_match_the_target},
+      {"cli_takes_the_mtp_flags", cli_takes_the_mtp_flags},
+      {"drafts_stop_below_the_min_p", drafts_stop_below_the_min_p},
+      {"acceptance_follows_llama_cpps_sample_and_accept_n", acceptance_follows_llama_cpps_sample_and_accept_n},
+      {"draft_budget_leaves_room_in_the_answer_and_context", draft_budget_leaves_room_in_the_answer_and_context},
   });
 }

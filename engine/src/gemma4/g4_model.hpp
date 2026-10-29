@@ -69,4 +69,39 @@ struct ModelError final {
 
 [[nodiscard]] std::variant<ModelDesc, ModelError> check_model(const GgufFile& file);
 
+// ---- the MTP drafter (spec §12): GGUF architecture gemma4-assistant (llama.cpp src/models/gemma4-assistant.cpp,
+// conversion/gemma.py Gemma4AssistantModel).  Its own width, depth and FFN are read from its header; what it shares
+// with the target is checked against the target's numbers: the target's width goes in (the target's token embedding
+// and its final hidden state) and comes out (h for the next draft), each layer attends Q-only over a target layer's
+// KV cache (sliding layers over layer n-2 = 28, full ones over n-1 = 29: llama-model.cpp's share map), so a layer's
+// head width, KV heads and window are the target's.
+inline constexpr int kAssistantMaxLayers = 16;
+
+struct AssistantLayerDesc final {
+  bool sliding{true};
+  int head_dim{kHeadSwa};
+  int kv_heads{kKvHeadsSwa};
+  int n_ff{0};
+  int target_layer{kLayers - 2};  // the target layer whose K/V this layer reads
+  TensorSpan attn_norm, attn_q, attn_q_norm, attn_output, post_attention_norm;
+  TensorSpan ffn_norm, ffn_gate, ffn_up, ffn_down, post_ffw_norm, layer_output_scale;
+};
+
+struct AssistantDesc final {
+  int n_embd{0};  // the drafter's own width
+  std::vector<AssistantLayerDesc> layers;
+  TensorSpan token_embd;       // its own tied head [262144 x n_embd] (the input embedding is the target's)
+  TensorSpan output_norm, rope_freqs;
+  TensorSpan pre_projection;   // [n_embd x 2*2816]: [target embedding | h] -> n_embd
+  TensorSpan post_projection;  // [2816 x n_embd]: the next draft's h
+  float rms_eps{1e-6f};
+  float rope_base_full{1e6f};
+  float rope_base_swa{1e4f};
+};
+
+[[nodiscard]] std::variant<AssistantDesc, ModelError> check_assistant(const GgufFile& file);
+
+// The drafter's vocabulary is the target's, token for token (its drafts are target ids, its head ranks them).
+[[nodiscard]] bool same_vocabulary(const GgufFile& target, const GgufFile& drafter);
+
 }  // namespace g4

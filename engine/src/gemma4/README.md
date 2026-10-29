@@ -16,7 +16,10 @@ builds with `/W4 /WX`, device code with `-Werror=all-warnings`. `-DSTRATA_BUILD_
 sampler), `g4_lane_tests` (the CPU lane on the shared expert code at Gemma 4's geometry), `g4_kernel_tests` (label
 `gpu`), and with `-DG4_MODEL_FILE=<gguf> -DG4_PYTHON=<python>` the model checks `g4_model.paths_agree` (prompt vs
 decode), `g4_model.prompt_paths` (the streamed MMQ prompt vs the grouped kernel, a real 293-token prompt) and
-`g4_model.serve_smoke` (labels `gpu;model`), which run `multiengine.exe`.
+`g4_model.serve_smoke` (labels `gpu;model`), which run `multiengine.exe`; with `-DG4_MTP_FILE=<drafter gguf>` also
+`g4_model.mtp_window` (windows bitwise the decode steps), `g4_model.mtp_greedy` (greedy with the drafter = without),
+`g4_model.mtp_serve` (the serve protocol, speed and acceptance) and `g4_model.mtp_serve_exact` (served greedy answers
+the same tokens with and without the drafter, the lane off and the slots pinned).
 
 ## Model
 
@@ -44,9 +47,14 @@ unknown tensor with a fixed message (`g4_model.cpp`).
 | `--no-prompt-borrow` | the streamed prompt's buffers in VRAM of their own instead of lent by the expert cache (A/B) |
 | `--no-graph` | a decode step as plain launches instead of one captured graph |
 | `--hybrid-rows N` | accepted, no effect |
+| `--mtp GGUF` | MTP speculative decoding with this `gemma4-assistant` drafter (unsloth's `mtp-gemma-4-26B-A4B-it-Q8_0.gguf`); checked against the model before load |
+| `--spec N` | the verify window's rows, 2-8 (1 + the drafts a step; default 4: llama.cpp's 3 drafts); nothing without `--mtp` |
+| `--spec-min-p P` | 0-1: drafting stops at a draft whose top-1 probability (the softmax of the drafter's top 10) is below P (default 0); nothing without `--mtp` |
 
 Test-only (refused with `--serve`): `--tokens ids [--n N] [--force ids] [--dump-full-logits F]
-[--dump-layers F]`, `--bench-pp N`, `--bench-tg N`, `--check`.
+[--dump-layers F]`, `--bench-pp N`, `--bench-tg N`, `--check` (with `--mtp`, the drafter's summary too), `--settle`
+(every expert swap lands after the prompt), `--spec-check N` (with `--mtp`: N greedy tokens, each window's logits
+compared bit for bit with the same tokens' single decode steps).
 
 ## How it runs (the paper's design, 3.1-3.6)
 
@@ -69,8 +77,17 @@ Test-only (refused with `--serve`): `--tokens ids [--n N] [--force ids] [--dump-
   prompt and refilled after it, as the tier's swaps (Strata's prefill borrow). Dense weights dequantized through
   cuBLAS SGEMM; attention as cuBLAS batched GEMMs with a masked softmax.
 - Protocol: `INFO ...`, `READY <ctx> stop`; `GEN <max_new> [k=v ...] <ids>` -> `PP`, `T <id>`, `DONE ...` (stops by
-  itself on `<eos>` and `<turn|>`); `STOP`; `QUIT`. A new prompt reuses the held tokens' common prefix when the held
-  tail past it fits the ring's spare rows.
+  itself on `<eos>` and `<turn|>`; fields 6 and 7 are the drafts accepted and offered, 0 0 without MTP); `STOP`;
+  `QUIT`. A new prompt reuses the held tokens' common prefix when the held tail past it fits the ring's spare rows.
+- **MTP** (`--mtp`, spec §12; `g4_mtp.{hpp,cu}`, `g4_spec.{hpp,cpp}`): llama.cpp's draft-mtp with shared memory. The
+  drafter (4 layers, 1024 wide, all in VRAM, 428 MiB taken before the expert slots) embeds a token with the target's
+  table, joins it with the target's final hidden state and attends Q-only over the target's caches (sliding layers
+  over layer 28, full over 29) at the token's position; a step's drafts are one captured graph, the token chained on
+  the device. The target then reads `[token, drafts]` as one **verify window**: the decode step's kernels over the rows
+  (`matvec_rows` reads each weight once; one attention per row; the experts grouped across the rows, each distinct
+  missed expert computed once on the CPU lane for all its rows), so every row's logits are bitwise the decode step's
+  (`--spec-check`). Acceptance is llama.cpp's `common_sampler_sample_and_accept_n` with the request's own sampler, so
+  sampled requests keep their exact plain-decode draws; the engine keeps the tokens plain decode keeps.
 
 Measured on the RTX 4080 SUPER (16 GB, PCIe 4.0; 53-54 of 128 expert slots a layer with the borrowed prompt
 buffers): a 2,048-token prompt 704 tok/s at 512-token chunks and 2,192 at 2,048, then 96 decode steps at 86.2 and

@@ -1,5 +1,7 @@
 #include "g4_cli.hpp"
 
+#include "g4_spec.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -110,7 +112,24 @@ std::variant<EngineOptions, std::string> parse_cli(const std::vector<std::string
       o.cpu_lane = v == "on";
       continue;
     }
+    // MTP (spec §12)
+    if (a == "--mtp") {
+      if (!value(o.mtp) || o.mtp.empty()) return std::string{"--mtp needs the drafter file"};
+      continue;
+    }
+    if (a == "--spec") { if (!integer(2, kSpecMaxRows, o.spec)) return std::string{"--spec must be 2-8"}; continue; }
+    if (a == "--spec-min-p") {
+      std::string v;
+      if (!value(v) || !parse_real(v, 0.0, 1.0, o.spec_min_p)) return std::string{"--spec-min-p must be 0-1"};
+      continue;
+    }
     // Test-only flags.
+    if (a == "--spec-check") {
+      test_only = true;
+      if (!integer(1, 1 << 20, o.spec_check)) return std::string{"--spec-check must be 1-1048576"};
+      continue;
+    }
+    if (a == "--settle") { test_only = true; o.settle = true; continue; }
     if (a == "--tokens") { test_only = true; if (!value(o.tokens) || o.tokens.empty()) return std::string{"--tokens needs ids"}; continue; }
     if (a == "--force") { test_only = true; if (!value(o.force) || o.force.empty()) return std::string{"--force needs ids"}; continue; }
     if (a == "--dump-full-logits") {

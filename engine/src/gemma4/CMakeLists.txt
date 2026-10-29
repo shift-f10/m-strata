@@ -101,7 +101,7 @@ target_link_libraries(g4core PUBLIC Threads::Threads)
 
 # ---- the Gemma 4 sources: the host half (file, GGUF reader, model guard, command line, profile; no CUDA), the
 # kernels, then the DLL
-add_library(strata_gemma4_host STATIC g4_file.cpp g4_gguf.cpp g4_model.cpp g4_cli.cpp g4_profile.cpp)
+add_library(strata_gemma4_host STATIC g4_file.cpp g4_gguf.cpp g4_model.cpp g4_cli.cpp g4_profile.cpp g4_spec.cpp)
 target_include_directories(strata_gemma4_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(strata_gemma4_host PRIVATE ${G4_HOST_WARNINGS})
 
@@ -111,7 +111,7 @@ target_include_directories(strata_gemma4_kernels PUBLIC ${CMAKE_CURRENT_SOURCE_D
 target_compile_options(strata_gemma4_kernels PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:${G4_CUDA_WARNINGS}>)
 target_link_libraries(strata_gemma4_kernels PRIVATE ${_strata_gpu_runtime_target})
 
-add_library(multiengine_gemma4 SHARED g4_engine.cu g4_lane.cpp g4_run.cpp)
+add_library(multiengine_gemma4 SHARED g4_engine.cu g4_lane.cpp g4_mtp.cu g4_run.cpp)
 set_target_properties(multiengine_gemma4 PROPERTIES CXX_VISIBILITY_PRESET hidden CUDA_VISIBILITY_PRESET hidden
                       VISIBILITY_INLINES_HIDDEN ON)
 target_include_directories(multiengine_gemma4 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${_strata_gpu_include_directories})
@@ -135,7 +135,10 @@ if(STRATA_BUILD_TESTS OR STRATA_BUILD_GEMMA4_TESTS)
         cli_accepts_the_serve_flags cli_refuses_bad_and_test_only_flags_with_serve gen_lines_follow_the_q36_grammar
         sampler_matches_the_q36_rules reuse_keeps_exact_prefixes_within_the_ring
         sorted_candidates_sample_like_the_full_sampler unseeded_requests_draw_fresh_seeds info_line_reports_the_expert_split
-        profile_fills_each_layer_with_its_top_experts)
+        profile_fills_each_layer_with_its_top_experts
+        assistant_guard_accepts_the_26b_a4b_drafter assistant_guard_refuses_other_shapes
+        assistant_vocabulary_must_match_the_target cli_takes_the_mtp_flags drafts_stop_below_the_min_p
+        acceptance_follows_llama_cpps_sample_and_accept_n draft_budget_leaves_room_in_the_answer_and_context)
     foreach(case IN LISTS G4_HOST_CASES)
         add_test(NAME g4_host_tests.${case} COMMAND g4_host_tests --case ${case})
     endforeach()
@@ -143,10 +146,12 @@ if(STRATA_BUILD_TESTS OR STRATA_BUILD_GEMMA4_TESTS)
     # the CPU lane on the vendored core (native rows, the pool, the window dispatcher) at Gemma 4's geometry:
     # synthetic experts, no GPU work
     add_executable(g4_lane_tests ${_g4_tests}/g4_lane_tests.cpp)
+    target_include_directories(g4_lane_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(g4_lane_tests PRIVATE g4core)
     target_compile_options(g4_lane_tests PRIVATE ${G4_HOST_WARNINGS})
     set(G4_LANE_CASES native_fmt_takes_the_gemma4_geometry geglu_rows_match_the_reference pool_runs_gemma4_experts
-        window_dispatch_uses_the_layers_width)
+        window_dispatch_uses_the_layers_width lane_plan_layout_grows_with_the_window
+        window_dispatch_rows_are_the_single_token_rows)
     foreach(case IN LISTS G4_LANE_CASES)
         add_test(NAME g4_lane_tests.${case} COMMAND g4_lane_tests --case ${case})
     endforeach()
@@ -159,7 +164,9 @@ if(STRATA_BUILD_TESTS OR STRATA_BUILD_GEMMA4_TESTS)
         matvec_matches_cpu_for_each_kind expert_matvec_reads_the_table_in_vram_and_pinned_ram norms_match_cpu
         embedding_and_small_ops_match_cpu router_picks_the_top_eight qkv_post_matches_cpu_for_both_layer_kinds
         decode_attention_matches_cpu decode_kernels_read_the_position_from_the_device prompt_softmax_masks_like_the_model
-        dequant_and_gather_match_cpu topk_matches_a_cpu_ranking)
+        dequant_and_gather_match_cpu topk_matches_a_cpu_ranking
+        window_rows_are_the_single_rows_bitwise window_plan_groups_entries_by_expert kept_rows_count_their_routing
+        scaled_sandwich_norm_matches_cpu drafter_attention_reads_the_keys_before_its_position)
     foreach(case IN LISTS G4_KERNEL_CASES)
         add_test(NAME g4_kernel_tests.${case} COMMAND g4_kernel_tests --case ${case})
         set_tests_properties(g4_kernel_tests.${case} PROPERTIES LABELS gpu)
@@ -183,5 +190,24 @@ if(STRATA_BUILD_TESTS OR STRATA_BUILD_GEMMA4_TESTS)
                  $<TARGET_FILE:multiengine> ${G4_MODEL_FILE} ${_g4_tests}/g4_prompt_ids.txt)
         set_tests_properties(g4_model.paths_agree g4_model.serve_smoke g4_model.prompt_paths PROPERTIES LABELS "gpu;model"
                              TIMEOUT 900)
+        # MTP (spec §12), with -DG4_MTP_FILE=<the gemma4-assistant drafter gguf>: verify windows bitwise the single decode
+        # steps; greedy with the drafter = without it (--tokens); the serve protocol's DONE fields, the decode speed and
+        # the acceptance with the drafter; and served answers, greedy and seeded sampled, the same tokens with the drafter
+        # (a drafting floor, the tier moving) as without, where nothing depends on the tier's timing (the lane off, no MMQ)
+        set(G4_MTP_FILE "" CACHE FILEPATH "The gemma4-assistant drafter GGUF for the MTP model tests (empty: not registered)")
+        if(G4_MTP_FILE)
+            add_test(NAME g4_model.mtp_window COMMAND ${G4_PYTHON} -I ${_g4_tests}/g4_mtp_window.py
+                     $<TARGET_FILE:multiengine> ${G4_MODEL_FILE} ${G4_MTP_FILE} ${_g4_tests}/g4_prompt_ids.txt)
+            add_test(NAME g4_model.mtp_greedy COMMAND ${G4_PYTHON} -I ${_g4_tests}/g4_mtp_greedy.py
+                     $<TARGET_FILE:multiengine> ${G4_MODEL_FILE} ${G4_MTP_FILE} ${_g4_tests}/g4_prompt_ids.txt ${G4_POEM_IDS} ${G4_FRANCE_IDS})
+            add_test(NAME g4_model.mtp_serve COMMAND ${G4_PYTHON} -I ${_g4_tests}/g4_mtp_serve.py
+                     $<TARGET_FILE:multiengine> ${G4_MODEL_FILE} ${G4_MTP_FILE} ${_g4_tests}/g4_prompt_ids.txt ${G4_POEM_IDS} ${G4_FRANCE_IDS})
+            add_test(NAME g4_model.mtp_serve_exact COMMAND ${G4_PYTHON} -I ${_g4_tests}/g4_mtp_serve.py
+                     $<TARGET_FILE:multiengine> ${G4_MODEL_FILE} ${G4_MTP_FILE} ${_g4_tests}/g4_prompt_ids.txt ${G4_POEM_IDS} ${G4_FRANCE_IDS}
+                     --rounds 1 --both "--cpu-lane off --expert-slots 50" --mtp-args "--spec 4 --spec-min-p 0.6" --no-mmq
+                     --same-gate)
+            set_tests_properties(g4_model.mtp_window g4_model.mtp_greedy g4_model.mtp_serve g4_model.mtp_serve_exact PROPERTIES
+                                 LABELS "gpu;model" TIMEOUT 1800)
+        endif()
     endif()
 endif()

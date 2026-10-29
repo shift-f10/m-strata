@@ -39,6 +39,10 @@ struct EngineConfig final {
   // P5: a streamed prompt's buffers (its chunk rows, the MMQ buffers, the miss ring) live in the expert cache's top
   // slots, lent for the prompt and refilled after it (paper 3.6, Strata's default); false: VRAM of their own
   bool prompt_borrow{true};
+  // MTP (spec §12): the drafter's file (Engine::create's AssistantDesc was read from it) and the verify window's rows at
+  // most (--spec: 1 + the drafts of a step)
+  std::string mtp_model;
+  int spec{4};
 };
 
 // save_profile's interval between requests (Strata's --expert-profile-save-every default).
@@ -61,14 +65,17 @@ struct LoadReport final {
   int lane_workers{0};  // the CPU lane's pool threads (0: no lane - every expert in VRAM, or --cpu-lane off)
   bool profile_filled{false};  // the slots were filled from --expert-profile
   int lent_slots{0};           // expert slots a streamed prompt borrows for its buffers (0: none, or VRAM of their own)
+  int mtp_layers{0};           // the drafter's layers (0: no drafter)
+  double mtp_mib{0.0};         // the drafter's VRAM (its weights and buffers, taken before the expert slots)
 };
 
 class Engine {
  public:
   virtual ~Engine() = default;
-  // Loads the model (checked by check_model) onto the current CUDA device. nullptr and a
-  // fixed `error` on failure.
-  [[nodiscard]] static std::unique_ptr<Engine> create(const EngineConfig& config, const ModelDesc& model, std::string& error);
+  // Loads the model (checked by check_model) onto the current CUDA device, and with `drafter` (checked by check_assistant,
+  // read from config.mtp_model) the MTP drafter. nullptr and a fixed `error` on failure.
+  [[nodiscard]] static std::unique_ptr<Engine> create(const EngineConfig& config, const ModelDesc& model, std::string& error,
+                                                      const AssistantDesc* drafter = nullptr);
 
   [[nodiscard]] virtual int context() const = 0;
   [[nodiscard]] virtual int ring_spare() const = 0;  // sliding-ring rows beyond the window (reuse rule)
@@ -96,6 +103,29 @@ class Engine {
   // was due or the file was written; false (and the reason) when it could not be.
   virtual bool save_profile(bool force, std::string& error) = 0;
   [[nodiscard]] virtual LoadReport report() const = 0;
+
+  // ---- MTP (spec §12) ----
+  [[nodiscard]] virtual bool has_drafter() const = 0;
+  // Up to `n` (< config.spec) chained drafts after `id_last` - the next token, decided and not yet read - at position():
+  // ids[i] and the drafter's top-1 probability probs[i]; drafting stops at the first draft below p_min (not offered).
+  // The drafter's other input is the hidden state of the row that gave id_last (the last process() or accept()).
+  // Returns how many to offer; -1 on a CUDA failure.
+  virtual int draft(std::int32_t id_last, int n, float p_min, std::int32_t* ids, float* probs) = 0;
+  // The verify window: reads ids[0 .. T) at position() as T decode steps would, keeping every row's logits - bitwise
+  // the logits those steps give over the same expert residency. position() moves at accept() only. Returns T; 0 when
+  // this engine reads no such window (no drafter, T outside 1 .. config.spec, or past the context: nothing was read);
+  // -1 on a CUDA failure (the engine is then unusable).
+  virtual int verify(const std::int32_t* ids, int T) = 0;
+  // The window's rows: their argmax (as greedy(): -2 for logits that are not finite), into out[0 .. T); returns T or -1.
+  virtual int window_greedy(std::int32_t* out) = 0;
+  // Row `row`'s k highest logits (as top_candidates) / its logits (as logits).
+  virtual int row_candidates(int row, int k, float* vals, int* ids) = 0;
+  virtual bool row_logits(int row, std::vector<float>& out) = 0;
+  // Keeps the window's first n rows (1 <= n <= T): position() moves on by n, the kept rows' routing goes to the expert
+  // tier's counts (the rejected rows' does not), and the drafter's next input is row n - 1's hidden state.
+  virtual bool accept(int n) = 0;
+  // Test hook: every expert swap in flight lands now (a residency that does not depend on timing).
+  virtual bool settle() = 0;
 };
 
 }  // namespace g4

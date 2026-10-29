@@ -280,6 +280,35 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z12 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+The owner: "gemma4 has an mtp ... make sure we work that mtp in our gemma engine".
+
+- **The engine** (a worker; spec §12): `multiengine_gemma4` drafts with unsloth's `gemma4-assistant` drafter
+  (`--mtp <gguf> --spec N --spec-min-p P`).
+  - **Drafter:** guarded by `check_assistant` and `same_vocabulary` (4 layers, 1024 wide, Q8_0/F32). All in VRAM,
+    428 MiB taken before the expert slots (57 -> 55 a layer at 4K). Q-only attention over target layers 28/29, keys
+    `[pos0-1023, pos0-1]`; each step's drafts are one captured graph (a graph per draft with a min-p floor).
+  - **Verify window:** `[token, drafts]` (T <= 8) through the decode kernels (`matvec_rows`, per-row attention, experts
+    grouped across rows, the CPU lane on 8T entries). Every row's logits are bitwise the decode step's; only kept rows
+    reach the tier's routing statistics; the reuse spare shrinks by `spec-1`.
+  - **Acceptance:** llama.cpp's sample-and-accept with the request's own sampler (greedy, top-k, or penalties with the
+    history per row). DONE fields 6/7 are accepted/offered; `--spec` alone does nothing.
+  - **Tests:** host 23 (7 new), lane 6 (2 new), kernel 16 (5 new), model 7 (4 new with `-DG4_MTP_FILE`). RED shown;
+    52/52.
+  - **GPU (RTX 4080 SUPER, the Q8_K_XL target):**
+    - `--spec-check` windows 2-8, lane on/off, graph and plain launches, 1,800 rows past the ring wrap: all bitwise.
+    - Greedy output identical with and without the drafter; served greedy, seeded sampled and penalized answers
+      identical with the lane and MMQ off. With the lane on, a long answer can part at a near tie: the drafter's slots
+      move the CPU/GPU split and MMQ's rounding, as between any two plain runs with a different residency.
+    - Served, 8K, lane on: greedy plain 74-76 tok/s; `--spec 4` 81.2 (50% accepted); `--spec 4 --spec-min-p 0.6`
+      86.5-91.9 (64-65%). Sampled plain 71.5-76.6, `--spec 4` 81.4, with 0.6 84.9. The gain is bounded by the CPU lane
+      (a 4-row window misses about 3.3x a step's distinct experts).
+  - **Not done:** upstream's split verify window, a fitted PCIe share for windows, drafting overlapped with the lane.
+    No Linux build of the Gemma 4 engine (its CMake is MSVC-only, as before).
+  - **Build tree:** a ninja 1.13 dry run deleted `engine/build-g`'s `.ninja_log` (a 1.12.1 tree); it was rebuilt from
+    `build.ninja` (hash- and format-checked against 1.12.1). Use only `cmake --build` (VS ninja) on that tree.
+
 ### Claude Code session, 2026-10-28 z11 (Windows box; owner-directed; committed with this entry, not pushed)
 
 **The server is now `strata-unified-server`.** The owner: "Let's not call it strata-secure-server as that may provide
