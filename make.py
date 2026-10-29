@@ -432,6 +432,19 @@ def missing_cpp_tools_message(vcvars: Path) -> str:
             f"      Then run make again (install the CUDA Toolkit after it, so it adds its Visual Studio integration).")
 
 
+def merged_environment(env: dict[str, str], listed: str) -> dict[str, str]:
+    """env with the variables cmd's `set` listed (vcvars64's environment). Windows names ignore case: cmd lists a name as
+    its parent wrote it ("Path" in a PowerShell window) while os.environ upper-cases it, so every name is kept upper-case
+    and a listed one replaces its own (owner 2026-10-29: vcvars64's Path sat beside the old PATH, and cl was looked for
+    on the old one). cmd's hidden "=C:" drive entries have no name and are skipped."""
+    merged = {key.upper(): value for key, value in env.items()}
+    for line in listed.splitlines():
+        key, eq, value = line.partition("=")
+        if eq and key:
+            merged[key.upper()] = value
+    return merged
+
+
 def build_environment(platform: str) -> dict[str, str]:
     """The environment the builds run in: on Windows the MSVC x64 developer environment (vcvars64), unless cl is on
     PATH already."""
@@ -446,10 +459,7 @@ def build_environment(platform: str) -> dict[str, str]:
     # does not find vswhere on PATH yet still sets everything up, so the result is judged by the environment it leaves.
     listed = subprocess.run(f'cmd /d /s /c "call "{vcvars}" >nul 2>nul & set"', capture_output=True, text=True,
                             check=False).stdout
-    for line in listed.splitlines():
-        key, eq, value = line.partition("=")
-        if eq and key:
-            env[key] = value
+    env = merged_environment(env, listed)
     if not shutil.which("cl", path=env.get("PATH")):
         raise SystemExit(missing_cpp_tools_message(vcvars))
     return env

@@ -177,6 +177,18 @@ def test_missing_cpp_tools_say_how_to_add_them():
             "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended") in text
 
 
+def test_the_compiler_environment_replaces_the_path_whatever_its_case():
+    """Owner 2026-10-29, install.bat on a PC with the C++ tools: "vcvars64.bat did not set up the MSVC x64 environment
+    (cl was not found after it)". cmd lists the search path under the name its parent gave it - "Path" in a PowerShell
+    window - while Python's copy of the environment calls it "PATH"; vcvars64's Path was added beside the old PATH and
+    the check for cl read the old one. Each listed name replaces its own, whatever the case."""
+    env = make.merged_environment({"PATH": r"C:\Windows", "TEMP": r"C:\Temp"},
+                                  "Path=C:\\VS\\VC\\bin\\HostX64\\x64;C:\\Windows\nINCLUDE=C:\\VS\\VC\\include\n=C:=C:\\\nTemp=C:\\T2\n")
+    assert [key for key in env if key.upper() == "PATH"] == ["PATH"] and env["PATH"] == r"C:\VS\VC\bin\HostX64\x64;C:\Windows"
+    assert env["INCLUDE"] == r"C:\VS\VC\include" and [key for key in env if key.upper() == "TEMP"] == ["TEMP"] and env["TEMP"] == r"C:\T2"
+    assert "" not in env, "cmd's hidden =C: drive entries are not variables"
+
+
 MAYA_PROFILES = ("expert-profile-glm.bin", "expert-profile-ds4.bin", "expert-profile-mm3.bin")
 # MiniMax-M3.1-Flash (owner 2026-10-28): Maya's chat template every MiniMax pack carries, with its licence beside it
 MINIMAX_FILES = ("engine/templates/minimax-m3.1/chat_template.jinja", "engine/templates/minimax-m3.1/LICENSE.minimax-m31")

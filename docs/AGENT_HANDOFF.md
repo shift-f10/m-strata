@@ -280,6 +280,25 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z26 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner's install.bat on another PC, after z25 (its plan found the Visual Studio C++ tools): "make: ... vcvars64.bat
+did not set up the MSVC x64 environment (cl was not found after it)".
+
+- **The cause**: `make.py`'s `build_environment` copied `os.environ` (whose names Python upper-cases on Windows: `PATH`)
+  and added the names cmd's `set` listed after vcvars64 as written. cmd lists the search path under the name its
+  parent gave it - `Path` in a PowerShell window, which is how install.bat runs make.bat - so vcvars64's `Path` sat
+  beside the old `PATH` and `cl` was looked for on the old one. From Git Bash (every earlier build here) the name is
+  `PATH`, so it never showed. Reproduced on this PC (which has the C++ tools) by running `build_environment` in a
+  child whose environment names it `Path`: the owner's message word for word. The 2026-10-28 second PC's same stop
+  (the `missing_cpp_tools_message` entry above) was most likely this too, not a missing workload.
+- **The fix**: `merged_environment` keeps every name upper-case and lets a listed name replace its own whatever its
+  case (cmd's nameless `=C:` entries skipped).
+- **Proof**: RED first (`test_the_compiler_environment_replaces_the_path_whatever_its_case`: two keys, `PATH` and
+  `Path`). The make and install tests 34/34 on Windows and Linux. Live: a whole `make.py` build (all features) run with
+  the search path named `Path` finished; before the fix the same environment stopped with the owner's message. Not
+  run: install.bat on the owner's other PC.
+
 ### Claude Code session, 2026-10-29 z25 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner, testing the z24 build and a fresh clone: "several errors".
