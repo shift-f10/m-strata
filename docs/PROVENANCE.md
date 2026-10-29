@@ -733,11 +733,14 @@ Peasant Smith and the Project Maya contributors"; read from `G:\Project-maya`'s 
   (`secure_frontend/tools/generate_raon1_flint_tool_prompt_fixture.py`, which adds the `{% generation %}` tag raon1's
   template uses); the templates are not committed (their SHA-256 is in the file).
 - **Gemma 4 tool calls (2026-10-28)**: `render_gemma4_tool_prompt` writes what the tool macros of Gemma 4's chat template
-  (Google's, from the UD-Q8_K_XL GGUF; its `general.license` apache-2.0 with Google's Gemma 4 terms linked) write -
-  `format_function_declaration`, `format_parameters`, `format_argument` and the call and response framing - ported to
-  C++ and checked byte for byte. The message path is llama.cpp's at the pinned `3cf03257` (MIT, "Copyright (c)
-  2023-2026 The ggml authors"): `common/parsers/gemma4.cpp`'s `convert_tool_responses_gemma4` (folding a round's calls
-  and results into one model turn) and its "<|turn>model" rule, ported; `gemma4_tool_calls.cpp` reads calls by that
+  (Google's newer, official one, from unsloth's gemma-4-26B-A4B-it-Q8_0 GGUF at `c099eb48`; its `general.license`
+  apache-2.0 with Google's Gemma 4 terms linked; until the same day the UD-Q8_K_XL GGUF's older one, which llama.cpp
+  calls outdated) write - `format_function_declaration`, `format_parameters` (its `filter_keys`), `format_argument`,
+  `format_tool_response_block`, `strip_thinking` and the turn framing - ported to C++ and checked byte for byte, plain
+  chats and declarations included. The message path is llama.cpp's at the pinned `3cf03257` (MIT, "Copyright (c)
+  2023-2026 The ggml authors"): for this template the messages as upstream's run_with_mcp writes them (no
+  `convert_tool_responses_gemma4`, which `common/chat.cpp` applies to outdated templates only) and
+  `common/parsers/gemma4.cpp`'s "<|turn>model" rule, ported; `gemma4_tool_calls.cpp` reads calls by that
   file's PEG rules and `common/chat-peg-parser.cpp`'s `gemma4_to_json`, reimplemented by hand; the `<|tool_response>`
   stop follows `src/llama-vocab.cpp`'s Gemma 4 end-of-generation list. `tests/gemma4_tool_calls_test.cpp` carries the
   replies of `tests/test-chat.cpp`'s Gemma 4 block with the calls llama.cpp expects for them.

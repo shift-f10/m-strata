@@ -1,6 +1,7 @@
 {
  "generator": "tools/generate_gemma4_tool_prompt_fixture.py",
- "template": "2dfbfc7d538912f4ea11d29d85b4e25d7bc26386e53f57529f1d707c28b5828c",
+ "template": "845f1ee48e39fc942fe190da9df6a1c5db229e17a96ea08966ad1c9274e73d1b",
+ "outdated": false,
  "tool": {
   "name": "web_search",
   "description": "Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.",
@@ -34,7 +35,7 @@
     }
    ],
    "rounds": [],
-   "prompt": "<bos><|turn>system\n<|think|><|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n"
+   "prompt": "<bos><|turn>system\n<|think|>\n<|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n"
   },
   {
    "name": "first_prompt_thinking_off",
@@ -70,7 +71,7 @@
     }
    ],
    "rounds": [],
-   "prompt": "<bos><|turn>system\n<|think|>You are a helpful assistant.<|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\nHello! How can I help?<turn|>\n<|turn>user\nWhat is the latest Python release?<turn|>\n<|turn>model\n"
+   "prompt": "<bos><|turn>system\n<|think|>\nYou are a helpful assistant.<|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\nHello! How can I help?<turn|>\n<|turn>user\nWhat is the latest Python release?<turn|>\n<|turn>model\n"
   },
   {
    "name": "one_round_a_call_after_reasoning",
@@ -98,7 +99,7 @@
      ]
     }
    ],
-   "prompt": "<bos><|turn>system\n<|think|><|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|tool_call>call:web_search{query:<|\"|>TWICE contract renewal<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>Web search results for \"TWICE contract renewal\" (SearXNG):\n\n1. Report\n   https://example.org/twice\n   Six members renewed.\n<|\"|>}<tool_response|>"
+   "prompt": "<bos><|turn>system\n<|think|>\n<|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|channel>thought\nThe user asks about recent news; I should search.\n<channel|><|tool_call>call:web_search{query:<|\"|>TWICE contract renewal<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>Web search results for \"TWICE contract renewal\" (SearXNG):\n\n1. Report\n   https://example.org/twice\n   Six members renewed.\n<|\"|>}<tool_response|><|channel>thought\n"
   },
   {
    "name": "content_before_two_calls",
@@ -138,7 +139,7 @@
      ]
     }
    ],
-   "prompt": "<bos><|turn>system\n<|think|>Answer in English.<|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|tool_call>call:web_search{max_results:3,query:<|\"|>a<|\"|>}<tool_call|><|tool_call>call:web_search{query:<|\"|>b<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>r1<|\"|>}<tool_response|><|tool_response>response:web_search{value:<|\"|>  r2 with spaces  \n<|\"|>}<tool_response|>"
+   "prompt": "<bos><|turn>system\n<|think|>\nAnswer in English.<|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|channel>thought\nTwo searches.\n<channel|><|tool_call>call:web_search{max_results:3,query:<|\"|>a<|\"|>}<tool_call|><|tool_call>call:web_search{query:<|\"|>b<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>r1<|\"|>}<tool_response|><|tool_response>response:web_search{value:<|\"|>  r2 with spaces  \n<|\"|>}<tool_response|>Let me look that up.<turn|>\n<|channel>thought\n"
   },
   {
    "name": "two_rounds_without_reasoning",
@@ -181,7 +182,7 @@
      ]
     }
    ],
-   "prompt": "<bos><|turn>system\n<|think|><|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|tool_call>call:web_search{query:<|\"|>x<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>first<|\"|>}<tool_response|><|turn>model\n<|tool_call>call:web_search{query:<|\"|>y<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>second<|\"|>}<tool_response|>"
+   "prompt": "<bos><|turn>system\n<|think|>\n<|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|tool_call>call:web_search{query:<|\"|>x<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>first<|\"|>}<tool_response|><|tool_call>call:web_search{query:<|\"|>y<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>second<|\"|>}<tool_response|>Still checking.<turn|>\n<|channel>thought\n"
   },
   {
    "name": "two_rounds_thinking_off",
@@ -224,7 +225,7 @@
      ]
     }
    ],
-   "prompt": "<bos><|turn>system\n<|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|tool_call>call:web_search{query:<|\"|>x<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>first<|\"|>}<tool_response|><|turn>model\n<|tool_call>call:web_search{query:<|\"|>y<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>second<|\"|>}<tool_response|><|channel>thought\n<channel|>"
+   "prompt": "<bos><|turn>system\n<|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|tool_call>call:web_search{query:<|\"|>x<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>first<|\"|>}<tool_response|><|tool_call>call:web_search{query:<|\"|>y<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>second<|\"|>}<tool_response|>"
   },
   {
    "name": "argument_types",
@@ -272,7 +273,7 @@
      ]
     }
    ],
-   "prompt": "<bos><|turn>system\n<|think|><|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|tool_call>call:web_search{flag:true,max_results:5,none:None,off:false,opts:{k:<|\"|>v<|\"|>,n:1,Z:[1,<|\"|>two<|\"|>]},query:<|\"|>q<|\"|>,ratio:2.5,tags:[<|\"|>a<|\"|>,<|\"|>b<|\"|>],text:<|\"|>multi\nline<|\"|>,Upper:<|\"|>u<|\"|>,whole:2.0}<tool_call|><|tool_response>response:web_search{value:<|\"|>ok<|\"|>}<tool_response|>"
+   "prompt": "<bos><|turn>system\n<|think|>\n<|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|channel>thought\nr\n<channel|><|tool_call>call:web_search{flag:true,max_results:5,none:null,off:false,opts:{k:<|\"|>v<|\"|>,n:1,Z:[1,<|\"|>two<|\"|>]},query:<|\"|>q<|\"|>,ratio:2.5,tags:[<|\"|>a<|\"|>,<|\"|>b<|\"|>],text:<|\"|>multi\nline<|\"|>,Upper:<|\"|>u<|\"|>,whole:2.0}<tool_call|><|tool_response>response:web_search{value:<|\"|>ok<|\"|>}<tool_response|><|channel>thought\n"
   },
   {
    "name": "results_that_are_json",
@@ -314,7 +315,7 @@
      ]
     }
    ],
-   "prompt": "<bos><|turn>system\n<|think|><|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|tool_call>call:web_search{query:<|\"|>a<|\"|>}<tool_call|><|tool_call>call:web_search{query:<|\"|>b<|\"|>}<tool_call|><|tool_call>call:web_search{query:<|\"|>c<|\"|>}<tool_call|><|tool_response>response:web_search{value:5}<tool_response|><|tool_response>response:web_search{n:[1,2.5,None,true],r:<|\"|>ok<|\"|>}<tool_response|><|tool_response>response:web_search{value:[<|\"|>x<|\"|>,{y:false}]}<tool_response|>"
+   "prompt": "<bos><|turn>system\n<|think|>\n<|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|tool_call>call:web_search{query:<|\"|>a<|\"|>}<tool_call|><|tool_call>call:web_search{query:<|\"|>b<|\"|>}<tool_call|><|tool_call>call:web_search{query:<|\"|>c<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>5<|\"|>}<tool_response|><|tool_response>response:web_search{value:<|\"|>{\"r\": \"ok\", \"n\": [1, 2.5, null, true]}<|\"|>}<tool_response|><|tool_response>response:web_search{value:<|\"|>[\"x\", {\"y\": false}]<|\"|>}<tool_response|><|channel>thought\n"
   },
   {
    "name": "special_literals_are_text",
@@ -342,7 +343,7 @@
      ]
     }
    ],
-   "prompt": "<bos><|turn>system\n<|think|><|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|tool_call>call:web_search{query:<|\"|>chat template <|tool_response> <|\"|><|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>A page quoting <tool_response|> and <|tool_call> and <|\"|> and <turn|>.<|\"|>}<tool_response|>"
+   "prompt": "<bos><|turn>system\n<|think|>\n<|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|channel>thought\nI could write <|tool_call> here, or <tool_call|>, but I will not.\n<channel|><|tool_call>call:web_search{query:<|\"|>chat template <|tool_response> <|\"|><|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>A page quoting <tool_response|> and <|tool_call> and <|\"|> and <turn|>.<|\"|>}<tool_response|><|channel>thought\n"
   },
   {
    "name": "unicode_whitespace_is_stripped",
@@ -370,7 +371,7 @@
      ]
     }
    ],
-   "prompt": "<bos><|turn>system\n<|think|><|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nQu'est-ce que c'est ? 日本<turn|>\n<|turn>model\n<|tool_call>call:web_search{query:<|\"|>日本 ニュース<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|> résultat <|\"|>}<tool_response|>"
+   "prompt": "<bos><|turn>system\n<|think|>\n<|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nQu'est-ce que c'est ? 日本<turn|>\n<|turn>model\n<|channel>thought\nthink\n<channel|><|tool_call>call:web_search{query:<|\"|>日本 ニュース<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|> résultat <|\"|>}<tool_response|>answer<turn|>\n<|channel>thought\n"
   },
   {
    "name": "the_limit_round",
@@ -413,7 +414,182 @@
      ]
     }
    ],
-   "prompt": "<bos><|turn>system\n<|think|><|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|tool_call>call:web_search{query:<|\"|>one<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>Web search results for \"TWICE contract renewal\" (SearXNG):\n\n1. Report\n   https://example.org/twice\n   Six members renewed.\n<|\"|>}<tool_response|><|turn>model\n<|tool_call>call:web_search{query:<|\"|>two<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>Not run: this answer has made all the searches it may. Answer the user now from the results above, without searching again.<|\"|>}<tool_response|>"
+   "prompt": "<bos><|turn>system\n<|think|>\n<|tool>declaration:web_search{description:<|\"|>Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-28.<|\"|>,parameters:{properties:{max_results:{description:<|\"|>How many results to get (1-10)<|\"|>,type:<|\"|>INTEGER<|\"|>},query:{description:<|\"|>What to search for<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>query<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWho in TWICE did not renew their contract?<turn|>\n<|turn>model\n<|channel>thought\nSearch.\n<channel|><|tool_call>call:web_search{query:<|\"|>one<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>Web search results for \"TWICE contract renewal\" (SearXNG):\n\n1. Report\n   https://example.org/twice\n   Six members renewed.\n<|\"|>}<tool_response|><|channel>thought\nAgain.\n<channel|><|tool_call>call:web_search{query:<|\"|>two<|\"|>}<tool_call|><|tool_response>response:web_search{value:<|\"|>Not run: this answer has made all the searches it may. Answer the user now from the results above, without searching again.<|\"|>}<tool_response|><|channel>thought\n"
+  }
+ ],
+ "text_cases": [
+  {
+   "name": "one_turn",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Say hello."
+    }
+   ],
+   "prompt": "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\nSay hello.<turn|>\n<|turn>model\n"
+  },
+  {
+   "name": "one_turn",
+   "thinking": false,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Say hello."
+    }
+   ],
+   "prompt": "<bos><|turn>user\nSay hello.<turn|>\n<|turn>model\n<|channel>thought\n<channel|>"
+  },
+  {
+   "name": "system_and_history",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "system",
+     "content": "  Be brief.  "
+    },
+    {
+     "role": "user",
+     "content": "Hi"
+    },
+    {
+     "role": "assistant",
+     "content": " Hello! How can I help? "
+    },
+    {
+     "role": "user",
+     "content": "Who are you?"
+    }
+   ],
+   "prompt": "<bos><|turn>system\n<|think|>\nBe brief.<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\nHello! How can I help?<turn|>\n<|turn>user\nWho are you?<turn|>\n<|turn>model\n"
+  },
+  {
+   "name": "system_and_history",
+   "thinking": false,
+   "conversation": [
+    {
+     "role": "system",
+     "content": "  Be brief.  "
+    },
+    {
+     "role": "user",
+     "content": "Hi"
+    },
+    {
+     "role": "assistant",
+     "content": " Hello! How can I help? "
+    },
+    {
+     "role": "user",
+     "content": "Who are you?"
+    }
+   ],
+   "prompt": "<bos><|turn>system\nBe brief.<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\nHello! How can I help?<turn|>\n<|turn>user\nWho are you?<turn|>\n<|turn>model\n<|channel>thought\n<channel|>"
+  },
+  {
+   "name": "unicode_whitespace",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "　日本 "
+    }
+   ],
+   "prompt": "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\n日本<turn|>\n<|turn>model\n"
+  },
+  {
+   "name": "unicode_whitespace",
+   "thinking": false,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "　日本 "
+    }
+   ],
+   "prompt": "<bos><|turn>user\n日本<turn|>\n<|turn>model\n<|channel>thought\n<channel|>"
+  }
+ ],
+ "declarations": [
+  {
+   "tool": {
+    "name": "lookup",
+    "description": "Look things up.",
+    "parameters": {
+     "type": "object",
+     "required": [
+      "where"
+     ],
+     "properties": {
+      "where": {
+       "type": "object",
+       "description": "Place",
+       "properties": {
+        "city": {
+         "type": "string",
+         "nullable": true
+        },
+        "zip": {
+         "type": "integer"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      },
+      "type": {
+       "type": "string",
+       "enum": [
+        "a",
+        "b"
+       ],
+       "description": "Kind"
+      },
+      "tags": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "rows": {
+       "type": "array",
+       "description": "Rows",
+       "items": {
+        "type": "object",
+        "properties": {
+         "k": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "k"
+        ]
+       }
+      },
+      "loose": {
+       "type": "object",
+       "description": "Free",
+       "x": {
+        "type": "number"
+       },
+       "description2": {
+        "type": "boolean"
+       }
+      },
+      "maybe": {
+       "type": "number",
+       "nullable": true
+      }
+     }
+    }
+   },
+   "text": "declaration:lookup{description:<|\"|>Look things up.<|\"|>,parameters:{properties:{loose:{description:<|\"|>Free<|\"|>,properties:{description2:{type:<|\"|>BOOLEAN<|\"|>},x:{type:<|\"|>NUMBER<|\"|>}},type:<|\"|>OBJECT<|\"|>},maybe:{nullable:true,type:<|\"|>NUMBER<|\"|>},rows:{description:<|\"|>Rows<|\"|>,items:{properties:{k:{type:<|\"|>STRING<|\"|>}},required:[<|\"|>k<|\"|>],type:<|\"|>OBJECT<|\"|>},type:<|\"|>ARRAY<|\"|>},tags:{items:{type:<|\"|>STRING<|\"|>},type:<|\"|>ARRAY<|\"|>},type:{description:<|\"|>Kind<|\"|>,enum:[<|\"|>a<|\"|>,<|\"|>b<|\"|>],type:<|\"|>STRING<|\"|>},where:{description:<|\"|>Place<|\"|>,properties:{city:{nullable:true,type:<|\"|>STRING<|\"|>},zip:{type:<|\"|>INTEGER<|\"|>}},required:[<|\"|>city<|\"|>],type:<|\"|>OBJECT<|\"|>}},required:[<|\"|>where<|\"|>],type:<|\"|>OBJECT<|\"|>}}"
+  },
+  {
+   "tool": {
+    "name": "bare",
+    "description": "No parameters."
+   },
+   "text": "declaration:bare{description:<|\"|>No parameters.<|\"|>}"
   }
  ]
 }

@@ -280,6 +280,38 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z20 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner: "Update our Gemma 4 renderer to the newer chat template (one profile for both GGUFs), with fixtures from the
+new template, then build and swap." (Asked "will this work on both models?": yes - both files hold the same weights;
+llama.cpp renders each GGUF's own template and calls the older one outdated.)
+
+- **The fixture generator** (`tools/generate_gemma4_tool_prompt_fixture.py`) takes llama.cpp's path for the template it
+  is given: `convert_tool_responses_gemma4` only for an outdated one (`common/chat.cpp`'s test: no
+  "{#- OpenAI Chat Completions:"); it also writes plain chats (`text_cases`, thinking on and off) and richer tool
+  declarations (`declarations`: nested objects, arrays of objects, nullable, enums, a property named "type", an object
+  without properties). Checked first: given the old template it still writes the committed cases byte for byte.
+  `tests/fixtures/gemma4_tool_prompts.json` is now the newer template's (12 cases, 6 plain, 2 declarations).
+- **The renderer** follows it: `<|think|>` then a newline; `format_parameters` with `filter_keys` and the newer comma
+  and key order (nullable after enum/items, an object's properties and required with commas); `null` written `null`;
+  a result is always the tool message's text (`value:<|"|>...<|"|>`, JSON or not); the rounds as one model turn they all
+  continue - each round's reasoning in the thought channel, its calls, their results, then its own text
+  (`strip_thinking`), the turn closed only after a last round with text; after a round's results the prompt goes on into
+  `<|channel>thought\n` when thinking (the tool plan's `starts_in_reasoning` is set then), and a turn a round's text
+  closed gets "<|turn>model\n" when not (llama.cpp's rule). Plain chats with thinking off are unchanged.
+- **Proof**: RED (the three fixture tests against the old renderer), then 17/17 MSVC and 102/102 Linux gcc over the
+  Gemma 4, chat-execution and tokenizer suites; four hand-written old-template expectations (the newline after
+  `<|think|>`, the reply starting in the thought channel after a thinking round) now hold the newer template's bytes,
+  each as the generator renders it. The whole Windows tree: 1360/1364 - the two release-only cases, the API test's
+  thinking-on prompt (`gemma4_thinking_round_trip`, the same old expectation, updated: 3/3 MSVC and gcc) and
+  `switch_waits_for_the_generation_then_swaps` under -j 4 only (it passes alone). Not run on the GPU here: the owner's
+  next Gemma 4 chats are the live check.
+- **Seen on the owner's Q8_0 card (z19's fix live, about 95 tok/s)**: with search on, the model reasoned that its own
+  earlier answer's CVEs were "fictional" for a "hypothetical 2026". Cause, ours: the page sends earlier answers as their
+  final text only, so the searches and results behind them are gone from later turns, and the only "2026" the model sees
+  is the search tool's "Today's date is". Upstream's page sends each answer back with its calls and their results
+  (`serve/web/app.js` `assistantMessages`). Not changed here; offered to the owner as the next step.
+
 ### Claude Code session, 2026-10-28 z19 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner's console: calibrating his new gemma-4-26B-A4B-it-Q8_0 card, "a calibration reply failed (invalid_request)",

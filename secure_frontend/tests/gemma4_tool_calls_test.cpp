@@ -144,6 +144,47 @@ void renders_the_templates_tool_prompts() {
   expect(seen >= 24U, "every case ran in both tool forms");
 }
 
+// Owner 2026-10-28 ("update our Gemma 4 renderer to the newer chat template, one profile for both GGUFs"): the fixture's
+// plain chats, each thinking on and off, as the newer template writes them (<|think|> then a newline).
+void renders_the_templates_text_prompts() {
+  const std::string text = secure_frontend_test::read_file(secure_frontend_test::extra_arguments().at(0));
+  auto parsed = secure_frontend::parse_json(text, kFixtureLimits);
+  auto* fixture = std::get_if<secure_frontend::JsonValue>(&parsed);
+  const auto* cases = fixture != nullptr ? member(*fixture, "text_cases") : nullptr;
+  expect(cases != nullptr && cases->if_array() != nullptr && cases->if_array()->size() >= 6U, "the fixture's plain chats");
+  if (cases == nullptr || cases->if_array() == nullptr) return;
+  for (const auto& entry : *cases->if_array()) {
+    const std::string name = text_of(entry, "name") + (flag_of(entry, "thinking") ? " (thinking)" : " (not thinking)");
+    std::vector<secure_frontend::ChatMessage> conversation;
+    for (const auto& m : *member(entry, "conversation")->if_array()) conversation.push_back({text_of(m, "role"), text_of(m, "content")});
+    const auto prompt = secure_frontend::render_gemma4_text_prompt(conversation, flag_of(entry, "thinking"));
+    expect(prompt.has_value() && *prompt == text_of(entry, "prompt"),
+           name + ": the template's prompt byte for byte: [" + prompt.value_or("(none)") + "]");
+  }
+}
+
+// The newer template's format_parameters past web_search's schema: nested objects, arrays of objects, nullable, enums,
+// a property named like a standard key, and an object without properties (its own keys but the standard ones).
+void writes_the_templates_declarations() {
+  const std::string text = secure_frontend_test::read_file(secure_frontend_test::extra_arguments().at(0));
+  auto parsed = secure_frontend::parse_json(text, kFixtureLimits);
+  auto* fixture = std::get_if<secure_frontend::JsonValue>(&parsed);
+  const auto* declarations = fixture != nullptr ? member(*fixture, "declarations") : nullptr;
+  expect(declarations != nullptr && declarations->if_array() != nullptr && declarations->if_array()->size() >= 2U, "the fixture's declarations");
+  if (declarations == nullptr || declarations->if_array() == nullptr) return;
+  for (const auto& entry : *declarations->if_array()) {
+    const auto* tool = member(entry, "tool");
+    if (tool == nullptr) continue;
+    const std::vector<std::string> tools{secure_frontend::python_json_text(*tool)};
+    const auto pieces = secure_frontend::render_gemma4_tool_prompt({{"user", "x"}}, tools, {}, false);
+    const std::string prompt = pieces ? joined(*pieces) : std::string{};
+    const auto open = prompt.find("<|tool>");
+    const auto close = prompt.find("<tool|>");
+    const std::string written = open != std::string::npos && close != std::string::npos ? prompt.substr(open + 7U, close - open - 7U) : "";
+    expect(written == text_of(entry, "text"), text_of(*tool, "name") + ": the template's declaration: [" + written + "]");
+  }
+}
+
 void refuses_what_the_tool_prompt_cannot_say() {
   const std::vector<std::string> tools{kTool};
   const std::vector<secure_frontend::ChatMessage> question{{"user", "Q"}};
@@ -296,9 +337,10 @@ void plans_with_its_tags() {
     expect(ids != nullptr && plan->prompt_token_ids == *ids && plan->prompt_token_ids.front() == id_of(pack, "<bos>"),
            "the plan's prompt is the pieces encoded, <bos> first");
     expect(plan->think_tokens.has_value() && plan->think_tokens->open == id_of(pack, "<|channel>") &&
-               plan->think_tokens->close == id_of(pack, "<channel|>") && !plan->starts_in_reasoning &&
+               plan->think_tokens->close == id_of(pack, "<channel|>") && plan->starts_in_reasoning == thinking &&
                plan->channel_name == std::optional<std::string>{"thought"},
-           "the thought channel splits the reasoning, as the text plan's does");
+           "the thought channel splits the reasoning; after a round's results with thinking on the newer template opened it, "
+           "so the reply starts in it");
     expect(plan->stop_tokens == secure_frontend::find_gemma4_end_of_turn_tokens(pack), "the engine ends the turn on <turn|> or <eos>");
     // llama.cpp ends a Gemma 4 generation on <|tool_response> (llama-vocab.cpp's gemma4 end-of-generation set); our
     // engine does not, so the server stops it there
@@ -422,6 +464,8 @@ void the_real_pack_plans_its_search() {
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"renders_the_templates_tool_prompts", renders_the_templates_tool_prompts},
+      {"renders_the_templates_text_prompts", renders_the_templates_text_prompts},
+      {"writes_the_templates_declarations", writes_the_templates_declarations},
       {"refuses_what_the_tool_prompt_cannot_say", refuses_what_the_tool_prompt_cannot_say},
       {"reads_calls_as_llama_cpp_does", reads_calls_as_llama_cpp_does},
       {"plans_with_its_tags", plans_with_its_tags},
