@@ -280,6 +280,8 @@ struct GlmSettings final {
   std::int64_t max_context{32768};                  // glm.max_context (Maya's DEFAULT_CONTEXT, maya.py:3148; bound added, C-1)
   std::string kv{"fp16"};                           // glm.kv: the engine's --kv (fp16 default, int8, q8_0, q4_0 - glm_driver.cpp)
   std::int64_t ram_headroom_gb{16};                 // glm.ram_headroom_gb (SP6 §4.9 M2: 6-1024, default 16; SETTINGS.md:38; the engine reads glm_fast_path.cu:1110/:1510)
+  std::optional<double> pcie_share;                 // glm.pcie_share: STRATA_GLM_PCIE_SHARE 0-1 (calibration, Maya's calibrate_glm.py; unset: the engine's)
+  std::optional<std::int64_t> cpu_lane;             // glm.cpu_lane: STRATA_GLM_CPU_LANE 1-64 (calibration; unset: the physical cores)
   std::int64_t idle_unload_s{0};                    // glm.idle_unload_s (v1.1.21 serve/server.py:8298, default 0 = never at :3753; under glm53 it wins over engine.idle_unload_s, R-T4-b)
   std::optional<GlmReasoningEffort> reasoning_effort;  // glm.reasoning_effort (unset: the request's; validator server.py:3798)
   bool fit_max_tokens{false};                       // glm.fit_max_tokens (Maya reads `is True` — server.py:4077; unlike engine's true)

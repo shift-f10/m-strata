@@ -33,6 +33,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -643,7 +644,8 @@ struct CalibrationFixture final {
     const auto engine = bin / fake.filename();
     std::error_code ec;
     std::filesystem::copy_file(fake, engine, ec);
-    const auto plan = secure_frontend::sweep_plan(secure_frontend::EngineProfile::gemma4, std::thread::hardware_concurrency());
+    const auto plan = secure_frontend::sweep_plan(secure_frontend::EngineProfile::gemma4,
+                                                  {std::max(1U, std::thread::hardware_concurrency()), secure_frontend::physical_cores()});
     winner = plan.back().values.back();
     std::string fake_options = "--tokens=8\n--token-ids=" + std::to_string(test_support::token_id(vocabulary, "a")) +
                                "\n--decode-ms=1000\n--faster-with=--cpu-threads:" + winner + ":2\n--dump-file=" +
@@ -697,7 +699,7 @@ void calibration_finds_the_win_and_starts_with_it() {
              stored->best_tok_s > stored->baseline_tok_s * 1.5,
          "the faster --cpu-threads " + f.winner + " is kept: " + (stored ? joined(stored->args) : std::string{"(no result)"}));
   const std::string listed = f.launcher->list_json();
-  expect(listed.find("\"calibration\":{\"state\":\"fresh\"") != std::string::npos &&
+  expect(listed.find("\"calibration\":{\"state\":\"fresh\",\"first_start\":true") != std::string::npos &&
              listed.find("\"args\":[\"--cpu-threads\",\"" + f.winner + "\"]") != std::string::npos,
          "the list shows the calibration: " + listed);
   expect(f.events->size() == 1U && f.events->front() == "calibration_finished: " + name + " is calibrated",
@@ -716,7 +718,7 @@ void calibration_finds_the_win_and_starts_with_it() {
          "a start at other options");
   const auto argv = dumped_argv(f.dump);
   expect(std::find(argv.begin(), argv.end(), "--cpu-threads") == argv.end(), "leaves the flag off: " + joined(argv));
-  expect(f.launcher->list_json().find("\"calibration\":{\"state\":\"settings_changed\"") != std::string::npos,
+  expect(f.launcher->list_json().find("\"calibration\":{\"state\":\"settings_changed\",") != std::string::npos,
          "and the card says its settings changed: " + f.launcher->list_json());
 }
 
@@ -767,6 +769,113 @@ void a_calibration_can_be_cancelled() {
   expect(f.launcher->cancel_calibration().has_value(), "nothing left to cancel");
 }
 
+// Owner 2026-10-28 ("when I downloaded minimax and deepseek, I did not see the system calibrate when I ran them"): a
+// MiniMax card (a maya-mm3 pack: its marker and a tokenizer with MiniMax's literals) on the fake engine in Maya's
+// dialect, which logs each --calibrate-prefill run's command line; the out folder's LICENSE beside the engine's folder.
+struct MinimaxFixture final {
+  std::filesystem::path root = secure_frontend_test::make_scratch_directory();
+  std::filesystem::path dump = root / "engine-argv.dump";
+  std::filesystem::path prefill_log = root / "prefill.log";
+  secure_frontend::DataFolder data = secure_frontend::data_folder_layout(root / "data");
+  std::unique_ptr<secure_frontend::ModelLauncher> launcher;
+  const std::string name = "MiniMax-M3.1";
+
+  explicit MinimaxFixture(const std::vector<std::string>& extra_fake_options = {}) {
+    const auto pack = root / "packs" / "minimax";
+    std::filesystem::create_directories(pack / "tokenizer");
+    (void)secure_frontend::write_pack_marker(pack, secure_frontend::kMinimaxModelName);
+    auto vocabulary = test_support::byte_tokenizer();
+    for (const auto& [literal, type] : std::vector<std::pair<std::string, int>>{
+             {"]~!b[", 3}, {"]~b]", 3}, {"[e~[", 3}, {"<mm:think>", 4}, {"</mm:think>", 4}}) {
+      vocabulary.tokens_by_id.push_back(literal);
+      vocabulary.token_types.push_back(type);
+    }
+    for (const auto& [file, bytes] : test_support::tokenizer_pack_files(vocabulary)) secure_frontend_test::write_file(pack / "tokenizer" / file, bytes);
+    std::string text;
+    for (int i = 0; i < 400; ++i) text += "Everyone is permitted to copy and distribute verbatim copies of this license document. ";
+    secure_frontend_test::write_file(root / "LICENSE", text);
+    const auto bin = root / "bin";
+    secure_frontend_test::make_private_directory(bin);
+    const std::filesystem::path fake{STRATA_FAKE_ENGINE_PATH};
+    const auto engine = bin / fake.filename();
+    std::error_code ec;
+    std::filesystem::copy_file(fake, engine, ec);
+    std::string fake_options = "--dialect=maya\n--tokens=8\n--token-ids=" + std::to_string(test_support::token_id(vocabulary, "a")) +
+                               "\n--dump-file=" + secure_frontend::path_to_utf8(dump) + "\n--prefill-log=" +
+                               secure_frontend::path_to_utf8(prefill_log) + "\n";
+    for (const auto& option : extra_fake_options) fake_options += option + "\n";
+    secure_frontend_test::write_file(bin / "fake-engine.options", fake_options);
+    (void)secure_frontend::ensure_data_folder(data, engine);
+    const auto main = std::get<secure_frontend::FrontendConfigDraft>(
+        secure_frontend::parse_config_text(secure_frontend_test::read_file(data.config_file), data.root));
+    const auto made = secure_frontend::card_for_pack(
+        {.family = secure_frontend::PackedFamily::minimax, .name = name, .engine = engine, .source = "download:mm", .pack = pack});
+    auto parsed = secure_frontend::parse_model_card(made.json, data.root);
+    secure_frontend::LauncherSettings settings{.main = main, .cards = {}, .operator_cards = 0U};
+    settings.calibration_dir = data.state / "calibration";
+    settings.log = [](std::string_view) {};
+    launcher = std::make_unique<secure_frontend::ModelLauncher>(std::move(settings));
+    expect(std::holds_alternative<secure_frontend::ModelCard>(parsed) && launcher->add_card(std::get<secure_frontend::ModelCard>(std::move(parsed))),
+           "the MiniMax card is added");
+  }
+  ~MinimaxFixture() { launcher->shutdown(); }
+  MinimaxFixture(const MinimaxFixture&) = delete;
+  MinimaxFixture& operator=(const MinimaxFixture&) = delete;
+  [[nodiscard]] std::filesystem::path calibration(const std::string& file) const { return data.state / "calibration" / file; }
+  [[nodiscard]] std::vector<std::string> prefill_runs() const {
+    std::vector<std::string> lines;
+    std::istringstream in(std::filesystem::exists(prefill_log) ? secure_frontend_test::read_file(prefill_log) : std::string{});
+    for (std::string line; std::getline(in, line);) {
+      if (!line.empty()) lines.push_back(line);
+    }
+    return lines;
+  }
+  [[nodiscard]] bool start_and_stop() {
+    const bool started = !launcher->start(name, nullptr, false).has_value() && launcher->wait_until_settled(std::chrono::seconds(120)) &&
+                         launcher->state_of(name) == secure_frontend::CardState::running;
+    (void)launcher->stop(false);
+    return launcher->wait_until_settled(std::chrono::seconds(60)) && started;
+  }
+};
+
+// Maya's start of a MiniMax config without a prefill calibration (needs_prefill_calibration) measures it once: the
+// engine's own --calibrate-prefill over the out folder's LICENSE as token ids, no --serve; the record is kept, the card
+// then runs, and a later start does not measure again. The thread sweep is not run unasked (a large model's).
+void a_minimax_card_measures_its_prompt_reading_first() {
+  MinimaxFixture f;
+  expect(f.start_and_stop(), "the first start ends with the card running");
+  const auto runs = f.prefill_runs();
+  const std::string out = secure_frontend::path_to_utf8(f.calibration(f.name + ".prefill-out.json"));
+  const std::string ids = secure_frontend::path_to_utf8(f.calibration(f.name + ".prefill-ids.txt"));
+  expect(runs.size() == 1U && runs[0].find("--calibrate-prefill " + out) != std::string::npos &&
+             runs[0].find("--ids @" + ids) != std::string::npos && runs[0].find("--serve") == std::string::npos,
+         "one run of the engine's own measurement, over the text's tokens, not serving: " + (runs.empty() ? std::string{} : runs[0]));
+  const auto record = secure_frontend::parse_prefill(secure_frontend_test::read_file(f.calibration(f.name + ".prefill.json")));
+  expect(record.has_value() && record->finished && record->chunk == 2048 && record->gemm == "blas" && record->tok_s == 950.5,
+         "the engine's choice is recorded");
+  expect(!std::filesystem::exists(f.calibration(f.name + ".prefill-out.json")) && !std::filesystem::exists(f.calibration(f.name + ".prefill-ids.txt")),
+         "its scratch files are gone");
+  expect(!std::filesystem::exists(f.calibration(f.name + ".json")), "no thread sweep ran unasked");
+  const auto argv = dumped_argv(f.dump);
+  expect(std::find(argv.begin(), argv.end(), "--calibrate-prefill") == argv.end(), "the start itself serves: " + joined(argv));
+  expect(f.launcher->list_json().find("\"calibration\":{\"state\":\"missing\",\"first_start\":false") != std::string::npos,
+         "a large model's card does not calibrate before its first start: " + f.launcher->list_json());
+  expect(f.launcher->list_json().find("\"prefill\":{\"state\":\"done\",\"chunk\":2048,\"gemm\":\"blas\"") != std::string::npos,
+         "the list shows it: " + f.launcher->list_json());
+  expect(f.start_and_stop() && f.prefill_runs().size() == 1U, "a later start does not measure again");
+}
+
+// An engine that stops before it finishes: the start goes on (the engine's defaults), the record says so, and only
+// Calibrate measures again (Maya: "a failed one is not tried again by itself").
+void a_failed_prefill_calibration_is_not_retried_by_itself() {
+  MinimaxFixture f({"--prefill-fail"});
+  expect(f.start_and_stop(), "the card still runs");
+  const auto record = secure_frontend::parse_prefill(secure_frontend_test::read_file(f.calibration(f.name + ".prefill.json")));
+  expect(record.has_value() && !record->finished, "the record says it did not finish");
+  expect(f.launcher->list_json().find("\"prefill\":{\"state\":\"failed\"") != std::string::npos, "the list shows it");
+  expect(f.start_and_stop() && f.prefill_runs().size() == 1U, "the next start does not try again: " + std::to_string(f.prefill_runs().size()));
+}
+
 // §4.5: a page card removed (the danger zone's delete) takes its calibration and its switch with it, so a later card
 // of the same name starts uncalibrated.
 void removing_a_card_removes_its_calibration() {
@@ -781,7 +890,7 @@ void removing_a_card_removes_its_calibration() {
   expect(!std::filesystem::exists(f.result_file(name)), "and its calibration with it");
   expect(held.has_value() && f.launcher->add_card(held->card), "the name is added again");
   const std::string listed = f.launcher->list_json();
-  expect(listed.find("\"calibration\":{\"state\":\"missing\"") != std::string::npos &&
+  expect(listed.find("\"calibration\":{\"state\":\"missing\",") != std::string::npos &&
              listed.find("\"auto\":true") == std::string::npos,
          "uncalibrated, without the old switch: " + listed);
 }
@@ -966,6 +1075,8 @@ int main(int argc, char** argv) {
       {"a_qwen36_card_reads_its_tokenizer_from_the_gguf", a_qwen36_card_reads_its_tokenizer_from_the_gguf},
       {"calibration_finds_the_win_and_starts_with_it", calibration_finds_the_win_and_starts_with_it},
       {"a_first_start_calibrates_first", a_first_start_calibrates_first},
+      {"a_minimax_card_measures_its_prompt_reading_first", a_minimax_card_measures_its_prompt_reading_first},
+      {"a_failed_prefill_calibration_is_not_retried_by_itself", a_failed_prefill_calibration_is_not_retried_by_itself},
       {"a_calibration_can_be_cancelled", a_calibration_can_be_cancelled},
       {"removing_a_card_removes_its_calibration", removing_a_card_removes_its_calibration},
       {"failures_raise_alerts", failures_raise_alerts},

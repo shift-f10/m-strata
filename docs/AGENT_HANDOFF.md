@@ -280,6 +280,60 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z10 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+The owner: "Yes: build the MiniMax first-start prefill calibration and the DeepSeek/MiniMax CPU-thread tuning, as Maya
+does", then "make sure every model we have have the tuning and calibration option as well".
+
+- **Every profile has a sweep** (`sweep_plan(profile, SweepMachine{logical, physical})`), each with its reference
+  tool's steps and candidate values:
+  - qwen: upstream's `tools/calibrate.py`;
+  - glm53 and raon1: Maya's `calibrate_glm.py`;
+  - deepseek and minimax: Maya's `calibrate_ds4_tp.py` and `tools/mm3/calibrate.py`;
+  - flint and gemma4: as before.
+
+  The values follow Python's rounding, and the engines' own CPU counts come from their sources (`physical_cores()`,
+  new: `GetLogicalProcessorInformationEx` on Windows, `/sys` topology elsewhere). The spec's §5.1 table lists them.
+- **The sweep** (`run_sweep`) gains:
+  - joint steps (the expert tier's three flags);
+  - per-step answer lengths (`max_tokens`): the best so far is measured again on the step's answers, and the
+    confirmation uses the winner's longest;
+  - a step floor (`stop_below`: Maya's `STOP_BELOW`, and "stops at the first that gains nothing");
+  - a per-profile keep margin (5% for deepseek and minimax, Maya's `MIN_GAIN`).
+
+  `SweepMeasure` takes the answers' length. `apply_calibration` (calibration.cpp) puts flags into `engine.args` and
+  rows into the draft; the card's own flag or row stays.
+- **GLM rows**: `glm.pcie_share` (0-1) and `glm.cpu_lane` (1-64) are typed and rendered by `glm_environment_knobs` as
+  `STRATA_GLM_PCIE_SHARE` / `STRATA_GLM_CPU_LANE` (the engine reads both, `glm_fast_path.cu`). The README's config
+  table is regenerated.
+- **First starts**: only flint and gemma4 calibrate before a page card's first start (`calibrates_before_first_start`).
+  The others' sweeps are many starts of a large model, so they run from Calibrate, as upstream and Maya do. The page
+  says which (`calibration.first_start`).
+- **MiniMax's prefill calibration** (`run_prefill_calibration`), as Maya's `calibrate_mm3_prefill.py`:
+  - before a MiniMax card's first start on this machine (no record, or a stale one), and first in each Calibrate,
+    the card's composed engine runs once without `--serve` and without the prefill flags, with `--calibrate-prefill
+    <calibration>/<card>.prefill-out.json --ids @<card>.prefill-ids.txt`;
+  - the ids are about 4096 tokens of the out folder's `LICENSE` as one message through MiniMax's template, thinking
+    off;
+  - the engine keeps its choice in the pack's `prefill-tune.txt`, and `<card>.prefill.json` records the run (or that
+    it did not finish: not retried by itself).
+
+  The card's calibration JSON gains `prefill`; the page shows the prompt reading.
+- **Tests**:
+  - calibration: 12 cases (5 new);
+  - launcher: `a_minimax_card_measures_its_prompt_reading_first` and
+    `a_failed_prefill_calibration_is_not_retried_by_itself`, with a MiniMax pack on disk and the fake engine's new
+    `--calibrate-prefill` / `--prefill-log` / `--prefill-fail`;
+  - typed config: `glm_cpu_lane_rows_project_when_set`;
+  - page: `web_ui_models_tab_calibrates`.
+
+  RED shown for each behaviour: the new steps, the floor, joint flags, rows, the file's values, the prefill trigger,
+  the first-start rule and the page's words. 187/187 over the affected suites. Full suite: ON 1313/1316 and OFF 1284/1286, the known three (two release-only and
+  `idle_unload_respawns_before_the_next_request`) only.
+- **Not built** (spec §5.1): DeepSeek's `--tp` on several GPUs, the DSpark drafter's speed calibration (the owner's
+  packs carry no drafter), upstream's `--prefill-pipe` and AMD stream switch, Maya's GLM `READ_CHUNKS`, the
+  hybrid-CPU extra counts. Not run on the GPU at this commit.
+
 ### Claude Code session, 2026-10-28 z9 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 - **MiniMax's real pack** (the owner's `minimax-m3.1-flash-maya-s`, downloaded and packed by him) failed the real-pack

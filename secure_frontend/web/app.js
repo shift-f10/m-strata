@@ -1244,6 +1244,9 @@
   var CAL_STATES = { missing: ["", "Not calibrated"], fresh: ["st-badge--generating", "Calibrated"],
                      stale: ["st-badge--error", "Out of date"], settings_changed: ["st-badge--queued", "Settings changed"] };
   function calibrationText(card, cal) {
+    if (cal.running && cal.running.stage === "prompt reading") {
+      return "Measuring how this PC reads prompts (one start of the engine, a few minutes); the chat is unavailable meanwhile.";
+    }
     if (cal.running) {
       var run = cal.running;
       return "Measuring the engine's settings: trial " + run.trial + " of " + run.trials + (run.stage ? " (" + run.stage + ")" : "") +
@@ -1260,9 +1263,29 @@
       return "These options differ from the ones it was calibrated at, so it is not used at them: recalibrate" +
              (found ? " (it found " + found + ")" : "") + ".";
     }
-    return card.page_card === true
-      ? "Not calibrated yet: the first start measures this PC's fastest engine settings first (a few minutes), then serves."
-      : "Not calibrated: Calibrate measures this PC's fastest engine settings for this model (a few minutes).";
+    // (the engines whose sweep is a few short starts calibrate before a page card's first start; a large model's when asked)
+    if (card.page_card === true && cal.first_start === true) {
+      return "Not calibrated yet: the first start measures this PC's fastest engine settings first (a few minutes), then serves.";
+    }
+    return "Not calibrated: Calibrate measures this PC's fastest engine settings for this model, each candidate one start of " +
+           "the engine (" + (cal.first_start === true ? "a few minutes" : "for a large model an hour or more") + ").";
+  }
+  // MiniMax: the prefill calibration (how this PC reads prompts), which the engine keeps in the model's pack
+  function prefillText(card, p) {
+    if (!p) {
+      return card.page_card === true
+        ? "Prompt reading: the first start measures how this PC reads prompts first (a few minutes)."
+        : "Prompt reading: not measured yet; Calibrate measures it.";
+    }
+    if (p.state === "failed") {
+      return "Prompt reading: the last measurement did not finish, so the engine reads prompts with its defaults; Calibrate measures again.";
+    }
+    if (p.state === "stale") {
+      return "Prompt reading: this PC, the engine or the model changed since it was measured; the next start measures it again.";
+    }
+    return "Prompt reading" + (p.date ? " (" + String(p.date).slice(0, 10) + ")" : "") + ": chunks of " + p.chunk + " tokens, " +
+           (p.gemm === "hipblaslt" ? "hipBLASLt" : "BLAS") + " matrix products, " + fmt(p.tok_s, 0) + " tok/s (the engine's defaults " +
+           fmt(p.default_tok_s, 0) + " tok/s).";
   }
   function renderCalibration(card, starting) {
     var cal = card.calibration && typeof card.calibration === "object" ? card.calibration : null;
@@ -1273,6 +1296,9 @@
     clear(box);
     box.appendChild(el("span", "st-badge " + badge[0], cal.running ? "Calibrating" : badge[1]));
     $("model-calibration-text").textContent = calibrationText(card, cal);
+    var prefill = $("model-calibration-prefill");
+    prefill.hidden = !("prefill" in cal);
+    prefill.textContent = "prefill" in cal ? prefillText(card, cal.prefill) : "";
     var run = cal.running;
     $("model-calibration-progress").hidden = !run;
     $("model-calibration-bar").style.width = run && run.trials ? Math.min(100, (100 * run.trial) / run.trials) + "%" : "0%";

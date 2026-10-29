@@ -307,11 +307,27 @@ flags (`--expert`, `--models-root`, `--engine`, `--model-id`, `--profile`, `--to
   The prompt is DeepSeek's own encoder's; a request's `reasoning_effort` sets its effort line (low 50, medium and high
   75), `none` is chat mode.
 - Each page card shows its **folder**. After moving the files, change it there and the card follows at the next start.
-- **Calibrate** sweeps the engine settings that depend on this PC (flint: `--cpu-lane`, `--pcie-frac`,
-  `--cpu-threads`; Gemma 4: `--cpu-threads`). Each candidate is one engine start, scored by the median decode speed;
-  a setting is kept only when more than 3% faster. The result applies at each start until the GPU, CPU, RAM, engine,
-  model file or the card's settings change. A card that was never calibrated calibrates on its first start; "Recalibrate
-  when settings change" does the same after a settings change.
+- **Calibrate** sweeps the engine settings that depend on this PC, every profile with its reference tool's steps:
+
+  | Profile | Swept | As |
+  |---|---|---|
+  | flint | `--cpu-lane` {off, on}, `--pcie-frac` {0, .25, .5, .75}, `--cpu-threads` {N, 2N/3, N/2} | ours |
+  | gemma4 | `--cpu-threads` {N, 2N/3, N/2} | ours |
+  | qwen | `--pcie-frac` {0, .2, .35, .55, .75, .9, 1}, `--spec-min-p` {.3, .5, .7}, `--pool-workers` {2/3, 1/2, 1/4 of the engine's own}, then the expert tier `--adapt-every 1 --adapt-swaps 80` or `160` `--adapt-decay 0.97` on 512-token answers | upstream's `tools/calibrate.py` |
+  | glm53, raon1 | `glm.pcie_share` {0, .1, .25, .5, .75}, then `glm.cpu_lane` {3/4, 2/3, 1/2, 1/4 of the engine's own}, a step ending below 70% of its best | Maya's `calibrate_glm.py` (the GLM engine's environment) |
+  | deepseek, minimax | `--cpu-threads` {3/4, 1/2 of the physical cores; 2 and 4 fewer first without SMT}, the step ending at the first that gains nothing, a 5% margin | Maya's `calibrate_ds4_tp.py` and `tools/mm3/calibrate.py` |
+
+  N is the CPU's threads; the engines' own counts are the physical cores (Qwen's less the host thread). Each candidate
+  is one engine start, scored by the median decode speed; a setting is kept only when more than 3% faster (5% for
+  DeepSeek and MiniMax) and when the confirmation repeats it. The result applies at each start until the GPU, CPU, RAM,
+  engine, model file or the card's settings change. A flint or Gemma 4 card that was never calibrated calibrates on its
+  first start; the other profiles calibrate when asked (each candidate a start of a large model), as upstream and Maya
+  do. "Recalibrate when settings change" calibrates before a start at changed settings.
+- **MiniMax's prompt reading** (Maya's `tools/calibrate_mm3_prefill.py`): before a MiniMax card's first start on this
+  PC, and with each Calibrate, the engine measures the prompt chunk and the matrix library itself (`--calibrate-prefill`,
+  over about 4K tokens of the out folder's `LICENSE` through MiniMax's template) and keeps the fastest in the pack's
+  `prefill-tune.txt`, which every start reads. The card shows the result; one that did not finish is not retried by
+  itself (Calibrate measures again).
 - **Danger zone**, for a page card that is not running: a one-time code to type back, the API key again, then a final
   confirmation that the delete is permanent. The server checks all three and deletes only that model's files (and a
   download's store entry), the card and its calibration.
@@ -605,6 +621,8 @@ Every key (generated from the schema; `readme_config_table_matches_schema` keeps
 | `glm.max_context` | integer | `32768` | 1-1048576 | - | GLM context length in tokens the engine is started with (Maya's default 32768). |
 | `glm.kv` | string | `fp16` | - | - | KV cache precision the GLM engine starts with: fp16 (default; raon1 keeps its exact F32 cache), int8, or q8_0 / q4_0 (raon1's quantized cache). |
 | `glm.ram_headroom_gb` | integer | `16` | 6-1024 | - | Gigabytes of RAM the GLM engine leaves free when sizing its pinned tier (6-1024; default 16). |
+| `glm.pcie_share` | number | unset | 0-1 | - | Share (0-1) of a route's RAM-tier experts the GLM engine copies over PCIe instead of computing them on its CPU lane (STRATA_GLM_PCIE_SHARE); unset: the engine times one expert each way and splits by that. |
+| `glm.cpu_lane` | integer | unset | 1-64 | - | CPU threads of the GLM engine's CPU lane (1-64, STRATA_GLM_CPU_LANE); unset: the physical cores. |
 | `glm.idle_unload_s` | integer | `0` | 0-86400 | - | Seconds a GLM engine idles unloaded before it gives back the memory (0 = never; under glm53 this wins over engine.idle_unload_s). |
 | `models.cards` | string array | `[]` | - | - | Absolute paths of model card files (at most 16): the page's Models tab starts and stops them. Each card holds its model's engine.*, model.aliases, roots.models, roots.tokenizer_pack, defaults.sampling.*, reasoning.* and limits.chat token rows, which the main config then may not set. |
 | `models.start` | string | unset | - | - | The card (by name) started at boot; unset: the server boots with no engine and waits for the page. Needs models.cards. |

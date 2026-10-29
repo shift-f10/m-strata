@@ -51,8 +51,17 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   time, and Stop gives its GPU and RAM back.
 - **GPUs:** on a PC with several GPUs, each card has a box per GPU (as nvidia-smi numbers them); none ticked is the
   first GPU. About lists this PC's GPUs.
-- **Calibrate** tunes the settings that depend on this PC by timing real engine starts, once per card (today flint's
-  CPU expert lane, PCIe share and CPU threads, and Gemma 4's CPU threads; the other engines tune themselves).
+- **Calibrate** tunes the settings that depend on this PC by timing real engine starts, once per card, on every model,
+  each with its reference tool's steps:
+  - Qwen: upstream Strata's `tools/calibrate.py` (the PCIe share, the draft floor, the CPU pool workers, the adaptive
+    expert tier);
+  - GLM-5.3 and raon1: Project Maya's `calibrate_glm.py` (the PCIe share and the CPU lane's threads);
+  - DeepSeek-V4.1 and MiniMax-M3.1: Maya's CPU-thread step;
+  - flint and Gemma 4: their engines' CPU lane, PCIe share and threads.
+
+  flint and Gemma 4 calibrate before a new card's first start (a few short starts). The large models calibrate when you
+  press Calibrate, as upstream and Maya do: each candidate is a start of the model, so it can take an hour or more.
+  MiniMax also measures how this PC reads prompts once, before its first start, as Maya does (a few minutes).
 - **Add a model** from files already on this PC (a folder and its `.gguf`); the pack is built when the family needs one.
   A Qwen model whose folder holds its picture encoder (one `mmproj*.gguf`) gets a card that reads pictures, with a
   **Pictures** option (GPU, CPU or off).
@@ -431,8 +440,8 @@ On the page, open **Models**:
   (`pull.connections`, 1-32; 1 is one stream). A Qwen entry's **Vision files** box also fetches its picture encoder.
   When it is verified, it is packed if needed and appears as a card.
 - **Start a model** starts and stops a card, with its options (context length, cache format, thinking, sampling).
-  **Calibrate** tunes the engine settings that depend on this PC, once per card; it reruns after a settings change if
-  you ask it to.
+  **Calibrate** tunes the engine settings that depend on this PC, once per card, for every model; it reruns after a
+  settings change if you ask it to.
 - A model folder must normally be private (other users of the PC cannot change it); the page offers to make it so -
   a folder of model files, with the packs its tools put beside them (`pack/`, `maya-ds4/`, `maya-mm3/`) and Hugging Face's
   `.cache/`. If you would rather use folders as they are, see Model folders below.

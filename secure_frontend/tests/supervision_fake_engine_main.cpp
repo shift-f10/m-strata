@@ -110,6 +110,10 @@ struct Options final {
   std::string grandchild_pidfile;
   bool echo_cmdline{false};
   std::string dump_file;
+  // MiniMax's prefill calibration (maya-mm3 --calibrate-prefill OUT): each such run appends its command line here;
+  // --prefill-fail makes it exit 1 without writing OUT
+  std::string prefill_log;
+  bool prefill_fail{false};
   std::optional<int> write_inherited;
 };
 
@@ -188,6 +192,8 @@ Options parse_options(const std::vector<std::string>& arguments) {
     else if (value_of(argument, "--record-file", value)) options.record_file = value;
     else if (value_of(argument, "--grandchild-pidfile", value)) options.grandchild_pidfile = value;
     else if (value_of(argument, "--dump-file", value)) options.dump_file = value;
+    else if (value_of(argument, "--prefill-log", value)) options.prefill_log = value;
+    else if (argument == "--prefill-fail") options.prefill_fail = true;
     else if (value_of(argument, "--write-inherited", value)) options.write_inherited = std::stoi(value);
     else if (value_of(argument, "--slow-stdin", value)) options.slow_stdin_bytes = std::max(1, std::stoi(value));
     else if (value_of(argument, "--slow-stdin-interval-ms", value)) options.slow_stdin_interval_ms = std::max(1, std::stoi(value));
@@ -686,6 +692,21 @@ int serve(const Options& options) {
   std::cerr << "diagnostic: private engine startup\n" << std::flush;
   if (options.write_inherited && !write_inherited(*options.write_inherited)) return 3;
   if (!options.dump_file.empty()) write_dump_file(options.dump_file);
+  // maya-mm3 --calibrate-prefill OUT (mm3_main.cpp calibrate_prefill): its JSON in OUT, a calibration line on stderr, exit 0
+  for (std::size_t i = 0; i + 1U < options.command_line.size(); ++i) {
+    if (options.command_line[i] != "--calibrate-prefill") continue;
+    if (!options.prefill_log.empty()) {
+      std::ofstream log(options.prefill_log, std::ios::app | std::ios::binary);
+      for (std::size_t j = 0; j < options.command_line.size(); ++j) log << (j == 0U ? "" : " ") << options.command_line[j];
+      log << '\n';
+    }
+    if (options.prefill_fail) return 1;
+    std::ofstream out(options.command_line[i + 1U], std::ios::binary | std::ios::trunc);
+    out << R"({"key": "fake", "file": "prefill-tune.txt", "chunk": 2048, "gemm": "blas", "tok_s": 950.5, "default_tok_s": 900.0, )"
+           R"("tokens": 4096, "all_resident": false, "lt_available": false, "seconds": 1, "trials": []})" << '\n';
+    std::cerr << "calibration: chunk 2048, BLAS GEMMs: 950.5 tok/s (the defaults 900.0) - kept for this PC\n" << std::flush;
+    return 0;
+  }
   if (options.exit_before_ready) return *options.exit_before_ready;
   if (options.hang_before_ready) sleep_forever();
   if (options.echo_cmdline) echo_cmdline();

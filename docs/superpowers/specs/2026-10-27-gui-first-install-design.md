@@ -252,14 +252,31 @@ Settings swept per engine (each start reads its flags once, so one start per can
 |---|---|---|
 | flint (ours) | `--cpu-lane` {off, on}, `--pcie-frac` {0, .25, .5, .75}, `--cpu-threads` {N, 2N/3, N/2} (N = the machine's threads) | pcie share, CPU threads |
 | gemma4 (ours) | `--cpu-threads` {N, 2N/3, N/2} | CPU threads |
-| qwen (upstream Strata) | later: `--pcie-frac`, `--spec-min-p`, `--pool-workers`, `--adapt-every/-swaps/-decay` with upstream's candidate values | `tools/calibrate.py` steps 1-5 |
-| raon1, glm53 (Maya) | later: Maya's GLM sweep over the glm environment allowlist | `calibrate_glm.py` |
+| qwen (upstream Strata) | `--pcie-frac` {0, .2, .35, .55, .75, .9, 1}, `--spec-min-p` {.3, .5, .7}, `--pool-workers` {2/3, 1/2, 1/4 of the engine's own: the physical cores less the host's}, then `--adapt-every 1 --adapt-swaps {80, 160} --adapt-decay .97` on 512-token answers | `tools/calibrate.py` steps 1, 2, 4, 5 |
+| raon1, glm53 (Maya) | `glm.pcie_share` {0, .1, .25, .5, .75}, then `glm.cpu_lane` {3/4, 2/3, 1/2, 1/4 of the engine's own}, each step ending below 70% of its best | `calibrate_glm.py` steps 1-2 |
+| deepseek, minimax (Maya) | `--cpu-threads` {3/4, 1/2 of the physical cores; 2 and 4 fewer first on a CPU without SMT}, the step ending at the first that gains nothing; a 5% keep margin | `calibrate_ds4_tp.py`, `tools/mm3/calibrate.py` |
 
 Built (phase 4, 2026-10-27): the flint and gemma4 sweeps above (`src/calibration.cpp`, `sweep_plan` and `run_sweep`):
 the baseline first, then coordinate descent over the flags in the table's order with the 3% keep margin, failed
 candidates dropped, then two interleaved confirmation rounds (defaults, winner, defaults, winner); the winner keeps its
-place only when it repeats. Cancel is checked before and after each trial. A card of any other profile answers
-`calibration_unsupported`. **Not built yet:** the expert usage profile (the workload run once with
+place only when it repeats. Cancel is checked before and after each trial.
+
+Built (2026-10-28; owner: "make sure every model we have have the tuning and calibration option as well"): the qwen,
+glm53, raon1, deepseek and minimax sweeps above.
+- A step may set several flags at once (the expert tier's three), may measure on longer answers (the best so far is
+  measured again on them first, and the confirmation uses them), and may end early (Maya's `STOP_BELOW`).
+- The GLM settings are two typed rows, `glm.pcie_share` and `glm.cpu_lane`, which the launch renders as the engine's
+  `STRATA_GLM_PCIE_SHARE` / `STRATA_GLM_CPU_LANE`, as Maya's calibration writes them into a config's environment.
+- MiniMax also gets Maya's prefill calibration (`calibrate_mm3_prefill.py`, the engine's own `--calibrate-prefill`):
+  - it runs before a MiniMax card's first start on this machine and with each Calibrate;
+  - it is recorded as `<card>.prefill.json` and shown on the card;
+  - one that did not finish is not retried by itself.
+- Not built:
+  - DeepSeek's `--tp` on several GPUs (this PC has one; the launch gives `--tp` by the GPU count);
+  - the DSpark drafter's speed calibration (the owner's packs carry no drafter);
+  - upstream's `--prefill-pipe` (a layer split) and its AMD stream switch;
+  - Maya's GLM `READ_CHUNKS` (only when part of the model is read from the SSD);
+  - the hybrid-CPU extra counts. **Not built yet:** the expert usage profile (the workload run once with
 `--expert-profile-save`, used at start with `--expert-profile`, the Strata paper's VRAM cache filled from use); the
 upstream and Maya sweeps.
 
@@ -271,9 +288,12 @@ modification time, and the card's options that change the measurement (context, 
 the launcher composes the kept settings after the card's own arguments (frontend-owned values, each still checked
 against the profile's allowlist; the usage-profile path is frontend-owned and lives in `<roots.state>/calibration`).
 
-- **Never calibrated** (a new card, from a download or from "Add a model"): the first start calibrates first, then
-  serves with the result (owner, 2026-10-27: "running it for the first time after downloaded must run the required
-  calibration"); the page shows the calibration's progress in the card while it runs.
+- **Never calibrated** (a new card, from a download or from "Add a model"): a flint or Gemma 4 card's first start
+  calibrates first, then serves with the result (owner, 2026-10-27: "running it for the first time after downloaded
+  must run the required calibration"); the page shows the calibration's progress in the card while it runs. The other
+  profiles' sweeps are many starts of a large model (an hour or more), so they run when asked (Calibrate), as
+  upstream's and Maya's do; MiniMax's first start runs Maya's prefill calibration (a few minutes), which Maya also runs
+  unasked.
 - **Hard stale** (GPU, CPU, RAM, engine or model file changed): not applied; the card shows "Calibrate again".
 - **Settings changed** (an option in the key differs from the start's options): not applied; the card shows
   "Settings changed - recalibrate". The card's "Recalibrate when settings change" switch (saved with the card's

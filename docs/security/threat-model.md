@@ -672,11 +672,22 @@ asks quoted there.
   store entry then goes through the store's own `strata rm <id>:download` child (its lock, its
   index, the version folder inside the store), never a path from the page.
 - **Calibration** starts the card's own engine with candidate values of a fixed per-profile
-  list of allowlisted flags (`--cpu-lane`, `--pcie-frac`, `--cpu-threads`); nothing comes from
-  the page but the card's name and its typed options. It runs on the launcher's single job
-  thread, so it is never concurrent with a start or a stop. Results are owner-only files in
-  `<roots.state>/calibration`. A result read back is checked value by value against the same
-  list before it is composed at a start.
+  list (2026-10-28, every profile): the flags `--cpu-lane`, `--pcie-frac`, `--cpu-threads`,
+  `--spec-min-p`, `--pool-workers`, `--adapt-every`, `--adapt-swaps` and `--adapt-decay`, and the
+  GLM rows `glm.pcie_share` and `glm.cpu_lane`, typed config rows (0-1, 1-64) rendered only onto
+  the closed child-environment allowlist's `STRATA_GLM_PCIE_SHARE` / `STRATA_GLM_CPU_LANE`.
+  Nothing comes from the page but the card's name and its typed options. It runs on the
+  launcher's single job thread, so it is never concurrent with a start or a stop. Results are
+  owner-only files in `<roots.state>/calibration`. A result read back is checked value by value
+  against the same list before it is composed at a start, and then still passes the profile's
+  argument allowlist and the config validator.
+- **MiniMax's prefill calibration** runs the card's composed engine once more, on the same job
+  thread, without `--serve` and with two frontend-owned flags only, `--calibrate-prefill` and
+  `--ids @<file>`. Both paths are files the server names under `<roots.state>/calibration`
+  (owner-only, removed after the run). The ids come from the out folder's `LICENSE` through the
+  card's tokenizer. Its kill on cancel and its hour bound are the supervisor's job-object kill,
+  and its result is read as bounded strict JSON. The engine writes its own `prefill-tune.txt`
+  into the card's pack folder (the model folder the page already owns), as Maya's engine does.
 - **Email alerts (built only with `SECURE_FRONTEND_EMAIL_ALERTS`).** The server's only
   outbound connection, to the configured SMTP host and port, made only when
   `alerts.email.enabled`. TLS is mandatory (implicit TLS on 465, or STARTTLS on 587 required

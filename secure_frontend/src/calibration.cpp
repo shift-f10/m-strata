@@ -8,11 +8,16 @@
 #include <chrono>
 #include <cmath>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
+#include <string>
 #include <system_error>
 #include <thread>
 #include <utility>
+#include <variant>
+#include <vector>
 
 #if defined(_WIN32)
 #include "secure_frontend/win32_prelude.hpp"
@@ -46,32 +51,89 @@ double median(std::vector<double> values) {
   return n % 2U == 1U ? values[n / 2U] : (values[n / 2U - 1U] + values[n / 2U]) / 2.0;
 }
 
+// The chosen candidates as engine settings, in the plan's order; a joint step's flags each with its own value.
 std::vector<std::string> arguments_of(const std::vector<SweepStep>& plan, const std::map<std::string, std::string>& chosen) {
   std::vector<std::string> args;
   for (const auto& step : plan) {
-    if (const auto found = chosen.find(step.flag); found != chosen.end()) {
+    const auto found = chosen.find(step.flag);
+    if (found == chosen.end()) continue;
+    if (step.joint.empty()) {
       args.push_back(step.flag);
       args.push_back(found->second);
+      continue;
+    }
+    std::vector<std::string> flags{step.flag};
+    flags.insert(flags.end(), step.joint.begin(), step.joint.end());
+    std::size_t at = 0;
+    for (const auto& flag : flags) {
+      const std::size_t space = found->second.find(' ', at);
+      args.push_back(flag);
+      args.push_back(found->second.substr(at, space == std::string::npos ? std::string::npos : space - at));
+      if (space == std::string::npos) break;
+      at = space + 1U;
     }
   }
   return args;
 }
 
-bool all_digits(const std::string_view text) {
-  return !text.empty() && text.size() <= 3U && std::all_of(text.begin(), text.end(), [](const char c) { return c >= '0' && c <= '9'; });
+// Python's round (half to even), as upstream's and Maya's candidates are computed.
+int python_round(const double value) { return static_cast<int>(std::nearbyint(value)); }
+
+// Counts below the engine's own: `first`, then each share of it, at least 2, without repeats, in that order.
+std::vector<int> fewer(const int own, const std::vector<double>& shares, const std::vector<int>& first = {}) {
+  std::vector<int> out;
+  const auto add = [&out, own](const int count) {
+    if (count >= 2 && count < own && std::find(out.begin(), out.end(), count) == out.end()) out.push_back(count);
+  };
+  for (const int count : first) add(count);
+  for (const double share : shares) add(python_round(own * share));
+  return out;
 }
 
-// The sweep's own flags with the values the engine takes (engine_arguments.cpp's bounds).
+std::vector<std::string> texts_of(std::vector<int> counts, const bool descending) {
+  if (descending) std::sort(counts.begin(), counts.end(), std::greater<>{});
+  std::vector<std::string> out;
+  for (const int count : counts) out.push_back(std::to_string(count));
+  return out;
+}
+
+// A whole number lo..hi in decimal, without a sign or leading zeros.
+bool count_in(const std::string_view text, const int lo, const int hi) {
+  if (text.empty() || text.size() > 5U || text.front() == '0' ||
+      !std::all_of(text.begin(), text.end(), [](const char c) { return c >= '0' && c <= '9'; })) {
+    return false;
+  }
+  int n = 0;
+  std::from_chars(text.data(), text.data() + text.size(), n);
+  return n >= lo && n <= hi;
+}
+
+// A share 0-1 with at most three decimals ("0", "1", "0.35", "1.0").
+bool fraction(const std::string_view text) {
+  if (text == "0" || text == "1") return true;
+  if (text.size() < 3U || text.size() > 5U || text[1] != '.' || (text[0] != '0' && text[0] != '1')) return false;
+  const std::string_view decimals = text.substr(2U);
+  if (!std::all_of(decimals.begin(), decimals.end(), [](const char c) { return c >= '0' && c <= '9'; })) return false;
+  return text[0] == '0' || std::all_of(decimals.begin(), decimals.end(), [](const char c) { return c == '0'; });
+}
+
+// The sweeps' own settings with the values their engines take (engine_arguments.cpp's bounds; the GLM engine's lane at
+// most 64 threads, glm_fast_path.cu).
 bool valid_pair(const std::string_view flag, const std::string_view value) {
   if (flag == "--cpu-lane") return value == "on" || value == "off";
-  if (flag == "--pcie-frac") return value == "0" || value == "0.25" || value == "0.5" || value == "0.75" || value == "1";
-  if (flag == "--cpu-threads") {
-    if (!all_digits(value) || value.front() == '0') return false;
-    int n = 0;
-    std::from_chars(value.data(), value.data() + value.size(), n);
-    return n >= 1 && n <= 256;
-  }
+  if (flag == "--pcie-frac" || flag == "--spec-min-p" || flag == "--adapt-decay" || flag == "glm.pcie_share") return fraction(value);
+  if (flag == "--cpu-threads" || flag == "--pool-workers") return count_in(value, 1, 256);
+  if (flag == "--adapt-every" || flag == "--adapt-swaps") return count_in(value, 1, 4096);
+  if (flag == "glm.cpu_lane") return count_in(value, 1, 64);
   return false;
+}
+
+// The card config rows a sweep sets (the GLM engine's environment rows), and their kind.
+enum class RowKind { none, decimal, integer };
+RowKind row_kind(const std::string_view row) {
+  if (row == "glm.pcie_share") return RowKind::decimal;
+  if (row == "glm.cpu_lane") return RowKind::integer;
+  return RowKind::none;
 }
 
 const JsonValue* member(const JsonValue& object, const std::string_view key) {
@@ -92,8 +154,10 @@ std::optional<double> number(const JsonValue* value) {
 
 }  // namespace
 
-std::vector<SweepStep> sweep_plan(const EngineProfile profile, const unsigned logical_cores) {
-  const unsigned cores = std::max(1U, logical_cores);
+std::vector<SweepStep> sweep_plan(const EngineProfile profile, const SweepMachine& machine) {
+  const unsigned cores = std::max(1U, machine.logical_cores);
+  const int logical = static_cast<int>(cores);
+  const int physical = static_cast<int>(std::clamp(machine.physical_cores, 1U, cores));
   std::vector<std::string> threads;
   for (const unsigned n : {cores, cores * 2U / 3U, cores / 2U}) {
     const std::string text = std::to_string(std::max(1U, n));
@@ -103,32 +167,145 @@ std::vector<SweepStep> sweep_plan(const EngineProfile profile, const unsigned lo
     case EngineProfile::flint:
       return {{"--cpu-lane", {"off", "on"}}, {"--pcie-frac", {"0", "0.25", "0.5", "0.75"}}, {"--cpu-threads", threads}};
     case EngineProfile::gemma4: return {{"--cpu-threads", threads}};
-    case EngineProfile::qwen:
+    case EngineProfile::qwen: {
+      // upstream's tools/calibrate.py: PCIE_FRACS, SPEC_MIN_PS, worker_candidates of the engine's own pool (every
+      // physical core but the host's, generate.cpp --pool-workers 0), ADAPT_CANDIDATES on TIER_MAX_NEW-token answers
+      std::vector<SweepStep> plan{{"--pcie-frac", {"0", "0.2", "0.35", "0.55", "0.75", "0.9", "1"}},
+                                  {"--spec-min-p", {"0.3", "0.5", "0.7"}}};
+      if (auto workers = fewer(physical - 1, {2.0 / 3.0, 0.5, 0.25}); !workers.empty()) {
+        plan.push_back({"--pool-workers", texts_of(std::move(workers), false)});
+      }
+      plan.push_back({"--adapt-every", {"1 80 0.97", "1 160 0.97"}, {"--adapt-swaps", "--adapt-decay"}, 512U});
+      return plan;
+    }
     case EngineProfile::glm53:
+    case EngineProfile::raon1: {
+      // Maya's tools/calibrate_glm.py: PCIE_SHARES, then thread_candidates of the engine's own lane (glm_fast_path.cu:
+      // the physical cores, two thirds of the CPUs where every core is one), each step ending below STOP_BELOW of its best
+      const int lane = physical < logical ? physical : logical * 2 / 3;
+      std::vector<SweepStep> plan{{"glm.pcie_share", {"0", "0.1", "0.25", "0.5", "0.75"}, {}, 128U, 0.7}};
+      if (auto lanes = fewer(lane, {0.75, 2.0 / 3.0, 0.5, 0.25}); !lanes.empty()) {
+        plan.push_back({"glm.cpu_lane", texts_of(std::move(lanes), true), {}, 128U, 0.7});
+      }
+      return plan;
+    }
     case EngineProfile::deepseek:
-    case EngineProfile::minimax:  // (maya-mm3 tunes its own prompt reading, --prefill-tune; no flag sweep)
-    case EngineProfile::raon1: return {};
+    case EngineProfile::minimax: {
+      // Maya's tools/calibrate_ds4_tp.py thread_candidates (tools/mm3/calibrate.py takes it as it is): the engine's own
+      // count is the physical cores (ds4_model.hpp, mm3 CpuLane::auto_workers); a lane on every CPU tries 2 and 4 fewer
+      // first; the fewest last, the sweep stopping at the first that gains nothing
+      const bool every_cpu = physical >= logical - 1;
+      auto counts = fewer(physical, {0.75, 0.5}, every_cpu ? std::vector<int>{physical - 2, physical - 4} : std::vector<int>{});
+      if (counts.empty()) return {};
+      return {{"--cpu-threads", texts_of(std::move(counts), true), {}, 128U, 1.0}};
+    }
   }
   return {};
+}
+
+double sweep_keep_margin(const EngineProfile profile) noexcept {
+  return profile == EngineProfile::deepseek || profile == EngineProfile::minimax ? 0.05 : 0.03;
+}
+
+bool calibrates_before_first_start(const EngineProfile profile) noexcept {
+  return profile == EngineProfile::flint || profile == EngineProfile::gemma4;
+}
+
+unsigned physical_cores() {
+  const unsigned logical = std::max(1U, std::thread::hardware_concurrency());
+  unsigned count = 0;
+#if defined(_WIN32)
+  DWORD length = 0;
+  (void)GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &length);
+  if (length != 0U) {
+    std::vector<unsigned char> buffer(length);
+    if (GetLogicalProcessorInformationEx(RelationProcessorCore, reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()),
+                                         &length) != FALSE) {
+      for (DWORD offset = 0; offset + sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX) <= length;) {
+        const auto* info = reinterpret_cast<const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buffer.data() + offset);
+        if (info->Size == 0U) break;
+        if (info->Relationship == RelationProcessorCore) ++count;
+        offset += info->Size;
+      }
+    }
+  }
+#else
+  // each (package, core) pair once
+  std::vector<std::pair<std::string, std::string>> seen;
+  std::error_code ec;
+  for (const auto& entry : std::filesystem::directory_iterator("/sys/devices/system/cpu", ec)) {
+    const std::string name = entry.path().filename().string();
+    if (name.size() < 4U || name.rfind("cpu", 0) != 0U ||
+        !std::all_of(name.begin() + 3, name.end(), [](const char c) { return c >= '0' && c <= '9'; })) {
+      continue;
+    }
+    std::ifstream core(entry.path() / "topology" / "core_id");
+    std::ifstream package(entry.path() / "topology" / "physical_package_id");
+    std::string core_id;
+    std::string package_id;
+    if (!(core >> core_id) || !(package >> package_id)) continue;
+    if (std::find(seen.begin(), seen.end(), std::pair{package_id, core_id}) == seen.end()) seen.emplace_back(package_id, core_id);
+  }
+  count = static_cast<unsigned>(seen.size());
+#endif
+  return count == 0U ? logical : std::min(count, logical);
+}
+
+bool apply_calibration(FrontendConfigDraft& draft, const std::vector<std::string>& settings) {
+  for (std::size_t i = 0; i + 1U < settings.size(); i += 2U) {
+    const std::string& key = settings[i];
+    const std::string& value = settings[i + 1U];
+    if (key.rfind("--", 0) == 0U) {
+      auto found = draft.entries.find("engine.args");
+      if (found == draft.entries.end()) {
+        found = draft.entries.emplace("engine.args", ConfigDraftEntry{std::vector<std::string>{}, ConfigSource::file}).first;
+      }
+      auto* list = std::get_if<std::vector<std::string>>(&found->second.value);
+      if (list == nullptr) return false;
+      if (std::find(list->begin(), list->end(), key) != list->end()) continue;  // the card's own flag stays
+      list->push_back(key);
+      list->push_back(value);
+      continue;
+    }
+    if (draft.entries.contains(key)) continue;  // the card's own row stays
+    const RowKind kind = row_kind(key);
+    if (kind == RowKind::none) continue;
+    const auto parsed = parse_json(value, kResultLimits);
+    const auto* number_value = std::get_if<JsonValue>(&parsed);
+    const auto as_number = number_value == nullptr ? std::nullopt : number(number_value);
+    if (!as_number) continue;
+    if (kind == RowKind::decimal) {
+      draft.entries.emplace(key, ConfigDraftEntry{*as_number, ConfigSource::file});
+    } else {
+      draft.entries.emplace(key, ConfigDraftEntry{static_cast<std::int64_t>(*as_number), ConfigSource::file});
+    }
+  }
+  return true;
 }
 
 SweepOutcome run_sweep(const std::vector<SweepStep>& plan, const SweepMeasure& measure,
                        const std::function<void(const SweepProgress&)>& progress, const std::function<bool()>& cancelled,
                        const double keep_margin, const unsigned confirm_rounds) {
+  constexpr unsigned kDefaultTokens = 128U;
+  // every candidate, plus a measurement of the best so far wherever a step's answers are of another length
   std::size_t trials = 1U + 2U * confirm_rounds;
-  for (const auto& step : plan) trials += step.values.size();
+  unsigned tokens_seen = kDefaultTokens;
+  for (const auto& step : plan) {
+    trials += step.values.size() + (step.max_tokens != tokens_seen ? 1U : 0U);
+    tokens_seen = step.max_tokens;
+  }
   std::size_t trial = 0;
   std::optional<double> best_seen;
   // One trial: asked to stop first; nullopt for a cancel (the outcome says so) or a failed start.
   bool stop = false;
-  const auto run = [&](const std::string& stage, const std::vector<std::string>& args) -> std::optional<double> {
+  const auto run = [&](const std::string& stage, const std::vector<std::string>& args, const unsigned max_tokens) -> std::optional<double> {
     if (stop || (cancelled && cancelled())) {
       stop = true;
       return std::nullopt;
     }
     ++trial;
     if (progress) progress(SweepProgress{stage, trial, trials, best_seen});
-    auto score = measure(args);
+    auto score = measure(args, max_tokens);
     // a cancel that arrived during the trial (its engine was stopped early) ends the sweep as cancelled
     if (cancelled && cancelled()) {
       stop = true;
@@ -139,7 +316,7 @@ SweepOutcome run_sweep(const std::vector<SweepStep>& plan, const SweepMeasure& m
   };
 
   SweepOutcome outcome;
-  const auto baseline = run("defaults", {});
+  const auto baseline = run("defaults", {}, kDefaultTokens);
   if (stop) {
     outcome.end = SweepOutcome::End::cancelled;
     return outcome;
@@ -151,30 +328,58 @@ SweepOutcome run_sweep(const std::vector<SweepStep>& plan, const SweepMeasure& m
   outcome.baseline_tok_s = *baseline;
   std::map<std::string, std::string> chosen;
   double current = *baseline;
+  unsigned current_tokens = kDefaultTokens;
   for (const auto& step : plan) {
-    for (const auto& value : step.values) {
-      auto candidate = chosen;
-      candidate[step.flag] = value;
-      const auto score = run(step.flag, arguments_of(plan, candidate));
+    if (step.max_tokens != current_tokens) {
+      // the best so far on this step's answers, the reference its candidates must beat
+      const auto again = run(step.flag, arguments_of(plan, chosen), step.max_tokens);
       if (stop) {
         outcome.end = SweepOutcome::End::cancelled;
         return outcome;
       }
-      if (score && *score > current * (1.0 + keep_margin)) {
+      current_tokens = step.max_tokens;
+      if (!again) {
+        trials -= step.values.size();
+        continue;
+      }
+      current = *again;
+    }
+    double step_best = current;
+    for (std::size_t i = 0; i < step.values.size(); ++i) {
+      auto candidate = chosen;
+      candidate[step.flag] = step.values[i];
+      const auto score = run(step.flag, arguments_of(plan, candidate), step.max_tokens);
+      if (stop) {
+        outcome.end = SweepOutcome::End::cancelled;
+        return outcome;
+      }
+      if (!score) continue;
+      if (*score > current * (1.0 + keep_margin)) {
         chosen = std::move(candidate);
         current = *score;
+      }
+      step_best = std::max(step_best, *score);
+      if (step.stop_below > 0.0 && *score < step.stop_below * step_best) {
+        trials -= step.values.size() - 1U - i;  // the step's later candidates are not measured
+        break;
       }
     }
   }
   outcome.best_tok_s = outcome.baseline_tok_s;
   if (chosen.empty()) return outcome;
-  // The confirmation: the defaults and the winner, interleaved; the winner keeps its place only when it repeats.
+  // The confirmation: the defaults and the winner, interleaved, on answers as long as the winner's steps' longest; the
+  // winner keeps its place only when it repeats.
   const auto winner = arguments_of(plan, chosen);
-  std::vector<double> defaults_scores{*baseline};
+  unsigned confirm_tokens = kDefaultTokens;
+  for (const auto& step : plan) {
+    if (chosen.contains(step.flag)) confirm_tokens = std::max(confirm_tokens, step.max_tokens);
+  }
+  std::vector<double> defaults_scores;
+  if (confirm_tokens == kDefaultTokens) defaults_scores.push_back(*baseline);
   std::vector<double> winner_scores;
   for (unsigned round = 0; round < confirm_rounds; ++round) {
-    const auto a = run("confirming", {});
-    const auto b = stop ? std::nullopt : run("confirming", winner);
+    const auto a = run("confirming", {}, confirm_tokens);
+    const auto b = stop ? std::nullopt : run("confirming", winner, confirm_tokens);
     if (stop) {
       outcome.end = SweepOutcome::End::cancelled;
       return outcome;
@@ -182,7 +387,7 @@ SweepOutcome run_sweep(const std::vector<SweepStep>& plan, const SweepMeasure& m
     if (a) defaults_scores.push_back(*a);
     if (b) winner_scores.push_back(*b);
   }
-  if (winner_scores.empty()) return outcome;
+  if (winner_scores.empty() || defaults_scores.empty()) return outcome;
   const double defaults_median = median(defaults_scores);
   const double winner_median = median(winner_scores);
   if (winner_median > defaults_median * (1.0 + keep_margin)) {
@@ -260,6 +465,85 @@ std::optional<CalibrationResult> parse_calibration(const std::string_view text) 
   }
   result.key = CalibrationKey{*gpu, *cpu, static_cast<std::uint64_t>(*ram->if_integer()), *engine, *model, *options};
   return result;
+}
+
+namespace {
+
+std::string key_json(const CalibrationKey& key) {
+  return "{\"gpu\": " + json_text(key.gpu) + ", \"cpu\": " + json_text(key.cpu) + ", \"ram_bytes\": " + std::to_string(key.ram_bytes) +
+         ", \"engine\": " + json_text(key.engine) + ", \"model\": " + json_text(key.model) + ", \"options\": " + json_text(key.options) + "}";
+}
+
+std::optional<CalibrationKey> key_of(const JsonValue* key) {
+  if (key == nullptr) return std::nullopt;
+  const auto text_of = [](const JsonValue* value) -> const std::string* { return value == nullptr ? nullptr : value->if_string(); };
+  const auto* gpu = text_of(member(*key, "gpu"));
+  const auto* cpu = text_of(member(*key, "cpu"));
+  const auto* engine = text_of(member(*key, "engine"));
+  const auto* model = text_of(member(*key, "model"));
+  const auto* options = text_of(member(*key, "options"));
+  const auto* ram = member(*key, "ram_bytes");
+  if (gpu == nullptr || cpu == nullptr || engine == nullptr || model == nullptr || options == nullptr || ram == nullptr ||
+      ram->if_integer() == nullptr || *ram->if_integer() < 0) {
+    return std::nullopt;
+  }
+  return CalibrationKey{*gpu, *cpu, static_cast<std::uint64_t>(*ram->if_integer()), *engine, *model, *options};
+}
+
+}  // namespace
+
+std::string render_prefill(const PrefillRecord& r) {
+  return "{\n  \"schema_version\": 1,\n  \"card\": " + json_text(r.card) + ",\n  \"date\": " + json_text(r.date) +
+         ",\n  \"finished\": " + (r.finished ? "true" : "false") + ",\n  \"chunk\": " + std::to_string(r.chunk) +
+         ",\n  \"gemm\": " + json_text(r.gemm) + ",\n  \"tok_s\": " + decimal(r.tok_s) + ",\n  \"default_tok_s\": " +
+         decimal(r.default_tok_s) + ",\n  \"key\": " + key_json(r.key) + "\n}\n";
+}
+
+std::optional<PrefillRecord> parse_prefill(const std::string_view text) {
+  const auto parsed = parse_json(text, kResultLimits);
+  const auto* root = std::get_if<JsonValue>(&parsed);
+  if (root == nullptr || root->if_object() == nullptr) return std::nullopt;
+  const auto* version = member(*root, "schema_version");
+  const auto* card = member(*root, "card");
+  const auto* date = member(*root, "date");
+  const auto* finished = member(*root, "finished");
+  const auto* chunk = member(*root, "chunk");
+  const auto* gemm = member(*root, "gemm");
+  const auto tok_s = number(member(*root, "tok_s"));
+  const auto default_tok_s = number(member(*root, "default_tok_s"));
+  const auto key = key_of(member(*root, "key"));
+  if (version == nullptr || version->if_integer() == nullptr || *version->if_integer() != 1 || card == nullptr ||
+      card->if_string() == nullptr || date == nullptr || date->if_string() == nullptr || finished == nullptr ||
+      finished->if_boolean() == nullptr || chunk == nullptr || chunk->if_integer() == nullptr || *chunk->if_integer() < 0 ||
+      *chunk->if_integer() > 65536 || gemm == nullptr || gemm->if_string() == nullptr || gemm->if_string()->size() > 16U ||
+      !tok_s || !default_tok_s || !key) {
+    return std::nullopt;
+  }
+  return PrefillRecord{*card->if_string(), *date->if_string(), *finished->if_boolean(), *chunk->if_integer(), *gemm->if_string(),
+                       *tok_s, *default_tok_s, *key};
+}
+
+bool read_prefill_measurement(const std::string_view text, PrefillRecord& record) {
+  // the engine's JSON also lists its trials and the tune file's path; only the kept settings and speeds are read
+  constexpr JsonLimits kMeasurementLimits{.max_bytes = 64U * 1024U, .max_depth = 4U, .max_container_entries = 256U,
+                                          .max_string_bytes = 4096U, .allow_fractions = true};
+  const auto parsed = parse_json(text, kMeasurementLimits);
+  const auto* root = std::get_if<JsonValue>(&parsed);
+  if (root == nullptr || root->if_object() == nullptr) return false;
+  const auto* chunk = member(*root, "chunk");
+  const auto* gemm = member(*root, "gemm");
+  const auto tok_s = number(member(*root, "tok_s"));
+  const auto default_tok_s = number(member(*root, "default_tok_s"));
+  if (chunk == nullptr || chunk->if_integer() == nullptr || *chunk->if_integer() < 1 || *chunk->if_integer() > 65536 ||
+      gemm == nullptr || gemm->if_string() == nullptr || (*gemm->if_string() != "blas" && *gemm->if_string() != "hipblaslt") ||
+      !tok_s || !default_tok_s || !std::isfinite(*tok_s) || !std::isfinite(*default_tok_s)) {
+    return false;
+  }
+  record.chunk = *chunk->if_integer();
+  record.gemm = *gemm->if_string();
+  record.tok_s = *tok_s;
+  record.default_tok_s = *default_tok_s;
+  return true;
 }
 
 std::string file_fact(const std::filesystem::path& file) {

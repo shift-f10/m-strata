@@ -546,8 +546,8 @@ void web_ui_models_tab_calibrates() {
   const std::string html{secure_frontend::find_web_asset("/")->body};
   const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
   for (const char* id : {"id=\"model-calibration\"", "id=\"model-calibration-state\"", "id=\"model-calibration-text\"",
-                         "id=\"model-calibration-progress\"", "id=\"model-calibrate\"", "id=\"model-calibrate-cancel\"",
-                         "id=\"model-calibration-auto\""}) {
+                         "id=\"model-calibration-prefill\"", "id=\"model-calibration-progress\"", "id=\"model-calibrate\"",
+                         "id=\"model-calibrate-cancel\"", "id=\"model-calibration-auto\""}) {
     const auto at = html.find(id);
     expect(at != std::string::npos && at > html.find("id=\"model-detail\"") && at < html.find("id=\"models-pane-download\""),
            std::string{"the model detail has "} + id);
@@ -563,6 +563,12 @@ void web_ui_models_tab_calibrates() {
              js.find("cal.state === \"stale\"") != std::string::npos,
          "the calibration's states are said in words");
   expect(js.find("$(\"model-calibration\").hidden = !cal;") != std::string::npos, "a card with no calibration shows none");
+  // 2026-10-28 (every model calibrates): only the engines that calibrate before a first start say so; MiniMax shows its
+  // prompt reading (the prefill calibration) - measured, failed, out of date or still to come
+  expect(js.find("cal.first_start === true") != std::string::npos && js.find("function prefillText(") != std::string::npos &&
+             js.find("p.state === \"failed\"") != std::string::npos && js.find("p.state === \"stale\"") != std::string::npos &&
+             js.find("stage === \"prompt reading\"") != std::string::npos,
+         "the first start and MiniMax's prompt reading are said in words");
 }
 
 // The Settings tab (spec 2026-10-28-server-window-design, Part 1; the owner: "a configuration tab ... api key, etc"): the
