@@ -26,7 +26,7 @@ struct InitError final {
 [[nodiscard]] std::optional<TokenStoreError> generate_token(const CanonicalRoot& secret_root, const RelativePath& file,
                                                             bool force);
 
-// The mechanics behind `strata-secure-server init` (spec §3.9). The UX --
+// The mechanics behind `strata-unified-server init` (spec §3.9). The UX --
 // default locations, the strata wrapper, what is printed -- belongs to the
 // product-experience spec.
 [[nodiscard]] std::optional<InitError> init_frontend(const std::filesystem::path& config_file,

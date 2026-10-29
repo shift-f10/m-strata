@@ -86,7 +86,7 @@ every CI job has `timeout-minutes: 60`.
 SP2 adds eight `.exe` files (38 in all): the test-only
 `strata-supervision-fake-engine` and `strata-supervision-fake-engine-elevated`,
 the test launcher `secure_frontend_non_elevated_run` (starts
-`strata-secure-server` with a non-elevated token on Windows), and five test
+`strata-unified-server` with a non-elevated token on Windows), and five test
 binaries (`secure_frontend_{fake_engine,deadline,engine_child,engine_supervisor,server}_tests`),
 each case registered as `<binary>.<case>` through SP1's `secure_frontend_add_cases`.
 Tests that need real Windows semantics (Job Objects, handles, DACLs, tokens,
@@ -178,9 +178,9 @@ The bundle holds tag `v0.2.2` (tag object
 | `windows-cross` (`windows-llvm-mingw-cross`) | ubuntu-24.04 (pinned; `ubuntu-latest` becomes Ubuntu 26 on 2026-10-19); uploads the `.exe` files | no | yes |
 | `windows-msys2` (`windows-msys2-clang`) | windows-latest, MSYS2 CLANG64; runs `ctest` | no | yes |
 | `windows-msvc` | windows-latest | no | no |
-| `top-level-integration` | ubuntu-24.04 (pinned; `ubuntu-latest` becomes Ubuntu 26 on 2026-10-19); first configures **our** root with no `-D` flags (`out/root-defaults`, configure only) and asserts `STRATA_NATIVE_EXPERTS`/`STRATA_ENABLE_CUDA`/`STRATA_ENABLE_HIP` `OFF`, `CMAKE_BUILD_TYPE=Release` and no `_deps`; then configures it with CUDA/HIP/native experts off, builds `strata-secure-server`, `secure_frontend_config_tests`, `strata-plan`, runs `ctest -R secure_frontend_config_tests`, checks no `out/root/_deps` | yes | yes |
+| `top-level-integration` | ubuntu-24.04 (pinned; `ubuntu-latest` becomes Ubuntu 26 on 2026-10-19); first configures **our** root with no `-D` flags (`out/root-defaults`, configure only) and asserts `STRATA_NATIVE_EXPERTS`/`STRATA_ENABLE_CUDA`/`STRATA_ENABLE_HIP` `OFF`, `CMAKE_BUILD_TYPE=Release` and no `_deps`; then configures it with CUDA/HIP/native experts off, builds `strata-unified-server`, `secure_frontend_config_tests`, `strata-plan`, runs `ctest -R secure_frontend_config_tests`, checks no `out/root/_deps` | yes | yes |
 
-The `linux-release` job runs `secure_distribution_check.py` without `--release` until SP7 provides the release manifest and SBOM that `--release` requires; the test-hooks marker scan runs in every mode and covers `strata` and `strata-secure-server` (SP4 Controller note 19).
+The `linux-release` job runs `secure_distribution_check.py` without `--release` until SP7 provides the release manifest and SBOM that `--release` requires; the test-hooks marker scan runs in every mode and covers `strata` and `strata-unified-server` (SP4 Controller note 19).
 
 The jobs that check out the submodule end with the step "upstream submodule
 pinned and unmodified": `git submodule status` must show no `+`/`-`/`U` prefix

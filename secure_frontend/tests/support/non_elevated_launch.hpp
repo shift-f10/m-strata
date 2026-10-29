@@ -1,7 +1,7 @@
 #pragma once
 
 // Spec G4 / plan Global Constraint "Elevation in tests (no override flag)":
-// strata-secure-server refuses an elevated token, and GitHub's Windows runners
+// strata-unified-server refuses an elevated token, and GitHub's Windows runners
 // (and any elevated developer shell, and wine) are elevated. So EVERY test
 // launch of the server goes through create_non_elevated_process(): a
 // LUA-restricted copy of the caller's own token (CreateProcessAsUserW needs no
@@ -69,7 +69,7 @@ inline bool create_non_elevated_process(const std::wstring& executable, std::wst
   HANDLE token = non_elevated_token();
   if (token == nullptr) {
     std::cerr << who
-              << ": no non-elevated token for strata-secure-server (LUA and Safer NORMALUSER both elevated); "
+              << ": no non-elevated token for strata-unified-server (LUA and Safer NORMALUSER both elevated); "
                  "STOP and ask the owner -- there is no test-only override\n";
     return false;
   }

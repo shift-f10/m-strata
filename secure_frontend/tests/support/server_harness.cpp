@@ -470,7 +470,7 @@ std::unique_ptr<ServerProcess> ServerProcess::start(const ServerOptions& options
 #endif
   for (const auto& [name, value] : options.extra_env) environment[name] = value;
   if (!server->launch(arguments, environment)) {
-    std::cerr << "harness: could not launch strata-secure-server\n";
+    std::cerr << "harness: could not launch strata-unified-server\n";
     return nullptr;
   }
   return server;

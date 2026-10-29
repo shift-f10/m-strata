@@ -65,12 +65,12 @@ def test_upstream_desktop_and_host_apps_are_rejected_when_flattened(tmp_path):
 
 
 def test_apps_lookalikes_pass(tmp_path):
-    files = ["share/doc/apps-host-notes.txt", "bin/apps/strata-secure-server"]
+    files = ["share/doc/apps-host-notes.txt", "bin/apps/strata-unified-server"]
     assert check.inspect(stage(tmp_path, *files), False) == []
 
 
 def test_native_only_stage_passes(tmp_path):
-    assert check.inspect(stage(tmp_path, "bin/strata-secure-server"), False) == []
+    assert check.inspect(stage(tmp_path, "bin/strata-unified-server"), False) == []
 
 
 def test_lookalike_names_pass(tmp_path):

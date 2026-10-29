@@ -161,8 +161,8 @@ def test_the_window_is_built_only_when_asked(tmp_path):
     assert "Models > Settings" not in windowed and "Settings tab" in windowed
     # built, not only installed (2026-10-28: the first --with window build failed at install: nothing built the window,
     # which needs the server but is not needed by it, as strata-search is)
-    assert make.frontend_build_targets(options("--with", "window")) == ["strata-secure-server", "strata", "strata-window"]
-    assert make.frontend_build_targets(options()) == ["strata-secure-server", "strata"]
+    assert make.frontend_build_targets(options("--with", "window")) == ["strata-unified-server", "strata", "strata-window"]
+    assert make.frontend_build_targets(options()) == ["strata-unified-server", "strata"]
 
 
 def test_missing_cpp_tools_say_how_to_add_them():
@@ -185,7 +185,7 @@ MINIMAX_FILES = ("engine/templates/minimax-m3.1/chat_template.jinja", "engine/te
 def stage(tmp_path: Path, platform: str, extra: tuple[str, ...] = (), skip: tuple[str, ...] = ()) -> Path:
     exe = ".exe" if platform == "windows" else ""
     lib = (lambda n: n + ".dll") if platform == "windows" else (lambda n: "lib" + n + ".so")
-    files = [f"strata-secure-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
+    files = [f"strata-unified-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
              f"engine/strata-vision{exe}", "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin", "engine/build.json",
              "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + ["engine/profiles/" + p for p in MAYA_PROFILES] + \
         list(MINIMAX_FILES)
@@ -278,15 +278,15 @@ def test_the_folder_readme_names_its_license_and_how_to_start_it():
     for text in (windows, linux):
         assert "AGPL-3.0" in text and "LICENSE" in text and "NOTICE.md" in text
         assert "limits.engine.generation_timeout_s" in text and "--data-dir data" not in text
-        assert "strata-secure-server --help" in text or "strata-secure-server.exe --help" in text
-    assert ".\\strata-secure-server.exe --port 9090" in windows and "./strata-secure-server --port 9090" in linux
-    assert ".\\strata-secure-server.exe" in windows and "./strata-secure-server" in linux
+        assert "strata-unified-server --help" in text or "strata-unified-server.exe --help" in text
+    assert ".\\strata-unified-server.exe --port 9090" in windows and "./strata-unified-server --port 9090" in linux
+    assert ".\\strata-unified-server.exe" in windows and "./strata-unified-server" in linux
     assert "engine/templates/" in windows and "strata-search" in windows and "strata-search" not in linux
 
 
 def test_a_test_hooks_build_is_refused(tmp_path):
     root = stage(tmp_path, "windows")
-    (root / "strata-secure-server.exe").write_bytes(b"MZ..." + HOOK_MARKER + b"...")
+    (root / "strata-unified-server.exe").write_bytes(b"MZ..." + HOOK_MARKER + b"...")
     problems = "\n".join(make.layout_problems(root, options(), "windows"))
     assert "test-hooks" in problems or "TEST_HOOKS" in problems
 

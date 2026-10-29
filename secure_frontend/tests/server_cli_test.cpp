@@ -231,7 +231,7 @@ void serve_requires_state_root() {
 // Task 29: each SP2 option sets exactly one SP1 schema key (a regression pin
 // for the rows Tasks 18, 19 and 26 landed).
 void cli_sp2_flags_map_to_schema_keys() {
-  const char* argv[] = {"strata-secure-server", "--state-dir", "/srv/state", "--engine-lib-dir", "/opt/a",
+  const char* argv[] = {"strata-unified-server", "--state-dir", "/srv/state", "--engine-lib-dir", "/opt/a",
                         "--engine-lib-dir", "/opt/b", "--gpu", "0,1", "--allow-new-privileges"};
   const auto parsed = secure_frontend::parse_server_command_line(static_cast<int>(std::size(argv)), argv);
   const auto* invocation = std::get_if<secure_frontend::ServerInvocation>(&parsed);
@@ -265,13 +265,13 @@ void cli_sp2_flags_map_to_schema_keys() {
     return errors != nullptr ? *errors : secure_frontend::ConfigErrors{};
   };
   bool gpu_issue = false;
-  for (const auto& issue : issues_for({"strata-secure-server", "--gpu", "0,0"})) {
+  for (const auto& issue : issues_for({"strata-unified-server", "--gpu", "0,0"})) {
     gpu_issue = gpu_issue || (issue.key_path == "engine.gpu" && issue.reason.find("0,0") == std::string::npos);
   }
   expect(gpu_issue, "a malformed engine.gpu is a validation issue that never echoes the value");
   // The production refusal path for GPUs under the GLM profile (spec §3.9).
   bool glm_conflict = false;
-  for (const auto& issue : issues_for({"strata-secure-server", "--profile", "glm53", "--gpu", "0"})) {
+  for (const auto& issue : issues_for({"strata-unified-server", "--profile", "glm53", "--gpu", "0"})) {
     glm_conflict = glm_conflict || (issue.key_path == "engine.gpu" &&
                                     issue.code == secure_frontend::ConfigIssueCode::conflicting_values);
   }
@@ -423,7 +423,7 @@ void auth04_no_switch_disables_auth() {
 // SP4 §4.9 d (Task 24a/24b addendum): --expert parses once, with serve, --check and init.
 void cli_expert_flag_parsing() {
   const auto parse = [](std::vector<const char*> argv) {
-    argv.insert(argv.begin(), "strata-secure-server");
+    argv.insert(argv.begin(), "strata-unified-server");
     return secure_frontend::parse_server_command_line(static_cast<int>(argv.size()), argv.data());
   };
   const auto twice = parse({"--expert", "--expert"});

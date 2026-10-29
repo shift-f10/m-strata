@@ -12,7 +12,7 @@ the webui then be able to select settings like mtp, kv cache streaming, etc and 
 
 ## 0. Summary
 
-Today `strata-secure-server` binds **one** model at boot: the launch (executable, argv,
+Today `strata-unified-server` binds **one** model at boot: the launch (executable, argv,
 environment), the chat profile, the tokenizer pack, the chat route's settings and the served
 name are all fixed in `server_bootstrap.cpp`, and changing any of them means editing a config file
 and restarting the server from a terminal.

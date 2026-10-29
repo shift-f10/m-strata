@@ -51,7 +51,7 @@ engine). Read both first. Pins at the time of writing: upstream `v0.2.3.1`, Proj
 
 ## 0. Summary and the one finding that shapes everything
 
-The frontend already presents a **unified server** — one `strata-secure-server`, one page, one API —
+The frontend already presents a **unified server** — one `strata-unified-server`, one page, one API —
 over per-family engine *binaries*, bound by the `profile / family / flavor` table (SP6 §4.1). The
 owner wants a stronger thing: **one engine binary** that loads and runs every family in one process.
 
@@ -122,7 +122,7 @@ families and most of Raon, and its linear-attention path is the closest existing
    passes a parity gate (logits/KL vs its reference) + a short generation battery on the owner's
    NVIDIA box; results committed under `docs/validation/unified-engine/`.
 3. **Frontend acceptance (owner):** a model of each family served end-to-end through
-   `strata-secure-server` (the page + the API kit), one binary, both OSes.
+   `strata-unified-server` (the page + the API kit), one binary, both OSes.
 4. Only then does the handoff say "unified engine verified on <GPU>, <OS>" per family.
 
 ### 1.4 Plans (indicative; sized in §5)

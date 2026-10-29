@@ -42,7 +42,7 @@ def _stage(tmp_path: Path) -> Path:
     stage = tmp_path / "stage"
     (stage / "bin").mkdir(parents=True)
     (stage / "bin" / "strata").write_bytes(b"\x7fELF stub")
-    (stage / "bin" / "strata-secure-server").write_bytes(b"\x7fELF stub")
+    (stage / "bin" / "strata-unified-server").write_bytes(b"\x7fELF stub")
     subprocess.run([sys.executable, str(SCRIPTS / "make_manifest.py"),
                     "--version", VERSION, "--created-utc", CREATED,
                     "--out", str(stage / "secure-release-manifest.json")],
@@ -95,7 +95,7 @@ def test_manifest_fields_match_the_check_script_contract(tmp_path: Path) -> None
     assert doc["created_utc"] == CREATED, "created_utc is pinnable for reproducible builds"
     assert isinstance(doc["components"], list) and doc["components"], "components non-empty"
     names = {comp["name"] for comp in doc["components"]}
-    assert names == {"strata", "strata-secure-server"}, "exactly the shipped product binaries"
+    assert names == {"strata", "strata-unified-server"}, "exactly the shipped product binaries"
     for comp in doc["components"]:
         assert set(comp) == {"name", "version", "source"}, "documented component schema"
         assert comp["version"] == VERSION and comp["source"], "component provenance is filled in"

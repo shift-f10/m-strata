@@ -60,7 +60,7 @@ def test_release_scripts_exist() -> None:
 def test_linux_bundle_content_and_evidence(tmp_path: Path) -> None:
     bundle, stdout = _linux_bundle(tmp_path)
     assert (bundle / "bin" / "strata").is_file(), "bin/strata shipped"
-    assert (bundle / "bin" / "strata-secure-server").is_file(), "bin/strata-secure-server shipped"
+    assert (bundle / "bin" / "strata-unified-server").is_file(), "bin/strata-unified-server shipped"
     assert (bundle / "VERSION").read_text(encoding="utf-8").strip() == VERSION, "VERSION file"
     assert (bundle / "secure-release-manifest.json").is_file(), "profile manifest generated"
     assert (bundle / "sbom.spdx.json").is_file(), "SBOM generated"
@@ -113,7 +113,7 @@ def test_linux_bundle_artifacts(tmp_path: Path) -> None:
         assert debs, "dpkg-deb present -> .deb built"
         contents = subprocess.run(["dpkg-deb", "-c", str(debs[0])],
                                   capture_output=True, text=True).stdout
-        assert "./usr/bin/strata" in contents and "./usr/bin/strata-secure-server" in contents, \
+        assert "./usr/bin/strata" in contents and "./usr/bin/strata-unified-server" in contents, \
             "the admin path installs both binaries"
     else:
         assert not debs, "no dpkg-deb -> no .deb"
@@ -148,7 +148,7 @@ def test_signed_run_produces_a_verifiable_envelope(tmp_path: Path) -> None:
 def test_windows_staging_tree_installer_and_nsis_status(tmp_path: Path) -> None:
     build = tmp_path / "winbuild"
     build.mkdir()
-    for name in ("strata.exe", "strata-secure-server.exe", "strata_widget_tests.exe",
+    for name in ("strata.exe", "strata-unified-server.exe", "strata_widget_tests.exe",
                  "secure_frontend_non_elevated_run.exe"):
         (build / name).write_bytes(b"MZ\x90 stub")
     run = subprocess.run(["bash", str(SCRIPTS / "stage_windows.sh"),
@@ -158,7 +158,7 @@ def test_windows_staging_tree_installer_and_nsis_status(tmp_path: Path) -> None:
     assert run.returncode == 0, run.stdout + run.stderr
     bundle = tmp_path / "out" / f"strata-{VERSION}-windows-x86_64"
     assert (bundle / "bin" / "strata.exe").is_file(), "strata.exe staged"
-    assert (bundle / "bin" / "strata-secure-server.exe").is_file(), "strata-secure-server.exe staged"
+    assert (bundle / "bin" / "strata-unified-server.exe").is_file(), "strata-unified-server.exe staged"
     names = _bundle_files(bundle)
     assert not [n for n in names if n.endswith(".py")], "no Python in a native staging tree"
     assert not [n for n in names if "_tests.exe" in n or "non_elevated" in n], \
@@ -167,7 +167,7 @@ def test_windows_staging_tree_installer_and_nsis_status(tmp_path: Path) -> None:
     assert (bundle / "secure-release-manifest.json").is_file(), "profile manifest generated"
     assert (bundle / "sbom.spdx.json").is_file(), "SBOM generated"
     nsi = (bundle / "installer.nsi").read_text(encoding="utf-8")
-    assert "strata.exe" in nsi and "strata-secure-server.exe" in nsi, "installer carries both binaries"
+    assert "strata.exe" in nsi and "strata-unified-server.exe" in nsi, "installer carries both binaries"
     assert "RequestExecutionLevel user" in nsi, "no elevation: user level, per the spec's non-goals"
     assert _sums_complete(bundle), "SHA256SUMS lists every staged file but itself"
     status = (bundle / "NSIS_STATUS.txt").read_text(encoding="utf-8")

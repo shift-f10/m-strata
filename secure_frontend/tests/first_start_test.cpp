@@ -204,23 +204,23 @@ void login_link_is_used_once() {
 }
 
 void data_dir_flag_is_parsed() {
-  const char* with[] = {"strata-secure-server", "--data-dir", "D:/SecureStrata/data"};
+  const char* with[] = {"strata-unified-server", "--data-dir", "D:/SecureStrata/data"};
   const auto parsed = secure_frontend::parse_server_command_line(3, with);
   const auto* invocation = std::get_if<secure_frontend::ServerInvocation>(&parsed);
   expect(invocation != nullptr && invocation->data_dir.has_value() &&
              secure_frontend::path_to_utf8(*invocation->data_dir) == "D:/SecureStrata/data",
          "--data-dir names the data folder");
-  const char* both[] = {"strata-secure-server", "--data-dir", "D:/a", "--config", "D:/a/config.json"};
+  const char* both[] = {"strata-unified-server", "--data-dir", "D:/a", "--config", "D:/a/config.json"};
   const auto refused = secure_frontend::parse_server_command_line(5, both);
   expect(std::holds_alternative<secure_frontend::CliError>(refused), "--data-dir and --config exclude each other");
 }
 
-// Owner 2026-10-28 ("ensure the syntax for configuring and starting it are correct"): `strata-secure-server --port 9090`
+// Owner 2026-10-28 ("ensure the syntax for configuring and starting it are correct"): `strata-unified-server --port 9090`
 // failed with "roots.models: is required" because options alone skipped data/. Options now adjust the data folder's
 // config for that start; only --config and a bring-up start that names its model by flags leave the data folder out.
 void options_alone_start_from_the_data_folder() {
   const auto uses = [](std::vector<const char*> argv) {
-    argv.insert(argv.begin(), "strata-secure-server");
+    argv.insert(argv.begin(), "strata-unified-server");
     const auto parsed = secure_frontend::parse_server_command_line(static_cast<int>(argv.size()), argv.data());
     const auto* invocation = std::get_if<secure_frontend::ServerInvocation>(&parsed);
     expect(invocation != nullptr, "the command line parses");

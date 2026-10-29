@@ -69,7 +69,7 @@ inline void write_test_tokenizer_pack(const std::filesystem::path& root) {
 
 // A complete local installation in a scratch directory: models/ with
 // qwen-local.gguf, a tokenizer pack, an empty secret root, a 0700 state root, a private copy of
-// the fake engine, and a free loopback port. ARGS: [0] strata-secure-server, [1] fake engine.
+// the fake engine, and a free loopback port. ARGS: [0] strata-unified-server, [1] fake engine.
 class ServerFixture final {
  public:
   std::filesystem::path dir = make_scratch_directory();
@@ -86,7 +86,7 @@ class ServerFixture final {
   ServerFixture() {
     const auto& args = extra_arguments();
     if (args.size() < 2U) {
-      std::cerr << "ServerFixture needs ARGS <strata-secure-server> <fake engine>\n";
+      std::cerr << "ServerFixture needs ARGS <strata-unified-server> <fake engine>\n";
       std::exit(EXIT_FAILURE);
     }
     server_executable = args[0];

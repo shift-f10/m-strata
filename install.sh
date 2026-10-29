@@ -178,5 +178,5 @@ step "Building into $out (the first build compiles the CUDA engine: allow an hou
 step 'Done'
 say "  M-Strata is in $out. Start it with:"
 if has_feature window; then say "    $out/strata-window          (a window with the page, and a tray icon)"; fi
-say "    $out/strata-secure-server   (prints a one-time login link: open it in a browser on this PC)"
+say "    $out/strata-unified-server   (prints a one-time login link: open it in a browser on this PC)"
 if [ -z "$driver" ]; then say '  No NVIDIA driver was found: install it before starting a model.'; fi

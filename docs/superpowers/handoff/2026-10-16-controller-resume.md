@@ -175,14 +175,14 @@ Owner-visible behaviour changes already on the **SP3 branch** (not yet on main):
 - Plans: `docs/superpowers/plans/…sp3-m1-concurrency-hardening.md`, `…sp3-m2-streaming.md`, `…sp4-acquire.md`, earlier SP0/SP1/SP2.
 - Research: `docs/superpowers/research/2026-10-14-sp6-glm-engine-sources.md` (Maya vs glm53f facts; project-maya is the second SP6 source per the owner).
 - This directory `docs/superpowers/handoff/`: `briefs/` (§3.2), `reports/` (SDD final reports and ledgers for SP1, SP2 run 1 and 2, SP4 part 1 and 2, SP3 M1 to Task 11, the Windows fix lane, the SP4 merge resolver, the SP0 ledger).
-- Code: `secure_frontend/` (presets in `CMakePresets.json`: `linux-gcc`, `linux-clang`, `linux-gcc-release`, `windows-llvm-mingw-cross`, `windows-msys2-clang` CI-only; tests register per case through `secure_frontend_add_cases`, label `windows-runtime` for real-Windows-only cases). Binaries: `strata-secure-server`, `strata` (SP4 verbs). CI: `.github/workflows/secure-frontend.yml`, Linux jobs pinned `ubuntu-24.04`.
+- Code: `secure_frontend/` (presets in `CMakePresets.json`: `linux-gcc`, `linux-clang`, `linux-gcc-release`, `windows-llvm-mingw-cross`, `windows-msys2-clang` CI-only; tests register per case through `secure_frontend_add_cases`, label `windows-runtime` for real-Windows-only cases). Binaries: `strata-unified-server`, `strata` (SP4 verbs). CI: `.github/workflows/secure-frontend.yml`, Linux jobs pinned `ubuntu-24.04`.
 
 ---
 
 ## 8. First GPU-box session checklist (the first real test of the system)
 
 1. Build the upstream engine there (CUDA; Windows needs MSVC v143 as nvcc host — the frontend itself stays llvm-mingw/MSYS2). Hand-place engine, model shards and tokenizer pack (catalog is empty by design; or build a developer bundle with `make_bundle.py` and `strata import --trust-manifest`).
-2. `strata-secure-server --config <file> --expert` with `--pack` and the weight flags in `engine.args`; one `POST /v1/chat/completions`. The `PP` heartbeat fix (c9629e6e) is the known first-request blocker that was fixed by reading; confirm it live.
+2. `strata-unified-server --config <file> --expert` with `--pack` and the weight flags in `engine.args`; one `POST /v1/chat/completions`. The `PP` heartbeat fix (c9629e6e) is the known first-request blocker that was fixed by reading; confirm it live.
 3. Check `qwen35moe` family behaviour if that model is used (different serve loop: no QUIT, unknown flags skipped, no `--pack`, no `+8` margin — `engine-protocol-limits.md`).
 4. Run the cgroup-delegation proof if the box is systemd (`systemd-run --user --scope -p Delegate=yes`) and the SP2 `proc05_cgroup_kill_when_delegated` case.
 5. Measure STOP latency during a long prefill (SP3 risk R4) and the READY time against `ready_timeout_s` (900 s default).

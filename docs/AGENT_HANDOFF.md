@@ -280,6 +280,34 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z11 (Windows box; owner-directed; committed with this entry, not pushed)
+
+**The server is now `strata-unified-server`.** The owner: "Let's not call it strata-secure-server as that may provide
+misconceptions, let's call it strata-unified-server". **Entries before this one (and the dated plans, reports, briefs,
+research, validation records and the specs from before 2026-10-20) keep the old name `strata-secure-server`:** they
+record what was built and run then.
+
+- Renamed: the executable and its CMake target (every `$<TARGET_FILE>`, `add_dependencies` and install),
+  `STRATA_UNIFIED_SERVER_PATH`, the ctest cases `strata_unified_server_{help,glm_rejects_engine_args,rejects_malformed_gpu}`,
+  `strata-unified-server.link-set.txt`, the usage text and messages, the window's and the TUI's `kServerName`, `make.py`
+  (targets, required files, README.txt), `install.ps1`/`install.sh`, `scripts/release` (bundle, .deb, NSIS, manifest),
+  the CI workflow, `engine/*.bat`, and the current docs and specs (2026-10-22 on). Both READMEs say the old name.
+- Unchanged: the source file names (`secure_server_main.cpp`), `strata-secure-smoke-server`,
+  `privacy.priv04_secure_server_does_not_link_acquisition`, and the console line `Secure server listening on http://`,
+  which the window and the TUI read (`kListeningPrefix`).
+- RED then GREEN: `test_make.py` (5 cases), `test_release_manifest_and_sbom.py` (1),
+  `window_shell_tests.the_window_starts_the_server_beside_it`, `privacy_tests.priv04_secure_server_does_not_link_acquisition`.
+  Done by a worker in its own build tree. windows-msvc Release ctest: 1321/1333, failing only the 2 release-only cases
+  and 10 cases of other lanes' work then in flight. pytest: 137 passed, 7 failed (`test_build_release.py` needs Linux bash
+  and its build trees; on Linux, in the WSL build environment of z13, all 7 pass).
+- At run time:
+  - `make --out` always builds into a new folder.
+  - The window and the TUI start only `strata-unified-server(.exe)` beside them, so they must come from the same build
+    as the server.
+  - An old install keeps its old file.
+  - A data folder is not tied to the name.
+  - Shortcuts, scripts, firewall program rules and antivirus allowlists that name the old path must be redone.
+
 ### Claude Code session, 2026-10-28 z10 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 The owner: "Yes: build the MiniMax first-start prefill calibration and the DeepSeek/MiniMax CPU-thread tuning, as Maya

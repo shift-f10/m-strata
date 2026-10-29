@@ -7,10 +7,10 @@
 
 make.bat (Windows) and make.sh (Linux) run it. It configures and builds the engine (engine/: the multiengine launcher
 and one library per model family), upstream's picture encoder (upstream/tools/vision: engine/strata-vision, built out
-of source) and the frontend (secure_frontend/: strata-secure-server and the strata CLI, a release build without test
+of source) and the frontend (secure_frontend/: strata-unified-server and the strata CLI, a release build without test
 hooks), installs only their `runtime` CMake components (and `cuda`, the bundled cuBLAS)
 into a staging folder, checks that folder holds runtime files and nothing else, writes README.txt and
-config.example.json, moves it to --out and makes it owner-only. The first start of strata-secure-server creates its
+config.example.json, moves it to --out and makes it owner-only. The first start of strata-unified-server creates its
 data/ folder there (docs/superpowers/specs/2026-10-27-gui-first-install-design.md).
 
 Standard library only. It never deletes: --out must not exist yet (or be an empty folder).
@@ -152,7 +152,7 @@ def frontend_configure_args(opts: Options, platform: str) -> list[str]:
 def frontend_build_targets(opts: Options) -> list[str]:
     """The frontend's programs to build: the server (strata-search comes with it) and strata, and strata-window, which
     needs the server but is not needed by it."""
-    return ["strata-secure-server", "strata"] + (["strata-window"] if "window" in opts.with_features else [])
+    return ["strata-unified-server", "strata"] + (["strata-window"] if "window" in opts.with_features else [])
 
 
 # ---- the out folder's layout ----------------------------------------------------------------------------------------
@@ -182,7 +182,7 @@ def required_files(opts: Options, platform: str) -> list[str]:
     # the picture encoder beside the launcher, where the server looks for it (spec 2026-10-28)
     vision = [] if "vision" in opts.without else [f"engine/strata-vision{exe}"]
     # engine/build.json: the build record the server's About shows (build_record)
-    return ([f"strata-secure-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
+    return ([f"strata-unified-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
              "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin", "engine/build.json",
              "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + search + window + vision + maya +
             ["engine/" + lib(n) for n in _families(opts)])
@@ -334,7 +334,7 @@ Config:     data/config.json (to keep a port, set listener.port there). An answe
             raise limits.engine.generation_timeout_s (120 s by default), then restart the server.
 Key:        {strata} --config data/config.json key show   (or key rotate)
 
-Contents:   strata-secure-server and strata, the frontend{search}{window_contents}
+Contents:   strata-unified-server and strata, the frontend{search}{window_contents}
             engine/: multiengine (the launcher), one library per model family, strata-prepare{vision}, the expert
             profiles{templates}{cuda}
             LICENSE and NOTICE.md
@@ -350,8 +350,8 @@ NVIDIA_TEXT = """NVIDIA:     engine/{cublas}* are NVIDIA cuBLAS libraries, redis
 
 def readme_text(opts: Options, platform: str) -> str:
     windows = platform == "windows"
-    server = ".\\strata-secure-server.exe" if windows else "./strata-secure-server"
-    shell = "   (PowerShell; in cmd: strata-secure-server)" if windows else ""
+    server = ".\\strata-unified-server.exe" if windows else "./strata-unified-server"
+    shell = "   (PowerShell; in cmd: strata-unified-server)" if windows else ""
     cuda = ",\n            NVIDIA's cuBLAS" if opts.cuda_runtime else ""
     search = ("\n            strata-search: web search through your SearXNG instance (the Settings tab)"
               if "search" in opts.with_features else "")
@@ -524,7 +524,7 @@ def main(argv: list[str] | None = None) -> int:
     for command in owner_only_commands(opts.out, platform, user):
         run(command, env, False)
     total = sum(p.stat().st_size for p in opts.out.rglob("*") if p.is_file())
-    print(f"make: {opts.out} ({total / 2**20:.0f} MiB): run strata-secure-server there")
+    print(f"make: {opts.out} ({total / 2**20:.0f} MiB): run strata-unified-server there")
     return 0
 
 

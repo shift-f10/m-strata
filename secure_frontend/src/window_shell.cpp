@@ -111,20 +111,20 @@ std::optional<std::pair<LoopbackAddress, std::uint16_t>> loopback_target(const s
 }
 
 #if defined(_WIN32)
-constexpr std::string_view kServerName = "strata-secure-server.exe";
+constexpr std::string_view kServerName = "strata-unified-server.exe";
 #else
-constexpr std::string_view kServerName = "strata-secure-server";
+constexpr std::string_view kServerName = "strata-unified-server";
 #endif
 
 std::variant<ServerInvocation, std::string> parse_arguments(const std::vector<std::string>& arguments) {
-  std::vector<const char*> argv{"strata-secure-server"};
+  std::vector<const char*> argv{"strata-unified-server"};
   for (const auto& argument : arguments) argv.push_back(argument.c_str());
   argv.push_back(nullptr);
   auto parsed = parse_server_command_line(static_cast<int>(argv.size() - 1U), argv.data());
   if (const auto* error = std::get_if<CliError>(&parsed)) return "the server's options: " + error->message;
   auto invocation = std::get<ServerInvocation>(std::move(parsed));
   if (invocation.command != ServerCommand::serve) {
-    return std::string{"strata-window runs the server; use strata-secure-server itself for init, --check and --help"};
+    return std::string{"strata-window runs the server; use strata-unified-server itself for init, --check and --help"};
   }
   return invocation;
 }

@@ -56,7 +56,7 @@ int main(int argc, char* argv[]) {
   // Spec A2: UTF-8 from the wide command line, not the ANSI code page (utf8_argv.hpp).
   const auto utf8_arguments = secure_frontend::utf8_command_line(argc, argv);
   if (!utf8_arguments) {
-    std::cerr << "Error: the command line is not valid Unicode\nRun strata-secure-server --help for usage.\n";
+    std::cerr << "Error: the command line is not valid Unicode\nRun strata-unified-server --help for usage.\n";
     return EXIT_FAILURE;
   }
   std::vector<const char*> utf8_argv;
@@ -67,7 +67,7 @@ int main(int argc, char* argv[]) {
   const auto parsed = secure_frontend::parse_server_command_line(argc, argv);
 #endif
   if (const auto* error = std::get_if<secure_frontend::CliError>(&parsed)) {
-    std::cerr << "Error: " << error->message << "\nRun strata-secure-server --help for usage.\n";
+    std::cerr << "Error: " << error->message << "\nRun strata-unified-server --help for usage.\n";
     return EXIT_FAILURE;
   }
   const auto& invocation = std::get<secure_frontend::ServerInvocation>(parsed);

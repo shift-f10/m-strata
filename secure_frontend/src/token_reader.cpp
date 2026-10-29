@@ -134,7 +134,7 @@ std::variant<SecretBytes, TokenReadError> token_from_bytes(const std::string_vie
   }
   if (value.size() < kMinimumOperatorTokenBytes) {
     return error(TokenReadErrorCode::token_too_short,
-                 "Tokens must be at least 32 bytes; run strata-secure-server init to generate one.");
+                 "Tokens must be at least 32 bytes; run strata-unified-server init to generate one.");
   }
   SecretBytes token;
   (void)token.assign(value);

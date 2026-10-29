@@ -645,10 +645,10 @@ void cfg01_pull_keys_table_driven() {
   }
 }
 // SP4 Task 24b (spec §4.9 c/d; F-8): the managed-model rejections are config errors that
-// strata-secure-server --check reports too. ARGS: <strata-secure-server>.
+// strata-unified-server --check reports too. ARGS: <strata-unified-server>.
 secure_frontend_test::ProcessResult server_check(const secure_frontend_test::cli::CliHarness& h, const bool expert) {
   const auto& args = secure_frontend_test::extra_arguments();
-  if (args.empty()) return {-2, {}, "needs ARGS <strata-secure-server>"};
+  if (args.empty()) return {-2, {}, "needs ARGS <strata-unified-server>"};
   std::vector<std::string> argv{"--check", "--config", secure_frontend::path_to_utf8(h.config)};
   if (expert) argv.insert(argv.begin(), "--expert");
   return secure_frontend_test::run_to_completion(secure_frontend_test::ProcessSpec{

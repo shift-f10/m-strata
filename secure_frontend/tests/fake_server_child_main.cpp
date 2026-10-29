@@ -1,4 +1,4 @@
-// A stand-in for strata-secure-server in the window's tests (window_shell_test.cpp): it prints the server's listening
+// A stand-in for strata-unified-server in the window's tests (window_shell_test.cpp): it prints the server's listening
 // and sign-in lines (stdout) and a log line (stderr), then waits for what stops the real server - a console Ctrl-Break
 // on Windows, SIGTERM elsewhere - and exits 0 after "fake: stopping". --exit <n> ends at once with n; --ignore-stop
 // keeps running through the request (the window must then kill it); --show-env <name> first prints whether that

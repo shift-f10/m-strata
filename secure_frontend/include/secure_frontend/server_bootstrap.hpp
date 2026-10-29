@@ -21,7 +21,7 @@ namespace secure_frontend {
 // exit code; the messages are the server's own (stderr/stdout).
 [[nodiscard]] int server_run(const FrontendConfig& config, bool expert);
 
-// strata-secure-server --check: describe, launch-config issues, then the token read.
+// strata-unified-server --check: describe, launch-config issues, then the token read.
 [[nodiscard]] int server_check(const FrontendConfig& config, const std::vector<std::string>& overridden, bool expert);
 // Model launcher (plan 2026-10-23 Task 3): the boot of a main config with models.cards. The
 // cards are loaded (a bad one refused by name, D9), each validated with the main config; the

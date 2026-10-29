@@ -13,7 +13,7 @@ key, the listener and LAN access, limits and timeouts, and the folders.
 1. **A Settings tab in the page** (every way of opening the page gets it, the window included). It gathers what Models >
    Settings holds today (model folders, email alerts, web search) with four new sections. It answers loopback clients
    and the hosts `models.control_remote_networks` lists, like the settings it joins.
-2. **`strata-window`**, a small native program beside the server: it runs `strata-secure-server` as its child with no
+2. **`strata-window`**, a small native program beside the server: it runs `strata-unified-server` as its child with no
    console, shows the page in an embedded web view, and lives in the tray.
 
 Downloads and Add a model are already in the page (Models > Download models), so the window has them with no new code.
@@ -41,7 +41,7 @@ refused here, by name), `POST /v1/strata/key/rotate`. Nothing about a key is eve
 
 ## Part 2: `strata-window`
 
-- **Start.** It starts `strata-secure-server` beside it with the same arguments it was given (so `--data-dir`, `--port`
+- **Start.** It starts `strata-unified-server` beside it with the same arguments it was given (so `--data-dir`, `--port`
   pass through), with no console window, its output written to `data/logs/server.log` (bounded, rotated). It reads the
   server's "Sign in: open http://127.0.0.1:PORT/#login=..." line and opens the page through it (the one-time link,
   this PC only), on the Monitor tab: the page takes `#login=<code>&view=monitor` (or `#view=monitor`); a restart's link
@@ -61,7 +61,7 @@ refused here, by name), `POST /v1/strata/key/rotate`. Nothing about a key is eve
   API key read from the data folder's token store, as `strata key show` reads it (never logged, never shown).
 - **Exit.** Stops the server (its Ctrl-Break / SIGTERM path: the running model stops cleanly), then quits. Restart does
   the same and starts it again (the way settings apply).
-- **Console mode stays.** `strata-secure-server` is unchanged: development, tests and headless Linux run it as before.
+- **Console mode stays.** `strata-unified-server` is unchanged: development, tests and headless Linux run it as before.
 
 ### Build
 

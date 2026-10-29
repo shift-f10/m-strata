@@ -755,7 +755,7 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
 
 ### The window app (2026-10-28; built only with `SECURE_FRONTEND_WINDOW`)
 
-- **What it is.** `strata-window` runs `strata-secure-server` beside it as a child: the same user, no console window,
+- **What it is.** `strata-window` runs `strata-unified-server` beside it as a child: the same user, no console window,
   its own arguments passed through. It shows the page in WebView2 (Windows) or WebKitGTK (Linux) and keeps a tray
   icon. It listens on nothing; it is a client of the server over loopback. The server ends with it (a kill-on-close
   Job; on Linux, the parent-death signal).

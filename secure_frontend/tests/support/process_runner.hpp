@@ -94,12 +94,12 @@ class ChildProcess final {
     startup.hStdError = err;
     PROCESS_INFORMATION info{};
     const DWORD flags = CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW;
-    // G4: strata-secure-server refuses an elevated token, so it always starts
+    // G4: strata-unified-server refuses an elevated token, so it always starts
     // through the shared non-elevated launch (no override flag exists); any
     // other executable keeps the plain CreateProcessW.
     // Selected by name: a renamed copy of the server takes the plain path and
     // is then refused by G4 itself (a loud failure, never a bypass).
-    const bool server = spec.executable.stem() == L"strata-secure-server";
+    const bool server = spec.executable.stem() == L"strata-unified-server";
     const bool ok = server ? create_non_elevated_process(spec.executable.wstring(), command, flags, block.data(), startup, info,
                                                          "process_runner")
                            : CreateProcessW(spec.executable.c_str(), command.data(), nullptr, nullptr, TRUE, flags,

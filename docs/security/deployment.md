@@ -3,7 +3,7 @@
 ## Status
 
 This is the deployment contract for the eventual secure-native distribution.
-The native `strata-secure-server` now provides a runnable, serial local chat
+The native `strata-unified-server` now provides a runnable, serial local chat
 path for its deliberately constrained Qwen/text tokenizer profile. It is not
 yet a full compatibility or release claim for every upstream model/template,
 vision, or backend profile. Do not package the upstream Python workflow as a
@@ -77,7 +77,7 @@ renaming a quarantined component.
   them on startup or request handling.
 - Create a dedicated model directory owned by the service user. Do not make it
   world-writable and do not allow symlink/junction escapes from it.
-- Generate the token with `strata-secure-server init` (CSPRNG, 43 characters,
+- Generate the token with `strata-unified-server init` (CSPRNG, 43 characters,
   never printed). On Linux it is an owner-only `0600` file in a `0700`
   directory. On Windows it is a DPAPI-wrapped file (`STRATAK1` + blob) with a
   protected DACL for you and SYSTEM; the reader also accepts an operator-made
@@ -93,7 +93,7 @@ renaming a quarantined component.
   security review.
 - Do not expose the engine child endpoint, model directory, or token file
   directly to clients. The frontend is the only public listener.
-- Start `strata-secure-server` with an already-local tokenizer pack, selected
+- Start `strata-unified-server` with an already-local tokenizer pack, selected
   `.gguf` model, engine executable, and each engine option supplied as a
   distinct `--engine-arg` (or `engine.args` element in the `--config` file;
   run `--check` first: it validates every key without side effects and lists
@@ -130,7 +130,7 @@ renaming a quarantined component.
   frontend logs a hint naming this fix when an engine dies before READY under
   NNP. `--allow-new-privileges` turns NNP off; it exists for the offline GPU
   validation kit and such hosts, and is not the default.
-- `strata-secure-server` refuses to start as root (Windows: with an elevated
+- `strata-unified-server` refuses to start as root (Windows: with an elevated
   token). Containers must run it as an unprivileged user.
 - `--state-dir` must be an existing directory owned by the service user with
   no group/other permissions; the engine's working directory, temp and CUDA

@@ -2,7 +2,7 @@
 
 // strata-window's portable half (spec docs/superpowers/specs/2026-10-28-server-window-design.md, Part 2; the owner:
 // "instead of a console application, we should make it into a window application ... minimized into the tray that
-// has the start and stop models menu"). The window runs strata-secure-server as its child and shows the page; this
+// has the start and stop models menu"). The window runs strata-unified-server as its child and shows the page; this
 // is what it reads from the server's console, what it keeps of it, where its web view may go, the tray's model list,
 // its requests to the server, and the server child itself. The native windows (WebView2, WebKitGTK) are thin over it.
 
@@ -117,7 +117,7 @@ class RotatingLog final {
 };
 
 // --------------------------------------------------------------------------- the server child
-// strata-secure-server run as the window's child: no console window, its stdout and stderr read as lines on a thread
+// strata-unified-server run as the window's child: no console window, its stdout and stderr read as lines on a thread
 // of its own (handed to `on_line`, then `on_exit` with the exit code once it ends), `environment` as its environment
 // (ServerSetup::environment: a --token-env variable reaches it). The child ends with the window (a kill-on-close Job
 // on Windows, the parent-death signal on Linux). stop() asks it to stop as a console's Ctrl-Break or SIGTERM would (it

@@ -292,7 +292,7 @@ add_executable(strata-secure-smoke-server
 
 # The production-shaped native listener.  It keeps the engine behind the
 # authenticated HTTP boundary and deliberately links no legacy Python service.
-add_executable(strata-secure-server
+add_executable(strata-unified-server
     src/secure_server_main.cpp
 )
 
@@ -516,19 +516,19 @@ target_link_libraries(strata-secure-smoke-server PRIVATE secure_frontend_config 
     secure_frontend_http_policy secure_frontend_http_request_handler secure_frontend_http_socket_server
     secure_frontend_api_router secure_frontend_model_inventory)
 target_compile_features(strata-secure-smoke-server PRIVATE cxx_std_20)
-target_link_libraries(strata-secure-server PRIVATE secure_frontend_config secure_frontend_token_reader
+target_link_libraries(strata-unified-server PRIVATE secure_frontend_config secure_frontend_token_reader
     secure_frontend_http_policy secure_frontend_http_request_handler secure_frontend_http_socket_server
     secure_frontend_api_router secure_frontend_model_inventory secure_frontend_tokenizer_pack
     secure_frontend_engine_protocol_client secure_frontend_engine_stdio_process secure_frontend_chat_schema
     secure_frontend_chat_generation_plan secure_frontend_chat_execution secure_frontend_engine_arguments)
-target_link_libraries(strata-secure-server PRIVATE secure_frontend_server_cli secure_frontend_typed_config)
-target_link_libraries(strata-secure-server PRIVATE secure_frontend_first_start)
-target_link_libraries(strata-secure-server PRIVATE secure_frontend_subsystem_limits secure_frontend_engine_supervisor)
-target_link_libraries(strata-secure-server PRIVATE secure_frontend_socket_io secure_frontend_api_core)
-target_link_libraries(strata-secure-server PRIVATE secure_frontend_connection_pool secure_frontend_chat_route secure_frontend_request_log)
-target_compile_features(strata-secure-server PRIVATE cxx_std_20)
+target_link_libraries(strata-unified-server PRIVATE secure_frontend_server_cli secure_frontend_typed_config)
+target_link_libraries(strata-unified-server PRIVATE secure_frontend_first_start)
+target_link_libraries(strata-unified-server PRIVATE secure_frontend_subsystem_limits secure_frontend_engine_supervisor)
+target_link_libraries(strata-unified-server PRIVATE secure_frontend_socket_io secure_frontend_api_core)
+target_link_libraries(strata-unified-server PRIVATE secure_frontend_connection_pool secure_frontend_chat_route secure_frontend_request_log)
+target_compile_features(strata-unified-server PRIVATE cxx_std_20)
 # Spec A2: UTF-8 argv from the wide command line on Windows, shared by
-# strata-secure-server and strata (CommandLineToArgvW: shell32).
+# strata-unified-server and strata (CommandLineToArgvW: shell32).
 add_library(secure_frontend_utf8_argv src/utf8_argv.cpp)
 target_compile_features(secure_frontend_utf8_argv PUBLIC cxx_std_20)
 target_include_directories(secure_frontend_utf8_argv PUBLIC
@@ -537,7 +537,7 @@ if(WIN32)
     target_link_libraries(secure_frontend_utf8_argv PUBLIC shell32)
 endif()
 secure_frontend_set_warnings(secure_frontend_utf8_argv)
-target_link_libraries(strata-secure-server PRIVATE secure_frontend_utf8_argv)
+target_link_libraries(strata-unified-server PRIVATE secure_frontend_utf8_argv)
 
 target_link_libraries(secure_frontend_config PUBLIC secure_frontend_paths)
 target_link_libraries(secure_frontend_model_inventory PUBLIC secure_frontend_paths)
@@ -583,7 +583,7 @@ foreach(_target IN ITEMS
         secure_frontend_minimax_prompt_renderer
         secure_frontend_chat_generation_plan secure_frontend_chat_execution secure_frontend_engine_supervisor
         secure_frontend_subsystem_limits secure_frontend_secrets secure_frontend_token_store
-        secure-frontend-smoke strata-secure-smoke-server strata-secure-server)
+        secure-frontend-smoke strata-secure-smoke-server strata-unified-server)
     secure_frontend_set_warnings(${_target})
 endforeach()
 
@@ -638,7 +638,7 @@ endif()
 secure_frontend_set_warnings(secure_frontend_acquire)
 
 # SP4 Tasks 25/26 (spec §3.1-§3.3): the confined system curl. Linked only by
-# secure_frontend_strata_cli and tests; strata-secure-server never links it (§7.1).
+# secure_frontend_strata_cli and tests; strata-unified-server never links it (§7.1).
 add_library(secure_frontend_downloader src/downloader_common.cpp)
 target_compile_features(secure_frontend_downloader PUBLIC cxx_std_20)
 target_include_directories(secure_frontend_downloader PUBLIC
@@ -714,7 +714,7 @@ target_include_directories(secure_frontend_launch PUBLIC
 target_link_libraries(secure_frontend_launch PUBLIC secure_frontend_model_store secure_frontend_typed_config
     secure_frontend_engine_arguments secure_frontend_model_inventory)
 secure_frontend_set_warnings(secure_frontend_launch)
-target_link_libraries(strata-secure-server PRIVATE secure_frontend_launch)
+target_link_libraries(strata-unified-server PRIVATE secure_frontend_launch)
 
 # Model downloads (plan 2026-10-23-model-downloads Task 1): Hugging Face links and the SP4 manifests
 # a download becomes (O4: Hugging Face and .gguf only). Pure: no network, no filesystem.
@@ -827,7 +827,7 @@ secure_frontend_add_library(secure_frontend_card_routes SOURCES src/card_routes.
           secure_frontend_token_store secure_frontend_tokenizer_pack secure_frontend_paths secure_frontend_config_writer)
 
 # SP5 M1 Task 13 (Ruling T13-b): the supervised serve path as a library — the one
-# boot `strata-secure-server` and `strata serve` share (server_bootstrap.hpp).
+# boot `strata-unified-server` and `strata serve` share (server_bootstrap.hpp).
 # The Settings tab's server half (spec 2026-10-28-server-window-design, Part 1): config_routes.hpp. The key rotation is
 # generate_token's (frontend_init.cpp, in secure_frontend_server_cli), as `strata key rotate`.
 secure_frontend_add_library(secure_frontend_config_routes SOURCES src/config_routes.cpp
@@ -863,9 +863,9 @@ endif()
 if(SECURE_FRONTEND_WEB_SEARCH)
     target_link_libraries(secure_frontend_server_bootstrap PUBLIC secure_frontend_search_service secure_frontend_search_routes)
     # strata-search is a runtime file of the server: built with it, beside it
-    add_dependencies(strata-secure-server strata-search)
+    add_dependencies(strata-unified-server strata-search)
 endif()
-target_link_libraries(strata-secure-server PRIVATE secure_frontend_server_bootstrap)
+target_link_libraries(strata-unified-server PRIVATE secure_frontend_server_bootstrap)
 
 # SP4 Task 23 (spec §1.5): the strata CLI's verbs.
 add_library(secure_frontend_strata_cli src/strata_cli.cpp)
@@ -925,7 +925,7 @@ target_compile_definitions(secure_frontend_release_manifest PRIVATE
     "STRATA_RELEASE_PUBKEY_HEX=\"${STRATA_RELEASE_PUBKEY_HEX}\"")
 
 # PX §2: the one user-facing binary. SP4 provides only its acquisition verbs (Controller note 1);
-# strata-secure-server never links secure_frontend_acquire or secure_frontend_strata_cli (§7.1).
+# strata-unified-server never links secure_frontend_acquire or secure_frontend_strata_cli (§7.1).
 add_executable(strata src/strata_main.cpp)
 target_link_libraries(strata PRIVATE secure_frontend_strata_cli secure_frontend_utf8_argv secure_frontend_socket_io)
 target_compile_features(strata PRIVATE cxx_std_20)
@@ -934,7 +934,7 @@ secure_frontend_set_warnings(strata)
 # Installing (make.py at the repository root): `cmake --install <build> --component runtime --prefix <out>` writes the
 # two user-facing programs (the page, the catalog and the prepare script are embedded in them) and, on Windows, the
 # MSVC runtime beside them (Microsoft's app-local deployment). Nothing else of this tree is installed.
-install(TARGETS strata-secure-server strata RUNTIME DESTINATION . COMPONENT runtime)
+install(TARGETS strata-unified-server strata RUNTIME DESTINATION . COMPONENT runtime)
 if(SECURE_FRONTEND_WEB_SEARCH)
     # web search: strata-search beside the server, which runs it from its own folder
     install(TARGETS strata-search RUNTIME DESTINATION . COMPONENT runtime)
@@ -974,7 +974,7 @@ if(SECURE_FRONTEND_WINDOW)
     endif()
     target_compile_features(strata-window PRIVATE cxx_std_20)
     secure_frontend_set_warnings(strata-window)
-    add_dependencies(strata-window strata-secure-server)  # the window runs the server beside it
+    add_dependencies(strata-window strata-unified-server)  # the window runs the server beside it
     install(TARGETS strata-window RUNTIME DESTINATION . COMPONENT runtime)
 endif()
 if(MSVC)
@@ -1151,8 +1151,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         target_compile_definitions(${target} PRIVATE
             "STRATA_FAKE_ENGINE_PATH=\"$<TARGET_FILE:strata-supervision-fake-engine>\""
             "STRATA_FAKE_VISION_CHILD_PATH=\"$<TARGET_FILE:strata-fake-vision-child>\""
-            "STRATA_SECURE_SERVER_PATH=\"$<TARGET_FILE:strata-secure-server>\"")
-        add_dependencies(${target} strata-supervision-fake-engine strata-fake-vision-child strata-secure-server)
+            "STRATA_UNIFIED_SERVER_PATH=\"$<TARGET_FILE:strata-unified-server>\"")
+        add_dependencies(${target} strata-supervision-fake-engine strata-fake-vision-child strata-unified-server)
         if(TARGET strata_egress_tripwire)  # SP3 Task 19: Linux-only tripwire targets, when defined
             target_compile_definitions(${target} PRIVATE
                 STRATA_EGRESS_TRIPWIRE_PATH="$<TARGET_FILE:strata_egress_tripwire>"
@@ -1706,12 +1706,12 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         multi_child_replicas_reject_with_the_ruling
         vision_rows_match_the_pin
         bounds_are_the_pins_at_each_edge)
-    # SP4 Task 24b (spec §4.9 c/d; F-8): managed-model config errors, also through strata-secure-server --check.
+    # SP4 Task 24b (spec §4.9 c/d; F-8): managed-model config errors, also through strata-unified-server --check.
     target_link_libraries(secure_frontend_typed_config_tests PRIVATE secure_frontend_launch secure_frontend_strata_cli)
-    add_dependencies(secure_frontend_typed_config_tests strata-secure-server)
+    add_dependencies(secure_frontend_typed_config_tests strata-unified-server)
     secure_frontend_add_cases(secure_frontend_typed_config_tests cfg01_engine_profile_rejected_for_managed_model
         cfg01_tokenizer_pack_root_rejected_for_managed_model cfg01_model_reference_rejected_for_managed_model
-        ARGS $<TARGET_FILE:strata-secure-server> LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+        ARGS $<TARGET_FILE:strata-unified-server> LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     if(NOT WIN32)
         # chmod-based: the config folder's mode decides the roots.secret default.
         secure_frontend_add_cases(secure_frontend_typed_config_tests
@@ -2042,7 +2042,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     add_executable(secure_frontend_fake_engine tests/fake_engine_main.cpp)
     target_compile_features(secure_frontend_fake_engine PRIVATE cxx_std_20)
     secure_frontend_set_warnings(secure_frontend_fake_engine)
-    set(SECURE_FRONTEND_SERVER_ARGS ARGS $<TARGET_FILE:strata-secure-server> $<TARGET_FILE:secure_frontend_fake_engine>
+    set(SECURE_FRONTEND_SERVER_ARGS ARGS $<TARGET_FILE:strata-unified-server> $<TARGET_FILE:secure_frontend_fake_engine>
         $<TARGET_FILE:strata>)  # SP5 M1 Task 13: ARGS[2] is the `strata` CLI (strata serve cases)
 
     # GUI-first start-up (spec 2026-10-27 §3): the data folder, the card-less config, the install folder, the login link.
@@ -2208,7 +2208,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
 
     secure_frontend_add_test_executable(secure_frontend_server_cli_tests tests/server_cli_test.cpp
         secure_frontend_typed_config)
-    add_dependencies(secure_frontend_server_cli_tests strata-secure-server secure_frontend_fake_engine strata)
+    add_dependencies(secure_frontend_server_cli_tests strata-unified-server secure_frontend_fake_engine strata)
     secure_frontend_add_cases(secure_frontend_server_cli_tests
         cli_config_file_and_flags_share_validator cli_flag_overrides_file_and_is_reported cli_check_prints_no_token
         cli_check_unreadable_token_is_not_reported_valid
@@ -2361,7 +2361,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
 
     secure_frontend_add_test_executable(secure_frontend_server_e2e_tests tests/server_e2e_test.cpp
         secure_frontend_typed_config)
-    add_dependencies(secure_frontend_server_e2e_tests strata-secure-server secure_frontend_fake_engine)
+    add_dependencies(secure_frontend_server_e2e_tests strata-unified-server secure_frontend_fake_engine)
     if(WIN32)
         target_link_libraries(secure_frontend_server_e2e_tests PRIVATE iphlpapi ws2_32)
     endif()
@@ -2670,12 +2670,12 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     endif()
     # SP4 Task 28 (spec §7, §10.3 DL-01/PRIV-01..04, §10.5): privacy lifecycle and release-only proofs.
     secure_frontend_add_test_executable(secure_frontend_privacy_tests tests/privacy_test.cpp secure_frontend_strata_cli)
-    add_dependencies(secure_frontend_privacy_tests strata strata-secure-server secure_frontend_fake_engine secure_frontend_fake_curl
+    add_dependencies(secure_frontend_privacy_tests strata strata-unified-server secure_frontend_fake_engine secure_frontend_fake_curl
         strata-supervision-fake-engine)
     if(WIN32)
         target_link_libraries(secure_frontend_privacy_tests PRIVATE iphlpapi ws2_32)
     endif()
-    set(_sf_server_args ARGS $<TARGET_FILE:strata-secure-server> $<TARGET_FILE:secure_frontend_fake_engine>)
+    set(_sf_server_args ARGS $<TARGET_FILE:strata-unified-server> $<TARGET_FILE:secure_frontend_fake_engine>)
     secure_frontend_add_cases(secure_frontend_privacy_tests priv03_api_payloads_resembling_pull_trigger_nothing ${_sf_server_args}
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 120)
     secure_frontend_add_cases(secure_frontend_privacy_tests doctor_proxy_hint_is_presence_only ARGS $<TARGET_FILE:strata>
@@ -2683,10 +2683,10 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_privacy_tests doctor_warns_on_strata_env_knob ARGS $<TARGET_FILE:strata>
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_cases(secure_frontend_privacy_tests priv04_secure_server_does_not_link_acquisition
-        ARGS ${CMAKE_CURRENT_BINARY_DIR}/strata-secure-server.link-set.txt ${CMAKE_CURRENT_BINARY_DIR}/strata.link-set.txt
+        ARGS ${CMAKE_CURRENT_BINARY_DIR}/strata-unified-server.link-set.txt ${CMAKE_CURRENT_BINARY_DIR}/strata.link-set.txt
         LABELS release-also)
     secure_frontend_add_cases(secure_frontend_privacy_tests release_binary_lacks_hook_marker
-        ARGS $<TARGET_FILE:strata> $<TARGET_FILE:strata-secure-server> LABELS release-only)
+        ARGS $<TARGET_FILE:strata> $<TARGET_FILE:strata-unified-server> LABELS release-only)
     if(UNIX)
         # Linux LD_PRELOAD socket audit (logs, and with SF_CONNECT_AUDIT_BLOCK refuses, non-loopback use).
         add_library(secure_frontend_connect_audit SHARED tests/connect_audit_shim.cpp)
@@ -2701,11 +2701,11 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         target_link_libraries(secure_frontend_resolve_probe PRIVATE dl)
         add_dependencies(secure_frontend_privacy_tests secure_frontend_connect_audit secure_frontend_resolve_probe)
         secure_frontend_add_cases(secure_frontend_privacy_tests dl01_server_makes_no_outbound_connection
-            ARGS $<TARGET_FILE:strata-secure-server> $<TARGET_FILE:secure_frontend_fake_engine>
+            ARGS $<TARGET_FILE:strata-unified-server> $<TARGET_FILE:secure_frontend_fake_engine>
                  $<TARGET_FILE:secure_frontend_connect_audit> $<TARGET_FILE:secure_frontend_resolve_probe>
             LABELS release-also TIMEOUT 120)
         secure_frontend_add_cases(secure_frontend_privacy_tests priv01_lifecycle_and_crash_restart_make_no_network_use
-            ARGS $<TARGET_FILE:strata-secure-server> $<TARGET_FILE:strata-supervision-fake-engine>
+            ARGS $<TARGET_FILE:strata-unified-server> $<TARGET_FILE:strata-supervision-fake-engine>
                  $<TARGET_FILE:secure_frontend_connect_audit>
             TIMEOUT 120)
         target_sources(secure_frontend_fetch_tests PRIVATE tests/fetch_release_test.cpp)
@@ -2735,7 +2735,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
                 ARGS $<TARGET_FILE:strata> $<TARGET_FILE:secure_frontend_fake_curl> LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 120)
         endif()
         secure_frontend_add_cases(secure_frontend_privacy_tests hooks_build_announces_marker
-            ARGS $<TARGET_FILE:strata> $<TARGET_FILE:strata-secure-server>)
+            ARGS $<TARGET_FILE:strata> $<TARGET_FILE:strata-unified-server>)
     endif()
     # SP4 Task 27 (spec §3.2, §7.3, §10.3): confinement through the strata CLI and acquire.log.
     target_sources(secure_frontend_fetch_tests PRIVATE tests/fetch_cli_test.cpp)
@@ -2750,41 +2750,41 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         endif()
     endif()
 
-    add_test(NAME strata_secure_server_help COMMAND strata-secure-server --help)
+    add_test(NAME strata_unified_server_help COMMAND strata-unified-server --help)
     # G4: past --help the server refuses an elevated token, and the Windows CI
     # runners (and wine) are elevated. On Windows the CLI checks below run it
     # through the shared non-elevated launch (tests/support/non_elevated_launch.hpp)
     # and are windows-runtime (wine cannot produce a non-elevated token); on
     # Linux they run the server directly and stay unlabeled.
-    set(SECURE_FRONTEND_SERVER_CLI_LAUNCH strata-secure-server)
+    set(SECURE_FRONTEND_SERVER_CLI_LAUNCH strata-unified-server)
     if(WIN32)
         secure_frontend_add_test_executable(secure_frontend_non_elevated_run tests/non_elevated_run_main.cpp shell32)
         target_include_directories(secure_frontend_non_elevated_run PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-        add_dependencies(secure_frontend_non_elevated_run strata-secure-server)
-        set(SECURE_FRONTEND_SERVER_CLI_LAUNCH secure_frontend_non_elevated_run $<TARGET_FILE:strata-secure-server>)
+        add_dependencies(secure_frontend_non_elevated_run strata-unified-server)
+        set(SECURE_FRONTEND_SERVER_CLI_LAUNCH secure_frontend_non_elevated_run $<TARGET_FILE:strata-unified-server>)
     endif()
     # SP5 M2 Task 7 (D-8, C-5): the GLM launch is composed from the model directory and the
     # typed table — engine.args with glm53 is refused by name (SP1 pass-through retired).
-    add_test(NAME strata_secure_server_glm_rejects_engine_args
+    add_test(NAME strata_unified_server_glm_rejects_engine_args
         COMMAND ${SECURE_FRONTEND_SERVER_CLI_LAUNCH} --expert --profile glm53 --models-root models --tokenizer-pack tok
                 --engine engine --model-id glm-local --engine-arg --max-context --engine-arg 32768 --token-env STRATA_UNUSED_TOKEN)
-    set_tests_properties(strata_secure_server_glm_rejects_engine_args PROPERTIES
+    set_tests_properties(strata_unified_server_glm_rejects_engine_args PROPERTIES
         PASS_REGULAR_EXPRESSION "engine.args: engine.profile glm53 takes no engine arguments"
         FAIL_REGULAR_EXPRESSION "32768")
     # Review Focus 4: a malformed --gpu is a startup error with a fixed message (never the value).
-    add_test(NAME strata_secure_server_rejects_malformed_gpu
+    add_test(NAME strata_unified_server_rejects_malformed_gpu
         COMMAND ${SECURE_FRONTEND_SERVER_CLI_LAUNCH} --models-root models --tokenizer-pack tok --engine engine
                 --model-id m --token-env STRATA_UNUSED_TOKEN --gpu 0,0)
-    set_tests_properties(strata_secure_server_rejects_malformed_gpu PROPERTIES
+    set_tests_properties(strata_unified_server_rejects_malformed_gpu PROPERTIES
         PASS_REGULAR_EXPRESSION "engine.gpu: must be a comma-separated list of distinct device indices"
         FAIL_REGULAR_EXPRESSION "0,0")
     if(WIN32)
-        set_tests_properties(strata_secure_server_glm_rejects_engine_args strata_secure_server_rejects_malformed_gpu
+        set_tests_properties(strata_unified_server_glm_rejects_engine_args strata_unified_server_rejects_malformed_gpu
             PROPERTIES LABELS windows-runtime)
     endif()
 endif()
 
-# PRIV-04 supplement (SP4 §7.1): the transitive link closures of strata-secure-server and
+# PRIV-04 supplement (SP4 §7.1): the transitive link closures of strata-unified-server and
 # (its positive control) strata, read by privacy.priv04_secure_server_does_not_link_acquisition.
 # Kept last so every target_link_libraries above is already recorded. Generator
 # expressions ($<LINK_ONLY:x>, $<$<PLATFORM_ID:Windows>:x>, ...) are handled
@@ -2820,7 +2820,7 @@ function(secure_frontend_link_closure target out_var)
     endwhile()
     set(${out_var} ${_seen} PARENT_SCOPE)
 endfunction()
-foreach(_sf_link_target IN ITEMS strata-secure-server strata)
+foreach(_sf_link_target IN ITEMS strata-unified-server strata)
     secure_frontend_link_closure(${_sf_link_target} _sf_link_set)
     list(JOIN _sf_link_set "\n" _sf_link_text)
     # file(WRITE) writes text mode on a native Windows host (CRLF on MSYS2); pin LF on every host.
