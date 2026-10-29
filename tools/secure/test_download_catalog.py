@@ -34,7 +34,7 @@ ISTA = "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF"
 ISTA_REV = "ed59f92082b1e93c0e96d60a8b11aab089b52f09"
 MAYA_REPO = "peasantsmith/GLM-5.3-Flash-Maya-GGUF"
 KEYS = {"id", "name", "source", "family", "engine", "about", "repo", "revision", "files", "prepare", "pack_args",
-        "expert_profile", "mmproj", "mtp"}
+        "expert_profile", "mmproj", "mtp", "draft_layer"}
 FLINT_REPO, FLINT_REV = "unsloth/flint-GGUF", "20468edfc38ab43d6914cc88b08cbecb05d0fc62"
 RAON_REPO, RAON_REV = "KRAFTON/Raon-1-mini-preview-gguf", "cd61e81afcdfdf4b13cb345b3587c0ba4b918d00"
 GEMMA_REPO, GEMMA_REV = "unsloth/gemma-4-26B-A4B-it-GGUF", "c099eb48e663fd284577b04978a94ffccb261841"
@@ -136,7 +136,7 @@ def test_ids_unique_well_formed_and_sorted(generated):
 
 def test_schema_shape_and_provenance(generated):
     doc, _ = generated
-    assert list(doc) == ["schema_version", "generated_from", "models"]
+    assert list(doc) == ["schema_version", "generated_from", "models", "draft_layers"]
     assert doc["schema_version"] == 1
     assert doc["generated_from"] == {"upstream": "v0.2.4.2", "maya": "v1.1.27"}
     for m in doc["models"]:
@@ -150,6 +150,46 @@ def test_schema_shape_and_provenance(generated):
             assert list(f) == ["path", "size", "sha256"]
         # the MTP draft file: Gemma 4's only (its engine runs it), shaped as the image encoder is
         assert m["mtp"] is None or (m["engine"] == "gemma4" and list(m["mtp"]) == ["path", "size", "sha256", "repo", "revision"])
+
+
+def test_qwen38_entries_name_the_draft_layer_upstream_builds(generated):
+    """Owner 2026-10-29 ("check which models in the download needs draft layers ... configured correctly automatically"):
+    every Qwen3.8-family entry (Qwen3.8, Swift, Coder, Unsloth, Gyro) drafts with the one MTP draft layer upstream's setup
+    builds - Qwen3.8-Flash-Next's 31 mtp.* tensors at mtp_fetch.py's PINNED_REVISION, each a window of a .safetensors
+    shard with mtp_fetch.py's SHA-256 - and no other entry names one (Qwen3.6's is in its GGUF, Gemma 4's is its mtp)."""
+    doc, _ = generated
+    layers = doc["draft_layers"]
+    assert list(layers) == ["qwen3.8-flash-next-mtp"]
+    layer = layers["qwen3.8-flash-next-mtp"]
+    fetch = dc.Source(dc.UPSTREAM / "tools" / "mtp_fetch.py")
+    assert layer["repo"] == "Qwen/Qwen3.8-Flash-Next" and layer["revision"] == fetch.value("PINNED_REVISION")
+    tensors = layer["tensors"]
+    assert [t["name"] for t in tensors] == sorted(fetch.value("SHA256"))
+    assert all(t["sha256"] == fetch.value("SHA256")[t["name"]] for t in tensors)
+    assert all(list(t) == ["name", "shard", "offset", "size", "sha256"] for t in tensors)
+    assert len(tensors) == 31 and sum(t["size"] for t in tensors) == 5214301696
+    assert tensors[0] == {"name": "mtp.fc_embedding.weight", "shard": "model-00120-of-00131.safetensors",
+                          "offset": 1935412640, "size": 13107200,
+                          "sha256": "241d6e87ded317a61b1aeb3ca4e28c53f1caba09ad5be66092e91fe5e3e14751"}
+    qwen38 = {m["id"] for m in doc["models"] if m["source"] == "strata" and m["family"] != "qwen36"}
+    assert len(qwen38) == 15
+    for m in doc["models"]:
+        assert m["draft_layer"] == ("qwen3.8-flash-next-mtp" if m["id"] in qwen38 else None), m["id"]
+
+
+def test_a_draft_layer_inventory_off_the_pinned_revision_is_refused(tmp_path):
+    """The inventory must be mtp_fetch.py's own: its revision, every tensor of its SHA256 table once, a shard name."""
+    import json
+    inv = json.loads(dc.MTP_INVENTORY.read_text(encoding="utf-8"))
+    for edit, why in ((lambda d: d.update(revision="0" * 40), "PINNED_REVISION"),
+                      (lambda d: d["tensors"].pop(), "SHA256 table"),
+                      (lambda d: d["tensors"][0].update(shard="x.gguf"), "not a pinned tensor")):
+        changed = json.loads(json.dumps(inv))
+        edit(changed)
+        path = tmp_path / "inventory.json"
+        path.write_text(json.dumps(changed), encoding="utf-8")
+        with pytest.raises(dc.CatalogError, match=why):
+            dc.build(dc.UPSTREAM, dc.MAYA, dc.UPSTREAM_VERSION, inventory=path)
 
 
 def test_our_pins_add_flint_raon1_and_gemma4_with_its_mtp(generated):
@@ -330,12 +370,15 @@ def test_write_mode_writes_the_committed_bytes(tmp_path):
 
 
 # ---------------------------------------------------------------- copies of the pinned files with one fact changed
-def copies(tmp_path: Path, setup_edit=None, maya_edit=None) -> tuple[Path, Path]:
+def copies(tmp_path: Path, setup_edit=None, maya_edit=None, fetch_edit=None) -> tuple[Path, Path]:
     up, maya = tmp_path / "upstream", tmp_path / "maya"
     up.mkdir()
     maya.mkdir()
     text = (dc.UPSTREAM / "setup.py").read_text(encoding="utf-8")
     (up / "setup.py").write_text(setup_edit(text) if setup_edit else text, encoding="utf-8")
+    (up / "tools").mkdir()   # (Qwen3.8's MTP draft layer: mtp_fetch.py's pinned revision and SHA-256s)
+    text = (dc.UPSTREAM / "tools" / "mtp_fetch.py").read_text(encoding="utf-8")
+    (up / "tools" / "mtp_fetch.py").write_text(fetch_edit(text) if fetch_edit else text, encoding="utf-8")
     text = (dc.MAYA / "maya.py").read_text(encoding="utf-8")
     (maya / "maya.py").write_text(maya_edit(text) if maya_edit else text, encoding="utf-8")
     shutil.copyfile(dc.MAYA / "CHANGELOG.md", maya / "CHANGELOG.md")
@@ -354,7 +397,7 @@ def replace_once(old: str, new: str):
 def test_reads_the_files_without_running_them(tmp_path):
     sentinel = tmp_path / "ran.txt"
     side_effect = f"open({str(sentinel)!r}, 'w').write('ran')\nraise SystemExit(7)\n"
-    up, maya = copies(tmp_path, lambda t: side_effect + t, lambda t: side_effect + t)
+    up, maya = copies(tmp_path, lambda t: side_effect + t, lambda t: side_effect + t, lambda t: side_effect + t)
     doc, _ = dc.build(up, maya, dc.UPSTREAM_VERSION)
     assert not sentinel.exists()
     assert dc.render(doc) == COMMITTED.read_bytes()
@@ -396,6 +439,14 @@ def test_an_expression_it_cannot_read_statically_is_refused(tmp_path):
 def test_a_changed_upstream_rule_is_refused(tmp_path):
     up, maya = copies(tmp_path, replace_once('fam.get("shards", 2))', 'fam.get("shards", 3))'))
     with pytest.raises(dc.CatalogError, match="rule"):
+        dc.build(up, maya, dc.UPSTREAM_VERSION)
+
+
+def test_a_changed_mtp_fetch_rule_is_refused(tmp_path):
+    """Owner 2026-10-29: the draft layer's checkpoint URL as mtp_fetch.py spells it, or the catalog stops."""
+    up, maya = copies(tmp_path, fetch_edit=replace_once('"/Qwen/Qwen3.8-Flash-Next/resolve/%s/" % PINNED_REVISION',
+                                                        '"/Qwen/Other/resolve/%s/" % PINNED_REVISION'))
+    with pytest.raises(dc.CatalogError, match="mtp_fetch.py: a rule the catalog restates changed"):
         dc.build(up, maya, dc.UPSTREAM_VERSION)
 
 

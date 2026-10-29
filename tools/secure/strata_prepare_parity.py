@@ -5,6 +5,7 @@
         [--tools <upstream Strata tools dir> [--real <shard 1> [--real-compat]]]
         [--maya-tools <Project Maya v1.1.30 tools dir> [--maya-real <shard 1>]]
         [--raon-tools <those tools with our raon1 additions> [--raon-real <shard 1>]]
+        [--tools <upstream Strata tools dir> --mtp-src <fetched MTP tensors> --draft-vocab <upstream data/draft_vocab.bin>]
 
 A dev-only check (Python is never needed to run strata-prepare). For each case it writes a synthetic GGUF with llama.cpp's
 gguf-py, runs the Python tool (this Python, numpy, regex, STRATA_GGUF_PY) and strata-prepare on it into two folders, and
@@ -20,6 +21,10 @@ compares the exit codes and every file:
   --raon-tools   raon1 the same way, against our additions to those two Python tools (engines/maya-ref/tools' diff on
                  Maya v1.1.30's): synthetic Q8_0 and IQ4_XS-layout models, the setup step and the tokenizer; --raon-real
                  adds a real raon-1-mini GGUF.
+  --mtp-src      Qwen3.8's MTP draft layer (owner 2026-10-29): upstream's mtp_pack.py (--experts q2_0) then mtp_rt.py on
+                 tensors mtp_fetch.py fetched (<dir>/tensors), the vocabulary copied in as setup.py's refresh_draft_vocab
+                 does, against `strata-prepare mtp` on the same tensors: every runtime file (the GGUF between the two
+                 tools and its report are not ours to write).
 Prints one line per case and exits non-zero on any difference.
 """
 from __future__ import annotations
@@ -477,6 +482,22 @@ def compare(name: str, gguf: pathlib.Path, flags: list[str]) -> bool:
     return report(name, py, cc, rp, rc, skip=lambda rel: rel.parts[0] == "tokenizer")
 
 
+def mtp_case(work: pathlib.Path) -> bool:
+    py, cc = fresh("mtp-real")
+    py.mkdir(parents=True)
+    env = dict(os.environ, STRATA_GGUF_PY=A.gguf_py)
+    tools = pathlib.Path(A.tools)
+    rp = run([sys.executable, str(tools / "mtp_pack.py"), "--src", A.mtp_src, "--experts", "q2_0",
+              "--out", str(py / "mtp-q2_0.gguf")], env=env)
+    if rp == 0:
+        rp = run([sys.executable, str(tools / "mtp_rt.py"), "--gguf", str(py / "mtp-q2_0.gguf"), "--out", str(py / "rt")], env=env)
+    if rp == 0:
+        shutil.copyfile(A.draft_vocab, py / "rt" / "draft_vocab.bin")   # setup.py refresh_draft_vocab
+    rc = run([A.exe, "mtp", "--src", A.mtp_src, "--out", str(cc / "rt"), "--draft-vocab", A.draft_vocab])
+    return report("mtp: real tensors", py, cc, rp, rc,
+                  skip=lambda rel: rel.as_posix() in ("mtp-q2_0.gguf", "mtp-q2_0.gguf.report.json"))
+
+
 def upstream_cases(work: pathlib.Path) -> bool:
     ok = True
     plain = work / "plain.gguf"
@@ -620,6 +641,8 @@ def main() -> int:
     ap.add_argument("--real-compat", action="store_true")
     ap.add_argument("--maya-real", action="append", default=[])
     ap.add_argument("--raon-real", action="append", default=[])
+    ap.add_argument("--mtp-src")
+    ap.add_argument("--draft-vocab")
     A = ap.parse_args()
     if not A.tools and not A.maya_tools and not A.raon_tools:
         ap.error("--tools, --maya-tools, --raon-tools or any of them")
@@ -629,7 +652,11 @@ def main() -> int:
     work = pathlib.Path(A.work)
     work.mkdir(parents=True, exist_ok=True)
     ok = True
-    if A.tools:
+    if A.tools and A.mtp_src:
+        if not A.draft_vocab:
+            ap.error("--mtp-src needs --draft-vocab")
+        ok &= mtp_case(work)
+    elif A.tools:
         ok &= upstream_cases(work)
     if A.maya_tools:
         ok &= maya_cases(work)

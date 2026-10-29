@@ -51,6 +51,7 @@ std::optional<AcquireError> check_layout(const CanonicalRoot& root, const Relati
     case ManifestProfile::deepseek:
     case ManifestProfile::raon1:
     case ManifestProfile::raw:
+    case ManifestProfile::mtp:
     case ManifestProfile::gguf: return std::nullopt;  // the shard-set rule only (validate_manifest)
   }
   if (!m.launch.pack || !m.launch.tokenizer_pack) return AcquireError{AcquireReason::pack_layout_invalid, where(m) + ": launch.pack"};

@@ -6,6 +6,7 @@
 #include "support/test_support.hpp"
 
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -144,6 +145,57 @@ void dl_parallel_resumes_from_sidecar() {
   expect(h.final_bytes() == kBody, "piece 0 was kept (not refetched as poison): " + h.final_bytes());
 }
 
+
+// Owner 2026-10-29 (Qwen3.8's MTP draft layer, upstream's tools/mtp_fetch.py): a file that is a window of its source -
+// bytes [offset, offset + size) of a checkpoint shard, its tensor - is fetched with that bounded range and taken only
+// from a 206 of exactly that range (any total); a resume stays inside the window; a 200 (the whole shard, its header
+// first: #327) or another range is refused, never restarted from byte 0.
+void a_window_of_its_source_is_fetched_by_its_range() {
+  Harness h("response " + kUrl + " range 100\nstatus 206 Partial\nheader Content-Range: bytes 100-109/5000\n"
+            "header Content-Length: 10\nbody-text 0123456789\nend\n");
+  h.manifest.files[0].source_offset = 100;
+  expect(!h.run().has_value(), "the window arrives");
+  expect(h.final_bytes() == kBody, "its bytes, verified: " + h.final_bytes());
+  expect(h.transport.argvs.size() == 1U && std::find(h.transport.argvs[0].begin(), h.transport.argvs[0].end(), "100-109") != h.transport.argvs[0].end(),
+         "one bounded request for bytes 100-109");
+  Harness resumed("response " + kUrl + " range 103\nstatus 206 Partial\nheader Content-Range: bytes 103-109/5000\nbody-text 3456789\nend\n");
+  resumed.manifest.files[0].source_offset = 100;
+  expect(!resumed.run("012").has_value() && resumed.final_bytes() == kBody, "a resume asks for the rest of the window only");
+  // every try asks for the window again (the answers are not consumed): never for the whole source
+  const auto always_the_window = [](const Harness& harness) {
+    return !harness.transport.argvs.empty() &&
+           std::all_of(harness.transport.argvs.begin(), harness.transport.argvs.end(),
+                       [](const std::vector<std::string>& argv) { return std::find(argv.begin(), argv.end(), "100-109") != argv.end(); });
+  };
+  Harness whole("response " + kUrl + " range 100\nstatus 200 OK\nbody-text 0123456789\nend\n");
+  whole.manifest.files[0].source_offset = 100;
+  const auto refused = whole.run();
+  expect(refused && refused->reason == AcquireReason::range_mismatch && always_the_window(whole),
+         "a 200 (the whole source) is refused, not restarted from 0");
+  Harness other("response " + kUrl + " range 100\nstatus 206 Partial\nheader Content-Range: bytes 0-9/5000\nbody-text 0123456789\nend\n");
+  other.manifest.files[0].source_offset = 100;
+  const auto wrong = other.run();
+  expect(wrong && wrong->reason == AcquireReason::range_mismatch && always_the_window(other), "another range is refused");
+}
+
+// The same window over parallel pieces: the probe asks for its first byte, each piece for its bytes at the window's
+// offset, each answer the exact range of the source's total.
+void dl_parallel_fetches_a_window() {
+  // the probe and the first piece both start at byte 100: one answer serves them (the probe reads only its head)
+  const std::string scenario =
+      "response " + kUrl + " range 100\nstatus 206 Partial\nheader ETag: \"v1\"\nheader Content-Range: bytes 100-103/5000\nbody-text 0123\nend\n" +
+      "response " + kUrl + " range 104\nstatus 206 Partial\nheader ETag: \"v1\"\nheader Content-Range: bytes 104-107/5000\nbody-text 4567\nend\n" +
+      "response " + kUrl + " range 108\nstatus 206 Partial\nheader ETag: \"v1\"\nheader Content-Range: bytes 108-109/5000\nbody-text 89\nend\n";
+  Harness h(scenario);
+  h.manifest.files[0].source_offset = 100;
+  h.settings.connections = 3;
+  h.settings.piece_bytes = 4;
+  h.settings.min_parallel_bytes = 0;
+  h.settings.pieces_per_run = 1;
+  const auto failure = h.run();
+  expect(!failure.has_value(), "the window arrives in pieces: " + (failure ? failure->detail : std::string{}));
+  expect(h.final_bytes() == kBody, "the pieces assemble into the window: " + h.final_bytes());
+}
 
 // F-49: every retry resumes at byte 3 and is truncated again, so the run really ends on
 // the truncation path (size_short), not on an unscripted request.

@@ -197,6 +197,7 @@ std::string_view profile_name(const ManifestProfile profile) noexcept {
     case ManifestProfile::gguf: return "gguf";
     case ManifestProfile::deepseek: return "deepseek";
     case ManifestProfile::raon1: return "raon1";
+    case ManifestProfile::mtp: return "mtp";
   }
   return "unknown";
 }
@@ -237,6 +238,7 @@ ManifestFamily family_for(const ManifestProfile profile) {
     case ManifestProfile::gguf: return ManifestFamily::none;
     case ManifestProfile::deepseek: return ManifestFamily::unified;  // unified-engine design §2.5
     case ManifestProfile::raon1: return ManifestFamily::unified;
+    case ManifestProfile::mtp: return ManifestFamily::none;
   }
   return ManifestFamily::none;  // unreachable: every value is a case above
 }
@@ -268,11 +270,11 @@ std::optional<ManifestIssue> validate_manifest(const AcquireManifest& m, const M
   if (m.family != family_for(m.profile)) {
     return bad("engine.family",
                "must be strata for qwen, glm for glm53, gemma4 for gemma4, unified for deepseek and raon1, "
-               "none for raw and gguf");
+               "none for raw, gguf and mtp");
   }
-  if ((m.profile == ManifestProfile::raw || m.profile == ManifestProfile::gguf) &&
+  if ((m.profile == ManifestProfile::raw || m.profile == ManifestProfile::gguf || m.profile == ManifestProfile::mtp) &&
       compare_versions(m.min_version, EngineVersion{}) != 0) {
-    return bad("engine.min_version", "must be 0.0.0 for raw and gguf");
+    return bad("engine.min_version", "must be 0.0.0 for raw, gguf and mtp");
   }
   std::string key;
   if (const auto why = license_problem(m.license, key, "license")) return bad(key, *why);
@@ -318,6 +320,12 @@ std::optional<ManifestIssue> validate_manifest(const AcquireManifest& m, const M
     }
     if (f.license) {
       if (const auto why = license_problem(*f.license, key, at + ".license")) return bad(key, *why);
+    }
+    if (f.source_offset) {
+      // owner 2026-10-29: a window of its source (Qwen3.8's MTP tensors) is fetched from one, never imported, and ends
+      // well inside the range a byte offset can name
+      if (f.sources.empty()) return bad(at + ".source_offset", "a window of its source must have a source");
+      if (*f.source_offset >= (std::uint64_t{1} << 62U) - f.size) return bad(at + ".source_offset", "must end below 2^62");
     }
   }
   // A file path must not equal (case-folded) a directory prefix of another file.
@@ -374,6 +382,23 @@ std::optional<ManifestIssue> validate_manifest(const AcquireManifest& m, const M
           return bad("files[" + std::to_string(i) + "].role", "gguf lists only weights and mmproj files");
         }
         if (!ascii_lower(f.path).ends_with(".gguf")) return bad("files[" + std::to_string(i) + "].path", "gguf lists only .gguf files");
+      }
+      break;
+    case ManifestProfile::mtp:
+      // Qwen3.8's MTP draft layer (owner 2026-10-29): only the tensors, each the window of a checkpoint shard
+      // (tools/mtp_fetch.py's ranges), as tensors/<name>.bin; strata-prepare mtp builds the layer from them
+      if (launch.native || launch.ple_gguf || launch.pack || launch.tokenizer_pack || launch.mmproj) {
+        return bad("launch", "mtp has no launch keys");
+      }
+      for (std::size_t i = 0; i < m.files.size(); ++i) {
+        const auto& f = m.files[i];
+        const std::string at = "files[" + std::to_string(i) + "]";
+        if (f.role != FileRole::weights) return bad(at + ".role", "mtp lists only weights");
+        if (!f.path.starts_with("tensors/") || !ascii_lower(f.path).ends_with(".bin") ||
+            f.path.find('/', 8U) != std::string::npos) {
+          return bad(at + ".path", "mtp lists only tensors/<name>.bin");
+        }
+        if (!f.source_offset) return bad(at + ".source_offset", "mtp lists only windows of their sources");
       }
       break;
     case ManifestProfile::raw:

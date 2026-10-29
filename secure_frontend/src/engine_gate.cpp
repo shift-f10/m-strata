@@ -32,6 +32,7 @@ std::optional<AcquireError> engine_gate(const AcquireManifest& manifest) {
     case ManifestProfile::glm53:
     case ManifestProfile::raw:
     case ManifestProfile::gguf:
+    case ManifestProfile::mtp:
       return AcquireError{AcquireReason::engine_profile_unavailable, std::string{profile_name(manifest.profile)}};
   }
   if (compare_versions(manifest.min_version, built_engine_version()) > 0) {

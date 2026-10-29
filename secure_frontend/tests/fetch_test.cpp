@@ -640,6 +640,8 @@ int main(int argc, char** argv) {
       {"dl_parallel_assembles_pieces", fetch_cases::dl_parallel_assembles_pieces},
       {"dl_parallel_falls_back_without_ranges", fetch_cases::dl_parallel_falls_back_without_ranges},
       {"dl_parallel_resumes_from_sidecar", fetch_cases::dl_parallel_resumes_from_sidecar},
+      {"a_window_of_its_source_is_fetched_by_its_range", fetch_cases::a_window_of_its_source_is_fetched_by_its_range},
+      {"dl_parallel_fetches_a_window", fetch_cases::dl_parallel_fetches_a_window},
       {"dl03_oversize_body_rejected_mid_stream", fetch_cases::dl03_oversize_body_rejected_mid_stream},
       {"dl03_redirect_to_http_rejected", fetch_cases::dl03_redirect_to_http_rejected},
       {"dl03_redirect_off_allowlist_rejected", fetch_cases::dl03_redirect_off_allowlist_rejected},

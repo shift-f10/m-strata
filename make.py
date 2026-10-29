@@ -188,7 +188,8 @@ def required_files(opts: Options, platform: str) -> list[str]:
     vision = [] if "vision" in opts.without else [f"engine/strata-vision{exe}"]
     # engine/build.json: the build record the server's About shows (build_record)
     return ([f"strata-unified-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
-             "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin", "engine/build.json",
+             "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin", "engine/data/draft_vocab.bin",
+             "engine/build.json",
              "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + search + window + vision + maya +
             ["engine/" + lib(n) for n in _families(opts)])
 

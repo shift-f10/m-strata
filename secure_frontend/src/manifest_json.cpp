@@ -173,7 +173,8 @@ ManifestParseResult parse_manifest(const std::string_view bytes, const ManifestR
   else if (profile == "raon1") m.profile = ManifestProfile::raon1;
   else if (profile == "raw") m.profile = ManifestProfile::raw;
   else if (profile == "gguf") m.profile = ManifestProfile::gguf;  // model downloads (owner, 2026-10-23)
-  else r.fail("profile", "must be qwen, glm53, gemma4, deepseek, raon1 or gguf");
+  else if (profile == "mtp") m.profile = ManifestProfile::mtp;    // Qwen3.8's MTP draft layer (owner, 2026-10-29)
+  else r.fail("profile", "must be qwen, glm53, gemma4, deepseek, raon1, gguf or mtp");
   if (const auto* engine = r.object(Reader::find(*top, "engine"), "engine")) {
     r.only(*engine, {"family", "min_version"}, "engine");
     const auto family = r.text(*engine, "family", "engine", 16).value_or("");
@@ -197,7 +198,7 @@ ManifestParseResult parse_manifest(const std::string_view bytes, const ManifestR
     const std::string at = "files[" + std::to_string(i) + "]";
     const auto* f = r.object(&(*file_items)[i], at);
     if (f == nullptr) break;
-    r.only(*f, {"path", "role", "size", "sha256", "sources", "license"}, at);
+    r.only(*f, {"path", "role", "size", "sha256", "sources", "license", "source_offset"}, at);
     ManifestFile file;
     file.path = r.text(*f, "path", at, kManifestMaxStringBytes).value_or("");
     const auto role = r.text(*f, "role", at, 16).value_or("");
@@ -211,6 +212,12 @@ ManifestParseResult parse_manifest(const std::string_view bytes, const ManifestR
     file.size = size > 0 ? static_cast<std::uint64_t>(size) : 0U;
     file.sha256 = r.text(*f, "sha256", at, 64).value_or("");
     file.sources = r.texts(*f, "sources", at, kManifestMaxSources, kMaxSourceUrlBytes);
+    // owner 2026-10-29: a window of its source (a tensor of a checkpoint shard: Qwen3.8's MTP draft layer)
+    if (const auto* offset = Reader::find(*f, "source_offset")) {
+      const auto* number = offset->if_integer();
+      if (number == nullptr || *number < 0) r.fail(at + ".source_offset", "must be a non-negative integer");
+      else file.source_offset = static_cast<std::uint64_t>(*number);
+    }
     if (const auto* license = r.object(Reader::find(*f, "license"), at + ".license", false)) {
       file.license = read_license(r, *license, at + ".license");
     }

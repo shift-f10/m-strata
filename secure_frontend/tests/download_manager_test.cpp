@@ -185,6 +185,7 @@ struct Fixture final {
   std::vector<std::string> carded;  // the cards on_card was told about
   std::vector<std::string> events;  // the alerts raised (spec 2026-10-27 §5a)
   std::vector<secure_frontend::ModelCard> held;   // the launcher's cards, as the list reads them (owner 2026-10-28)
+  std::string catalog = catalog_text();           // set before start(): the catalog the manager reads
   void start(const std::uint64_t free_bytes) {
     for (const char* name : {"downloads", "work", "cards"}) secure_frontend_test::make_private_directory(dir / name);
     open(free_bytes);
@@ -196,7 +197,7 @@ struct Fixture final {
   }
   void open(const std::uint64_t free_bytes) {
     secure_frontend::DownloadSettings settings;
-    settings.catalog = secure_frontend::parse_download_catalog(catalog_text());
+    settings.catalog = secure_frontend::parse_download_catalog(catalog);
     settings.strata_executable = dir / "strata.exe";
     settings.config_file = dir / "config.json";
     settings.downloads_root = dir / "downloads";
@@ -844,6 +845,89 @@ void a_downloaded_qwen38_drafts_with_the_stores_draft_layer() {
          "and lists the MTP settings");
 }
 
+// Owner 2026-10-29 ("make sure when they are downloaded ... configured correctly automatically"): a Qwen3.8 download
+// whose catalog entry names a draft layer, with none built yet, fetches the layer's tensors after packing - one more
+// pull, an mtp manifest of windows of the checkpoint's shards - then builds the layer into <store>/mtp/rt (strata-prepare
+// mtp, the vocabulary beside the engine); its card drafts with it. The layer's bytes count in the card's size.
+void a_downloaded_qwen38_fetches_and_builds_its_draft_layer() {
+  Fixture f;
+  f.with_gguf_engine = true;
+  f.with_prepare = true;
+#if defined(_WIN32)
+  const auto tool = f.dir / "strata-prepare.exe";
+#else
+  const auto tool = f.dir / "strata-prepare";
+#endif
+  secure_frontend_test::write_file(tool, "tool");
+  secure_frontend_test::make_private_directory(f.dir / "profiles");
+  secure_frontend_test::write_file(f.dir / "profiles" / "expert-profile.bin", "profile");
+  secure_frontend_test::make_private_directory(f.dir / "data");
+  secure_frontend_test::write_file(f.dir / "data" / "draft_vocab.bin", "vocab");
+  // qwen-small names the layer: one tensor, bytes 64..73 of a shard of acme/Ckpt
+  std::string catalog = catalog_text();
+  const std::string qwen_end = "\"revision\":\"" + std::string{kCommit} + "\"}},{\"id\":\"glm-small\"";
+  catalog.replace(catalog.find(qwen_end), qwen_end.size(),
+                  "\"revision\":\"" + std::string{kCommit} + "\"},\"draft_layer\":\"layer\"},{\"id\":\"glm-small\"");
+  catalog.insert(catalog.rfind('}'), ",\"draft_layers\":{\"layer\":{\"repo\":\"acme/Ckpt\",\"revision\":\"" + std::string{kCommit} +
+                                         "\",\"tensors\":[{\"name\":\"mtp.a.weight\",\"shard\":\"model-00001-of-00002.safetensors\","
+                                         "\"offset\":64,\"size\":10,\"sha256\":\"" + kShaA + "\"}]}}");
+  f.catalog = catalog;
+  f.spawner.pulls.push_back(Script{pull_lines("qwen-small")});
+  f.spawner.pulls.push_back(Script{{"STEP pack", "DONE"}});
+  f.spawner.pulls.push_back(Script{{"MANIFEST layer:download " + std::string(64, 'c'), "FILE tensors/mtp.a.weight.bin 10",
+                                    "BYTES tensors/mtp.a.weight.bin 10 10", "FINISHED tensors/mtp.a.weight.bin ok", "RESULT ok"}});
+  f.spawner.pulls.push_back(Script{{"STEP verify", "STEP experts", "STEP dense", "STEP vocab", "DONE"}});
+  const auto installed = f.dir / "installed";
+  secure_frontend_test::make_private_directory(installed);
+  secure_frontend_test::make_private_directory(installed / "Q");
+  std::vector<std::string> manifests;   // what each pull was asked to fetch
+  f.spawner.on_spawn = [&](const secure_frontend::EngineCommand& command) {
+    const auto& a = command.arguments;
+    if (command.executable != tool) {
+      const auto at = std::find(a.begin(), a.end(), "--manifest");
+      if (at != a.end() && at + 1 != a.end()) manifests.push_back(secure_frontend_test::read_file(secure_frontend::path_from_utf8(*(at + 1))));
+      return;
+    }
+    const auto out = std::find(a.begin(), a.end(), "--out");
+    if (out == a.end() || out + 1 == a.end()) return;
+    const std::filesystem::path target = secure_frontend::path_from_utf8(*(out + 1));
+    std::filesystem::create_directories(target);
+    if (a.front() == "mtp") {   // the layer's runtime files
+      for (const char* file : {"dense.bin", "experts.bin", "draft_vocab.bin"}) secure_frontend_test::write_file(target / file, "x");
+      return;
+    }
+    secure_frontend_test::write_file(target / "prepared.json", "{\"pack\": " + json_of(target) + ", \"tokenizer\": null, \"ple\": null, \"shards\": 2}\n");
+  };
+  f.start(1U << 30U);
+  expect(has(f.manager->list_json(), "\"size_bytes\":3010"), "the card's size counts the layer's tensors: " + f.manager->list_json());
+  {
+    std::lock_guard lock(f.spawner.mutex);
+    f.spawner.installed = installed;
+  }
+  expect(!f.manager->start("qwen-small").has_value() && f.manager->wait_idle(std::chrono::seconds(10)), "it downloads");
+  const std::string listed = f.manager->list_json();
+  expect(has(listed, "\"state\":\"ready\""), "ready - the layer built, a card made: " + listed);
+  expect(f.spawner.recorded.size() == 4U, "four children: the pull, the pack, the layer's pull, the layer's build: " +
+                                              std::to_string(f.spawner.recorded.size()));
+  if (f.spawner.recorded.size() != 4U || manifests.size() != 2U) return;
+  const std::string& layer = manifests[1];
+  expect(has(layer, "\"profile\":\"mtp\"") && has(layer, "\"path\":\"tensors/mtp.a.weight.bin\"") && has(layer, "\"source_offset\":64") &&
+             has(layer, "\"sources\":[\"https://huggingface.co/acme/Ckpt/resolve/" + std::string{kCommit} + "/model-00001-of-00002.safetensors\"]"),
+         "the layer's pull: an mtp manifest of the shard's window: " + layer);
+  const auto rt = f.dir / "downloads" / "mtp" / "rt";
+  const auto& build = f.spawner.recorded[3].command;
+  expect(build.executable == tool &&
+             build.arguments == std::vector<std::string>{"mtp", "--src", secure_frontend::path_to_utf8(installed), "--out",
+                                                         secure_frontend::path_to_utf8(rt), "--draft-vocab",
+                                                         secure_frontend::path_to_utf8(f.dir / "data" / "draft_vocab.bin")},
+         "strata-prepare mtp: the fetched tensors into <store>/mtp/rt, with the vocabulary beside the engine");
+  const auto read = secure_frontend::read_model_card(f.dir / "cards" / "qwen-small.json");
+  const auto* card = std::get_if<secure_frontend::ModelCard>(&read);
+  const auto args = card != nullptr ? std::get<std::vector<std::string>>(card->config.entries.at("engine.args").value) : std::vector<std::string>{};
+  const auto mtp = std::find(args.begin(), args.end(), "--mtp");
+  expect(mtp != args.end() && mtp + 1 != args.end() && *(mtp + 1) == secure_frontend::path_to_utf8(rt), "the card drafts with it");
+}
+
 // Owner 2026-10-27 ("Yes continue with the others": GLM after Qwen): with an engine for new cards and strata-prepare
 // beside it, a GLM-5.3 download (prepare maya_pack) is packed as Maya's setup packs it - `strata-prepare download
 // --maya`, the pack in a folder beside the shards, as the engine reads them (<pack>/..). The store's own version folder
@@ -1336,6 +1420,53 @@ void the_vision_files_come_with_the_download_when_asked() {
          "the Qwen3.6 card names its encoder file");
 }
 
+// Owner 2026-10-29 ("check which models in the download needs draft layers ... configured correctly automatically"): the
+// embedded catalog's draft layer - Qwen3.8-Flash-Next's 31 MTP tensors at upstream's pinned revision, each a window of a
+// .safetensors shard with its SHA-256 - and the Qwen3.8 entries that name it. A layer with any tensor not pinned is not
+// read, and an entry naming a layer the catalog lacks, or not a packed Qwen3.8 entry, is dropped.
+void the_catalog_reads_the_qwen38_draft_layer() {
+  const auto catalog = secure_frontend::parse_download_catalog(secure_frontend::embedded_download_catalog());
+  expect(catalog.dropped == 0U, "the embedded catalog is read whole: " + std::to_string(catalog.dropped) + " dropped");
+  const auto* layer = secure_frontend::find_draft_layer(catalog, "qwen3.8-flash-next-mtp");
+  std::uint64_t total = 0;
+  if (layer != nullptr) {
+    for (const auto& t : layer->tensors) total += t.size;
+  }
+  expect(layer != nullptr && layer->repo == "Qwen/Qwen3.8-Flash-Next" && layer->revision == "de4b8e4d43b917e7706784d8bb445c9af86a3540" &&
+             layer->tensors.size() == 31U && total == 5214301696ULL && layer->tensors[0].name == "mtp.fc_embedding.weight" &&
+             layer->tensors[0].shard == "model-00120-of-00131.safetensors" && layer->tensors[0].offset == 1935412640ULL,
+         "the draft layer: 31 tensors, 5.2 GB, at the pinned revision");
+  std::size_t naming = 0;
+  for (const auto& entry : catalog.entries) {
+    if (entry.draft_layer) ++naming;
+    if (entry.id == "qwen3.6-35b-a3b-q8_0") expect(!entry.draft_layer, "Qwen3.6's draft layer is in its GGUF");
+  }
+  expect(naming == 15U, "the 15 Qwen3.8-family entries name it: " + std::to_string(naming));
+  const std::string tensor = "{\"name\":\"mtp.a.weight\",\"shard\":\"model-00001-of-00002.safetensors\",\"offset\":64,\"size\":10,\"sha256\":\"" +
+                             kShaB + "\"}";
+  const auto doc = [](const std::string& layer_tensor, const std::string& entry_layer, const std::string& prepare = "iq_pack") {
+    std::string entry = catalog_entry("q", "qwen", "strata", "null");
+    const auto at = entry.find("\"prepare\":\"");
+    if (at != std::string::npos) entry.replace(at + 11U, entry.find('"', at + 11U) - at - 11U, prepare);
+    entry.insert(entry.rfind('}'), ",\"draft_layer\":\"" + entry_layer + "\"");
+    return secure_frontend::parse_download_catalog("{\"schema_version\":1,\"models\":[" + entry + "],\"draft_layers\":{\"layer\":{\"repo\":\"o/r\","
+                                                   "\"revision\":\"" + std::string(40, 'c') + "\",\"tensors\":[" + layer_tensor + "]}}}");
+  };
+  const auto good = doc(tensor, "layer");
+  expect(good.entries.size() == 1U && good.entries[0].draft_layer == std::optional<std::string>{"layer"} &&
+             secure_frontend::find_draft_layer(good, "layer") != nullptr,
+         "a pinned layer, named by a packed Qwen3.8 entry");
+  expect(doc(tensor, "other").dropped == 1U, "an entry naming a layer the catalog lacks is dropped");
+  expect(doc(tensor, "layer", "none").dropped == 1U, "a draft layer only on a packed Qwen3.8 entry");
+  std::string bad = tensor;
+  bad.replace(bad.find("model-00001-of-00002.safetensors"), 32U, "model-00001-of-00002.gguf.....");
+  expect(secure_frontend::find_draft_layer(doc(bad, "layer"), "layer") == nullptr && doc(bad, "layer").dropped == 1U,
+         "a tensor not in a .safetensors shard: the layer is not read, its entry dropped");
+  bad = tensor;
+  bad.replace(bad.find("\"offset\":64"), 11U, "\"offset\":-1");
+  expect(secure_frontend::find_draft_layer(doc(bad, "layer"), "layer") == nullptr, "a negative offset: not read");
+}
+
 // Owner 2026-10-28 ("there are no download cards for ... flint, raon1, gemma4"; "gemma4 has an mtp"): the embedded
 // catalog's own pins (source m-strata) are read whole - flint and Gemma 4 on their engines, raon-1-mini packed first,
 // Gemma 4's MTP draft file pinned by its commit, size and SHA-256. An MTP file is Gemma 4's only, always fetched, so it
@@ -1745,6 +1876,8 @@ int main(int argc, char** argv) {
       {"a_downloaded_model_can_be_removed", a_downloaded_model_can_be_removed},
       {"a_downloaded_qwen36_becomes_a_card", a_downloaded_qwen36_becomes_a_card},
       {"a_downloaded_qwen38_is_packed_natively", a_downloaded_qwen38_is_packed_natively},
+      {"the_catalog_reads_the_qwen38_draft_layer", the_catalog_reads_the_qwen38_draft_layer},
+      {"a_downloaded_qwen38_fetches_and_builds_its_draft_layer", a_downloaded_qwen38_fetches_and_builds_its_draft_layer},
       {"a_downloaded_qwen38_drafts_with_the_stores_draft_layer", a_downloaded_qwen38_drafts_with_the_stores_draft_layer},
       {"a_downloaded_glm_is_packed_with_mayas_step", a_downloaded_glm_is_packed_with_mayas_step},
       {"a_downloaded_deepseek_is_packed_with_mayas_step", a_downloaded_deepseek_is_packed_with_mayas_step},

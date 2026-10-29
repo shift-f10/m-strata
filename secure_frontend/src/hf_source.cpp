@@ -53,6 +53,14 @@ bool digits(const std::string_view text) noexcept {
   return !text.empty() && std::all_of(text.begin(), text.end(), [](const char c) { return c >= '0' && c <= '9'; });
 }
 
+
+// A .safetensors shard's path in the repository (an mtp file's window is in one): segments as is_hf_gguf_path's
+bool is_hf_safetensors_path(const std::string_view path) {
+  if (path.size() <= 12U || path.size() > 512U || !path.ends_with(".safetensors")) return false;
+  const auto segments = split(path, '/');
+  return std::all_of(segments.begin(), segments.end(), [](const std::string_view s) { return name_ok(s, 255, true); });
+}
+
 }  // namespace
 
 bool is_hf_repo(const std::string_view repo) noexcept {
@@ -138,7 +146,8 @@ std::vector<std::string> gguf_shard_set(const std::string_view path) {
 }
 
 std::variant<std::string, std::string_view> hf_manifest_json(const HfDownload& d, const std::string_view version) {
-  if (d.profile != "gguf" && d.profile != "glm53") return std::string_view{"the profile must be gguf or glm53"};
+  const bool mtp = d.profile == "mtp";   // owner 2026-10-29: Qwen3.8's MTP draft layer's tensors
+  if (d.profile != "gguf" && d.profile != "glm53" && !mtp) return std::string_view{"the profile must be gguf, glm53 or mtp"};
   if (!is_valid_model_name(d.name) || !is_valid_model_name(d.tag) || d.tag == "default") {
     return std::string_view{"the name and tag must be model names"};
   }
@@ -148,7 +157,17 @@ std::variant<std::string, std::string_view> hf_manifest_json(const HfDownload& d
   if (d.files.empty()) return std::string_view{"a download lists at least one file"};
   std::size_t mmproj = 0;
   for (const auto& f : d.files) {
-    if (!is_hf_gguf_path(f.path)) return std::string_view{"every file must be a .gguf"};
+    if (mtp) {
+      // tensors/<name>.bin, each the window of a .safetensors shard where the tensor starts
+      const std::string_view name = std::string_view{f.path}.substr(f.path.starts_with("tensors/") ? 8U : 0U);
+      if (!f.path.starts_with("tensors/") || name.size() <= 4U || !name.ends_with(".bin") || !name_ok(name, 255, true) ||
+          !f.source_offset || !is_hf_safetensors_path(f.source_path)) {
+        return std::string_view{"every mtp file is a tensor's window of a .safetensors shard"};
+      }
+    } else {
+      if (f.source_offset || !f.source_path.empty()) return std::string_view{"only an mtp download lists windows of files"};
+      if (!is_hf_gguf_path(f.path)) return std::string_view{"every file must be a .gguf"};
+    }
     if (f.size == 0) return std::string_view{"every file has a size"};
     if (!lower_hex(f.sha256, 64)) return std::string_view{"every file has a SHA-256"};
     if (!f.repo.empty() && !is_hf_repo(f.repo)) return std::string_view{"a file's repository must be owner/name"};
@@ -163,7 +182,7 @@ std::variant<std::string, std::string_view> hf_manifest_json(const HfDownload& d
   };
   std::string json = "{\"format\":\"strata-model-manifest\",\"schema_version\":1,\"name\":" + quoted(d.name) +
                      ",\"tag\":" + quoted(d.tag) + ",\"version\":" + quoted(version) + ",\"sequence\":1,\"profile\":" +
-                     quoted(d.profile) + ",\"engine\":{\"family\":" + quoted(d.profile == "gguf" ? "none" : "glm") +
+                     quoted(d.profile) + ",\"engine\":{\"family\":" + quoted(d.profile == "glm53" ? "glm" : "none") +
                      ",\"min_version\":\"0.0.0\"},\"license\":{\"id\":" + quoted(d.license_id) + ",\"url\":" +
                      quoted(d.license_url.empty() ? hf_file_url(d.repo, d.commit, "").substr(0, kLinkPrefix.size() + d.repo.size())
                                                   : d.license_url) +
@@ -176,8 +195,10 @@ std::variant<std::string, std::string_view> hf_manifest_json(const HfDownload& d
     const auto& f = d.files[i];
     if (i != 0U) json += ',';
     json += "{\"path\":" + quoted(f.path) + ",\"role\":" + quoted(f.mmproj ? "mmproj" : "weights") +
-            ",\"size\":" + std::to_string(f.size) + ",\"sha256\":" + quoted(f.sha256) + ",\"sources\":[" +
-            quoted(hf_file_url(f.repo.empty() ? d.repo : f.repo, f.commit.empty() ? d.commit : f.commit, f.path)) + "]}";
+            ",\"size\":" + std::to_string(f.size) + ",\"sha256\":" + quoted(f.sha256) +
+            (f.source_offset ? ",\"source_offset\":" + std::to_string(*f.source_offset) : std::string{}) + ",\"sources\":[" +
+            quoted(hf_file_url(f.repo.empty() ? d.repo : f.repo, f.commit.empty() ? d.commit : f.commit,
+                               f.source_path.empty() ? f.path : f.source_path)) + "]}";
     if (!f.mmproj && !first_shard.has_value()) {
       const auto shards = gguf_shard_set(f.path);
       first_shard = shards.front();

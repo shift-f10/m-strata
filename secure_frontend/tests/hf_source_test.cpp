@@ -194,6 +194,58 @@ void manifests_are_huggingface_gguf_only() {
          "SP4: every file of a gguf manifest is a .gguf (O4 in the schema)");
 }
 
+// Owner 2026-10-29 (Qwen3.8's MTP draft layer): an mtp download lists the draft layer's tensors as tensors/<name>.bin,
+// each a window of a .safetensors shard of the checkpoint at its commit (the source is the shard, source_offset where
+// the tensor starts). Windows are mtp's alone; an mtp file is always one.
+void an_mtp_download_lists_windows_of_the_checkpoint() {
+  secure_frontend::HfDownload d;
+  d.name = "qwen3.8-flash-next-mtp";
+  d.tag = "download";
+  d.profile = "mtp";
+  d.repo = "Qwen/Qwen3.8-Flash-Next";
+  d.commit = std::string{kCommit};
+  d.license_url = "https://huggingface.co/" + d.repo;
+  secure_frontend::HfFile tensor{"tensors/mtp.fc_hidden.weight.bin", 100, kSha, false};
+  tensor.source_path = "model-00124-of-00131.safetensors";
+  tensor.source_offset = 1716599928U;
+  d.files = {tensor};
+  secure_frontend::ManifestRules rules;
+  rules.allow_raw_profile = false;
+  const auto text = secure_frontend::hf_manifest_json(d, "2026.10.29.1");
+  const auto* json = std::get_if<std::string>(&text);
+  expect(json != nullptr, "an mtp manifest");
+  if (json != nullptr) {
+    const auto parsed = secure_frontend::parse_manifest(*json, rules);
+    const auto* manifest = std::get_if<secure_frontend::ParsedManifest>(&parsed);
+    expect(manifest != nullptr, "SP4 reads it in a release build");
+    if (manifest != nullptr) {
+      const auto& m = manifest->manifest;
+      expect(m.profile == secure_frontend::ManifestProfile::mtp && m.files.size() == 1U &&
+                 m.files[0].path == "tensors/mtp.fc_hidden.weight.bin" &&
+                 m.files[0].source_offset == std::optional<std::uint64_t>{1716599928U} &&
+                 m.files[0].sources == Strings{"https://huggingface.co/Qwen/Qwen3.8-Flash-Next/resolve/" + std::string{kCommit} +
+                                               "/model-00124-of-00131.safetensors"},
+             "the tensor's file, its window of the shard at the commit");
+    }
+  }
+  const auto refused = [](secure_frontend::HfDownload changed, const std::string& what) {
+    expect(std::holds_alternative<std::string_view>(secure_frontend::hf_manifest_json(changed, "2026.10.29.1")), "refused: " + what);
+  };
+  auto bad = d;
+  bad.files[0].source_offset.reset();
+  refused(bad, "an mtp file that is no window");
+  bad = d;
+  bad.files[0].source_path = "model-00124-of-00131.gguf";
+  refused(bad, "a window of something other than a .safetensors shard");
+  bad = d;
+  bad.files[0].path = "mtp.fc_hidden.weight.bin";
+  refused(bad, "a tensor outside tensors/");
+  auto gguf = sample("gguf");
+  gguf.files[0].source_offset = 10U;
+  gguf.files[0].source_path = "x.safetensors";
+  refused(gguf, "a window in a gguf download");
+}
+
 }  // namespace
 
 // Box run 2026-10-23: Hugging Face answered the resolve URL of a real GGUF with a 302 to
@@ -227,5 +279,6 @@ int main(int argc, char** argv) {
       {"urls_and_shard_sets", urls_and_shard_sets},
       {"manifests_are_huggingface_gguf_only", manifests_are_huggingface_gguf_only},
       {"cdn_redirects_are_admitted", cdn_redirects_are_admitted},
+      {"an_mtp_download_lists_windows_of_the_checkpoint", an_mtp_download_lists_windows_of_the_checkpoint},
   }, failures);
 }

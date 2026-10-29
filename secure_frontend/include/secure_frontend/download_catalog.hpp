@@ -44,12 +44,38 @@ struct DownloadEntry final {
   // Gemma 4 entries only, pinned to a commit with its size; its repository and revision the entry's unless it names its
   // own.
   std::optional<CatalogFile> mtp;
+  // Owner 2026-10-29: the draft layer every Qwen3.8 model runs (an id of DownloadCatalog::draft_layers), built on this
+  // machine from another checkpoint's tensors. Packed Qwen3.8 entries (iq_pack) only.
+  std::optional<std::string> draft_layer;
+};
+
+// One tensor of a draft layer: the window [offset, offset + size) of a .safetensors shard of the layer's repository,
+// and the SHA-256 of those bytes; it is fetched as tensors/<name>.bin.
+struct CatalogTensor final {
+  std::string name;
+  std::string shard;
+  std::uint64_t offset{0};
+  std::uint64_t size{0};
+  std::string sha256;
+};
+
+// A draft layer built from a checkpoint's tensors (owner 2026-10-29: Qwen3.8-Flash-Next's MTP layer, upstream's
+// tools/mtp_fetch.py at its pinned revision; strata-prepare mtp builds it).
+struct CatalogDraftLayer final {
+  std::string id;
+  std::string repo;       // owner/name
+  std::string revision;   // a 40-hex commit
+  std::vector<CatalogTensor> tensors;
 };
 
 struct DownloadCatalog final {
   std::vector<DownloadEntry> entries;
   std::size_t dropped{0};  // entries refused by a rule
+  std::vector<CatalogDraftLayer> draft_layers;   // every one pinned whole (a layer with a tensor that is not is not read)
 };
+
+// The catalog's draft layer `id`, else nullptr.
+[[nodiscard]] const CatalogDraftLayer* find_draft_layer(const DownloadCatalog& catalog, std::string_view id) noexcept;
 
 // The catalog JSON (schema_version 1). A document that is not one gives an empty catalog.
 [[nodiscard]] DownloadCatalog parse_download_catalog(std::string_view text);

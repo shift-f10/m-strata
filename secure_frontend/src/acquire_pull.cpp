@@ -41,6 +41,7 @@ std::string runnable_text(const AcquireManifest& m) {
   switch (m.profile) {
     case ManifestProfile::raw: return "no (test profile raw)";
     case ManifestProfile::gguf: return "no (GGUF files to prepare on this machine)";
+    case ManifestProfile::mtp: return "no (an MTP draft layer's tensors, built on this machine)";
     case ManifestProfile::glm53: return "no (needs the glm engine, SP6)";
     case ManifestProfile::gemma4: return "no (engine not available: the Gemma 4 engine is not installed)";
     case ManifestProfile::deepseek:

@@ -4,10 +4,14 @@
 #include "iq_pack.hpp"
 #include "maya_moe_pack.hpp"
 #include "maya_pack.hpp"
+#include "mtp_layer.hpp"
+#include "pack_common.hpp"
 #include "py_json.hpp"
 #include "sha256.hpp"
 #include "tokenizer_export.hpp"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -351,7 +355,7 @@ void compat_bf16_dequantizes() {
   std::vector<unsigned char> block(34);
   block[0] = 0x00;
   block[1] = 0x38;
-  for (int i = 0; i < 32; ++i) block[2 + i] = static_cast<unsigned char>(i + 1);
+  for (int i = 0; i < 32; ++i) block[2U + static_cast<std::size_t>(i)] = static_cast<unsigned char>(i + 1);
   model.push_back({"blk.0.hc_attn_down.weight", {32, 1}, 8, block});
   write_gguf(dir / "c.gguf", arch_kv(), model);
   std::string log;
@@ -1170,6 +1174,196 @@ void download_maya_mm3_step() {
          "a GLM step takes no --template");
 }
 
+
+// ---- Qwen3.8's MTP draft layer (owner 2026-10-29: "create native versions ... add it to strata prepare") ----------
+
+std::vector<float> floats_of(const std::uint32_t* bits, const std::size_t n) {
+  std::vector<float> out(n);
+  std::memcpy(out.data(), bits, n * 4U);
+  return out;
+}
+
+// mtp_pack.py's q2_0 and mtp_rt.py's q8_0 against the bytes upstream's own numpy code gives for the same blocks (numpy
+// 2.5.3): zeros, a ramp, a normal block, one outlier, a uniform one (BF16 values, as the checkpoint holds)
+void mtp_quantizers_match_numpy() {
+  struct Case {
+    const char* name;
+    std::array<std::uint32_t, 64> in;
+    std::array<unsigned char, 18> out;
+  };
+  const std::vector<Case> cases{
+      {"zeros", {0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U}, {0, 0, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85}},
+      {"ramp", {0xbcf50000U, 0xbceb0000U, 0xbce00000U, 0xbcd60000U, 0xbccc0000U, 0xbcc10000U, 0xbcb70000U, 0xbcac0000U, 0xbca20000U, 0xbc980000U, 0xbc8d0000U, 0xbc830000U, 0xbc710000U, 0xbc5d0000U, 0xbc480000U, 0xbc330000U, 0xbc1e0000U, 0xbc090000U, 0xbbea0000U, 0xbbc00000U, 0xbb960000U, 0xbb5a0000U, 0xbb070000U, 0xba500000U, 0x39f90000U, 0x3ae40000U, 0x3b450000U, 0x3b8c0000U, 0x3bb60000U, 0x3bdf0000U, 0x3c040000U, 0x3c190000U, 0x3c2e0000U, 0x3c430000U, 0x3c570000U, 0x3c6c0000U, 0x3c800000U, 0x3c8b0000U, 0x3c950000U, 0x3c9f0000U, 0x3caa0000U, 0x3cb40000U, 0x3cbf0000U, 0x3cc90000U, 0x3cd30000U, 0x3cde0000U, 0x3ce80000U, 0x3cf30000U, 0x3cfd0000U, 0x3d030000U, 0x3d090000U, 0x3d0e0000U, 0x3d130000U, 0x3d180000U, 0x3d1d0000U, 0x3d230000U, 0x3d280000U, 0x3d2d0000U, 0x3d320000U, 0x3d370000U, 0x3d3d0000U, 0x3d420000U, 0x3d470000U, 0x3d4c0000U}, {96, 38, 0, 0, 0, 80, 85, 85, 85, 85, 165, 170, 170, 170, 170, 250, 255, 255}},
+      {"normal", {0xbcd00000U, 0x3d0a0000U, 0x3cd30000U, 0x3c890000U, 0xbc420000U, 0xbd3a0000U, 0xbc8b0000U, 0x3bef0000U, 0x3d030000U, 0xbc2d0000U, 0xbc290000U, 0xba420000U, 0xbc240000U, 0xbba80000U, 0xbcdc0000U, 0x3cbd0000U, 0x3c3a0000U, 0x3d010000U, 0xbbc50000U, 0x3c4a0000U, 0x3cd40000U, 0x3bec0000U, 0xbcdd0000U, 0xbd1f0000U, 0xbb8e0000U, 0x3c770000U, 0xb9c90000U, 0x3a7c0000U, 0x39ab0000U, 0x3c720000U, 0xbc190000U, 0xbbd30000U, 0x3c300000U, 0x3cc30000U, 0x3b7c0000U, 0x3abb0000U, 0x3d0a0000U, 0xbb9e0000U, 0xbcda0000U, 0xbcb40000U, 0x3b820000U, 0x3c910000U, 0x3c780000U, 0xbd130000U, 0x3bf90000U, 0xbca10000U, 0xbbce0000U, 0xbce00000U, 0xbcb20000U, 0xbd010000U, 0xbb860000U, 0x3af00000U, 0x3d0a0000U, 0x3c380000U, 0xba7d0000U, 0x3c690000U, 0x3bf50000U, 0xbc340000U, 0x3cc60000U, 0xbc620000U, 0x3ca40000U, 0xbc070000U, 0xbb760000U, 0x3bcf0000U}, {138, 38, 168, 65, 86, 133, 89, 6, 89, 89, 89, 6, 41, 17, 80, 150, 37, 86}},
+      {"outlier", {0xbc4f0000U, 0xbbcd0000U, 0x3c890000U, 0x3b3b0000U, 0x3b4d0000U, 0x3c440000U, 0x3c7a0000U, 0x3b2d0000U, 0xbbc50000U, 0x3c100000U, 0x3bfa0000U, 0x3c290000U, 0xbc2b0000U, 0x3c780000U, 0xbc010000U, 0x3bf90000U, 0xbccd0000U, 0x39260000U, 0x3a700000U, 0xbbdd0000U, 0xbb8e0000U, 0xbb9a0000U, 0xbbbe0000U, 0xbb820000U, 0x3aa20000U, 0xbbc50000U, 0x39450000U, 0x3afc0000U, 0xbc260000U, 0x3c6c0000U, 0x3b920000U, 0x3b8d0000U, 0x3b500000U, 0x3bd60000U, 0x3c800000U, 0xbb8c0000U, 0xbc1e0000U, 0x3c380000U, 0x3c650000U, 0xbc020000U, 0x3c890000U, 0xbc1e0000U, 0xba210000U, 0xbac30000U, 0x3bd10000U, 0xbabc0000U, 0xba520000U, 0x3cdc0000U, 0xbc0c0000U, 0xbc230000U, 0x3c2a0000U, 0xbc660000U, 0x39bd0000U, 0x3cbb0000U, 0xbb880000U, 0x3c390000U, 0x3c7e0000U, 0xbc7a0000U, 0x3bd50000U, 0x3c620000U, 0xbc190000U, 0xbc360000U, 0x3c040000U, 0x3ecc0000U}, {96, 50, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 213}},
+      {"uniform", {0xbec50000U, 0xbed00000U, 0xbe220000U, 0x3e940000U, 0x3f5f0000U, 0xbd860000U, 0xbf0a0000U, 0xbdcb0000U, 0x3f470000U, 0xbf480000U, 0xbf5e0000U, 0x3f240000U, 0xbe960000U, 0x3dfb0000U, 0xbe450000U, 0x3ee90000U, 0x3e6a0000U, 0xbf770000U, 0x3f1c0000U, 0xbd3d0000U, 0xbf4a0000U, 0x3dcf0000U, 0xbf630000U, 0xbeb30000U, 0xbd8f0000U, 0x3f4c0000U, 0x3ee00000U, 0x3ef10000U, 0x3e680000U, 0xbe6a0000U, 0x3f680000U, 0xbf260000U, 0xbe9f0000U, 0x3e350000U, 0x3e910000U, 0x3c650000U, 0x3f230000U, 0xbef80000U, 0x3d680000U, 0x3f790000U, 0xbf740000U, 0xbe730000U, 0xbf130000U, 0xbe790000U, 0xbd060000U, 0xbd690000U, 0xbe5d0000U, 0xbf1f0000U, 0x3f6a0000U, 0x3ee20000U, 0xbe570000U, 0xbef30000U, 0xbf540000U, 0x39180000U, 0xbeb30000U, 0xbf4e0000U, 0xbf6e0000U, 0x3e930000U, 0x3f7c0000U, 0x3e830000U, 0xbf260000U, 0x3f6d0000U, 0x3f530000U, 0x3f680000U}, {224, 55, 144, 71, 131, 148, 97, 4, 173, 53, 100, 210, 68, 21, 27, 4, 184, 252}},
+  };
+  for (const auto& c : cases) {
+    const auto x = floats_of(c.in.data(), 64U);
+    std::array<unsigned char, 18> got{};
+    strata_prepare::q2_0_block(x.data(), got.data());
+    expect(got == c.out, std::string{"q2_0 "} + c.name);
+  }
+  const std::array<std::uint32_t, 32> q8_in{0x3d0c0000U, 0xbc3e0000U, 0xbd010000U, 0x3ca80000U, 0xbd3f0000U, 0xbcb50000U, 0xbd0c0000U, 0xbd120000U, 0xbc8e0000U, 0x3c260000U, 0xbc560000U, 0xbcc50000U, 0x3d550000U, 0x3c940000U, 0x3d5a0000U, 0x3ccc0000U, 0x3cbf0000U, 0x3d110000U, 0xbd3a0000U, 0x3c300000U, 0x3cc40000U, 0xbc960000U, 0x3d220000U, 0xbc790000U, 0x3cad0000U, 0xbc9c0000U, 0x3c450000U, 0xbcf00000U, 0xbdbc0000U, 0xbd8d0000U, 0xbcfc0000U, 0x3b9e0000U};
+  const std::array<unsigned char, 34> q8_out{236, 17, 47, 240, 212, 28, 191, 225, 209, 207, 232, 14, 238, 223, 72, 25, 74, 34, 32, 49, 193, 15, 33, 231, 55, 235, 29, 230, 17, 215, 129, 161, 213, 7};
+  const auto x = floats_of(q8_in.data(), 32U);
+  std::array<unsigned char, 34> got{};
+  strata_prepare::q8_0_block(x.data(), got.data());
+  expect(got == q8_out, "q8_0");
+  // numpy's floor(|v| + 0.5) in float32: 0.49999997 + 0.5 rounds to 1 (roundf would give 0)
+  std::array<float, 32> edge{};
+  edge[0] = 127.0F;
+  edge[1] = 0.49999997F;
+  strata_prepare::q8_0_block(edge.data(), got.data());
+  expect(got[2] == 127U && got[3] == 1U, "q8_0 rounds as numpy's float32 floor(|v| + 0.5)");
+}
+
+// mtp_rt.py's blob_of: gate and up rows interleaved, every block's 16 code bytes, then every block's 2 scale bytes
+void mtp_expert_blob_layout() {
+  constexpr std::int64_t h = 128;
+  constexpr std::int64_t ff = 64;
+  std::vector<unsigned char> gate_up(static_cast<std::size_t>(2 * ff * (h / 64) * 18));
+  std::vector<unsigned char> down(static_cast<std::size_t>(h * (ff / 64) * 18));
+  for (std::size_t i = 0; i < gate_up.size(); ++i) gate_up[i] = static_cast<unsigned char>(i % 251U);
+  for (std::size_t i = 0; i < down.size(); ++i) down[i] = static_cast<unsigned char>((i * 7U) % 253U);
+  const std::string blob = strata_prepare::expert_blob(gate_up.data(), down.data(), h, ff);
+  expect(blob.size() == static_cast<std::size_t>(3 * h * ff / 64 * 18), "the blob is 3 x h x ff / 64 blocks");
+  const auto at = [&blob](const std::size_t i) { return static_cast<unsigned char>(blob[i]); };
+  const std::size_t gu_blocks = static_cast<std::size_t>(2 * ff * (h / 64));
+  const std::size_t dn_blocks = static_cast<std::size_t>(h * (ff / 64));
+  // codes: inter row 0 = gate row 0 (its 2 blocks), inter row 1 = up row 0 (gate_up row ff)
+  expect(at(0) == gate_up[2] && at(15) == gate_up[17] && at(16) == gate_up[18 + 2], "inter row 0: gate row 0's codes");
+  const std::size_t up0 = static_cast<std::size_t>(ff * (h / 64) * 18);
+  expect(at(32) == gate_up[up0 + 2] && at(48) == gate_up[up0 + 18 + 2], "inter row 1: up row 0's codes");
+  const std::size_t down_codes = gu_blocks * 16U;
+  expect(at(down_codes) == down[2] && at(down_codes + 16U) == down[18 + 2], "then down's codes");
+  const std::size_t scales = (gu_blocks + dn_blocks) * 16U;
+  expect(at(scales) == gate_up[0] && at(scales + 1U) == gate_up[1] && at(scales + 4U) == gate_up[up0] &&
+             at(scales + gu_blocks * 2U) == down[0],
+         "then the scales: inter rows, then down");
+}
+
+// A small model's tensors through the whole step: experts.bin from the Q2_0 rows, dense.bin with the 256-byte
+// alignment, dense.txt (short names, kinds, offsets), the vocabulary last - and each refusal
+void mtp_runtime_from_tensors() {
+  const auto dir = scratch("mtp");
+  const auto src = dir / "src";
+  fs::create_directories(src / "tensors");
+  std::mt19937 rng(7U);
+  std::normal_distribution<float> normal(0.0F, 0.02F);
+  const auto bf16_file = [&](const std::string& name, const std::size_t count) {
+    std::vector<std::uint16_t> v(count);
+    for (auto& x : v) x = strata_prepare::bf16_bits(normal(rng));
+    std::ofstream f(src / "tensors" / (name + ".bin"), std::ios::binary);
+    f.write(reinterpret_cast<const char*>(v.data()), static_cast<std::streamsize>(count * 2U));
+    return v;
+  };
+  constexpr std::int64_t h = 64;
+  constexpr std::int64_t ff = 64;
+  constexpr std::int64_t ne = 2;
+  const auto norm = bf16_file("mtp.a.weight", 64);
+  const auto gate = bf16_file("mtp.layers.0.mlp.gate.weight", 2 * 64);
+  bf16_file("mtp.layers.0.self_attn.q_proj.weight", 64 * 64);
+  const auto gate_up = bf16_file("mtp.layers.0.mlp.experts.gate_up_proj", ne * 2 * ff * h);
+  const auto down = bf16_file("mtp.layers.0.mlp.experts.down_proj", ne * h * ff);
+  strata_prepare::Sha256 sha;
+  sha.update(norm.data(), norm.size() * 2U);
+  const std::string norm_sha = sha.hex();
+  const std::vector<strata_prepare::MtpTensor> table{
+      {"mtp.a.weight", "s", 0, 128, {64, 0, 0}, 1, norm_sha},
+      {"mtp.layers.0.mlp.experts.down_proj", "s", 0, ne * h * ff * 2, {ne, h, ff}, 3, ""},
+      {"mtp.layers.0.mlp.experts.gate_up_proj", "s", 0, ne * 2 * ff * h * 2, {ne, 2 * ff, h}, 3, ""},
+      {"mtp.layers.0.mlp.gate.weight", "s", 0, 256, {2, 64, 0}, 2, ""},
+      {"mtp.layers.0.self_attn.q_proj.weight", "s", 0, 64 * 64 * 2, {64, 64, 0}, 2, ""}};
+  {
+    std::ofstream vocab(dir / "vocab.bin", std::ios::binary);
+    vocab << "VOCAB";
+  }
+  strata_prepare::MtpOptions options{.src = src, .out = dir / "rt", .draft_vocab = dir / "vocab.bin", .threads = 2};
+  std::ostringstream steps;
+  std::ostringstream log;
+  const std::string reason = strata_prepare::mtp_runtime(options, table, steps, log);
+  expect(reason.empty(), "the runtime folder is made: " + reason + " " + log.str());
+  expect(steps.str() == "STEP verify\nSTEP experts\nSTEP dense\nSTEP vocab\n", "the steps: " + steps.str());
+  // experts.bin: each expert's blob from its Q2_0 rows
+  const auto q2_rows = [](const std::uint16_t* bf, const std::size_t values) {
+    std::vector<unsigned char> out(values / 64U * 18U);
+    std::vector<float> x(64);
+    for (std::size_t b = 0; b < values / 64U; ++b) {
+      for (std::size_t i = 0; i < 64U; ++i) x[i] = strata_prepare::f32_from_bf16(bf[b * 64U + i]);
+      strata_prepare::q2_0_block(x.data(), out.data() + b * 18U);
+    }
+    return out;
+  };
+  std::string want;
+  for (std::int64_t e = 0; e < ne; ++e) {
+    const auto gu = q2_rows(gate_up.data() + e * 2 * ff * h, static_cast<std::size_t>(2 * ff * h));
+    const auto dn = q2_rows(down.data() + e * h * ff, static_cast<std::size_t>(h * ff));
+    want += strata_prepare::expert_blob(gu.data(), dn.data(), h, ff);
+  }
+  expect(read_text(dir / "rt" / "experts.bin") == want, "experts.bin: the experts' blobs in order");
+  std::string dense_txt = read_text(dir / "rt" / "dense.txt");
+  dense_txt.erase(std::remove(dense_txt.begin(), dense_txt.end(), '\r'), dense_txt.end());
+  expect(dense_txt == "a.weight f32 1 64 0 256\nmlp.gate.weight bf16 2 64 256 256\nself_attn.q_proj.weight q8_0 64 64 512 4352\n",
+         "dense.txt: " + dense_txt);
+  const std::string dense = read_text(dir / "rt" / "dense.bin");
+  float first = 0.0F;
+  std::memcpy(&first, dense.data(), 4);
+  expect(dense.size() == 512U + 4352U && first == strata_prepare::f32_from_bf16(norm[0]) + 1.0F &&
+             std::memcmp(dense.data() + 256, gate.data(), 256) == 0,
+         "dense.bin: the norm + 1 as F32, the gate's BF16 bytes at 256, then the Q8_0 projection");
+  expect(read_text(dir / "rt" / "draft_vocab.bin") == "VOCAB", "the vocabulary copied in");
+  // refusals: nothing past the failed step is published
+  const auto refused = [&](const std::vector<strata_prepare::MtpTensor>& t, const strata_prepare::MtpOptions& o) {
+    std::ostringstream s;
+    std::ostringstream l;
+    return strata_prepare::mtp_runtime(o, t, s, l);
+  };
+  auto other = options;
+  other.out = dir / "rt2";
+  auto wrong = table;
+  wrong[0].sha256 = "00";
+  expect(refused(wrong, other) == "wrong_sha256" && !fs::exists(dir / "rt2" / "experts.bin"), "a tensor that is not the checkpoint's");
+  wrong = table;
+  wrong[3].bytes = 254;
+  expect(refused(wrong, other) == "wrong_size", "a tensor of another size");
+  wrong = table;
+  wrong[1].name = "mtp.layers.0.mlp.experts.down_proj.missing";
+  expect(refused(wrong, other) == "missing_tensor", "a tensor not fetched");
+  wrong = table;
+  wrong[2].shape = {ne, 2 * ff, 60};
+  wrong[2].bytes = static_cast<std::uint64_t>(ne * 2 * ff * 60 * 2);
+  expect(refused(wrong, other) != "", "experts whose rows are no whole blocks");
+  auto no_vocab = other;
+  no_vocab.draft_vocab = dir / "none.bin";
+  expect(refused(table, no_vocab) == "missing_vocab" && !fs::exists(dir / "rt2" / "draft_vocab.bin"), "a missing vocabulary file");
+}
+
+// The pinned table: the 31 tensors of the pinned revision, sorted, 5,214,301,696 bytes; the command's protocol
+void mtp_command_protocol() {
+  const auto tensors = strata_prepare::mtp_tensors();
+  std::uint64_t total = 0;
+  bool sorted = true;
+  for (std::size_t i = 0; i < tensors.size(); ++i) {
+    total += tensors[i].bytes;
+    if (i > 0 && !(tensors[i - 1].name < tensors[i].name)) sorted = false;
+  }
+  expect(tensors.size() == 31U && sorted && total == 5214301696ULL, "the pinned table: 31 tensors, sorted, 5.2 GB");
+  expect(tensors[0].name == "mtp.fc_embedding.weight" && tensors[0].shard == "model-00120-of-00131.safetensors" &&
+             tensors[0].start == 1935412640ULL && tensors[0].sha256 == "241d6e87ded317a61b1aeb3ca4e28c53f1caba09ad5be66092e91fe5e3e14751",
+         "its first entry, as mtp_fetch.py pins it");
+  if (g_exe.empty()) {
+    expect(false, "the strata-prepare path is an argument");
+    return;
+  }
+  const auto dir = scratch("mtpcmd");
+  const std::string exe = "\"" + g_exe + "\"";
+  expect(run(exe + " mtp --src x") == "ERROR bad_arguments\n", "bad arguments");
+  expect(run(exe + " mtp --src \"" + (dir / "none").string() + "\" --out \"" + (dir / "rt").string() + "\"") ==
+             "STEP verify\nERROR missing_tensor\n",
+         "no tensors fetched");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1192,6 +1386,10 @@ int main(int argc, char** argv) {
       {"maya_glm_refusals", maya_glm_refusals},
       {"maya_raon1_pack_tables", maya_raon1_pack_tables},
       {"download_maya_mm3_step", download_maya_mm3_step},
+      {"mtp_quantizers_match_numpy", mtp_quantizers_match_numpy},
+      {"mtp_expert_blob_layout", mtp_expert_blob_layout},
+      {"mtp_runtime_from_tensors", mtp_runtime_from_tensors},
+      {"mtp_command_protocol", mtp_command_protocol},
       {"maya_split_layer_is_v4", maya_split_layer_is_v4},
       {"maya_qwen4exp_routers", maya_qwen4exp_routers},
       {"download_maya_protocol", download_maya_protocol},
