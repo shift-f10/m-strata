@@ -211,13 +211,24 @@ constexpr std::array<ModelOptionSpec, 10> kFlintOptions{{
 // GLM engine's vocabulary (glm.kv, glm_driver.cpp); no thinking option (the GLM prompt opens its think block always).
 constexpr std::array<std::int64_t, 4> kGlmContexts{8192, 32768, 65536, 131072};
 constexpr std::array<std::string_view, 4> kGlmKv{"fp16", "int8", "q8_0", "q4_0"};
-constexpr std::array<ModelOptionSpec, 8> kGlmOptions{{
+// The RAM the GLM engine leaves free when it fills RAM with experts (owner 2026-10-29: "make it an option in the card
+// setting"): glm.ram_headroom_gb's bounds (STRATA_GLM_RAM_HEADROOM_GB, glm_fast_path.cu); Maya's own is 6 GB with a
+// separate GPU - measured twice as fast on GLM-5.3 here as the server's 16, which keeps a desktop responsive.
+constexpr std::array<std::int64_t, 8> kRamHeadroomValues{6, 8, 12, 16, 24, 32, 48, 64};
+constexpr ModelOptionSpec kRamHeadroom = listed(
+    integer_option("ram_headroom", "RAM left free (GB)",
+                   "RAM the engine leaves for the rest of the PC when it fills RAM with experts: less is faster (6 is Maya's own "
+                   "with a separate GPU), more keeps the desktop responsive",
+                   6, 1024),
+    kRamHeadroomValues);
+constexpr std::array<ModelOptionSpec, 9> kGlmOptions{{
     listed(integer_option("max_context", "Context length",
                           "Tokens of context the engine allocates (Maya's choices; past 32K the attention cache streams from RAM)",
                           1, 1048576),
            kGlmContexts),
     choice_option("kv", "KV cache precision", "How the engine stores the attention cache: fp16, int8, or ggml's q8_0 / q4_0 blocks",
                   kGlmKv),
+    kRamHeadroom,
     kTemperature,
     kTopP,
     kTopK,
@@ -230,12 +241,13 @@ constexpr std::array<ModelOptionSpec, 8> kGlmOptions{{
 // its files): the same typed rows as glm53 (glm.max_context, glm.kv) up to the 256K it was served at; the cache in the
 // GLM engine's vocabulary (fp16 keeps raon1's exact F32 cache); KRAFTON's sampling as the card's defaults.
 constexpr std::array<std::int64_t, 5> kRaon1Contexts{8192, 32768, 65536, 131072, 262144};
-constexpr std::array<ModelOptionSpec, 8> kRaon1Options{{
+constexpr std::array<ModelOptionSpec, 9> kRaon1Options{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (its full attention keeps them all)",
                           1, 1048576),
            kRaon1Contexts),
     choice_option("kv", "KV cache precision", "How the engine stores the attention cache: fp16 (raon1's exact cache), int8, or ggml's q8_0 / q4_0 blocks",
                   kGlmKv),
+    kRamHeadroom,
     kTemperature,
     kTopP,
     kTopK,
@@ -622,10 +634,15 @@ void write_option(const EngineProfile profile, const std::string_view name, cons
     flags.push_back(std::move(argument));
   };
   const auto integer_or_auto = [integer, text]() { return integer != nullptr ? std::to_string(*integer) : *text; };
-  if ((profile == EngineProfile::glm53 || profile == EngineProfile::raon1) && (name == "max_context" || name == "kv")) {
-    // the GLM engine's launch (glm53, raon1) reads its typed rows (launch_composition: Glm53LaunchArgs), never engine.args
+  if ((profile == EngineProfile::glm53 || profile == EngineProfile::raon1) &&
+      (name == "max_context" || name == "kv" || name == "ram_headroom")) {
+    // the GLM engine's launch (glm53, raon1) reads its typed rows (launch_composition: Glm53LaunchArgs; the headroom its
+    // environment's STRATA_GLM_RAM_HEADROOM_GB, glm_environment_knobs), never engine.args
     if (name == "max_context" && integer != nullptr) set_entry(draft, "glm.max_context", ConfigDraftValue{std::in_place_type<std::int64_t>, *integer});
     if (name == "kv" && text != nullptr) set_entry(draft, "glm.kv", ConfigDraftValue{std::in_place_type<std::string>, *text});
+    if (name == "ram_headroom" && integer != nullptr) {
+      set_entry(draft, "glm.ram_headroom_gb", ConfigDraftValue{std::in_place_type<std::int64_t>, *integer});
+    }
     return;
   }
   if (name == "max_context" && integer != nullptr) {
@@ -786,7 +803,11 @@ const ModelOptionSpec* find_model_option(const EngineProfile profile, const std:
 }
 
 bool is_model_option_name(const std::string_view name) noexcept {
-  return find_model_option(EngineProfile::qwen, name) != nullptr || find_model_option(EngineProfile::gemma4, name) != nullptr;
+  // every profile's: an option may be one engine's alone (the GLM engine's RAM headroom)
+  constexpr std::array<EngineProfile, 7> kProfiles{EngineProfile::qwen,     EngineProfile::gemma4,  EngineProfile::glm53, EngineProfile::raon1,
+                                                   EngineProfile::deepseek, EngineProfile::minimax, EngineProfile::flint};
+  return std::any_of(kProfiles.begin(), kProfiles.end(),
+                     [name](const EngineProfile profile) { return find_model_option(profile, name) != nullptr; });
 }
 
 std::variant<std::vector<ModelOptionLimits>, ConfigErrors> parse_card_options(const EngineProfile profile,

@@ -196,10 +196,13 @@ void option_tables_per_profile() {
                                                     "temperature", "top_p", "top_k", "min_p", "web_search", "gpus"},
          "the gemma4 options in display order: " + joined(names_of(EngineProfile::gemma4)));
   // D10 met (owner 2026-10-27): Maya's own GLM choices - its context menu, the engine's --kv, the sampling defaults
-  expect(names_of(EngineProfile::glm53) == Strings{"max_context", "kv", "temperature", "top_p", "top_k", "min_p", "web_search", "gpus"},
+  // the RAM headroom since 2026-10-29 (owner: "make it an option in the card setting")
+  expect(names_of(EngineProfile::glm53) == Strings{"max_context", "kv", "ram_headroom", "temperature", "top_p", "top_k", "min_p",
+                                                   "web_search", "gpus"},
          "the glm53 options in display order: " + joined(names_of(EngineProfile::glm53)));
 
-  for (const auto profile : {EngineProfile::qwen, EngineProfile::gemma4}) {
+  for (const auto profile : {EngineProfile::qwen, EngineProfile::gemma4, EngineProfile::glm53, EngineProfile::raon1,
+                             EngineProfile::deepseek, EngineProfile::minimax, EngineProfile::flint}) {
     for (const auto& spec : secure_frontend::model_options_for(profile)) {
       const bool name_ok = !spec.name.empty() && std::all_of(spec.name.begin(), spec.name.end(),
                                                              [](const char c) { return (c >= 'a' && c <= 'z') || c == '_'; });
@@ -1039,6 +1042,35 @@ void glm_options_write_the_glm_rows() {
          "no engine flag is a GLM option's");
 }
 
+// Owner 2026-10-29 ("make it an option in the card setting"): the RAM the GLM engine leaves free when it fills RAM with
+// experts (STRATA_GLM_RAM_HEADROOM_GB, glm.ram_headroom_gb: 6-1024 GB) is a card option of the GLM engine's profiles
+// (glm53, raon1) - a menu of 6 (Maya's own on a separate GPU, the fastest) to 64 - written to its typed row, and kept
+// with a card's remembered options like any other.
+void glm_ram_headroom_is_a_card_option() {
+  for (const auto profile : {EngineProfile::glm53, EngineProfile::raon1}) {
+    const auto* spec = secure_frontend::find_model_option(profile, "ram_headroom");
+    expect(spec != nullptr && spec->kind == ModelOptionKind::integer && spec->minimum == 6 && spec->maximum == 1024 &&
+               std::vector<std::int64_t>(spec->values.begin(), spec->values.end()) ==
+                   std::vector<std::int64_t>{6, 8, 12, 16, 24, 32, 48, 64},
+           "the GLM engine's profiles offer the RAM headroom: 6-1024 GB, a menu of 6 to 64");
+    secure_frontend::FrontendConfigDraft draft;
+    secure_frontend::apply_option_values(profile, ModelOptionValues{{"ram_headroom", std::int64_t{6}}}, draft);
+    const auto row = draft.entries.find("glm.ram_headroom_gb");
+    expect(row != draft.entries.end() && std::get<std::int64_t>(row->second.value) == 6 && !draft.entries.contains("engine.args"),
+           "ram_headroom -> glm.ram_headroom_gb, no engine flag");
+  }
+  for (const auto profile : {EngineProfile::qwen, EngineProfile::gemma4, EngineProfile::flint, EngineProfile::deepseek,
+                             EngineProfile::minimax}) {
+    expect(secure_frontend::find_model_option(profile, "ram_headroom") == nullptr, "the other engines read no such headroom");
+  }
+  expect(secure_frontend::is_model_option_name("ram_headroom"), "a fixed option name");
+  const auto back = secure_frontend::parse_remembered_options(
+      secure_frontend::render_remembered_options({{"GLM", ModelOptionValues{{"ram_headroom", std::int64_t{6}}}}}));
+  expect(back.contains("GLM") && back.at("GLM").contains("ram_headroom") &&
+             std::get<std::int64_t>(back.at("GLM").at("ram_headroom")) == 6,
+         "a card's remembered RAM headroom is kept");
+}
+
 // DeepSeek-V4.1 (2026-10-27, spec 2026-10-27-strata-prepare-design §7.2): Maya's own DeepSeek choices - its context menu
 // (maya.py v1.1.30 DS4_CONTEXTS: 32K to 1M), the thinking level (DS4_EFFORT; DeepSeek's effort line: low 50, medium and
 // high 75, none chat mode), the sampling rows. The context is maya-ds4's own --max-context in engine.args (the maya_ds4
@@ -1230,6 +1262,7 @@ int main(int argc, char** argv) {
       {"context_and_kv_streaming_offer_fixed_values", context_and_kv_streaming_offer_fixed_values},
       {"past_trained_context_adds_yarn", past_trained_context_adds_yarn},
       {"glm_options_write_the_glm_rows", glm_options_write_the_glm_rows},
+      {"glm_ram_headroom_is_a_card_option", glm_ram_headroom_is_a_card_option},
       {"deepseek_options_are_mayas", deepseek_options_are_mayas},
       {"minimax_options_are_mayas", minimax_options_are_mayas},
       {"the_vision_option_writes_the_encoder_rows", the_vision_option_writes_the_encoder_rows},

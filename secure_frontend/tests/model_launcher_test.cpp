@@ -1145,16 +1145,55 @@ void cards_offer_their_models_recommended_sampling() {
     return out;
   };
   expect(defaults_of("Q") == "temperature=1 top_p=0.95 top_k=20 gpus=\"auto\"", "Qwen3.8 / 3.6 (upstream's card): " + defaults_of("Q"));
-  expect(defaults_of("G") == "temperature=1 top_p=0.95 gpus=\"auto\"", "GLM-5.3 (Maya's): " + defaults_of("G"));
-  expect(defaults_of("R") == "temperature=1 top_p=0.95 top_k=20 gpus=\"auto\"", "raon1 (KRAFTON's): " + defaults_of("R"));
+  expect(defaults_of("G") == "ram_headroom=16 temperature=1 top_p=0.95 gpus=\"auto\"", "GLM-5.3 (Maya's): " + defaults_of("G"));
+  expect(defaults_of("R") == "ram_headroom=16 temperature=1 top_p=0.95 top_k=20 gpus=\"auto\"", "raon1 (KRAFTON's): " + defaults_of("R"));
   expect(defaults_of("F") == "temperature=1 top_p=0.95 top_k=20 gpus=\"auto\"", "flint (its card's): " + defaults_of("F"));
   expect(defaults_of("E") == "temperature=1 top_p=0.95 top_k=64 min_p=0.05 gpus=\"auto\"", "Gemma 4 (Google's): " + defaults_of("E"));
   expect(defaults_of("D") == "temperature=1 top_p=1 gpus=\"auto\"", "DeepSeek-V4.1 (upstream's card): " + defaults_of("D"));
   expect(defaults_of("M") == "temperature=1 top_p=0.95 gpus=\"auto\"", "MiniMax (its card's): " + defaults_of("M"));
   expect(defaults_of("Own") == "thinking=\"high\" temperature=0.6 top_p=0.95 top_k=20 vision=\"gpu\" gpus=\"auto\"",
          "a card's own temperature stays, the rest in the profile's order: " + defaults_of("Own"));
-  expect(defaults_of("Rows") == "temperature=0.8 top_p=0.95 top_k=40 gpus=\"auto\"",
+  expect(defaults_of("Rows") == "ram_headroom=16 temperature=0.8 top_p=0.95 top_k=40 gpus=\"auto\"",
          "a card's own defaults.sampling rows are its defaults: " + defaults_of("Rows"));
+}
+
+// Owner 2026-10-29 ("make it an option in the card setting"): every GLM-engine card (glm53, raon1) offers the RAM its
+// engine leaves free, in the profile's order (after its cache), at the server's own glm.ram_headroom_gb (16 unless the
+// config moves it) unless its file lists it; no other card offers it.
+void glm_cards_offer_their_ram_headroom() {
+  const auto listed = [](const std::optional<std::int64_t> configured) {
+    secure_frontend::LauncherSettings settings;
+    if (configured) settings.main.entries["glm.ram_headroom_gb"] = {*configured, secure_frontend::ConfigSource::file};
+    for (const auto& [name, profile] : std::vector<std::pair<std::string, secure_frontend::EngineProfile>>{
+             {"G", secure_frontend::EngineProfile::glm53}, {"R", secure_frontend::EngineProfile::raon1},
+             {"D", secure_frontend::EngineProfile::deepseek}, {"M", secure_frontend::EngineProfile::minimax}}) {
+      secure_frontend::ModelCard card;
+      card.name = name;
+      card.profile = profile;
+      settings.cards.push_back(card);
+    }
+    settings.log = [](std::string_view) {};
+    secure_frontend::ModelLauncher launcher(std::move(settings));
+    std::string text = launcher.list_json();
+    launcher.shutdown();
+    return text;
+  };
+  const auto option_of = [](const std::string& text, const std::string& card) {
+    const auto at = text.find("{\"name\":\"" + card + "\",\"profile\"");
+    const auto end = text.find("\"calibration\":", at);
+    const auto option = text.find("{\"name\":\"ram_headroom\"", at);
+    return at == std::string::npos || option == std::string::npos || option > end ? std::string{} : text.substr(option, text.find('}', option) - option);
+  };
+  const std::string plain = listed(std::nullopt);
+  for (const char* card : {"G", "R"}) {
+    const std::string option = option_of(plain, card);
+    expect(option.find("\"kind\":\"integer\"") != std::string::npos && option.find("\"default\":16") != std::string::npos &&
+               option.find("\"choices\":[6,8,12,16,24,32,48,64]") != std::string::npos && option.find("\"value\":16") != std::string::npos,
+           std::string{card} + " offers the RAM headroom at the server's 16: " + option);
+  }
+  expect(option_of(plain, "D").empty() && option_of(plain, "M").empty(), "DeepSeek's and MiniMax's engines read none");
+  const std::string moved = listed(std::int64_t{24});
+  expect(option_of(moved, "G").find("\"default\":24") != std::string::npos, "the server's own value is the default: " + option_of(moved, "G"));
 }
 
 // The same over a start: a card made before cards carried sampling (the owner's Qwen3.8 card, 2026-10-29) samples as
@@ -1228,6 +1267,7 @@ int main(int argc, char** argv) {
       {"cards_say_whether_their_profile_takes_reasoning_effort", cards_say_whether_their_profile_takes_reasoning_effort},
       {"cards_offer_web_search_when_the_server_has_it", cards_offer_web_search_when_the_server_has_it},
       {"cards_offer_their_models_recommended_sampling", cards_offer_their_models_recommended_sampling},
+      {"glm_cards_offer_their_ram_headroom", glm_cards_offer_their_ram_headroom},
       {"a_card_without_sampling_starts_with_the_recommended", a_card_without_sampling_starts_with_the_recommended},
       {"a_gguf_card_reads_its_tokenizer_from_the_gguf", a_gguf_card_reads_its_tokenizer_from_the_gguf},
       {"a_qwen36_card_reads_its_tokenizer_from_the_gguf", a_qwen36_card_reads_its_tokenizer_from_the_gguf},

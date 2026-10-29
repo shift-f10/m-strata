@@ -175,9 +175,37 @@ void offer_sampling(ModelCard& card) {
   }
 }
 
-// The options a card offers beyond its file's: its model's recommended sampling, Web search with the server's, then its
-// GPUs.
-void offer_options(ModelCard& card, const ToolRunner* tools) {
+// Owner 2026-10-29 ("make it an option in the card setting"): a GLM-engine card (glm53, raon1) whose file does not list
+// it offers the RAM its engine leaves free, at the server's glm.ram_headroom_gb (a card's file holds no glm.* row), else
+// the row's default (16), in the profile's order. Started without a choice, it runs as before.
+void offer_ram_headroom(ModelCard& card, const FrontendConfigDraft& main) {
+  const auto* spec = find_model_option(card.profile, "ram_headroom");
+  if (spec == nullptr) return;
+  if (std::any_of(card.options.begin(), card.options.end(), [spec](const ModelOptionLimits& limit) { return limit.spec == spec; })) return;
+  constexpr std::string_view kRow = "glm.ram_headroom_gb";
+  const auto schema = config_schema();
+  const auto key = std::find_if(schema.begin(), schema.end(), [kRow](const ConfigKey& row) { return row.path == kRow; });
+  std::int64_t value = key == schema.end() ? spec->minimum : key->default_integer;
+  if (const auto row = main.entries.find(kRow); row != main.entries.end()) {
+    if (const auto* integer = std::get_if<std::int64_t>(&row->second.value)) value = *integer;
+  }
+  ModelOptionLimits limit;
+  limit.spec = spec;
+  limit.default_value = value;
+  limit.minimum = spec->minimum;
+  limit.maximum = spec->maximum;
+  const auto order = model_options_for(card.profile);
+  const auto place = [&order](const ModelOptionSpec* listed) { return static_cast<std::size_t>(listed - order.data()); };
+  const auto later = std::find_if(card.options.begin(), card.options.end(), [&](const ModelOptionLimits& listed) {
+    return listed.spec != nullptr && place(listed.spec) > place(spec);
+  });
+  card.options.insert(later, std::move(limit));
+}
+
+// The options a card offers beyond its file's: its engine's RAM headroom, its model's recommended sampling, Web search
+// with the server's, then its GPUs.
+void offer_options(ModelCard& card, const FrontendConfigDraft& main, const ToolRunner* tools) {
+  offer_ram_headroom(card, main);
   offer_sampling(card);
   offer_web_search(card, tools);
   offer_gpus(card);
@@ -209,7 +237,7 @@ ModelLauncher::ModelLauncher(LauncherSettings settings) : settings_(std::move(se
   // add_card never reallocates: a start holds its card by reference outside the lock.
   if (settings_.cards.size() > kMaxLauncherCards) settings_.cards.resize(kMaxLauncherCards);
   settings_.cards.reserve(kMaxLauncherCards);
-  for (auto& card : settings_.cards) offer_options(card, settings_.tools);
+  for (auto& card : settings_.cards) offer_options(card, settings_.main, settings_.tools);
   status_.resize(settings_.cards.size());
   status_.reserve(kMaxLauncherCards);
   for (std::size_t i = 0; i < settings_.cards.size(); ++i) page_card_.push_back(i >= settings_.operator_cards);
@@ -234,7 +262,7 @@ bool ModelLauncher::add_card(ModelCard card) {
   {
     std::lock_guard lock(mutex_);
     if (shutting_down_ || find_card(card.name).has_value() || settings_.cards.size() >= kMaxLauncherCards) return false;
-    offer_options(card, settings_.tools);
+    offer_options(card, settings_.main, settings_.tools);
     settings_.cards.push_back(std::move(card));
     status_.emplace_back();
     page_card_.push_back(true);
@@ -252,7 +280,7 @@ CardChange ModelLauncher::replace_card(ModelCard card) {
     if (!found.has_value()) return CardChange::not_found;
     if (!page_card_[*found]) return CardChange::not_page_card;
     if (busy_ || pending_.has_value()) return CardChange::busy;
-    offer_options(card, settings_.tools);
+    offer_options(card, settings_.main, settings_.tools);
     settings_.cards[*found] = std::move(card);
   }
   log("[strata] models: replaced " + name);

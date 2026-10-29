@@ -368,7 +368,8 @@ constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 
     // desktop stayed responsive at; the row projects at its default onto the
     // closed child-env allowlist (glm_environment_knobs).
     {"glm.ram_headroom_gb", T::integer, false, 6, 1024, 16, false, "", "",
-     "Gigabytes of RAM the GLM engine leaves free when sizing its pinned tier (6-1024; default 16)."},
+     "Gigabytes of RAM the GLM engine leaves free when sizing its pinned tier (6-1024; default 16). A GLM card's "
+     "`ram_headroom` option sets it per start; this row is that option's default."},
     // Calibration (owner 2026-10-28, Maya's tools/calibrate_glm.py): the GLM engine's CPU lane, which it reads from its
     // environment (glm_fast_path.cu) - the share of a route's RAM-tier experts copied over PCIe, and the lane's
     // threads (the engine caps them at 64). Unset: the engine's own choice. A card's calibration sets them at its start.

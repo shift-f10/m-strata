@@ -689,7 +689,7 @@ Every key (generated from the schema; `readme_config_table_matches_schema` keeps
 | `glm.model_name` | string | unset | - | - | Served model id for the GLM engine (1-256 characters; a managed model takes its identity from the manifest). |
 | `glm.max_context` | integer | `32768` | 1-1048576 | - | GLM context length in tokens the engine is started with (Maya's default 32768). |
 | `glm.kv` | string | `fp16` | - | - | KV cache precision the GLM engine starts with: fp16 (default; raon1 keeps its exact F32 cache), int8, or q8_0 / q4_0 (raon1's quantized cache). |
-| `glm.ram_headroom_gb` | integer | `16` | 6-1024 | - | Gigabytes of RAM the GLM engine leaves free when sizing its pinned tier (6-1024; default 16). |
+| `glm.ram_headroom_gb` | integer | `16` | 6-1024 | - | Gigabytes of RAM the GLM engine leaves free when sizing its pinned tier (6-1024; default 16). A GLM card's `ram_headroom` option sets it per start; this row is that option's default. |
 | `glm.pcie_share` | number | unset | 0-1 | - | Share (0-1) of a route's RAM-tier experts the GLM engine copies over PCIe instead of computing them on its CPU lane (STRATA_GLM_PCIE_SHARE); unset: the engine times one expert each way and splits by that. |
 | `glm.cpu_lane` | integer | unset | 1-64 | - | CPU threads of the GLM engine's CPU lane (1-64, STRATA_GLM_CPU_LANE); unset: the physical cores. |
 | `glm.idle_unload_s` | integer | `0` | 0-86400 | - | Seconds a GLM engine idles unloaded before it gives back the memory (0 = never; under glm53 this wins over engine.idle_unload_s). |
@@ -2089,7 +2089,12 @@ One model runs at a time.
   `expert_cache` (`auto` or a count), `prefill` (`auto` or a chunk), `thinking`
   (none|low|medium|high) and the sampling defaults. The `gemma4` engine: `max_context` (the same
   dropdown up to its trained 256K), `chunk`, `expert_vram` (GiB or `auto`), `thinking` (off|on)
-  and the sampling defaults (it has no KV streaming yet, D8). A listed value off the dropdown is
+  and the sampling defaults (it has no KV streaming yet, D8). The GLM engine (`glm53`, `raon1`):
+  `max_context` (`glm.max_context`), `kv` (`glm.kv`), `ram_headroom` (**RAM left free**,
+  `glm.ram_headroom_gb`, the engine's `STRATA_GLM_RAM_HEADROOM_GB`: a dropdown of 6, 8, 12, 16, 24,
+  32, 48 and 64 GB; offered on every GLM card at the server's own row, 16 unless set; less pins
+  more experts in RAM and is faster, 6 is Maya's own with a separate GPU) and the sampling
+  defaults. A listed value off the dropdown is
   refused (400 `invalid_option`); the card's `min`/`max` trim the dropdown. A card's fixed
   `engine.args` may not hold a flag one of its listed options sets (the context option's
   includes the rope flags). The page's last options per card are remembered in

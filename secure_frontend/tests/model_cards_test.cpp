@@ -8,6 +8,7 @@
 #include "support/test_support.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <map>
@@ -298,6 +299,30 @@ void card_options_reach_the_engine_arguments() {
   expect(std::holds_alternative<ConfigErrors>(bad_option), "an option of another engine is refused");
 }
 
+// Owner 2026-10-29 ("make it an option in the card setting"): a GLM card's RAM headroom choice reaches its engine's
+// environment (STRATA_GLM_RAM_HEADROOM_GB), and without one the server's own row does, as before.
+void glm_ram_headroom_reaches_the_engine_environment() {
+  ConfigFixture f;
+  const auto parsed = secure_frontend::parse_model_card(card_text("GLM-5.3-Flash", "glm53", card_config_object(f)), f.dir);
+  const auto* card = std::get_if<ModelCard>(&parsed);
+  expect(card != nullptr, "a glm53 card parses: " + (card ? std::string{} : issues_text(std::get<ConfigErrors>(parsed))));
+  if (card == nullptr) return;
+  const auto headroom = [&f, card](const std::map<std::string, std::string>& main_rows, const secure_frontend::ModelOptionValues& values) {
+    const auto result = secure_frontend::card_config(main_draft(f, main_rows), *card, values);
+    const auto* validated = std::get_if<secure_frontend::ValidatedConfig>(&result);
+    expect(validated != nullptr, "main + GLM card validate: " + (validated ? std::string{} : issues_text(std::get<ConfigErrors>(result))));
+    if (validated == nullptr) return std::string{};
+    for (const auto& knob : secure_frontend::glm_environment_knobs(validated->get())) {
+      if (knob.name == "STRATA_GLM_RAM_HEADROOM_GB") return knob.value;
+    }
+    return std::string{"(none)"};
+  };
+  expect(headroom({}, {{"ram_headroom", std::int64_t{6}}}) == "6", "the card's choice reaches the engine: " + headroom({}, {{"ram_headroom", std::int64_t{6}}}));
+  expect(headroom({}, {}) == "16", "no choice: the row's default, as before: " + headroom({}, {}));
+  expect(headroom({{"glm.ram_headroom_gb", "24"}}, {}) == "24", "no choice: the server's own row: " + headroom({{"glm.ram_headroom_gb", "24"}}, {}));
+  expect(headroom({{"glm.ram_headroom_gb", "24"}}, {{"ram_headroom", std::int64_t{8}}}) == "8", "the card's choice wins over the server's row");
+}
+
 // Model downloads (plan 2026-10-23-model-downloads Task 3): strata's own verbs (pull, hf-info,
 // list) read a models.cards config with models.downloads_root as their store (roots.models), the
 // server's settings from the main config and the first usable card; without the root they refuse.
@@ -333,6 +358,7 @@ int main(int argc, char** argv) {
       {"bad_card_is_refused_others_load", bad_card_is_refused_others_load},
       {"main_config_may_not_set_card_keys", main_config_may_not_set_card_keys},
       {"card_options_reach_the_engine_arguments", card_options_reach_the_engine_arguments},
+      {"glm_ram_headroom_reaches_the_engine_environment", glm_ram_headroom_reaches_the_engine_environment},
       {"launcher_store_config_uses_the_downloads_root", launcher_store_config_uses_the_downloads_root},
   }, failures);
 }

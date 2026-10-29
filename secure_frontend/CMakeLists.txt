@@ -1956,7 +1956,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         downloads_serve_the_catalog_and_load_download_cards
         cards_can_be_added_while_serving page_cards_can_be_replaced_and_removed a_gguf_card_reads_its_tokenizer_from_the_gguf
         cards_say_whether_their_profile_takes_reasoning_effort cards_offer_web_search_when_the_server_has_it
-        cards_offer_their_models_recommended_sampling a_card_without_sampling_starts_with_the_recommended
+        cards_offer_their_models_recommended_sampling glm_cards_offer_their_ram_headroom
+        a_card_without_sampling_starts_with_the_recommended
         a_qwen36_card_reads_its_tokenizer_from_the_gguf
         calibration_finds_the_win_and_starts_with_it a_first_start_calibrates_first
         a_minimax_card_measures_its_prompt_reading_first a_failed_prefill_calibration_is_not_retried_by_itself
@@ -1998,7 +1999,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         page_values_resolve_within_bounds kv_resident_cross_rules options_apply_as_flags_and_keys
         mtp_off_drops_the_draft_options controlled_flags_listed description_json_shape
         remembered_options_round_trip_and_tolerate_junk context_and_kv_streaming_offer_fixed_values
-        past_trained_context_adds_yarn flint_options_follow_the_flint_engine glm_options_write_the_glm_rows
+        past_trained_context_adds_yarn flint_options_follow_the_flint_engine glm_ram_headroom_is_a_card_option glm_options_write_the_glm_rows
         deepseek_options_are_mayas web_search_is_a_checkbox_of_the_tool_profiles minimax_options_are_mayas the_vision_option_writes_the_encoder_rows gpus_choose_the_cards_a_model_runs_on
         gemma4_mtp_off_drops_the_mtp_file)
 
@@ -2007,7 +2008,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_model_cards)
     secure_frontend_add_cases(secure_frontend_model_cards_tests
         card_parses_and_merges_into_a_valid_config card_refusals_name_the_rule bad_card_is_refused_others_load
-        main_config_may_not_set_card_keys card_options_reach_the_engine_arguments launcher_store_config_uses_the_downloads_root
+        main_config_may_not_set_card_keys card_options_reach_the_engine_arguments glm_ram_headroom_reaches_the_engine_environment launcher_store_config_uses_the_downloads_root
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # Gemma 4 plan 1 Task 8 (spec §2.5, §6.3)

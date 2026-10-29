@@ -280,6 +280,34 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z24 (Windows box; owner-directed; committed with this entry, not pushed)
+
+An A/B of our engine and upstream Maya v1.1.30 on the same packs and prompts (decode tok/s, a light code prompt and a
+prose one, greedy and the card's sampling): DeepSeek-V4.1 Maya-XS 11.56 against Maya's 11.33 (Maya's own speed
+calibration keeps DSpark off here: 9.4 against 12.3 without it; ours refuses `--dspark`, no loss on this PC);
+MiniMax-M3.1 Maya-S 3.89 against 3.98 (code -9-10%, prose +1-4%, one run each); GLM-5.3 Maya-S-v2 about 3.9 against
+9.73 under the server's defaults, 9.79 with 6 GB RAM headroom. The cause: `glm.ram_headroom_gb` (default 16, the owner's
+SP6 M2 choice: his desktop swapped at 12) is always projected onto `STRATA_GLM_RAM_HEADROOM_GB`, while Maya's engine
+leaves 6 GB on a discrete GPU (16 on unified memory, `glm_fast_path.cu`), so ours pins about 10 GB fewer experts in RAM.
+The owner: "Make it an option in the card setting".
+
+- **`ram_headroom`, a card option of the GLM engine's profiles** (`glm53`, `raon1`; `model_options.cpp`): RAM left
+  free (GB), a dropdown of 6, 8, 12, 16, 24, 32, 48 and 64 within the row's 6-1024, after `kv`; it writes
+  `glm.ram_headroom_gb` (never an engine flag), which `glm_environment_knobs` projects as before. Other profiles have
+  none (DeepSeek's and MiniMax's engines refuse the row). `is_model_option_name` now reads every profile's table, so an
+  option of one engine alone is remembered (`model-options.json`) and named in refusals.
+- **Offered on every GLM card** (`model_launcher.cpp`, `offer_ram_headroom`): a card whose file does not list it
+  offers it at the server's own `glm.ram_headroom_gb` (16 unless the main config sets it), in the profile's order, so a
+  start without a choice runs exactly as before. The default stays the owner's 16; the page's dropdown moves it per
+  card and the choice is remembered.
+- **Proof**: RED first (the option tables and offers, then a card's choice of 6 reaching the engine as 16 with the
+  committed `model_options.cpp`). The whole Windows tree 1380/1383: the two release-only cases and the README's
+  config table, whose `glm.ram_headroom_gb` text the schema now carries (then the config, options, cards and launcher
+  suites 103/103). Linux gcc and clang 1429/1434 each: the same three, `net01_workers_add_no_listener` (gcc) or
+  `net01_ipv6_loopback_listener_only` (clang), and `egress_table_scan_during_lifecycle`; after the schema text, the
+  touched suites 130/130 on both and each of those three alone 3 of 3 on both.
+- **Not run**: a GLM start from the page at 6 GB (the A/B ran ours at 6 through the server's row).
+
 ### Claude Code session, 2026-10-29 z23 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner, after z22 (Qwen3.8's draft layer comes from upstream's setup; a download could not make its own): "We should
