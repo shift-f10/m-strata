@@ -30,6 +30,10 @@ namespace {
 
 constexpr std::size_t kNvidiaSmiFields = 10U;
 constexpr std::size_t kMaximumGpuNameBytes = 96U;
+// "[Requested functionality has been deprecated]", nvidia-smi's longest placeholder, is 46.
+constexpr std::size_t kMaximumPlaceholderBytes = 64U;
+// The longest quote of nvidia-smi's answer in the note.
+constexpr std::size_t kMaximumAnswerQuoteBytes = 120U;
 // nvidia-smi answers once a second; this long without a valid line and the reading is stale.
 constexpr std::chrono::seconds kGpuStaleAfter{5};
 
@@ -39,15 +43,24 @@ std::string_view trim(std::string_view text) {
   return text;
 }
 
-// One numeric field: a plain non-negative decimal (digits and at most one dot), or nvidia-smi's
-// "[N/A]" / "[Not Supported]" (an empty reading). Anything else refuses the whole line.
+// nvidia-smi's word for a field it cannot read: "[N/A]", "[Not Supported]", "[Unknown Error]",
+// "[Insufficient Permissions]", ... (owner 2026-10-29: an RTX 5090 showed no GPU reading at all). Printable ASCII
+// other than brackets between '[' and ']', at most kMaximumPlaceholderBytes.
+bool placeholder(const std::string_view text) {
+  return text.size() > 2U && text.size() <= kMaximumPlaceholderBytes && text.front() == '[' && text.back() == ']' &&
+         std::all_of(text.begin() + 1, text.end() - 1,
+                     [](const unsigned char c) { return c >= 0x20U && c <= 0x7eU && c != '[' && c != ']'; });
+}
+
+// One numeric field: a plain non-negative decimal (digits and at most one dot), or one of nvidia-smi's
+// placeholders (an empty reading). Anything else refuses the whole line.
 struct Field final {
   bool valid{false};
   std::optional<double> value{};
 };
 Field numeric_field(const std::string_view raw) {
   const std::string_view text = trim(raw);
-  if (text == "[N/A]" || text == "[Not Supported]") return {true, std::nullopt};
+  if (placeholder(text)) return {true, std::nullopt};
   if (text.empty() || text.front() < '0' || text.front() > '9') return {};
   bool dot = false;
   for (const char character : text) {
@@ -67,6 +80,24 @@ Field numeric_field(const std::string_view raw) {
 std::optional<std::uint64_t> mebibytes(const std::optional<double> value) {
   if (!value.has_value()) return std::nullopt;
   return static_cast<std::uint64_t>(std::llround(*value * 1048576.0));
+}
+
+// A line nvidia-smi answered that is no reading ("Failed to initialize NVML: ...", say), added to `answered` for the
+// note: trimmed, a blank line skipped, printable ASCII (anything else '?'), lines joined by " / ". It stops growing
+// once past kMaximumAnswerQuoteBytes, which quote_answer() shows as a cut.
+void add_answer(std::string& answered, const std::string_view line) {
+  const std::string_view text = trim(line);
+  if (text.empty() || answered.size() > kMaximumAnswerQuoteBytes) return;
+  if (!answered.empty()) answered += " / ";
+  for (const unsigned char character : text) {
+    answered += character >= 0x20U && character <= 0x7eU ? static_cast<char>(character) : '?';
+    if (answered.size() > kMaximumAnswerQuoteBytes) break;
+  }
+}
+
+std::string quote_answer(const std::string& answered) {
+  if (answered.size() <= kMaximumAnswerQuoteBytes) return "\"" + answered + "\"";
+  return "\"" + answered.substr(0, kMaximumAnswerQuoteBytes - 3U) + "...\"";
 }
 
 }  // namespace
@@ -405,25 +436,29 @@ void GpuSampler::run(EngineCommand command) {
     return;
   }
   auto last_valid = std::chrono::steady_clock::now();
+  std::string answered;  // its lines since its last reading that are none (add_answer)
   while (!stopping_.load()) {
     const EngineReadResult read = child.read_line(std::chrono::milliseconds(250));
     if (read.kind == EngineReadKind::line) {
       if (auto reading = parse_nvidia_smi_line(read.line)) {
         last_valid = std::chrono::steady_clock::now();
+        answered.clear();
         std::lock_guard lock(mutex_);
         latest_ = std::move(reading);
         note_.clear();
+      } else {
+        add_answer(answered, read.line);
       }
     } else if (read.kind != EngineReadKind::timeout) {  // closed or failed: the tool is gone
       std::lock_guard lock(mutex_);
       latest_.reset();
-      note_ = "nvidia-smi stopped";
+      note_ = answered.empty() ? "nvidia-smi stopped" : "nvidia-smi stopped after answering " + quote_answer(answered);
       break;
     }
     if (std::chrono::steady_clock::now() - last_valid > kGpuStaleAfter) {
       std::lock_guard lock(mutex_);
       latest_.reset();
-      note_ = "nvidia-smi is not answering";
+      note_ = answered.empty() ? "nvidia-smi is not answering" : "nvidia-smi answers no reading: " + quote_answer(answered);
     }
   }
   (void)child.terminate(std::chrono::milliseconds(500));

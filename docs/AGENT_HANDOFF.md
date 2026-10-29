@@ -280,6 +280,23 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z31 (Windows box; owner-directed; a worker session's change, committed with this entry, not pushed)
+
+On his RTX 5090 PC the Monitor showed no GPU reading at all (load, VRAM, temperature, power, PCIe).
+
+- **Monitor GPU note**: `parse_nvidia_smi_line` now reads any bracketed nvidia-smi placeholder (`[Unknown Error]`,
+  `[Insufficient Permissions]`, `[GPU requires reset]`, ...: printable ASCII, at most 64 bytes) as an empty reading, as
+  it did `[N/A]`; a malformed number still refuses the whole line (before, one such field threw away every line, and
+  the note said "nvidia-smi is not answering"). The About page's GPU list reads its lines the same way. `GpuSampler`'s
+  note quotes what nvidia-smi answered since its last reading when it exits or gives no reading for 5 s (`nvidia-smi
+  stopped after answering "Failed to initialize NVML: ..."`; printable ASCII, anything else `?`, at most 120 bytes).
+- **Proof**: RED first (`parses_nvidia_smi_lines`: an RTX 5090-style line with five placeholders and six malformed
+  ones; `gpu_sampler_reads_a_fake_tool` with the new `--fake-nvidia-smi-unreadable` fake). GREEN with MSVC 21/21 and on
+  Linux gcc and clang (the serve monitor suite).
+- **Not verified**: the 5090 PC. nvidia-smi's own stderr still goes to the null device, so the note can quote only its
+  normal output; the environment it runs with is unchanged (if the note says "Failed to initialize NVML", a missing
+  `SystemRoot` is the first thing to try).
+
 ### Claude Code session, 2026-10-29 z30 (Windows box; owner-directed; committed with this entry, not pushed)
 
 On his RTX 5090 PC every calibration's first engine ended before ready ("crashed" / "error_exit", z28), and answers

@@ -45,8 +45,9 @@ inline constexpr std::string_view kNvidiaSmiQuery =
     "name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,enforced.power.limit,"
     "pcie.link.gen.current,pcie.link.gen.max,pcie.link.width.current";
 
-// One answer line: exactly ten comma-separated fields (memory in MiB). "[N/A]" or
-// "[Not Supported]" leave that reading empty; any other non-number, a name that is not 1-96
+// One answer line: exactly ten comma-separated fields (memory in MiB). A placeholder ("[N/A]",
+// "[Not Supported]", "[Unknown Error]", ...: printable ASCII other than brackets between '[' and
+// ']', at most 64 bytes) leaves that reading empty; any other non-number, a name that is not 1-96
 // printable ASCII characters, or another field count refuses the whole line (nullopt).
 [[nodiscard]] std::optional<GpuReading> parse_nvidia_smi_line(std::string_view line);
 
@@ -61,7 +62,7 @@ inline constexpr std::string_view kNvidiaSmiListQuery = "index,name,memory.total
 // The fixed argv after the executable: one answer, every GPU.
 [[nodiscard]] std::vector<std::string> nvidia_smi_list_arguments();
 // The answer's lines, "<index>, <name>, <MiB>" (the index 0-63, the name as parse_nvidia_smi_line takes it, "[N/A]"
-// memory left unread); any other line, and a repeated index, is skipped; at most 16 GPUs.
+// or another placeholder memory left unread); any other line, and a repeated index, is skipped; at most 16 GPUs.
 [[nodiscard]] std::vector<GpuListing> parse_nvidia_smi_gpu_list(std::string_view text);
 // Runs `command` (nvidia_smi_path() with nvidia_smi_list_arguments() and nvidia_smi_environment()) once and reads its
 // list, for at most 10 s; empty when the tool is missing, does not start or lists nothing.
@@ -135,7 +136,10 @@ struct EngineSample final {
 
 // One nvidia-smi child on its own thread, keeping the newest valid line. A tool that is
 // missing, fails to start or exits leaves no reading and a note saying why; it is not
-// restarted. stop() (and the destructor) ends the child and joins the thread.
+// restarted. When it exits, or no valid line came for 5 s, the note quotes what it answered
+// since its last reading that was none ("Failed to initialize NVML: ...", owner 2026-10-29):
+// its stdout lines joined by " / ", printable ASCII (anything else '?'), at most 120 bytes.
+// stop() (and the destructor) ends the child and joins the thread.
 class GpuSampler final {
  public:
   GpuSampler() = default;
