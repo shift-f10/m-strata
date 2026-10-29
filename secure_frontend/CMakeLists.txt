@@ -1688,7 +1688,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         thinking_budget_default_is_mayas_32768
         glm_environment_projection_moves_the_split_default
         glm_max_context_typed_and_glm53_args_refused
-        glm_ram_headroom_gb_typed_and_always_projected
+        glm_ram_headroom_gb_typed_and_always_projected glm_cpu_lane_rows_project_when_set
         glm_idle_unload_s_wins_for_the_glm_profile
         glm_vision_flags_reach_both_children
         lifecycle_rows_match_the_pin
@@ -1926,7 +1926,9 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         cards_can_be_added_while_serving page_cards_can_be_replaced_and_removed a_gguf_card_reads_its_tokenizer_from_the_gguf
         cards_say_whether_their_profile_takes_reasoning_effort cards_offer_web_search_when_the_server_has_it
         a_qwen36_card_reads_its_tokenizer_from_the_gguf
-        calibration_finds_the_win_and_starts_with_it a_first_start_calibrates_first a_calibration_can_be_cancelled
+        calibration_finds_the_win_and_starts_with_it a_first_start_calibrates_first
+        a_minimax_card_measures_its_prompt_reading_first a_failed_prefill_calibration_is_not_retried_by_itself
+        a_calibration_can_be_cancelled
         removing_a_card_removes_its_calibration failures_raise_alerts
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
 
@@ -2107,7 +2109,10 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_calibration_tests tests/calibration_test.cpp secure_frontend_calibration)
     secure_frontend_add_cases(secure_frontend_calibration_tests
         the_sweep_keeps_only_clear_wins a_win_that_does_not_repeat_is_dropped a_failed_baseline_or_a_cancel_ends_it
-        the_plan_follows_the_engine results_round_trip_and_keys_compare the_key_reads_files_and_options
+        the_plan_follows_the_engine joint_steps_and_longer_answers a_step_ends_below_its_floor
+        a_calibration_applies_flags_and_rows the_file_takes_every_sweeps_settings prefill_records_round_trip
+        results_round_trip_and_keys_compare
+        the_key_reads_files_and_options
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # GUI-first start-up (spec 2026-10-27 §4): the page's card and folder routes over a real launcher.

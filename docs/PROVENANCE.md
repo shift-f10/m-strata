@@ -677,6 +677,20 @@ repository's licence; nothing is copied from `upstream/` or Project Maya.
   Maya's `calibrate_glm.py`: a fixed greedy workload, the median decode tok/s, a 3% keep margin, and confirmation
   against the defaults. It shares the method only; no code or data from either is copied. The swept flags and values
   are our engines' own (`engine_arguments.cpp`).
+  - 2026-10-28, every profile: each profile's steps and candidate values follow its reference tool. That is
+    upstream's `tools/calibrate.py` for qwen (`PCIE_FRACS`, `SPEC_MIN_PS`, `worker_candidates`, `ADAPT_CANDIDATES` on
+    `TIER_MAX_NEW`-token answers). For glm53 and raon1 it is Maya v1.1.30's `tools/calibrate_glm.py` (`PCIE_SHARES`,
+    `thread_candidates`, `STOP_BELOW`, through the engine's `STRATA_GLM_PCIE_SHARE` / `STRATA_GLM_CPU_LANE`). For
+    deepseek and minimax it is Maya's `tools/calibrate_ds4_tp.py` and `tools/mm3/calibrate.py` (`thread_candidates`,
+    `MIN_GAIN`).
+  - The candidates use Python's rounding (half to even). The engines' own CPU counts are read from their sources:
+    `generate.cpp`'s pool, `glm_fast_path.cu`'s lane, the maya-ds4 and maya-mm3 lanes.
+  - Each candidate is still one engine start, where upstream and Maya measure some settings per request in one running
+    engine.
+  - MiniMax's prefill calibration runs the engine's own `--calibrate-prefill` (`mm3_main.cpp`, Maya's, in
+    `engine/third_party/maya`) as Maya's `tools/calibrate_mm3_prefill.py` does: its `KEYS` removed, about `TOKENS` ids
+    of a text through the chat template, `TIMEOUT_S`.
+  - Behaviour is followed; no code is copied.
 - **Email alerts** (only with `SECURE_FRONTEND_EMAIL_ALERTS`, off by default): the SMTP client
   (`smtp_client.cpp`, RFC 5321 with STARTTLS per RFC 3207, AUTH per RFC 4954 with PLAIN per RFC 4616 or LOGIN) is
   ours. TLS comes from the operating system, never from this repository: on Windows SChannel through SSPI

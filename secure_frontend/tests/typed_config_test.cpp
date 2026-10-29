@@ -1304,6 +1304,38 @@ void glm_ram_headroom_gb_typed_and_always_projected() {
   expect(has_issue(over, "glm.ram_headroom_gb", ConfigIssueCode::out_of_range), "1025 GB is refused (the M2 bound, 1024)");
 }
 
+// Calibration (owner 2026-10-28, Maya's tools/calibrate_glm.py): glm.pcie_share and glm.cpu_lane are the typed sources
+// of the GLM engine's STRATA_GLM_PCIE_SHARE and STRATA_GLM_CPU_LANE (glm_fast_path.cu reads both at its start). Unset,
+// nothing projects (the engine measures its own split, its lane the physical cores); set, they render; out of range
+// they are refused.
+void glm_cpu_lane_rows_project_when_set() {
+  ConfigFixture f;
+  const auto knob = [](const secure_frontend::FrontendConfig& config, const std::string_view name) -> std::optional<std::string> {
+    for (const auto& k : secure_frontend::glm_environment_knobs(config)) {
+      if (k.name == name) return k.value;
+    }
+    return std::nullopt;
+  };
+  const auto bare = with_literals(f, {{"engine.profile", "\"glm53\""}});
+  if (const auto* config = config_of(bare)) {
+    expect(!knob(*config, "STRATA_GLM_PCIE_SHARE") && !knob(*config, "STRATA_GLM_CPU_LANE"), "unset: the engine's own choice");
+  } else {
+    expect(false, "the bare glm53 config validates: " + issues_of(bare));
+  }
+  const auto set = with_literals(f, {{"engine.profile", "\"glm53\""}, {"glm.pcie_share", "0.25"}, {"glm.cpu_lane", "9"}});
+  if (const auto* config = config_of(set)) {
+    expect(knob(*config, "STRATA_GLM_PCIE_SHARE") == std::optional<std::string>{"0.250"} &&
+               knob(*config, "STRATA_GLM_CPU_LANE") == std::optional<std::string>{"9"},
+           "set: both render onto the closed allowlist rows");
+  } else {
+    expect(false, "the calibrated rows validate: " + issues_of(set));
+  }
+  expect(has_issue(with_literals(f, {{"engine.profile", "\"glm53\""}, {"glm.pcie_share", "1.5"}}), "glm.pcie_share", ConfigIssueCode::out_of_range) &&
+             has_issue(with_literals(f, {{"engine.profile", "\"glm53\""}, {"glm.cpu_lane", "65"}}), "glm.cpu_lane", ConfigIssueCode::out_of_range) &&
+             has_issue(with_literals(f, {{"engine.profile", "\"glm53\""}, {"glm.cpu_lane", "0"}}), "glm.cpu_lane", ConfigIssueCode::out_of_range),
+         "a share past 1 and a lane of 0 or past the engine's 64 are refused");
+}
+
 // glm.kv: the GLM engine's --kv as a closed choice - fp16 (the engine's default: glm5-next's FP16 latent, raon1's
 // exact F32 cache), int8 (glm5-next's INT8 latent), q8_0 / q4_0 (raon1's quantized cache). Default fp16; anything
 // else is refused at load.
@@ -2386,6 +2418,7 @@ int main(int argc, char** argv) {
       {"glm_environment_projection_moves_the_split_default", glm_environment_projection_moves_the_split_default},
       {"glm_max_context_typed_and_glm53_args_refused", glm_max_context_typed_and_glm53_args_refused},
       {"glm_ram_headroom_gb_typed_and_always_projected", glm_ram_headroom_gb_typed_and_always_projected},
+      {"glm_cpu_lane_rows_project_when_set", glm_cpu_lane_rows_project_when_set},
       {"glm_kv_is_a_closed_choice", glm_kv_is_a_closed_choice},
       {"glm_idle_unload_s_wins_for_the_glm_profile", glm_idle_unload_s_wins_for_the_glm_profile},
       {"glm_vision_flags_reach_both_children", glm_vision_flags_reach_both_children},

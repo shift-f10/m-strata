@@ -5,8 +5,10 @@
 #include "secure_frontend/engine_stdio_process.hpp"
 #include "secure_frontend/host_readings.hpp"
 #include "secure_frontend/launch_composition.hpp"
+#include "secure_frontend/minimax_prompt_renderer.hpp"
 #include "secure_frontend/subsystem_limits.hpp"
 #include "secure_frontend/token_store.hpp"
+#include "secure_frontend/tokenizer_pack.hpp"
 
 #include <algorithm>
 #include <array>
@@ -52,6 +54,13 @@ std::string calibration_file_name(const std::string_view card) {
   std::string name{card};
   std::replace(name.begin(), name.end(), ':', '_');
   return name + ".json";
+}
+
+// MiniMax's prefill record beside it (<card>.prefill.json).
+std::string prefill_file_name(const std::string_view card) {
+  std::string name{card};
+  std::replace(name.begin(), name.end(), ':', '_');
+  return name + ".prefill.json";
 }
 
 std::string_view calibration_state_name(const CalibrationState state) noexcept {
@@ -174,7 +183,10 @@ ModelLauncher::ModelLauncher(LauncherSettings settings) : settings_(std::move(se
     auto text = read_trusted_config_text(*settings_.memory_file);
     if (const auto* read = std::get_if<TrustedConfigText>(&text)) remembered_ = parse_remembered_options(read->text);
   }
-  if (settings_.calibration_dir.has_value()) cpu_fact_ = cpu_fact();
+  if (settings_.calibration_dir.has_value()) {
+    cpu_fact_ = cpu_fact();
+    machine_ = SweepMachine{std::max(1U, std::thread::hardware_concurrency()), physical_cores()};
+  }
   worker_ = std::thread([this] { run_jobs(); });
 }
 
@@ -234,6 +246,7 @@ CardChange ModelLauncher::remove_card(const std::string_view name) {
   if (settings_.calibration_dir.has_value()) {
     std::error_code ec;
     std::filesystem::remove(*settings_.calibration_dir / path_from_utf8(calibration_file_name(name)), ec);
+    std::filesystem::remove(*settings_.calibration_dir / path_from_utf8(prefill_file_name(name)), ec);
   }
   log("[strata] models: removed " + std::string{name});
   return CardChange::done;
@@ -321,20 +334,25 @@ std::optional<ModelLauncher::Refusal> ModelLauncher::start(const std::string_vie
     if (calibration == CalibrationState::fresh && !stored->args.empty()) {
       if (auto with = config_with(chosen, start_values, stored->args)) config = std::move(with);
     }
-    calibrate_first = (calibration == CalibrationState::missing && page) ||
+    // (only the engines whose sweep is a few short starts calibrate unasked; the others' run from Calibrate)
+    calibrate_first = (calibration == CalibrationState::missing && page && calibrates_before_first_start(chosen.profile)) ||
                       (calibration == CalibrationState::settings_changed && stored->auto_recalibrate);
   }
-  std::string line = std::string{"[strata] models: "} + (calibrate_first ? "calibrate, then start " : "start ") + chosen.name;
+  // MiniMax: its prefill calibration once, before the first start on this machine (Maya's needs_prefill_calibration)
+  const bool prefill_first = !calibrate_first && needs_prefill_calibration(chosen, std::get<ModelOptionValues>(values));
+  std::string line = std::string{"[strata] models: "} +
+                     (calibrate_first ? "calibrate, then start " : prefill_first ? "measure how this PC reads prompts, then start " : "start ") +
+                     chosen.name;
   for (const auto& [option, value] : std::get<ModelOptionValues>(values)) line += " " + option + "=" + value_text(value);
   line += remote_client ? " (remote client)" : " (loopback client)";
   log(line);
   {
     std::lock_guard lock(mutex_);
-    status_[*card] = CardStatus{calibrate_first ? CardState::calibrating : CardState::starting, {}};
+    status_[*card] = CardStatus{calibrate_first || prefill_first ? CardState::calibrating : CardState::starting, {}};
     starting_card_ = *card;
-    if (calibrate_first) cancel_calibration_.store(false);
+    if (calibrate_first || prefill_first) cancel_calibration_.store(false);
     pending_ = Job{calibrate_first ? Job::Kind::calibrate : Job::Kind::start, *card, std::move(std::get<ModelOptionValues>(values)),
-                   std::move(config), true, std::nullopt};
+                   std::move(config), true, std::nullopt, prefill_first};
   }
   changed_.notify_all();
   return std::nullopt;
@@ -421,7 +439,7 @@ std::optional<ModelLauncher::Refusal> ModelLauncher::cancel_calibration() {
 }
 
 bool ModelLauncher::calibration_supported(const ModelCard& card) const {
-  if (!settings_.calibration_dir.has_value() || sweep_plan(card.profile, std::thread::hardware_concurrency()).empty()) return false;
+  if (!settings_.calibration_dir.has_value() || sweep_plan(card.profile, machine_).empty()) return false;
   const auto text = [&card](const std::string_view key) {
     const auto found = card.config.entries.find(std::string{key});
     return found != card.config.entries.end() && std::holds_alternative<std::string>(found->second.value);
@@ -432,19 +450,8 @@ bool ModelLauncher::calibration_supported(const ModelCard& card) const {
 std::shared_ptr<const FrontendConfig> ModelLauncher::config_with(const ModelCard& card, const ModelOptionValues& values,
                                                                  const std::vector<std::string>& args) const {
   FrontendConfigDraft draft = card_draft(settings_.main, card, values);
-  if (!args.empty()) {
-    auto found = draft.entries.find("engine.args");
-    if (found == draft.entries.end()) {
-      found = draft.entries.emplace("engine.args", ConfigDraftEntry{std::vector<std::string>{}, ConfigSource::file}).first;
-    }
-    auto* list = std::get_if<std::vector<std::string>>(&found->second.value);
-    if (list == nullptr) return nullptr;
-    for (std::size_t i = 0; i + 1U < args.size(); i += 2U) {
-      if (std::find(list->begin(), list->end(), args[i]) != list->end()) continue;  // the card's own flag stays
-      list->push_back(args[i]);
-      list->push_back(args[i + 1U]);
-    }
-  }
+  // the flags join engine.args and the rows (the GLM engine's environment) the draft; the card's own stay
+  if (!args.empty() && !apply_calibration(draft, args)) return nullptr;
   auto validated = validate(draft);
   if (const auto* issues = std::get_if<ConfigErrors>(&validated)) {
     for (const auto& issue : *issues) log("[strata] models: " + card.name + ": " + format_issue(issue));
@@ -494,6 +501,157 @@ bool ModelLauncher::write_calibration(const CalibrationResult& result) {
               .has_value();
 }
 
+bool ModelLauncher::needs_prefill_calibration(const ModelCard& card, const ModelOptionValues& values) const {
+  if (card.profile != EngineProfile::minimax || !settings_.calibration_dir.has_value()) return false;
+  const auto stored = read_prefill(card.name);
+  return !stored || compare_key(stored->key, calibration_key(card, values)) == CalibrationState::stale;
+}
+
+std::optional<PrefillRecord> ModelLauncher::read_prefill(const std::string_view card) const {
+  if (!settings_.calibration_dir.has_value()) return std::nullopt;
+  std::ifstream in(*settings_.calibration_dir / path_from_utf8(prefill_file_name(card)), std::ios::binary);
+  if (!in) return std::nullopt;
+  std::ostringstream text;
+  text << in.rdbuf();
+  auto record = parse_prefill(text.str());
+  if (!record || record->card != card) return std::nullopt;
+  return record;
+}
+
+// Maya's tools/calibrate_mm3_prefill.py on this server: the engine of the card's start, without the prompt path's own
+// flags (Maya's KEYS), runs once with --calibrate-prefill OUT over about 4096 tokens of a real text - the out folder's
+// LICENSE (Maya's is its CHANGELOG.md) as one user message through the card's tokenizer and MiniMax's template, thinking
+// off - or, without that text, the engine's own token mix, as Maya's falls back. The engine keeps its choice in the
+// pack's prefill-tune.txt, which every later start reads; the record here says the measurement ran.
+bool ModelLauncher::run_prefill_calibration(const Job& job) {
+  constexpr std::size_t kPrefillTokens = 4096U;            // Maya's TOKENS
+  constexpr auto kPrefillTimeout = std::chrono::hours(1);  // Maya's TIMEOUT_S, the model's load included
+  constexpr std::array<std::string_view, 5> kPrefillFlags{"--chunk", "--prefill-gemm", "--prefill-tune", "--no-prefill-tune",
+                                                          "--calibrate-prefill"};
+  const ModelCard& card = [this, &job]() -> const ModelCard& {
+    std::lock_guard lock(mutex_);
+    return settings_.cards[job.card];
+  }();
+  const auto stop_asked = [this] {
+    std::lock_guard lock(mutex_);
+    return shutting_down_ || cancel_calibration_.load();
+  };
+  if (!settings_.calibration_dir.has_value() || job.config == nullptr) return false;
+  log("[strata] models: " + card.name + ": measuring how this PC reads prompts (MiniMax's prefill calibration, once)");
+  auto composed = compose_model(*job.config, true);
+  if (auto* failure = std::get_if<ComposeFailure>(&composed)) {
+    for (const auto& message : failure->messages) log("[strata] models: " + card.name + ": " + message);
+    return false;
+  }
+  auto& model = std::get<ComposedModel>(composed);
+  auto root = open_root(*settings_.calibration_dir, RootPolicy::create_private);
+  if (!std::holds_alternative<CanonicalRoot>(root) || !prepare_state_dir(*job.config->roots.state, *model.plan.environment)) {
+    log("[strata] models: " + card.name + ": the prefill calibration's folder could not be prepared");
+    return false;
+  }
+  const auto& folder = std::get<CanonicalRoot>(root);
+  const std::string base = prefill_file_name(card.name);
+  const std::string ids_name = base.substr(0, base.size() - 5U) + "-ids.txt";
+  const std::string out_name = base.substr(0, base.size() - 5U) + "-out.json";
+  const auto ids_path = *settings_.calibration_dir / path_from_utf8(ids_name);
+  const auto out_path = *settings_.calibration_dir / path_from_utf8(out_name);
+  std::error_code ec;
+  std::filesystem::remove(out_path, ec);
+  // the text's tokens, at most kPrefillTokens (Maya's long_prompt_ids: about 6 characters a token, cut by the count)
+  std::vector<std::size_t> ids;
+  {
+    // the out folder's LICENSE: <out>/engine/multiengine(.exe)
+    std::ifstream in(job.config->engine.executable.path().parent_path().parent_path() / "LICENSE", std::ios::binary);
+    std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    if (text.size() > kPrefillTokens * 6U) text.resize(kPrefillTokens * 6U);
+    std::vector<std::string_view> special;
+    for (const std::string_view literal : kMinimaxLiterals) {
+      if (find_special_token(model.tokenizer, literal).has_value()) special.push_back(literal);
+    }
+    for (int round = 0; round < 4 && !text.empty(); ++round) {
+      const auto pieces = render_minimax_text_prompt({ChatMessage{"user", "Summarize this text:\n\n" + text}}, MinimaxThinking{.off = true}, special);
+      const auto encoded = pieces ? encode_prompt_pieces(model.tokenizer, *pieces) : TokenizerEncodeResult{};
+      const auto* tokens = std::get_if<std::vector<std::size_t>>(&encoded);
+      if (tokens == nullptr) {
+        ids.clear();
+        break;
+      }
+      ids = *tokens;
+      if (ids.size() <= kPrefillTokens) break;
+      text.resize(static_cast<std::size_t>(static_cast<double>(text.size()) * kPrefillTokens / static_cast<double>(ids.size()) * 0.98));
+    }
+  }
+  std::string id_text;
+  for (const std::size_t id : ids) id_text += (id_text.empty() ? "" : ",") + std::to_string(id);
+  bool with_ids = false;
+  if (!id_text.empty()) {
+    const auto relative = parse_relative_path(ids_name);
+    with_ids = std::holds_alternative<RelativePath>(relative) &&
+               !write_private_file(folder, std::get<RelativePath>(relative), id_text, TokenStoreMode::replace).has_value();
+  }
+  EngineLaunchPlan plan = std::move(model.plan);
+  std::vector<std::string> arguments;
+  for (std::size_t i = 0; i < plan.command.arguments.size(); ++i) {
+    const std::string& argument = plan.command.arguments[i];
+    if (std::find(kPrefillFlags.begin(), kPrefillFlags.end(), argument) != kPrefillFlags.end()) {
+      if (argument != "--no-prefill-tune") ++i;  // and its value
+      continue;
+    }
+    arguments.push_back(argument);
+  }
+  arguments.insert(arguments.end(), {"--calibrate-prefill", path_to_utf8(out_path)});
+  if (with_ids) arguments.insert(arguments.end(), {"--ids", "@" + path_to_utf8(ids_path)});
+  plan.command.arguments = std::move(arguments);
+  plan.command.insert_serve = false;
+  PrefillRecord record{card.name, utc_now(), false, 0, {}, 0.0, 0.0, calibration_key(card, job.values)};
+  auto spawned = settings_.factory(std::move(plan))(1U);
+  bool cancelled = false;
+  std::optional<ExitStatus> ended;
+  if (auto* process = std::get_if<std::unique_ptr<SupervisedProcess>>(&spawned)) {
+    const auto until = std::chrono::steady_clock::now() + kPrefillTimeout;
+    while (!(ended = (*process)->try_reap())) {
+      if (stop_asked() || std::chrono::steady_clock::now() > until) {
+        cancelled = stop_asked();
+        (*process)->kill_group();
+        for (int i = 0; i < 50 && !(ended = (*process)->try_reap()); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        ended.reset();  // stopped, not finished
+        break;
+      }
+      // its stdout is drained (the measurement's lines go to the server's log through its stderr)
+      if ((*process)->transport().read_line(std::chrono::milliseconds(200)).kind != EngineReadKind::line) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+    }
+    (*process)->release_resources(settings_.stop_bound);
+  } else {
+    log("[strata] models: " + card.name + ": the prefill calibration's engine did not start: " + std::get<SpawnFailure>(spawned).message);
+  }
+  std::ifstream out(out_path, std::ios::binary);
+  const std::string measured{std::istreambuf_iterator<char>(out), std::istreambuf_iterator<char>()};
+  out.close();
+  record.finished = ended && !ended->signaled && ended->value == 0U && read_prefill_measurement(measured, record);
+  std::filesystem::remove(out_path, ec);
+  std::filesystem::remove(ids_path, ec);
+  if (cancelled) {
+    log("[strata] models: " + card.name + ": the prefill calibration was cancelled; nothing was kept");
+    return false;
+  }
+  if (record.finished) {
+    log("[strata] models: " + card.name + ": prompts are read in chunks of " + std::to_string(record.chunk) + " tokens with " +
+        (record.gemm == "hipblaslt" ? "hipBLASLt" : "BLAS") + " GEMMs, " + decimal_text(record.tok_s) + " tok/s (the defaults " +
+        decimal_text(record.default_tok_s) + ") - kept for this PC in the pack");
+  } else {
+    log("[strata] models: " + card.name + ": the prefill calibration did not finish; the engine reads prompts with its defaults " +
+        "(Calibrate measures again)");
+  }
+  const auto file = parse_relative_path(base);
+  if (!std::holds_alternative<RelativePath>(file) ||
+      write_private_file(folder, std::get<RelativePath>(file), render_prefill(record), TokenStoreMode::replace).has_value()) {
+    log("[strata] models: " + card.name + ": " + std::string{kCalibrationNotSaved});
+  }
+  return record.finished;
+}
+
 std::optional<ModelLauncher::Refusal> ModelLauncher::set_auto_recalibrate(const std::string_view name, const bool on) {
   std::optional<ModelCard> held;
   {
@@ -523,7 +681,9 @@ std::string ModelLauncher::calibration_json(const std::size_t index, const Model
   };
   const auto stored = read_calibration(card.name);
   const auto state = stored ? compare_key(stored->key, calibration_key(card, values)) : CalibrationState::missing;
-  std::string out = "{\"state\":" + json_string(calibration_state_name(state)) + ",\"running\":";
+  // first_start: the card calibrates before its first start (the engines whose sweep is a few short starts)
+  std::string out = "{\"state\":" + json_string(calibration_state_name(state)) +
+                    ",\"first_start\":" + (calibrates_before_first_start(card.profile) ? "true" : "false") + ",\"running\":";
   if (calibrating_.has_value() && calibrating_->card == index) {
     const auto& progress = calibrating_->progress;
     out += "{\"stage\":" + json_string(progress.stage) + ",\"trial\":" + std::to_string(progress.trial) +
@@ -541,14 +701,28 @@ std::string ModelLauncher::calibration_json(const std::size_t index, const Model
          ",\"after\":" + (stored ? decimal_text(stored->best_tok_s) : std::string{"null"}) +
          ",\"date\":" + (stored ? json_string(stored->date) : std::string{"null"}) + ",\"args\":[" + args + "]" +
          ",\"auto\":" + ((stored ? stored->auto_recalibrate : switched_on(card.name)) ? "true" : "false") +
-         ",\"error\":" + (error == calibration_errors_.end() ? std::string{"null"} : json_string(error->second)) + "}";
+         ",\"error\":" + (error == calibration_errors_.end() ? std::string{"null"} : json_string(error->second));
+  // MiniMax: its prefill calibration (null: never run here)
+  if (card.profile == EngineProfile::minimax) {
+    const auto prefill = read_prefill(card.name);
+    out += ",\"prefill\":";
+    if (!prefill) {
+      out += "null";
+    } else {
+      const bool stale = compare_key(prefill->key, calibration_key(card, values)) == CalibrationState::stale;
+      out += "{\"state\":" + json_string(stale ? "stale" : prefill->finished ? "done" : "failed") + ",\"chunk\":" +
+             std::to_string(prefill->chunk) + ",\"gemm\":" + json_string(prefill->gemm) + ",\"tok_s\":" + decimal_text(prefill->tok_s) +
+             ",\"default_tok_s\":" + decimal_text(prefill->default_tok_s) + ",\"date\":" + json_string(prefill->date) + "}";
+    }
+  }
+  out += "}";
   return out;
 }
 
 // §5.1: every candidate is one start of the card with those flags; the workload's median decode tok/s is its score.
 // The engine is stopped after each; a start that fails, a reply that is not one, or a cancel scores nothing.
 std::optional<double> ModelLauncher::measure(const ModelCard& card, const ModelOptionValues& values,
-                                             const std::vector<std::string>& args) {
+                                             const std::vector<std::string>& args, const unsigned max_tokens) {
   const auto stop_asked = [this] {
     std::lock_guard lock(mutex_);
     return shutting_down_ || cancel_calibration_.load();
@@ -591,7 +765,7 @@ std::optional<double> ModelLauncher::measure(const ModelCard& card, const ModelO
   std::vector<double> speeds;
   for (std::size_t i = 0; i < kCalibrationPrompts.size() && !stop_asked(); ++i) {
     const RequestContext context{.client_gone = {}, .shutting_down = runtime->stop_flag(), .loopback_peer = true};
-    const auto result = runtime->chat().handle(calibration_body(model_id, kCalibrationPrompts[i], i == 0U ? 16U : 128U), context);
+    const auto result = runtime->chat().handle(calibration_body(model_id, kCalibrationPrompts[i], i == 0U ? 16U : max_tokens), context);
     const auto* response = std::get_if<HttpResponse>(&result);
     if (response == nullptr || response->status != 200) {
       log("[strata] models: " + card.name + ": a calibration reply failed (" +
@@ -625,10 +799,20 @@ bool ModelLauncher::run_calibration(const Job& job) {
     calibrating_ = CalibrationRun{job.card, {}};
     calibration_errors_.erase(card.name);
   }
+  // MiniMax: Maya's --calibrate measures its prompt reading first (the engine keeps it in the pack; the sweep's starts read it)
+  if (card.profile == EngineProfile::minimax) {
+    {
+      std::lock_guard lock(mutex_);
+      calibrating_->progress = SweepProgress{"prompt reading", 0U, 0U, std::nullopt};
+    }
+    (void)run_prefill_calibration(job);
+  }
   log("[strata] models: calibrating " + card.name + " (each candidate is one engine start)");
   const auto outcome = run_sweep(
-      sweep_plan(card.profile, std::thread::hardware_concurrency()),
-      [this, &card, &job](const std::vector<std::string>& args) { return measure(card, job.values, args); },
+      sweep_plan(card.profile, machine_),
+      [this, &card, &job](const std::vector<std::string>& args, const unsigned max_tokens) {
+        return measure(card, job.values, args, max_tokens);
+      },
       [this, &card](const SweepProgress& progress) {
         {
           std::lock_guard lock(mutex_);
@@ -640,7 +824,8 @@ bool ModelLauncher::run_calibration(const Job& job) {
       [this] {
         std::lock_guard lock(mutex_);
         return shutting_down_ || cancel_calibration_.load();
-      });
+      },
+      sweep_keep_margin(card.profile));
   std::string_view failure;
   bool kept = false;
   if (outcome.end == SweepOutcome::End::done) {
@@ -703,7 +888,28 @@ void ModelLauncher::run_jobs() {
       pending_.reset();
     }
     if (job.kind == Job::Kind::start) {
-      run_start(job);
+      if (job.prefill_first) {
+        {
+          // the GPU to itself: the running model is retired first, its card shown calibrating
+          std::unique_lock lock(mutex_);
+          switching_ = true;
+          retire_running(lock);
+          status_[job.card] = CardStatus{CardState::calibrating, {}};
+          calibrating_ = CalibrationRun{job.card, SweepProgress{"prompt reading", 1U, 1U, std::nullopt}};
+        }
+        (void)run_prefill_calibration(job);
+        bool cancelled = false;
+        {
+          std::lock_guard lock(mutex_);
+          calibrating_.reset();
+          cancelled = shutting_down_ || cancel_calibration_.load();
+          cancel_calibration_.store(false);
+          status_[job.card] = cancelled ? CardStatus{} : CardStatus{CardState::starting, {}};
+        }
+        if (!cancelled) run_start(job);
+      } else {
+        run_start(job);
+      }
     } else if (job.kind == Job::Kind::calibrate) {
       const bool kept = run_calibration(job);
       if (job.then_start && kept) {

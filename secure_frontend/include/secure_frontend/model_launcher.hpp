@@ -169,13 +169,21 @@ class ModelLauncher final {
     std::shared_ptr<const FrontendConfig> config{};
     bool then_start{false};                   // calibrate: start the card with the result afterwards
     std::optional<bool> auto_recalibrate{};   // calibrate: kept with the result
+    bool prefill_first{false};                // start: MiniMax's prefill calibration runs first (run_prefill_calibration)
   };
   void run_jobs();
   void run_start(const Job& job);
   // §5: the sweep, each candidate one engine start of the card with those flags; true when a result was kept.
   [[nodiscard]] bool run_calibration(const Job& job);
   [[nodiscard]] std::optional<double> measure(const ModelCard& card, const ModelOptionValues& values,
-                                              const std::vector<std::string>& args);
+                                              const std::vector<std::string>& args, unsigned max_tokens);
+  // MiniMax (Maya's tools/calibrate_mm3_prefill.py): one run of the engine's own --calibrate-prefill with the card's
+  // start, over a real text's tokens; the engine keeps the result in the pack (prefill-tune.txt) and this server a record
+  // of it (<card>.prefill.json beside the calibrations). True when the engine finished.
+  [[nodiscard]] bool run_prefill_calibration(const Job& job);
+  // A MiniMax card at these options has no prefill record yet, or one measured on another machine, engine or model.
+  [[nodiscard]] bool needs_prefill_calibration(const ModelCard& card, const ModelOptionValues& values) const;
+  [[nodiscard]] std::optional<PrefillRecord> read_prefill(std::string_view card) const;
   // The card's validated config at `values` with `args` added to its engine flags (a flag the card sets itself
   // is left as the card has it).
   [[nodiscard]] std::shared_ptr<const FrontendConfig> config_with(const ModelCard& card, const ModelOptionValues& values,
@@ -218,6 +226,7 @@ class ModelLauncher final {
   std::map<std::string, bool, std::less<>> auto_recalibrate_;  // a switch set before the card's first calibration
   [[nodiscard]] bool write_calibration(const CalibrationResult& result);
   std::string cpu_fact_;
+  SweepMachine machine_{};  // the CPU the sweeps are planned for
   bool stop_reported_{false};  // the running model's circuit opening was alerted once
   void alert(std::string_view event, const std::string& subject, const std::string& body) const;
   std::thread worker_;

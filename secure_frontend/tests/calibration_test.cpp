@@ -6,11 +6,15 @@
 #include "secure_frontend/calibration.hpp"
 #include "support/test_support.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <map>
 #include <string>
+#include <thread>
+#include <utility>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -49,7 +53,7 @@ void the_sweep_keeps_only_clear_wins() {
   std::size_t trials = 0;
   const auto outcome = secure_frontend::run_sweep(
       kPlan,
-      [&tried](const std::vector<std::string>& args) {
+      [&tried](const std::vector<std::string>& args, unsigned) {
         tried.push_back(joined(args));
         return machine(args);
       },
@@ -78,7 +82,7 @@ void a_win_that_does_not_repeat_is_dropped() {
   int seen = 0;
   const auto outcome = secure_frontend::run_sweep(
       {{"--cpu-lane", {"on"}}},
-      [&seen](const std::vector<std::string>& args) -> std::optional<double> {
+      [&seen](const std::vector<std::string>& args, unsigned) -> std::optional<double> {
         if (args.empty()) return 10.0;
         return ++seen == 1 ? 12.0 : 10.0;
       },
@@ -90,13 +94,13 @@ void a_win_that_does_not_repeat_is_dropped() {
 
 void a_failed_baseline_or_a_cancel_ends_it() {
   const auto failed = secure_frontend::run_sweep(
-      kPlan, [](const std::vector<std::string>&) { return std::optional<double>{}; }, [](const secure_frontend::SweepProgress&) {},
+      kPlan, [](const std::vector<std::string>&, unsigned) { return std::optional<double>{}; }, [](const secure_frontend::SweepProgress&) {},
       [] { return false; });
   expect(failed.end == secure_frontend::SweepOutcome::End::failed, "the engine does not start with its defaults: failed");
   int measured = 0;
   const auto cancelled = secure_frontend::run_sweep(
       kPlan,
-      [&measured](const std::vector<std::string>& args) {
+      [&measured](const std::vector<std::string>& args, unsigned) {
         ++measured;
         return machine(args);
       },
@@ -106,7 +110,7 @@ void a_failed_baseline_or_a_cancel_ends_it() {
   bool cancel = false;
   const auto during = secure_frontend::run_sweep(
       kPlan,
-      [&cancel](const std::vector<std::string>&) {
+      [&cancel](const std::vector<std::string>&, unsigned) {
         cancel = true;
         return std::optional<double>{};
       },
@@ -114,20 +118,134 @@ void a_failed_baseline_or_a_cancel_ends_it() {
   expect(during.end == secure_frontend::SweepOutcome::End::cancelled, "a cancel during the defaults' trial is a cancel");
 }
 
+// A plan as text: each step's setting (its joint flags after '+'), its candidates, its answers' length and its floor.
+std::string plan_text(const std::vector<secure_frontend::SweepStep>& plan) {
+  std::string out;
+  for (const auto& step : plan) {
+    out += step.flag;
+    for (const auto& flag : step.joint) out += "+" + flag;
+    out += "=";
+    for (std::size_t i = 0; i < step.values.size(); ++i) out += (i == 0U ? "" : ",") + step.values[i];
+    if (step.max_tokens != 128U) out += " tokens " + std::to_string(step.max_tokens);
+    if (step.stop_below > 0.0) out += " stop " + std::to_string(static_cast<int>(std::lround(step.stop_below * 100.0))) + "%";
+    out += ";";
+  }
+  return out;
+}
+
 void the_plan_follows_the_engine() {
-  const auto flint = secure_frontend::sweep_plan(secure_frontend::EngineProfile::flint, 24U);
-  std::string flags;
-  for (const auto& step : flint) flags += step.flag + "=" + joined(step.values) + ";";
-  expect(flags == "--cpu-lane=off on;--pcie-frac=0 0.25 0.5 0.75;--cpu-threads=24 16 12;",
-         "flint: the CPU lane, the PCIe share and the CPU threads (all, 2/3, 1/2): " + flags);
-  const auto gemma = secure_frontend::sweep_plan(secure_frontend::EngineProfile::gemma4, 8U);
-  expect(gemma.size() == 1U && gemma[0].flag == "--cpu-threads" && joined(gemma[0].values) == "8 5 4",
-         "Gemma 4: the CPU threads (its engine's flags)");
-  const auto one_core = secure_frontend::sweep_plan(secure_frontend::EngineProfile::flint, 1U);
+  using secure_frontend::EngineProfile;
+  using secure_frontend::sweep_plan;
+  const secure_frontend::SweepMachine smt{24U, 12U};  // 12 cores, 2 threads each
+  expect(plan_text(sweep_plan(EngineProfile::flint, smt)) == "--cpu-lane=off,on;--pcie-frac=0,0.25,0.5,0.75;--cpu-threads=24,16,12;",
+         "flint: the CPU lane, the PCIe share and the CPU threads (all, 2/3, 1/2): " + plan_text(sweep_plan(EngineProfile::flint, smt)));
+  expect(plan_text(sweep_plan(EngineProfile::gemma4, {8U, 4U})) == "--cpu-threads=8,5,4;", "Gemma 4: the CPU threads (its engine's flags)");
+  const auto one_core = sweep_plan(EngineProfile::flint, {1U, 1U});
   expect(!one_core.empty() && one_core.back().values == std::vector<std::string>{"1"}, "threads are distinct and at least 1");
-  expect(secure_frontend::sweep_plan(secure_frontend::EngineProfile::qwen, 8U).empty() &&
-             secure_frontend::sweep_plan(secure_frontend::EngineProfile::raon1, 8U).empty(),
-         "other engines have no sweep here yet");
+  // upstream's tools/calibrate.py: the PCIe share, the draft floor, fewer pool workers than the engine's 11 (12 cores
+  // but the host's; Python's round, half to even: 7, 6, 3), the expert tier on 512-token answers
+  expect(plan_text(sweep_plan(EngineProfile::qwen, smt)) ==
+             "--pcie-frac=0,0.2,0.35,0.55,0.75,0.9,1;--spec-min-p=0.3,0.5,0.7;--pool-workers=7,6,3;"
+             "--adapt-every+--adapt-swaps+--adapt-decay=1 80 0.97,1 160 0.97 tokens 512;",
+         "Qwen: upstream's steps: " + plan_text(sweep_plan(EngineProfile::qwen, smt)));
+  // Maya's tools/calibrate_glm.py through the environment rows: the share, then fewer lane threads than the engine's 12
+  const std::string glm = "glm.pcie_share=0,0.1,0.25,0.5,0.75 stop 70%;glm.cpu_lane=9,8,6,3 stop 70%;";
+  expect(plan_text(sweep_plan(EngineProfile::glm53, smt)) == glm && plan_text(sweep_plan(EngineProfile::raon1, smt)) == glm,
+         "GLM-5.3 and raon1 (the GLM engine): Maya's steps: " + plan_text(sweep_plan(EngineProfile::glm53, smt)));
+  // without SMT siblings the GLM engine's own lane is two thirds of the CPUs (16: 10)
+  expect(plan_text(sweep_plan(EngineProfile::glm53, {16U, 16U})) == "glm.pcie_share=0,0.1,0.25,0.5,0.75 stop 70%;glm.cpu_lane=8,7,5,2 stop 70%;",
+         "a CPU without SMT: " + plan_text(sweep_plan(EngineProfile::glm53, {16U, 16U})));
+  // Maya's tools/calibrate_ds4_tp.py (and tools/mm3/calibrate.py): fewer CPU threads than the physical cores; 2 and 4
+  // fewer first where the lane takes every CPU (no SMT)
+  for (const auto profile : {EngineProfile::deepseek, EngineProfile::minimax}) {
+    expect(plan_text(sweep_plan(profile, smt)) == "--cpu-threads=9,6 stop 100%;" &&
+               plan_text(sweep_plan(profile, {16U, 16U})) == "--cpu-threads=14,12,8 stop 100%;",
+           "DeepSeek and MiniMax: Maya's CPU threads: " + plan_text(sweep_plan(profile, smt)) + " / " +
+               plan_text(sweep_plan(profile, {16U, 16U})));
+  }
+  expect(sweep_plan(EngineProfile::deepseek, {1U, 1U}).empty() && sweep_plan(EngineProfile::glm53, {1U, 1U}).size() == 1U,
+         "nothing fewer than one thread to try");
+  // the margins and the first start
+  expect(secure_frontend::sweep_keep_margin(EngineProfile::deepseek) == 0.05 && secure_frontend::sweep_keep_margin(EngineProfile::minimax) == 0.05 &&
+             secure_frontend::sweep_keep_margin(EngineProfile::qwen) == 0.03 && secure_frontend::sweep_keep_margin(EngineProfile::glm53) == 0.03,
+         "Maya's 5% for separate DeepSeek and MiniMax starts, 3% else");
+  for (const auto profile : {EngineProfile::qwen, EngineProfile::glm53, EngineProfile::raon1, EngineProfile::deepseek,
+                             EngineProfile::minimax, EngineProfile::flint, EngineProfile::gemma4}) {
+    expect(!sweep_plan(profile, smt).empty(), "every engine has its sweep");
+    const bool first = profile == EngineProfile::flint || profile == EngineProfile::gemma4;
+    expect(secure_frontend::calibrates_before_first_start(profile) == first,
+           "only flint and Gemma 4 calibrate before a first start (the others' sweeps take many starts of a large model)");
+  }
+  const unsigned cores = secure_frontend::physical_cores();
+  expect(cores >= 1U && cores <= std::max(1U, std::thread::hardware_concurrency()),
+         "this machine's physical cores: " + std::to_string(cores));
+}
+
+// upstream's expert tier: three flags set together, measured on longer answers (after the best so far is measured on
+// them too); the winner is confirmed on answers as long.
+void joint_steps_and_longer_answers() {
+  std::vector<std::pair<std::string, unsigned>> tried;
+  const std::string tier = "--adapt-every 1 --adapt-swaps 160 --adapt-decay 0.97";
+  const auto outcome = secure_frontend::run_sweep(
+      {{"--pcie-frac", {"0.5"}}, {"--adapt-every", {"1 80 0.97", "1 160 0.97"}, {"--adapt-swaps", "--adapt-decay"}, 512U}},
+      [&tried](const std::vector<std::string>& args, const unsigned max_tokens) -> std::optional<double> {
+        tried.emplace_back(joined(args), max_tokens);
+        return joined(args).find("--adapt-swaps 160") != std::string::npos ? 12.0 : 10.0;
+      },
+      [](const secure_frontend::SweepProgress&) {}, [] { return false; });
+  expect(outcome.end == secure_frontend::SweepOutcome::End::done && joined(outcome.args) == tier,
+         "the joint candidate is kept, its flags together: " + joined(outcome.args));
+  expect(std::abs(outcome.baseline_tok_s - 10.0) < 1e-9 && std::abs(outcome.best_tok_s - 12.0) < 1e-9, "scored on the long answers");
+  std::string order;
+  for (const auto& [args, tokens] : tried) order += "[" + args + " @" + std::to_string(tokens) + "]";
+  expect(order == "[ @128][--pcie-frac 0.5 @128][ @512][--adapt-every 1 --adapt-swaps 80 --adapt-decay 0.97 @512][" + tier + " @512]"
+                  "[ @512][" + tier + " @512][ @512][" + tier + " @512]",
+         "the best so far is measured again on the step's answers, and the confirmation on them: " + order);
+}
+
+// Maya's GLM steps end at a candidate below 70% of the step's best (fewer only get slower from there).
+void a_step_ends_below_its_floor() {
+  std::vector<std::string> tried;
+  std::size_t trials = 0;
+  const auto outcome = secure_frontend::run_sweep(
+      {{"glm.pcie_share", {"0", "0.1", "0.25"}, {}, 128U, 0.7}, {"glm.cpu_lane", {"9"}, {}, 128U, 0.7}},
+      [&tried](const std::vector<std::string>& args, unsigned) -> std::optional<double> {
+        tried.push_back(joined(args));
+        return args.size() >= 2U && args[1] == "0" ? 6.0 : 10.0;
+      },
+      [&trials](const secure_frontend::SweepProgress& progress) { trials = progress.trials; }, [] { return false; });
+  expect(outcome.end == secure_frontend::SweepOutcome::End::done && outcome.args.empty(), "nothing kept");
+  expect(tried == std::vector<std::string>{"", "glm.pcie_share 0", "glm.cpu_lane 9"},
+         "a share at 60% of the best ends its step; the next step still runs: " + std::to_string(tried.size()));
+  // the count the page shows (the defaults, 3 + 1 candidates and 4 possible confirmations) loses the 2 skipped
+  expect(trials == 7U, "the trials the page counts lose the skipped ones: " + std::to_string(trials));
+}
+
+// A calibration's settings go into a card's draft: flags after the card's arguments, rows as typed values; the card's
+// own flag or row stays.
+void a_calibration_applies_flags_and_rows() {
+  using secure_frontend::ConfigDraftEntry;
+  using secure_frontend::ConfigSource;
+  secure_frontend::FrontendConfigDraft draft;
+  draft.entries.emplace("engine.args", ConfigDraftEntry{std::vector<std::string>{"--cpu-threads", "4"}, ConfigSource::file});
+  draft.entries.emplace("glm.cpu_lane", ConfigDraftEntry{std::int64_t{5}, ConfigSource::file});
+  expect(secure_frontend::apply_calibration(draft, {"--cpu-threads", "8", "--pcie-frac", "0.35", "glm.pcie_share", "0.25", "glm.cpu_lane", "6"}),
+         "applied");
+  const auto* args = std::get_if<std::vector<std::string>>(&draft.entries.at("engine.args").value);
+  expect(args != nullptr && *args == std::vector<std::string>{"--cpu-threads", "4", "--pcie-frac", "0.35"},
+         "the flags after the card's own, which stay: " + (args ? joined(*args) : std::string{}));
+  const auto share = draft.entries.find("glm.pcie_share");
+  expect(share != draft.entries.end() && std::holds_alternative<double>(share->second.value) && std::get<double>(share->second.value) == 0.25,
+         "a decimal row as a decimal");
+  expect(std::get<std::int64_t>(draft.entries.at("glm.cpu_lane").value) == 5, "the card's own row stays");
+  secure_frontend::FrontendConfigDraft fresh;
+  expect(secure_frontend::apply_calibration(fresh, {"--pool-workers", "7", "glm.cpu_lane", "6"}) &&
+             std::get<std::vector<std::string>>(fresh.entries.at("engine.args").value) == std::vector<std::string>{"--pool-workers", "7"} &&
+             std::get<std::int64_t>(fresh.entries.at("glm.cpu_lane").value) == 6,
+         "engine.args made when the card has none; an integer row as an integer");
+  secure_frontend::FrontendConfigDraft odd;
+  odd.entries.emplace("engine.args", ConfigDraftEntry{std::string{"--x"}, ConfigSource::file});
+  expect(!secure_frontend::apply_calibration(odd, {"--cpu-threads", "8"}), "engine.args that is not a list");
 }
 
 secure_frontend::CalibrationKey key() {
@@ -169,6 +287,50 @@ void results_round_trip_and_keys_compare() {
   expect(secure_frontend::compare_key(key(), options) == CalibrationState::settings_changed, "other options: settings changed");
 }
 
+// Every sweep's settings read back from the file, each value within what its engine takes; anything else is refused.
+void the_file_takes_every_sweeps_settings() {
+  const auto file = [](const std::vector<std::string>& args) {
+    return secure_frontend::render_calibration(secure_frontend::CalibrationResult{
+        .card = "c", .args = args, .baseline_tok_s = 1.0, .best_tok_s = 1.0, .date = "2026-10-28T00:00:00Z", .auto_recalibrate = false, .key = key()});
+  };
+  for (const std::vector<std::string>& args : std::vector<std::vector<std::string>>{
+           {"--cpu-lane", "on"}, {"--cpu-threads", "9"}, {"--pcie-frac", "0.35"}, {"--pcie-frac", "1"}, {"--spec-min-p", "0.3"},
+           {"--pool-workers", "7"}, {"--adapt-every", "1", "--adapt-swaps", "160", "--adapt-decay", "0.97"},
+           {"glm.pcie_share", "0.1"}, {"glm.pcie_share", "0"}, {"glm.cpu_lane", "9"}}) {
+    const auto back = secure_frontend::parse_calibration(file(args));
+    expect(back.has_value() && back->args == args, "kept: " + joined(args));
+  }
+  for (const std::vector<std::string>& args : std::vector<std::vector<std::string>>{
+           {"glm.cpu_lane", "65"}, {"glm.cpu_lane", "0"}, {"--adapt-decay", "1.5"}, {"--pool-workers", "0"}, {"glm.kv", "int8"},
+           {"--pcie-frac", "0.1234"}, {"--pcie-frac", "-0.1"}, {"--spec-min-p", "abc"}, {"--adapt-swaps", "100000"}, {"--tp", "2"}}) {
+    expect(!secure_frontend::parse_calibration(file(args)).has_value(), "refused: " + joined(args));
+  }
+}
+
+// MiniMax's prefill calibration: the record round-trips, and the engine's own JSON (mm3_main.cpp calibrate_prefill)
+// gives the kept chunk, GEMMs and speeds.
+void prefill_records_round_trip() {
+  const secure_frontend::PrefillRecord record{.card = "MiniMax-M3.1", .date = "2026-10-28T00:00:00Z", .finished = true, .chunk = 2048,
+                                              .gemm = "blas", .tok_s = 950.5, .default_tok_s = 900.25, .key = key()};
+  const auto back = secure_frontend::parse_prefill(secure_frontend::render_prefill(record));
+  expect(back.has_value() && back->card == record.card && back->finished && back->chunk == 2048 && back->gemm == "blas" &&
+             back->tok_s == 950.5 && back->default_tok_s == 900.25 && back->key.model == key().model,
+         "a prefill record reads back as written: " + secure_frontend::render_prefill(record));
+  expect(!secure_frontend::parse_prefill("{}").has_value() && !secure_frontend::parse_prefill("[1]").has_value(), "a damaged record is none");
+  secure_frontend::PrefillRecord measured;
+  const std::string engine_json =
+      R"({"key": "NVIDIA GeForce RTX 4080 SUPER cc 8.9 cuda 13000 driver 581.57", "file": "C:\\packs\\m\\prefill-tune.txt", )"
+      R"("chunk": 4096, "gemm": "blas", "tok_s": 1201.3, "default_tok_s": 1100.0, "tokens": 4096, "all_resident": false, )"
+      R"("lt_available": false, "seconds": 61, "trials": [{"chunk": 4096, "gemm": "blas", "tok_s": 1201.3}]})";
+  expect(secure_frontend::read_prefill_measurement(engine_json, measured) && measured.chunk == 4096 && measured.gemm == "blas" &&
+             measured.tok_s == 1201.3 && measured.default_tok_s == 1100.0,
+         "the engine's measurement is read");
+  for (const std::string bad : {std::string{"{}"}, std::string{R"({"chunk": 0, "gemm": "blas", "tok_s": 1, "default_tok_s": 1})"},
+                                std::string{R"({"chunk": 1024, "gemm": "cublaslt", "tok_s": 1, "default_tok_s": 1})"}, std::string{"not json"}}) {
+    expect(!secure_frontend::read_prefill_measurement(bad, measured), "not the engine's measurement: " + bad);
+  }
+}
+
 void the_key_reads_files_and_options() {
   const auto dir = secure_frontend_test::make_scratch_directory();
   secure_frontend_test::write_file(dir / "model.gguf", "GGUF1234");
@@ -193,6 +355,11 @@ int main(int argc, char** argv) {
       {"a_win_that_does_not_repeat_is_dropped", a_win_that_does_not_repeat_is_dropped},
       {"a_failed_baseline_or_a_cancel_ends_it", a_failed_baseline_or_a_cancel_ends_it},
       {"the_plan_follows_the_engine", the_plan_follows_the_engine},
+      {"joint_steps_and_longer_answers", joint_steps_and_longer_answers},
+      {"a_step_ends_below_its_floor", a_step_ends_below_its_floor},
+      {"a_calibration_applies_flags_and_rows", a_calibration_applies_flags_and_rows},
+      {"the_file_takes_every_sweeps_settings", the_file_takes_every_sweeps_settings},
+      {"prefill_records_round_trip", prefill_records_round_trip},
       {"results_round_trip_and_keys_compare", results_round_trip_and_keys_compare},
       {"the_key_reads_files_and_options", the_key_reads_files_and_options},
   }, failures);

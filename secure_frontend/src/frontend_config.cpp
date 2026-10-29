@@ -36,7 +36,7 @@ std::string decimal_text(const double value) {
   return ec == std::errc{} ? std::string{buffer, end} : std::string{"?"};
 }
 
-constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 + 1 + 2 + 1 + 1 + 2 + 4 + 5 + 1 + 1 /* roots.allow_untrusted_media */ + 1 /* glm.kv */ + 3 /* listener.login_link, models.default_engine, models.default_root */ + 8 /* alerts.email.* */ + 1 /* models.control_remote_networks */ + 5 /* search.* */ + 2 /* vision.mmproj, vision.gpu */> kSchema{{
+constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 + 1 + 2 + 1 + 1 + 2 + 4 + 5 + 1 + 1 /* roots.allow_untrusted_media */ + 1 /* glm.kv */ + 3 /* listener.login_link, models.default_engine, models.default_root */ + 8 /* alerts.email.* */ + 1 /* models.control_remote_networks */ + 5 /* search.* */ + 2 /* vision.mmproj, vision.gpu */ + 2 /* glm.pcie_share, glm.cpu_lane */> kSchema{{
     {"schema_version", T::integer, false, 1, 1, d::kSchemaVersion, false, "", "",
      "Config format version; must be 1. Required in a config file."},
     {"listener.host", T::string, false, 0, 0, 0, false, "127.0.0.1", "--host",
@@ -369,6 +369,14 @@ constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 
     // closed child-env allowlist (glm_environment_knobs).
     {"glm.ram_headroom_gb", T::integer, false, 6, 1024, 16, false, "", "",
      "Gigabytes of RAM the GLM engine leaves free when sizing its pinned tier (6-1024; default 16)."},
+    // Calibration (owner 2026-10-28, Maya's tools/calibrate_glm.py): the GLM engine's CPU lane, which it reads from its
+    // environment (glm_fast_path.cu) - the share of a route's RAM-tier experts copied over PCIe, and the lane's
+    // threads (the engine caps them at 64). Unset: the engine's own choice. A card's calibration sets them at its start.
+    {"glm.pcie_share", T::decimal, false, 0, 0, 0, false, "", "",
+     "Share (0-1) of a route's RAM-tier experts the GLM engine copies over PCIe instead of computing them on its CPU lane "
+     "(STRATA_GLM_PCIE_SHARE); unset: the engine times one expert each way and splits by that.", 0.0, 1.0, kUnsetDecimal, false},
+    {"glm.cpu_lane", T::integer, false, 1, 64, -1, false, "", "",
+     "CPU threads of the GLM engine's CPU lane (1-64, STRATA_GLM_CPU_LANE); unset: the physical cores."},
     // SP5-P2 Task 4 (D-7): the Maya v1.1.21 server gained the idle-unload timer —
     // the config's "idle_unload_s" (serve/server.py:8298; default 0 = never,
     // :3753). It wins over engine.idle_unload_s for a glm53 profile; the 86400
@@ -1379,6 +1387,8 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
     add(errors, "glm.kv", ConfigIssueCode::invalid_value, "must be fp16, int8, q8_0 or q4_0");
   }
   glm.ram_headroom_gb = read.integer("glm.ram_headroom_gb");
+  glm.pcie_share = read.decimal("glm.pcie_share");
+  glm.cpu_lane = read.optional_integer("glm.cpu_lane");
   glm.idle_unload_s = read.integer("glm.idle_unload_s");
   glm.rows_present = any_glm_row;  // R-T3-a: refused at launch when the manifest names the qwen profile
   if (const auto text = read.string("glm.reasoning_effort")) {
@@ -1893,6 +1903,14 @@ std::vector<ForcedEnvironmentValue> glm_environment_knobs(const FrontendConfig& 
   // the typed config's default 16 IS the forced-safe value, and the operator
   // moves it (6..1024) through glm.ram_headroom_gb (SETTINGS.md:38).
   knobs.push_back({std::string{"STRATA_GLM_RAM_HEADROOM_GB"}, std::to_string(config.glm.ram_headroom_gb)});
+  // the CPU lane as a calibration (or the operator) set it (maya-ref docs/SETTINGS.md: Maya's calibrate_glm.py writes
+  // the same two into a config's env); unset rows leave the engine's own measurement in place
+  if (config.glm.pcie_share) {
+    char share[16];
+    const auto [end, error] = std::to_chars(share, share + sizeof(share), *config.glm.pcie_share, std::chars_format::fixed, 3);
+    if (error == std::errc{}) knobs.push_back({std::string{"STRATA_GLM_PCIE_SHARE"}, std::string{share, end}});
+  }
+  if (config.glm.cpu_lane) knobs.push_back({std::string{"STRATA_GLM_CPU_LANE"}, std::to_string(*config.glm.cpu_lane)});
   // SP5 M2 Task 8 (D-8): the vision turn — an on-demand encoder (vision.enabled,
   // not resident; maya-ref serve/server.py:4015) runs in memory the engine lends
   // from its expert pool, sized by STRATA_GLM_VISION_LEND_MB (server.py:4026).
