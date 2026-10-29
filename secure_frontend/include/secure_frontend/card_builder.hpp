@@ -139,6 +139,26 @@ struct PackedCardRequest final {
 // guess between files or models: nullopt. Its folder's privacy is the caller's to check.
 [[nodiscard]] std::optional<std::filesystem::path> find_mtp_gguf(const std::filesystem::path& folder, std::string_view model_file);
 
+// A page card's own draft layer (owner 2026-10-29: "if it supports mtp we should be able to point where the mtp is"): a
+// Qwen3.8 pack card's (upstream's mtp/rt folder) or a Gemma 4 card's (its mtp-*.gguf), and where its engine.args' --mtp
+// points now (nullopt: none). nullopt for a card whose model has no draft layer of its own to point at (a Qwen3.6 GGUF's
+// is inside the model; the Maya families draft with none).
+struct DraftLayerSlot final {
+  bool folder{false};   // a folder (Qwen3.8's rt), else a file (Gemma 4's)
+  std::optional<std::string> path;
+};
+[[nodiscard]] std::optional<DraftLayerSlot> draft_layer_slot(const ModelCard& card);
+// The model list's and the add answer's "draft": {"kind": "folder" | "file", "path": <text> | null}.
+[[nodiscard]] std::string draft_layer_json(const DraftLayerSlot& slot);
+// The Qwen3.8 draft layer a picked folder holds: the folder itself, its rt/ or its mtp/rt/ with upstream's dense.bin,
+// experts.bin and draft_vocab.bin as regular files (not links). nullopt: none. Its privacy is the caller's to check.
+[[nodiscard]] std::optional<std::filesystem::path> mtp_runtime_at(const std::filesystem::path& folder);
+// A page card's text drafting with `draft`: --mtp <draft> in its engine.args (replacing one there) and the MTP options as
+// a card made with it lists them (mtp on; Qwen3.8's confidence 0.5, Gemma 4's window 4 and confidence 0.6) where the
+// card has none; everything else as it was.
+[[nodiscard]] std::variant<std::string, CardError> card_with_draft_layer(std::string_view card_json, EngineProfile profile,
+                                                                         const std::filesystem::path& draft);
+
 // A card's text with roots.models set to `folder` (the model moved); everything else as it was, but for a Gemma 4 card's
 // MTP file inside the old folder (engine.args --mtp <old folder>/...), which moves with it when `folder` holds it at the
 // same place (else it stays where it was: the model alone moved).

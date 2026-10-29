@@ -1721,6 +1721,18 @@ bool DownloadManager::native_prepare(const std::size_t index, std::string& error
   if (ple != nullptr && ple->if_string() != nullptr && !ple->if_string()->empty() && shard_count <= 2) request.ple_gguf = *ple->if_string();
   if (entry.expert_profile) request.expert_profile = settings_.gguf_engine->parent_path() / "profiles" / path_from_utf8(*entry.expert_profile);
   if (vision) request.mmproj = stored_file(*version, entry.mmproj->path);   // the picture encoder that came with it
+  // owner 2026-10-29 (downloads with their draft layers): every Qwen3.8 model drafts with the one MTP draft layer
+  // upstream's setup builds, <data>/mtp/rt beside packs/ - the store's own, else one near the model's folder as an added
+  // model finds it - used when it is private (owner-only like the store)
+  auto rt = mtp_runtime_at(store / "mtp");
+  if (!rt) rt = find_mtp_runtime(shard.parent_path());
+  if (rt && std::holds_alternative<CanonicalRoot>(open_root(*rt, RootPolicy::existing))) {
+    request.mtp = *rt;
+    log("[strata] downloads: " + entry.id + " drafts with the MTP draft layer in " + path_to_utf8(*rt));
+  } else if (rt) {
+    log("[strata] downloads: the MTP draft layer in " + path_to_utf8(*rt) + " is not private (other users of this PC can change it): " +
+        entry.id + " runs without it");
+  }
   const auto card = card_for_pack(request);
   return write_download_card(entry, card.name, card.json, error);
 }

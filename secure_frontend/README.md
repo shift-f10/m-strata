@@ -365,6 +365,12 @@ Until 2026-10-28 the server was named `strata-secure-server`; an older out folde
   then `POST /v1/strata/cards/remove {"name"}` takes the card off the list with its card file, remembered options and
   calibration; the model's files stay (add it again from its folder; a download's store keeps it). The running card's
   model is stopped first, as Stop stops it, and the card goes once it has stopped (`"stopping": true`). strata-tui: Del.
+- **MTP draft layer** (owner 2026-10-29, "point where the mtp is"), for a page card whose model drafts with a layer of
+  its own (a Qwen3.8 pack's upstream `mtp/rt`, a Gemma 4 model's `mtp-*.gguf`): the model list says where it is
+  (`"draft": {"kind": "folder" | "file", "path"}`, null when none was found), the card shows it with **Choose...**, and
+  `POST /v1/strata/cards/mtp {"name","folder"[,"file"]}` points the card at the one picked (the folder itself, its `rt/`
+  or `mtp/rt/`; Gemma's file by name in the folder), held to the model folders' rule. The card then runs `--mtp` with
+  the MTP settings. Add a model offers it at once for a model with none found.
 - **Danger zone**, for a page card that is not running: a one-time code to type back, the API key again, then a final
   confirmation that the delete is permanent. The server checks all three and deletes only that model's files (and a
   download's store entry), the card and its calibration.

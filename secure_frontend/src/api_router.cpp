@@ -384,6 +384,7 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
       case RouteId::strata_folder_sharing:
       case RouteId::strata_card_add:
       case RouteId::strata_card_folder:
+      case RouteId::strata_card_mtp:
       case RouteId::strata_card_delete_begin:
       case RouteId::strata_card_delete:
       case RouteId::strata_card_remove: {

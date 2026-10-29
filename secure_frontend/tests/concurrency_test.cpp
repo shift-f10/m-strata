@@ -351,7 +351,7 @@ void request_log_format_and_token_bucket() {
       {R::strata_card_folder, "strata_card_folder"},   {R::strata_card_delete_begin, "strata_card_delete_begin"},
       {R::strata_card_delete, "strata_card_delete"},   {R::strata_folder_sharing, "strata_folder_sharing"},
       {R::strata_about, "strata_about"},               {R::strata_download_link, "strata_download_link"},
-      {R::strata_card_remove, "strata_card_remove"}};
+      {R::strata_card_remove, "strata_card_remove"},   {R::strata_card_mtp, "strata_card_mtp"}};
   for (const auto& [route, name] : named) {
     const secure_frontend::RequestLogRecord line{route, 200, "", std::chrono::milliseconds(1), 0U, secure_frontend::AddressScope::loopback};
     expect(secure_frontend::format_request_line(1, line) == "req 1 " + std::string{name} + " 200 - 1 0 loopback",

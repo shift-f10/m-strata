@@ -1093,6 +1093,101 @@ void cards_offer_web_search_when_the_server_has_it() {
   }
 }
 
+// Owner 2026-10-29 ("make sure the card matches the chat settings when the engine is started as default so each model
+// reset it to the recommended"): a card whose file lists no sampling offers its model's recommended sampling (upstream's
+// MODEL_CARD_SAMPLING, the shipped cards) in the profile's order; a value its file lists, or its config's
+// defaults.sampling row, stays the card's own.
+void cards_offer_their_models_recommended_sampling() {
+  secure_frontend::LauncherSettings settings;
+  for (const auto& [name, profile] : std::vector<std::pair<std::string, secure_frontend::EngineProfile>>{
+           {"Q", secure_frontend::EngineProfile::qwen}, {"G", secure_frontend::EngineProfile::glm53},
+           {"R", secure_frontend::EngineProfile::raon1}, {"F", secure_frontend::EngineProfile::flint},
+           {"E", secure_frontend::EngineProfile::gemma4}, {"D", secure_frontend::EngineProfile::deepseek},
+           {"M", secure_frontend::EngineProfile::minimax}}) {
+    secure_frontend::ModelCard card;
+    card.name = name;
+    card.profile = profile;
+    settings.cards.push_back(card);
+  }
+  const auto options_from = [](const secure_frontend::EngineProfile profile, const std::string_view json) {
+    const auto parsed = secure_frontend::parse_json(json, {.max_bytes = 4096U, .max_depth = 8U, .max_container_entries = 64U,
+                                                           .max_string_bytes = 256U, .allow_fractions = true});
+    const auto limits = secure_frontend::parse_card_options(profile, std::get<secure_frontend::JsonValue>(parsed));
+    return std::get<std::vector<secure_frontend::ModelOptionLimits>>(limits);
+  };
+  secure_frontend::ModelCard own;   // its own temperature, between its thinking and its Pictures
+  own.name = "Own";
+  own.profile = secure_frontend::EngineProfile::qwen;
+  own.options = options_from(own.profile, R"({"thinking":{"default":"high"},"temperature":{"default":0.6},"vision":{"default":"gpu"}})");
+  settings.cards.push_back(own);
+  secure_frontend::ModelCard rows;  // a hand-written raon1 card's config rows (engine/fe-config/cards/raon1.json)
+  rows.name = "Rows";
+  rows.profile = secure_frontend::EngineProfile::raon1;
+  rows.config.entries["defaults.sampling.top_k"] = {std::int64_t{40}, secure_frontend::ConfigSource::file};
+  rows.config.entries["defaults.sampling.temperature"] = {0.8, secure_frontend::ConfigSource::file};
+  settings.cards.push_back(rows);
+  settings.log = [](std::string_view) {};
+  secure_frontend::ModelLauncher launcher(std::move(settings));
+  const std::string listed = launcher.list_json();
+  launcher.shutdown();
+  // the card's options as "name=default" in their listed order
+  const auto defaults_of = [&listed](const std::string& name) {
+    const auto at = listed.find("{\"name\":\"" + name + "\",\"profile\"");
+    const auto from = at == std::string::npos ? std::string::npos : listed.find("\"options\":", at);
+    const std::string options = from == std::string::npos ? std::string{} : listed.substr(from, listed.find("\"calibration\":", from) - from);
+    std::string out;
+    for (std::size_t pos = options.find("{\"name\":\""); pos != std::string::npos; pos = options.find("{\"name\":\"", pos + 1U)) {
+      const auto name_end = options.find('"', pos + 9U);
+      const auto value = options.find("\"default\":", name_end);
+      const auto value_end = options.find_first_of(",}", value);
+      out += (out.empty() ? "" : " ") + options.substr(pos + 9U, name_end - pos - 9U) + "=" + options.substr(value + 10U, value_end - value - 10U);
+    }
+    return out;
+  };
+  expect(defaults_of("Q") == "temperature=1 top_p=0.95 top_k=20 gpus=\"auto\"", "Qwen3.8 / 3.6 (upstream's card): " + defaults_of("Q"));
+  expect(defaults_of("G") == "temperature=1 top_p=0.95 gpus=\"auto\"", "GLM-5.3 (Maya's): " + defaults_of("G"));
+  expect(defaults_of("R") == "temperature=1 top_p=0.95 top_k=20 gpus=\"auto\"", "raon1 (KRAFTON's): " + defaults_of("R"));
+  expect(defaults_of("F") == "temperature=1 top_p=0.95 top_k=20 gpus=\"auto\"", "flint (its card's): " + defaults_of("F"));
+  expect(defaults_of("E") == "temperature=1 top_p=0.95 top_k=64 min_p=0.05 gpus=\"auto\"", "Gemma 4 (Google's): " + defaults_of("E"));
+  expect(defaults_of("D") == "temperature=1 top_p=1 gpus=\"auto\"", "DeepSeek-V4.1 (upstream's card): " + defaults_of("D"));
+  expect(defaults_of("M") == "temperature=1 top_p=0.95 gpus=\"auto\"", "MiniMax (its card's): " + defaults_of("M"));
+  expect(defaults_of("Own") == "thinking=\"high\" temperature=0.6 top_p=0.95 top_k=20 vision=\"gpu\" gpus=\"auto\"",
+         "a card's own temperature stays, the rest in the profile's order: " + defaults_of("Own"));
+  expect(defaults_of("Rows") == "temperature=0.8 top_p=0.95 top_k=40 gpus=\"auto\"",
+         "a card's own defaults.sampling rows are its defaults: " + defaults_of("Rows"));
+}
+
+// The same over a start: a card made before cards carried sampling (the owner's Qwen3.8 card, 2026-10-29) samples as
+// its model's card says when the chat names nothing (it ran greedy), and a chat's own values still win.
+void a_card_without_sampling_starts_with_the_recommended() {
+  const auto record_file = test_support::make_temp_dir("plain") / "record.txt";
+  ServerOptions options;
+  options.model_cards = {CardOptions{.name = "Plain", .profile = "qwen", .engine_args = {"--record-file=" + test_support::utf8_path(record_file)}}};
+  options.config_literals = {{"models.control", "true"}};
+  auto server = ServerProcess::start(options);
+  expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots");
+  if (!server) return;
+  const auto started = call(*server, "POST", "/v1/strata/models/start", R"({"name":"Plain"})");
+  expect(started && started->status == 202, "Plain's start is accepted: " + shown(started));
+  expect(wait_for_card(*server, "Plain", "running"), "Plain runs: " + server->stderr_text());
+  const auto plain = call(*server, "POST", "/v1/chat/completions", chat_body("Plain"));
+  expect(plain && plain->status == 200, "a chat that names no sampling answers: " + shown(plain));
+  const auto greedy = call(*server, "POST", "/v1/chat/completions",
+                           R"({"model":"Plain","messages":[{"role":"user","content":"Hi"}],"max_tokens":2,"temperature":0})");
+  expect(greedy && greedy->status == 200, "a greedy chat answers: " + shown(greedy));
+  std::vector<std::string> generations;
+  std::istringstream lines(secure_frontend_test::read_file(record_file));
+  for (std::string line; std::getline(lines, line);) {
+    if (line.rfind("GEN ", 0) == 0) generations.push_back(line);
+  }
+  expect(generations.size() == 2U, "two generations reached the engine: " + std::to_string(generations.size()));
+  if (generations.size() != 2U) return;
+  expect(generations[0].find(" temperature=1 top_p=0.95 top_k=20") != std::string::npos,
+         "the recommended sampling reached the engine: " + generations[0]);
+  expect(generations[1].find("temperature=") == std::string::npos && generations[1].find(" top_p=0.95 top_k=20") != std::string::npos,
+         "the chat's temperature 0 wins (greedy), the card's others stay: " + generations[1]);
+}
+
 // Owner 2026-10-23 ("Every model should be showing the number of experts loaded along with
 // memory used"): the Monitor's VRAM and RAM cards read the expert split from the engine's startup
 // INFO. A model shows its experts as soon as it is running, without a first chat.
@@ -1132,6 +1227,8 @@ int main(int argc, char** argv) {
       {"page_cards_can_be_replaced_and_removed", page_cards_can_be_replaced_and_removed},
       {"cards_say_whether_their_profile_takes_reasoning_effort", cards_say_whether_their_profile_takes_reasoning_effort},
       {"cards_offer_web_search_when_the_server_has_it", cards_offer_web_search_when_the_server_has_it},
+      {"cards_offer_their_models_recommended_sampling", cards_offer_their_models_recommended_sampling},
+      {"a_card_without_sampling_starts_with_the_recommended", a_card_without_sampling_starts_with_the_recommended},
       {"a_gguf_card_reads_its_tokenizer_from_the_gguf", a_gguf_card_reads_its_tokenizer_from_the_gguf},
       {"a_qwen36_card_reads_its_tokenizer_from_the_gguf", a_qwen36_card_reads_its_tokenizer_from_the_gguf},
       {"calibration_finds_the_win_and_starts_with_it", calibration_finds_the_win_and_starts_with_it},

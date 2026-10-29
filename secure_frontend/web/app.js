@@ -19,7 +19,7 @@
   // Upstream's four thinking levels (session log step 16): none closes the think block; low,
   // medium and high (the template's default) write its effort sentence.
   var DEFAULTS = { thinking: "high", temperature: 1.0, top_p: 0.95, max: "", seed: "", show: true, tuned: false, search: true };
-  var LEVELS = { none: "answers right away", low: "short", medium: "medium", high: "thorough (default)" };
+  var LEVELS = { none: "answers right away", low: "short", medium: "medium", high: "thorough (default)", auto: "the model decides" };
   var SPRITE = "/ui/sprite.svg#";
   var DEG = String.fromCharCode(176);
   var DOT = " " + String.fromCharCode(183) + " ";
@@ -558,6 +558,60 @@
     var card = findCard(launcher.data.running);
     return !card || card.reasoning_effort !== false;
   }
+  // Owner 2026-10-29 ("make sure the card matches the chat settings when the engine is started as default so each model
+  // reset it to the recommended"): the running card's thinking level, temperature and top-p - the values it started
+  // with, its model's recommended unless changed on the card - are the chat's settings until they are changed here, and
+  // each start of a model sets them back to its card's.
+  function runningCard() {
+    return launcher.enabled && launcher.data && launcher.data.running ? findCard(launcher.data.running) : null;
+  }
+  function cardOption(card, name) {
+    var options = card && Array.isArray(card.options) ? card.options : [];
+    for (var i = 0; i < options.length; i += 1) {
+      if (options[i] && options[i].name === name) {
+        return { value: options[i].value !== undefined && options[i].value !== null ? options[i].value : options[i].default,
+                 choices: Array.isArray(options[i].choices) ? options[i].choices : [] };
+      }
+    }
+    return null;
+  }
+  // The card's settings in the page's terms: Gemma's and flint's thinking on / off is High / Off; a card with no such
+  // option keeps the page's own.
+  function cardSettings(card) {
+    var thinking = cardOption(card, "thinking");
+    var level = thinking && thinking.value === "on" ? "high" : thinking && thinking.value === "off" ? "none"
+      : thinking && LEVELS[thinking.value] ? thinking.value : null;
+    var temperature = cardOption(card, "temperature");
+    var topP = cardOption(card, "top_p");
+    return { thinking: level, temperature: temperature && typeof temperature.value === "number" ? temperature.value : null,
+             top_p: topP && typeof topP.value === "number" ? topP.value : null };
+  }
+  // MiniMax's adaptive thinking (its card's "auto"): the drawer offers Auto, which names no level.
+  function autoOffered() {
+    var thinking = cardOption(runningCard(), "thinking");
+    return !!thinking && thinking.choices.indexOf("auto") >= 0;
+  }
+  function settingsFrom(card, s) {
+    var from = cardSettings(card);
+    var out = Object.assign({}, s);
+    out.thinking = from.thinking || DEFAULTS.thinking;
+    out.temperature = from.temperature !== null ? from.temperature : DEFAULTS.temperature;
+    out.top_p = from.top_p !== null ? from.top_p : DEFAULTS.top_p;
+    out.tuned = false;
+    out.card = card ? card.name + "|" + JSON.stringify(from) : "";
+    return out;
+  }
+  // Called on every look at the launcher: a running card the settings were not set from (another model, or the same one
+  // started with other options) resets them; `started` (this page saw it start) resets them for a restart too.
+  function followCard(started) {
+    var card = runningCard();
+    if (!card || !modelReady()) { return; }
+    var next = settingsFrom(card, state.settings);
+    if (!started && next.card === state.settings.card) { return; }
+    state.settings = next;
+    save(SLOT_SETTINGS, next);
+    if ($("drawer").getAttribute("data-open") === "true") { showSettings(); }
+  }
   // Owner 2026-10-28: the running card's Web search checkbox (listed while the server's web search is on) says whether
   // its model may search; the chat's own switch then turns it off for this browser's chats.
   function searchOffered() {
@@ -635,7 +689,7 @@
       stream_options: { include_usage: true },
       reasoning_effort: LEVELS[s.thinking] ? s.thinking : "high"
     };
-    if (!sendsReasoning()) { delete body.reasoning_effort; }
+    if (!sendsReasoning() || s.thinking === "auto") { delete body.reasoning_effort; }
     if (s.search === false && searchOffered()) { body.strata_search = false; }
     if (s.tuned) { body.temperature = Number(s.temperature); body.top_p = Number(s.top_p); }
     if (s.max) { body.max_tokens = Number(s.max); }
@@ -836,14 +890,31 @@
   // ---------------------------------------------------------------- sampling drawer
   function showSettings() {
     var s = state.settings;
+    var auto = autoOffered();
+    if (s.thinking === "auto" && !auto) { s.thinking = DEFAULTS.thinking; }
+    $("s-thinking-auto").hidden = !auto;
     Array.prototype.forEach.call($("s-thinking").querySelectorAll("button"), function (b) {
       b.setAttribute("aria-checked", b.getAttribute("data-v") === s.thinking ? "true" : "false");
     });
     $("o-thinking").textContent = LEVELS[s.thinking] || "";
-    // Untuned, the page sends neither and the model card's defaults apply, so the slider's
-    // starting position is not what runs.
-    $("s-temp").value = s.temperature; $("o-temp").textContent = s.tuned ? Number(s.temperature).toFixed(2) : "model default";
-    $("s-topp").value = s.top_p; $("o-topp").textContent = s.tuned ? Number(s.top_p).toFixed(2) : "model default";
+    // Untuned, the page sends neither and the running card's values apply (the sliders stand at them); without model
+    // control the page cannot read them, so the starting position is not what runs.
+    var card = runningCard();
+    var from = cardSettings(card);
+    var shown = function (value, cards) {
+      return s.tuned ? Number(value).toFixed(2) : cards !== null ? Number(cards).toFixed(2) + " (the card's)" : "model default";
+    };
+    $("s-temp").value = s.temperature; $("o-temp").textContent = shown(s.temperature, from.temperature);
+    $("s-topp").value = s.top_p; $("o-topp").textContent = shown(s.top_p, from.top_p);
+    // what the sliders read back (a value past a slider's range stands at its end): moving one is what tunes
+    state.shown = { temperature: Number($("s-temp").value), top_p: Number($("s-topp").value) };
+    var rest = [];
+    var topK = cardOption(card, "top_k");
+    var minP = cardOption(card, "min_p");
+    if (topK && typeof topK.value === "number") { rest.push("top-k " + topK.value); }
+    if (minP && typeof minP.value === "number" && minP.value > 0) { rest.push("min-p " + minP.value); }
+    $("s-card-note").textContent = rest.length ? "Also from the card: " + rest.join(", ") + " (set them in the Models tab)" : "";
+    $("s-card-note").hidden = !rest.length;
     $("s-max").value = s.max; $("s-seed").value = s.seed;
     $("s-show").setAttribute("aria-checked", s.show ? "true" : "false");
     $("s-search").setAttribute("aria-checked", s.search !== false ? "true" : "false");
@@ -861,7 +932,8 @@
     s.thinking = thinking ? thinking.getAttribute("data-v") : "high";
     var temperature = Number($("s-temp").value);
     var topP = Number($("s-topp").value);
-    s.tuned = s.tuned || temperature !== s.temperature || topP !== s.top_p;
+    var was = state.shown || { temperature: s.temperature, top_p: s.top_p };
+    s.tuned = s.tuned || temperature !== was.temperature || topP !== was.top_p;
     s.temperature = temperature;
     s.top_p = topP;
     s.max = $("s-max").value.trim();
@@ -1273,6 +1345,10 @@
     $("model-folder").hidden = !pageCard || typeof card.folder !== "string";
     $("model-folder-path").textContent = pageCard && typeof card.folder === "string" ? card.folder : "";
     $("model-folder-change").disabled = launcher.acting || card.state === "starting";
+    var draft = pageCard && card.draft && typeof card.draft === "object" ? card.draft : null;
+    $("model-draft").hidden = !draft;
+    $("model-draft-path").textContent = draft ? (typeof draft.path === "string" ? draft.path : "None found: the model runs without one") : "";
+    $("model-draft-change").disabled = launcher.acting || card.state === "starting";
     $("danger-zone").hidden = !pageCard;
     // Owner 2026-10-28: the card can be taken off the list, its files kept - the running one too (stopped first)
     $("model-remove-box").hidden = !pageCard;
@@ -1469,6 +1545,7 @@
       launcher.chatFor = want;
       if (want !== state.model || (want && state.models.indexOf(want) < 0)) { refreshChatModel(want); }
     }
+    followCard(false);
   }
   async function refreshChatModel(want) {
     var models;
@@ -1511,7 +1588,10 @@
     launcher.startedAt = 0;
     launcher.vram = "";
     var failed = cardsOf(parsed).filter(function (card) { return card.state === "failed"; });
-    if (parsed.state === "running" && parsed.running) { toast("success", parsed.running + " is running"); }
+    if (parsed.state === "running" && parsed.running) {
+      followCard(true);   // a start this page saw: the chat's settings are the card's again
+      toast("success", parsed.running + " is running");
+    }
     else if (parsed.state === "failed" || failed.length) {
       toast("error", "The model did not start", (failed.length && failed[0].error) || parsed.error || "");
     }
@@ -2542,6 +2622,12 @@
     await refreshLauncher();
     if (downloads.enabled) { await refreshDownloads(); }
     showModelsSubtab("start");
+    // a model that drafts with a draft layer of its own, none found beside it: point to it now
+    var draft = answer.body && answer.body.draft;
+    if (draft && draft.path === null && window.confirm(name + " can guess tokens ahead with an MTP draft layer, which makes its " +
+                                                       "answers faster, but none was found beside it.\n\nPoint to its draft layer now?")) {
+      await pointDraft(findCard(name));
+    }
   }
   async function addLocalModel() {
     showLocalError("");
@@ -2569,6 +2655,35 @@
     var picked = await pickFolder("Move " + card.name, "Pick the folder that holds " + (card.file ? card.file + ".gguf" : "the model's file") +
                                   " now.", "folder");
     if (picked && picked.folder) { await repointCard(card, picked.folder); }
+  }
+
+  // Owner 2026-10-29 ("when browsing for models, if it supports mtp we should be able to point where the mtp is at too"):
+  // a card whose model drafts with a draft layer of its own (card.draft: a Qwen3.8 pack's upstream mtp\rt folder, a
+  // Gemma 4 model's mtp-*.gguf) shows where it is and is pointed at one the user picks; a model added with none found
+  // offers that at once.
+  async function pointDraft(card) {
+    if (!card || !card.draft) { return; }
+    showStartError("");
+    var folder = card.draft.kind === "folder";
+    var picked = await pickFolder("MTP draft layer for " + card.name,
+                                  folder ? "Open the draft layer's folder (upstream's mtp\\rt, which holds dense.bin, experts.bin and " +
+                                           "draft_vocab.bin) or a folder holding it, then use it."
+                                         : "Open the folder that holds the model's MTP draft file and pick it (its name starts with mtp-).",
+                                  folder ? "folder" : "file");
+    if (picked && picked.folder) { await sendDraft(card, picked.folder, folder ? null : picked.file); }
+  }
+  async function sendDraft(card, folder, file) {
+    var body = { name: card.name, folder: folder };
+    if (file) { body.file = file; }
+    var answer = await downloadsAnswer(api("/v1/strata/cards/mtp", jsonPost(body)));
+    if (answer.signedOut) { return; }
+    if (answer.code === "folder_not_private") {
+      if (await offerPrivate(folder)) { await sendDraft(card, folder, file); }
+      return;
+    }
+    if (answer.error) { showStartError(answer.error); return; }
+    toast("success", card.name + " drafts with its MTP layer", card.state === "running" ? "It is used from the model's next start." : "");
+    await refreshLauncher();
   }
 
   // Owner 2026-10-28 ("an ability to remove an active model card but not delete files"): the card goes off the list, its
@@ -3490,7 +3605,12 @@
     $("s-search").addEventListener("click", function () {
       $("s-search").setAttribute("aria-checked", $("s-search").getAttribute("aria-checked") === "true" ? "false" : "true");
     });
-    $("s-reset").addEventListener("click", function () { state.settings = Object.assign({}, DEFAULTS); showSettings(); });
+    // Reset: the running card's settings (its model's recommended), else the page's own
+    $("s-reset").addEventListener("click", function () {
+      var card = runningCard();
+      state.settings = card ? settingsFrom(card, Object.assign({}, DEFAULTS)) : Object.assign({}, DEFAULTS);
+      showSettings();
+    });
     $("s-apply").addEventListener("click", applySettings);
     $("tab-btn-chat").addEventListener("click", function () { showView("chat"); });
     $("tab-btn-models").addEventListener("click", function () { showView("models"); });
@@ -3522,6 +3642,7 @@
     $("models-empty-add").addEventListener("click", function () { showModelsSubtab("download"); });
     $("local-models-pick").addEventListener("click", addLocalModel);
     $("model-folder-change").addEventListener("click", changeCardFolder);
+    $("model-draft-change").addEventListener("click", function () { pointDraft(findCard(launcher.selected)); });
     $("model-delete").addEventListener("click", beginDelete);
     $("model-remove").addEventListener("click", removeCard);
     $("model-calibrate").addEventListener("click", calibrateModel);

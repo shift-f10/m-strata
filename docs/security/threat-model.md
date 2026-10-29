@@ -714,6 +714,15 @@ asks quoted there.
   options and its calibration. The folder is removed only when left empty. A downloaded model's
   store entry then goes through the store's own `strata rm <id>:download` child (its lock, its
   index, the version folder inside the store), never a path from the page.
+- **A card's draft layer** (`POST /v1/strata/cards/mtp`, owner 2026-10-29) points a page card (never a `models.cards`
+  one, never one starting) at a draft layer the user picked, for the two kinds that have one of their own: a Qwen3.8
+  pack card's upstream `mtp/rt` (the picked folder itself, its `rt/` or its `mtp/rt/`, holding `dense.bin`,
+  `experts.bin` and `draft_vocab.bin` as regular files, not links) and a Gemma 4 card's `.gguf` file (a name, never a
+  path, opened beneath the picked folder). The picked folder and the `rt` folder each pass the model folders' checks
+  (local-folder and `open_root`: private, unless model folders are used as they are), so a draft layer other users can
+  change is refused as a model folder is. It answers the same clients as the other card routes, keyed; it rewrites only
+  that card's file (its `--mtp` and the MTP options), validated as at boot, and restores the old file if the launcher
+  refuses the change.
 - **Remove card** (`POST /v1/strata/cards/remove`, owner 2026-10-28) deletes no model file: only
   the card file the server wrote in `<roots.state>/cards` (found by the card's name, as the
   delete finds it), the card's remembered options and its calibration files. It answers the

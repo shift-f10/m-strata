@@ -772,7 +772,7 @@ secure_frontend_add_library(secure_frontend_model_launcher
     SOURCES src/model_launcher.cpp
     LINKS secure_frontend_model_runtime secure_frontend_model_cards secure_frontend_model_options secure_frontend_api_router
           secure_frontend_engine_stdio_process secure_frontend_token_store secure_frontend_typed_config secure_frontend_launch
-          secure_frontend_calibration secure_frontend_subsystem_limits)
+          secure_frontend_calibration secure_frontend_subsystem_limits secure_frontend_card_builder)
 # GUI-first start-up (spec 2026-10-27 §5a): the optional email alerts - the SMTP dialogue, its TLS connection (SChannel
 # on Windows, OpenSSL elsewhere), the queue and the password - only with SECURE_FRONTEND_EMAIL_ALERTS.
 if(SECURE_FRONTEND_EMAIL_ALERTS OR SECURE_FRONTEND_WEB_SEARCH)
@@ -1521,7 +1521,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         web_ui_leaves_every_api_route_authenticated web_ui_still_checks_host_and_origin
         web_ui_assets_are_bundled_and_inert keyless_router_answers_without_a_key
         metrics_route_needs_the_key_and_the_switch about_route_needs_the_key_and_answers_its_provider
-        web_ui_has_the_monitor_and_four_thinking_levels the_page_sends_reasoning_effort_only_where_it_is_taken
+        web_ui_has_the_monitor_and_four_thinking_levels the_chat_settings_follow_the_running_card the_page_sends_reasoning_effort_only_where_it_is_taken
         web_ui_has_the_models_tab_hidden_until_the_server_offers_it web_ui_models_tab_starts_stops_and_polls
         web_ui_chat_follows_the_running_model web_ui_models_tab_has_a_downloads_section
         web_ui_downloads_profile_picker_and_multipart
@@ -1956,6 +1956,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         downloads_serve_the_catalog_and_load_download_cards
         cards_can_be_added_while_serving page_cards_can_be_replaced_and_removed a_gguf_card_reads_its_tokenizer_from_the_gguf
         cards_say_whether_their_profile_takes_reasoning_effort cards_offer_web_search_when_the_server_has_it
+        cards_offer_their_models_recommended_sampling a_card_without_sampling_starts_with_the_recommended
         a_qwen36_card_reads_its_tokenizer_from_the_gguf
         calibration_finds_the_win_and_starts_with_it a_first_start_calibrates_first
         a_minimax_card_measures_its_prompt_reading_first a_failed_prefill_calibration_is_not_retried_by_itself
@@ -1974,7 +1975,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         maya_sizes_meet_the_free_space_and_resume_keeps_the_commit a_resume_counts_its_rate_from_the_kept_bytes
         qwen36_is_runnable_with_a_tokenizer_note a_pasted_gguf_is_matched_to_a_profile
         a_multipart_paste_assembles_its_shards a_download_goes_to_the_chosen_folder a_downloaded_gguf_becomes_a_card
-        a_downloaded_model_can_be_removed a_downloaded_qwen36_becomes_a_card a_downloaded_qwen38_is_packed_natively a_downloaded_glm_is_packed_with_mayas_step
+        a_downloaded_model_can_be_removed a_downloaded_qwen36_becomes_a_card a_downloaded_qwen38_is_packed_natively a_downloaded_qwen38_drafts_with_the_stores_draft_layer a_downloaded_glm_is_packed_with_mayas_step
         a_downloaded_deepseek_is_packed_with_mayas_step a_downloaded_minimax_is_packed_with_mayas_step
         the_catalog_reads_our_pins_and_the_mtp_file a_downloaded_gemma4_brings_its_mtp_file a_download_never_writes_over_a_folder_card
         a_downloaded_raon1_is_packed_like_glm
@@ -2160,7 +2161,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         card_routes_answer_loopback_clients_only folders_list_the_drives_and_one_folder a_card_is_added_from_a_folder a_qwen_model_beside_its_encoder_reads_pictures qwen38_and_glm_models_are_added_with_their_packs
         a_qwen38_model_finds_its_draft_layer
         a_deepseek_model_is_added_with_mayas_ds4_pack a_minimax_model_is_added_with_mayas_mm3_pack
-        a_card_follows_its_moved_folder a_new_private_folder_is_made delete_needs_the_code_the_key_and_permanent
+        a_card_follows_its_moved_folder a_card_is_pointed_at_its_draft_layer a_new_private_folder_is_made delete_needs_the_code_the_key_and_permanent
         a_running_card_is_not_deleted a_card_is_removed_and_its_files_stay a_running_card_is_stopped_then_removed
         a_downloaded_model_leaves_its_store_too listed_remote_clients_use_the_file_routes
         a_shared_folder_is_used_as_it_is_when_the_owner_allows_it the_shared_folders_setting_is_read_and_saved

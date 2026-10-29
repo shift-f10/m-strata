@@ -86,6 +86,33 @@ std::string card_name_from(const std::string_view stem) {
   return name;
 }
 
+
+// The three runtime files of upstream's MTP draft layer in `rt`, each a regular file and not a link.
+bool holds_mtp_runtime(const std::filesystem::path& rt) {
+  std::error_code ec;
+  return std::all_of(kMtpRuntimeFiles.begin(), kMtpRuntimeFiles.end(), [&rt, &ec](const std::string_view file) {
+    return std::filesystem::is_regular_file(rt / file, ec) && !std::filesystem::is_symlink(rt / file, ec);
+  });
+}
+
+const JsonValue* object_member(const JsonValue& object, const std::string_view key) {
+  const auto* members = object.if_object();
+  if (members == nullptr) return nullptr;
+  const auto it = std::find_if(members->begin(), members->end(), [key](const JsonMember& member) { return member.key == key; });
+  return it == members->end() ? nullptr : &it->value;
+}
+
+// `object` with `key` set to `value`: in its place when there, else last.
+JsonValue with_member(const JsonValue& object, const std::string& key, JsonValue value) {
+  std::vector<JsonMember> members = object.if_object() != nullptr ? *object.if_object() : std::vector<JsonMember>{};
+  const auto it = std::find_if(members.begin(), members.end(), [&key](const JsonMember& member) { return member.key == key; });
+  if (it != members.end()) {
+    it->value = std::move(value);
+  } else {
+    members.push_back(JsonMember{key, std::move(value)});
+  }
+  return JsonValue::make_object(std::move(members));
+}
 }  // namespace
 
 std::variant<CardText, CardError> card_for_gguf(const GgufMetadata& metadata, const GgufCardRequest& request) {
@@ -267,7 +294,9 @@ CardText card_for_pack(const PackedCardRequest& request) {
       "}" + vision_row + ",\"limits\":{\"chat\":{\"max_prompt_tokens\":1048576,\"max_completion_tokens\":1048576}}}," +
       "\"options\":{\"max_context\":{\"default\":131072,\"min\":4096,\"max\":1048576},\"kv\":{\"default\":\"int8\"}," +
       "\"kv_resident\":{\"default\":32768,\"max\":262144}," + mtp_options + vision_option + "\"spec\":{\"default\":4},\"expert_cache\":{\"default\":\"auto\"}," +
-      "\"prefill\":{\"default\":\"auto\"},\"thinking\":{\"default\":\"high\"}}}\n";
+      "\"prefill\":{\"default\":\"auto\"},\"thinking\":{\"default\":\"high\"}," +
+      // Qwen3.8's own sampling for thinking (upstream's MODEL_CARD_SAMPLING; owner 2026-10-29: the recommended)
+      "\"temperature\":{\"default\":1.0},\"top_p\":{\"default\":0.95},\"top_k\":{\"default\":20}}}\n";
   return CardText{request.name, EngineProfile::qwen, json};
 }
 
@@ -328,16 +357,85 @@ std::optional<std::filesystem::path> find_mtp_gguf(const std::filesystem::path& 
 std::optional<std::filesystem::path> find_mtp_runtime(const std::filesystem::path& folder) {
   std::filesystem::path at = folder;
   for (int up = 0; up < 3 && !at.empty(); ++up) {
-    const auto rt = at / "mtp" / "rt";
-    std::error_code ec;
-    const bool whole = std::all_of(kMtpRuntimeFiles.begin(), kMtpRuntimeFiles.end(), [&rt, &ec](const std::string_view file) {
-      return std::filesystem::is_regular_file(rt / file, ec) && !std::filesystem::is_symlink(rt / file, ec);
-    });
-    if (whole) return rt;
+    if (const auto rt = at / "mtp" / "rt"; holds_mtp_runtime(rt)) return rt;
     if (at == at.parent_path()) break;
     at = at.parent_path();
   }
   return std::nullopt;
+}
+
+std::optional<std::filesystem::path> mtp_runtime_at(const std::filesystem::path& folder) {
+  for (const auto& rt : {folder, folder / "rt", folder / "mtp" / "rt"}) {
+    if (holds_mtp_runtime(rt)) return rt;
+  }
+  return std::nullopt;
+}
+
+std::optional<DraftLayerSlot> draft_layer_slot(const ModelCard& card) {
+  const auto found = card.config.entries.find("engine.args");
+  const auto* args = found == card.config.entries.end() ? nullptr : std::get_if<std::vector<std::string>>(&found->second.value);
+  const auto has = [args](const std::string_view flag) {
+    return args != nullptr && std::find(args->begin(), args->end(), flag) != args->end();
+  };
+  // a Qwen3.8 pack's card runs --pack; a Qwen3.6 GGUF's (--mtp 2: the model's own layer) does not
+  if (!(card.profile == EngineProfile::qwen && has("--pack")) && card.profile != EngineProfile::gemma4) return std::nullopt;
+  DraftLayerSlot slot{.folder = card.profile == EngineProfile::qwen, .path = std::nullopt};
+  if (args != nullptr) {
+    const auto mtp = std::find(args->begin(), args->end(), "--mtp");
+    if (mtp != args->end() && mtp + 1 != args->end()) slot.path = *(mtp + 1);
+  }
+  return slot;
+}
+
+std::string draft_layer_json(const DraftLayerSlot& slot) {
+  std::string out = std::string{"{\"kind\":\""} + (slot.folder ? "folder" : "file") + "\",\"path\":";
+  if (slot.path) {
+    append_json_string(&out, *slot.path);
+  } else {
+    out += "null";
+  }
+  return out + "}";
+}
+
+std::variant<std::string, CardError> card_with_draft_layer(const std::string_view card_json, const EngineProfile profile,
+                                                           const std::filesystem::path& draft) {
+  const CardError foreign{"the card is not one the page wrote"};
+  const auto parsed = parse_json(card_json, JsonLimits{.max_bytes = 1U << 20U, .max_depth = 16U, .max_container_entries = 4096U,
+                                                       .max_string_bytes = 1U << 16U, .allow_fractions = true});
+  const auto* card = std::get_if<JsonValue>(&parsed);
+  const auto* config = card != nullptr ? object_member(*card, "config") : nullptr;
+  const auto* engine = config != nullptr ? object_member(*config, "engine") : nullptr;
+  if (engine == nullptr || engine->if_object() == nullptr) return foreign;
+  // the card's arguments without an earlier --mtp and its value, then --mtp <draft>
+  std::vector<JsonValue> args;
+  if (const auto* listed = object_member(*engine, "args")) {
+    const auto* items = listed->if_array();
+    if (items == nullptr) return foreign;
+    for (std::size_t i = 0; i < items->size(); ++i) {
+      const auto* text = (*items)[i].if_string();
+      if (text != nullptr && *text == "--mtp") {
+        ++i;
+        continue;
+      }
+      args.push_back((*items)[i]);
+    }
+  }
+  args.push_back(JsonValue::make_string("--mtp"));
+  args.push_back(JsonValue::make_string(path_to_utf8(draft)));
+  JsonValue out = with_member(*card, "config", with_member(*config, "engine", with_member(*engine, "args", JsonValue::make_array(std::move(args)))));
+  // the MTP options as a card made with the draft layer lists them (card_for_pack, card_for_gguf): the switch on, and the
+  // window and confidence the card lacks
+  const auto* listed_options = object_member(*card, "options");
+  JsonValue options = listed_options != nullptr ? *listed_options : JsonValue::make_object({});
+  if (options.if_object() == nullptr) return foreign;
+  const auto with_default = [&options](const std::string& key, JsonValue value, const bool replace) {
+    if (!replace && object_member(options, key) != nullptr) return;
+    options = with_member(options, key, JsonValue::make_object({JsonMember{"default", std::move(value)}}));
+  };
+  with_default("mtp", JsonValue::make_boolean(true), true);
+  if (profile == EngineProfile::gemma4) with_default("spec", JsonValue::make_integer(4), false);
+  with_default("spec_min_p", JsonValue::make_decimal(profile == EngineProfile::gemma4 ? 0.6 : 0.5), false);
+  return python_json_text(with_member(out, "options", std::move(options))) + "\n";
 }
 
 bool write_glm_pack_marker(const std::filesystem::path& pack) { return write_pack_marker(pack, kGlmModelName); }

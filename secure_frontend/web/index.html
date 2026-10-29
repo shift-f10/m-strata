@@ -201,6 +201,12 @@
             <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-folder-change">Change...</button></div>
           <p class="muted small">Moved the model's files? Point the card at the folder they are in now.</p>
         </div>
+        <div class="model-folder" id="model-draft" hidden>
+          <span class="st-label">MTP draft layer</span>
+          <div class="model-folder__row"><code id="model-draft-path"></code>
+            <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-draft-change">Choose...</button></div>
+          <p class="muted small">The model's draft layer guesses tokens ahead, so answers come faster. Kept somewhere else? Point the card at it.</p>
+        </div>
         <div class="model-options" id="model-options"></div>
         <div class="st-progress model-loading" id="model-loading" hidden><div class="st-progress__bar"></div></div>
         <div class="model-actions">
@@ -568,6 +574,7 @@
       <div class="seg" id="s-thinking" role="radiogroup" aria-label="Thinking">
         <button type="button" role="radio" data-v="none">Off</button><button type="button" role="radio" data-v="low">Low</button>
         <button type="button" role="radio" data-v="medium">Medium</button><button type="button" role="radio" data-v="high">High</button>
+        <button type="button" role="radio" data-v="auto" id="s-thinking-auto" hidden>Auto</button>
       </div>
       <span class="muted small">Gemma models think or answer directly; Low, Medium and High all mean thinking on</span>
     </div>
@@ -579,6 +586,7 @@
     <div class="st-field">
       <label class="st-label" for="s-topp">Top-p <output id="o-topp"></output></label>
       <input class="st-slider" type="range" id="s-topp" min="0.05" max="1" step="0.05">
+      <span class="muted small" id="s-card-note" hidden></span>
     </div>
     <div class="st-field">
       <label class="st-label" for="s-max">Max tokens <output>empty = until done</output></label>

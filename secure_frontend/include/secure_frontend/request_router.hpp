@@ -35,6 +35,7 @@ enum class RouteId {
   strata_folders, strata_folder_private, strata_folder_new, strata_card_add, strata_card_folder, strata_card_delete_begin, strata_card_delete,
   strata_card_remove,
   strata_folder_sharing,
+  strata_card_mtp,
   strata_about,
 };
 
@@ -85,13 +86,14 @@ inline constexpr std::array<RouteEntry, 5> kModelDownloadRoutes{{
 // delete), and a card removed with its files kept (owner 2026-10-28). Served only with models.control, keyed like
 // kRouteTable; each a POST of a small JSON body. Owner 2026-10-27:
 // the Model folders setting (model folders used as they are, other users' access included).
-inline constexpr std::array<RouteEntry, 9> kModelCardRoutes{{
+inline constexpr std::array<RouteEntry, 10> kModelCardRoutes{{
     {"POST", "/v1/strata/folders", false, RouteId::strata_folders},
     {"POST", "/v1/strata/folders/private", false, RouteId::strata_folder_private},
     {"POST", "/v1/strata/folders/new", false, RouteId::strata_folder_new},
     {"POST", "/v1/strata/folders/sharing", false, RouteId::strata_folder_sharing},
     {"POST", "/v1/strata/cards/add", false, RouteId::strata_card_add},
     {"POST", "/v1/strata/cards/folder", false, RouteId::strata_card_folder},
+    {"POST", "/v1/strata/cards/mtp", false, RouteId::strata_card_mtp},
     {"POST", "/v1/strata/cards/delete/begin", false, RouteId::strata_card_delete_begin},
     {"POST", "/v1/strata/cards/delete", false, RouteId::strata_card_delete},
     {"POST", "/v1/strata/cards/remove", false, RouteId::strata_card_remove},

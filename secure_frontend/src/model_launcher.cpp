@@ -1,6 +1,7 @@
 #include "secure_frontend/model_launcher.hpp"
 
 #include "secure_frontend/canonical_path.hpp"
+#include "secure_frontend/card_builder.hpp"
 #include "secure_frontend/config_file.hpp"
 #include "secure_frontend/engine_stdio_process.hpp"
 #include "secure_frontend/host_readings.hpp"
@@ -140,8 +141,44 @@ void offer_gpus(ModelCard& card) {
   card.options.push_back(std::move(limit));
 }
 
-// The options a card offers beyond its file's: Web search with the server's, then its GPUs.
+// Owner 2026-10-29 ("make sure the card matches the chat settings when the engine is started as default so each model
+// reset it to the recommended"): a sampling option the card's file does not list is offered with its model's recommended
+// value (recommended_sampling), or the card's own defaults.sampling row where its config has one, in the profile's
+// order. A card made before cards carried sampling (a Qwen3.8 pack's) then samples as its model's card says, not greedy.
+void offer_sampling(ModelCard& card) {
+  const auto order = model_options_for(card.profile);
+  const auto place = [&order](const ModelOptionSpec* spec) { return static_cast<std::size_t>(spec - order.data()); };
+  for (const auto& [name, recommended] : recommended_sampling(card.profile)) {
+    const auto* spec = find_model_option(card.profile, name);
+    if (spec == nullptr ||
+        std::any_of(card.options.begin(), card.options.end(), [spec](const ModelOptionLimits& limit) { return limit.spec == spec; })) {
+      continue;
+    }
+    ModelOptionLimits limit;
+    limit.spec = spec;
+    limit.default_value = recommended;
+    limit.minimum = spec->minimum;
+    limit.maximum = spec->maximum;
+    limit.minimum_decimal = spec->minimum_decimal;
+    limit.maximum_decimal = spec->maximum_decimal;
+    if (const auto row = card.config.entries.find("defaults.sampling." + name); row != card.config.entries.end()) {
+      if (const auto* decimal = std::get_if<double>(&row->second.value)) {
+        limit.default_value = *decimal;
+      } else if (const auto* integer = std::get_if<std::int64_t>(&row->second.value)) {
+        limit.default_value = spec->kind == ModelOptionKind::decimal ? ModelOptionValue{static_cast<double>(*integer)} : ModelOptionValue{*integer};
+      }
+    }
+    const auto later = std::find_if(card.options.begin(), card.options.end(), [&](const ModelOptionLimits& listed) {
+      return listed.spec != nullptr && place(listed.spec) > place(spec);
+    });
+    card.options.insert(later, std::move(limit));
+  }
+}
+
+// The options a card offers beyond its file's: its model's recommended sampling, Web search with the server's, then its
+// GPUs.
 void offer_options(ModelCard& card, const ToolRunner* tools) {
+  offer_sampling(card);
   offer_web_search(card, tools);
   offer_gpus(card);
 }
@@ -1239,6 +1276,8 @@ std::string ModelLauncher::list_json() const {
       };
       out += ",\"source\":" + (card.source.empty() ? std::string{"null"} : json_string(card.source)) +
              ",\"folder\":" + text_row("roots.models") + ",\"file\":" + text_row("engine.model_id");
+      // its own draft layer, where the page can point it (owner 2026-10-29)
+      if (const auto slot = draft_layer_slot(card)) out += ",\"draft\":" + draft_layer_json(*slot);
     }
     out += ",\"options\":" + describe_options_json(shown_options(card, settings_.tools), values);
     out += ",\"calibration\":" + calibration_json(i, card, values.empty() ? default_option_values(card) : values);

@@ -762,6 +762,23 @@ std::span<const ModelOptionSpec> model_options_for(const EngineProfile profile) 
   return {};
 }
 
+ModelOptionValues recommended_sampling(const EngineProfile profile) {
+  ModelOptionValues out{{"temperature", 1.0}, {"top_p", 0.95}};
+  switch (profile) {
+    case EngineProfile::qwen:
+    case EngineProfile::flint:
+    case EngineProfile::raon1: out.emplace("top_k", std::int64_t{20}); break;
+    case EngineProfile::gemma4:
+      out.emplace("top_k", std::int64_t{64});
+      out.emplace("min_p", 0.05);
+      break;
+    case EngineProfile::deepseek: out.insert_or_assign("top_p", 1.0); break;
+    case EngineProfile::glm53:
+    case EngineProfile::minimax: break;
+  }
+  return out;
+}
+
 const ModelOptionSpec* find_model_option(const EngineProfile profile, const std::string_view name) noexcept {
   const auto options = model_options_for(profile);
   const auto it = std::find_if(options.begin(), options.end(), [name](const ModelOptionSpec& spec) { return spec.name == name; });

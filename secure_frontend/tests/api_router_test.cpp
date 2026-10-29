@@ -391,10 +391,29 @@ void the_page_sends_reasoning_effort_only_where_it_is_taken() {
   const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
   expect(js.find("reasoning_effort: LEVELS[s.thinking] ? s.thinking : \"high\"") != std::string::npos,
          "the level is still the request's reasoning_effort");
-  expect(js.find("if (!sendsReasoning()) { delete body.reasoning_effort; }") != std::string::npos,
-         "the page leaves it out where the running card does not take it");
+  // and for MiniMax's Auto (owner 2026-10-29: the chat follows the card's level, auto names none)
+  expect(js.find("if (!sendsReasoning() || s.thinking === \"auto\") { delete body.reasoning_effort; }") != std::string::npos,
+         "the page leaves it out where the running card does not take it, and for Auto");
   expect(js.find("return !card || card.reasoning_effort !== false;") != std::string::npos,
          "only a card that says false loses it");
+}
+
+// Owner 2026-10-29 ("make sure the card matches the chat settings when the engine is started as default so each model
+// reset it to the recommended"): the drawer's thinking level, temperature and top-p are the running card's until changed
+// there, a start this page saw sets them back, and Reset gives the card's. (Driven in headless Edge on a mock server:
+// the session's page_follow.py.)
+void the_chat_settings_follow_the_running_card() {
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  const std::string html{secure_frontend::find_web_asset("/")->body};
+  expect(js.find("function followCard(started) {") != std::string::npos && js.find("    followCard(false);\n  }") != std::string::npos,
+         "every look at the launcher follows the running card");
+  expect(js.find("followCard(true);   // a start this page saw") != std::string::npos, "a start the page saw resets the settings");
+  expect(js.find("state.settings = card ? settingsFrom(card, Object.assign({}, DEFAULTS)) : Object.assign({}, DEFAULTS);") != std::string::npos,
+         "Reset gives the running card's settings");
+  expect(js.find("Number(cards).toFixed(2) + \" (the card's)\"") != std::string::npos, "untuned, the drawer shows the card's values");
+  expect(html.find("<button type=\"button\" role=\"radio\" data-v=\"auto\" id=\"s-thinking-auto\" hidden>Auto</button>") != std::string::npos &&
+             html.find("<span class=\"muted small\" id=\"s-card-note\" hidden></span>") != std::string::npos,
+         "the drawer has Auto (shown for a card that offers it) and the card's other sampling");
 }
 
 // Model launcher plan Task 5 (spec §6): the Models tab. It is in the page from the start but
@@ -519,7 +538,8 @@ void web_ui_cards_from_this_pc_and_the_danger_zone() {
          "model files on this PC come first in the Download pane");
   for (const char* route : {"api(\"/v1/strata/folders\", jsonPost(", "api(\"/v1/strata/folders/private\", jsonPost(",
                             "api(\"/v1/strata/folders/new\", jsonPost(", "api(\"/v1/strata/cards/add\", jsonPost(",
-                            "api(\"/v1/strata/cards/folder\", jsonPost(", "api(\"/v1/strata/cards/delete/begin\", jsonPost(",
+                            "api(\"/v1/strata/cards/folder\", jsonPost(", "api(\"/v1/strata/cards/mtp\", jsonPost(",
+                            "api(\"/v1/strata/cards/delete/begin\", jsonPost(",
                             "api(\"/v1/strata/cards/delete\", jsonPost("}) {
     expect(js.find(route) != std::string::npos, std::string{"the page calls "} + route);
   }
@@ -1769,6 +1789,7 @@ void model_card_routes_need_the_switch_and_the_key() {
       {"/v1/strata/folders/sharing", RouteId::strata_folder_sharing},
       {"/v1/strata/cards/add", RouteId::strata_card_add},
       {"/v1/strata/cards/folder", RouteId::strata_card_folder},
+      {"/v1/strata/cards/mtp", RouteId::strata_card_mtp},
       {"/v1/strata/cards/delete/begin", RouteId::strata_card_delete_begin},
       {"/v1/strata/cards/delete", RouteId::strata_card_delete},
       {"/v1/strata/cards/remove", RouteId::strata_card_remove}};
@@ -1885,6 +1906,7 @@ int main(int argc, char** argv) {
       {"web_ui_assets_are_bundled_and_inert", web_ui_assets_are_bundled_and_inert},
       {"web_ui_has_the_monitor_and_four_thinking_levels", web_ui_has_the_monitor_and_four_thinking_levels},
       {"the_page_sends_reasoning_effort_only_where_it_is_taken", the_page_sends_reasoning_effort_only_where_it_is_taken},
+      {"the_chat_settings_follow_the_running_card", the_chat_settings_follow_the_running_card},
       {"web_ui_has_the_models_tab_hidden_until_the_server_offers_it", web_ui_has_the_models_tab_hidden_until_the_server_offers_it},
       {"web_ui_models_tab_starts_stops_and_polls", web_ui_models_tab_starts_stops_and_polls},
       {"web_ui_chat_follows_the_running_model", web_ui_chat_follows_the_running_model},
