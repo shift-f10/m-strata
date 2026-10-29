@@ -29,11 +29,16 @@ else()
 endif()
 
 add_library(strata_prepare_core STATIC gguf_header.cpp py_json.cpp sha256.cpp pack_common.cpp iq_pack.cpp maya_pack.cpp
-                                       maya_moe_pack.cpp tokenizer_export.cpp)
+                                       maya_moe_pack.cpp tokenizer_export.cpp mtp_layer.cpp)
 target_compile_features(strata_prepare_core PUBLIC cxx_std_20)
 target_include_directories(strata_prepare_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(strata_prepare_core PUBLIC ggml-base)
+find_package(Threads REQUIRED)   # mtp: the experts quantized side by side
+target_link_libraries(strata_prepare_core PUBLIC ggml-base Threads::Threads)
 target_compile_options(strata_prepare_core PRIVATE ${_sp_warnings})
+# numpy's float32 arithmetic one operation at a time (mtp_layer.cpp's scale search): no fused multiply-add
+if(NOT MSVC)
+  target_compile_options(strata_prepare_core PRIVATE -ffp-contract=off)
+endif()
 
 add_executable(strata-prepare prepare_main.cpp)
 target_link_libraries(strata-prepare PRIVATE strata_prepare_core)
@@ -53,7 +58,8 @@ if(EXISTS ${_sp_tests} AND (_sp_standalone OR STRATA_BUILD_TESTS))
                 compat_bf16_dequantizes experts_bin_blobs download_protocol utf8_replace_like_python
                 tokenizer_export_like_strata_tokenizer tokenizer_export_refusals maya_glm_pack_tables maya_glm_refusals
                 maya_raon1_pack_tables maya_split_layer_is_v4 maya_qwen4exp_routers download_maya_protocol maya_ds4_pack_tables maya_mm3_pack_tables
-                download_maya_ds4_step download_maya_mm3_step)
+                download_maya_ds4_step download_maya_mm3_step mtp_quantizers_match_numpy mtp_expert_blob_layout
+                mtp_runtime_from_tensors mtp_command_protocol)
     add_test(NAME strata_prepare_tests.${_case} COMMAND strata_prepare_tests --case ${_case} $<TARGET_FILE:strata-prepare>)
   endforeach()
 endif()

@@ -101,7 +101,7 @@ std::string python_float_repr(const double value) {
   if (exponent < -4 || exponent >= 16) {
     std::string out = sign + digits.substr(0, 1);
     if (digits.size() > 1U) out += "." + digits.substr(1);
-    char exp[8];
+    char exp[16];   // room for any int exponent (gcc's -Wformat-truncation cannot see it is at most 3 digits)
     std::snprintf(exp, sizeof(exp), "e%c%02d", exponent < 0 ? '-' : '+', exponent < 0 ? -exponent : exponent);
     return out + exp;
   }

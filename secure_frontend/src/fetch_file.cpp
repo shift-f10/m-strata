@@ -95,11 +95,13 @@ std::optional<AcquireReason> pin_request(FetchContext& ctx, const HttpsUrl& url,
   return std::nullopt;
 }
 
-// A resolved parallel source: the final URL (after our redirects), the object ETag and total.
+// A resolved parallel source: the final URL (after our redirects), the object ETag and total, and where the file starts
+// in it (a window of its source: its source_offset; else 0).
 struct ResolvedSource final {
   HttpsUrl url;
   std::string etag;
   std::uint64_t total{0};
+  std::uint64_t offset{0};
 };
 
 // The one-byte probe: follow redirects to the final URL and read its 206 head (ETag, total, range
@@ -113,8 +115,9 @@ std::variant<ResolvedSource, AcquireError, std::monostate> resolve_parallel_sour
     const auto remaining = ctx.budget.remaining_seconds(ctx.clock.now());
     if (!remaining) return AcquireError{AcquireReason::time_budget_exceeded, "pull.max_duration_s"};
     TransferRequest request = hop_request(current, ctx.settings, *remaining);
-    request.range_from = 0;
-    request.range_to = 0;  // one byte: a cheap 206 that carries Content-Range and ETag
+    const std::uint64_t offset = file.source_offset.value_or(0);
+    request.range_from = offset;
+    request.range_to = offset;  // one byte: a cheap 206 that carries Content-Range and ETag
     if (const auto reason = pin_request(ctx, current, request)) return AcquireError{*reason, current.host};
 
     ResponseHeadParser parser;
@@ -147,25 +150,31 @@ std::variant<ResolvedSource, AcquireError, std::monostate> resolve_parallel_sour
     const auto range = header_value(parser.head(), "content-range");
     if (!etag || etag->empty() || !range) return std::monostate{};
     const auto total = content_range_total(*range);
-    if (!total || *total != file.size) return std::monostate{};
-    return ResolvedSource{std::move(current), *etag, *total};
+    if (!total) return std::monostate{};
+    if (file.source_offset) {
+      // a window: the answer starts at its first byte, of a source that holds the whole window
+      if (!range->starts_with("bytes " + std::to_string(offset) + "-") || *total < offset + file.size) return std::monostate{};
+    } else if (*total != file.size) {
+      return std::monostate{};
+    }
+    return ResolvedSource{std::move(current), *etag, *total, offset};
   }
 }
 
 // Fetch one run of contiguous pieces [first_piece, last_piece] (one request, range lo-hi) from the
 // resolved URL, writing each byte at its offset under file_mutex. Returns the AcquireReason on
 // failure (so the worker can retry or give up), or nullopt on success.
-std::optional<AcquireReason> fetch_piece_run(FetchContext& ctx, const ResolvedSource& src, const ManifestFile& file,
-                                             FetchTarget& target, std::mutex& file_mutex, const PieceMap& map,
-                                             const std::uint64_t first_piece, const std::uint64_t last_piece) {
+std::optional<AcquireReason> fetch_piece_run(FetchContext& ctx, const ResolvedSource& src, FetchTarget& target,
+                                             std::mutex& file_mutex, const PieceMap& map, const std::uint64_t first_piece,
+                                             const std::uint64_t last_piece) {
   const auto remaining = ctx.budget.remaining_seconds(ctx.clock.now());
   if (!remaining) return AcquireReason::time_budget_exceeded;
   const std::uint64_t lo = piece_span(map, first_piece).offset;
   const PieceSpan last = piece_span(map, last_piece);
   const std::uint64_t hi = last.offset + last.length - 1U;  // inclusive
   TransferRequest request = hop_request(src.url, ctx.settings, *remaining);
-  request.range_from = lo;
-  request.range_to = hi;
+  request.range_from = src.offset + lo;   // the pieces are the file's; in its source they start at its offset
+  request.range_to = src.offset + hi;
   if (const auto reason = pin_request(ctx, src.url, request)) return reason;
 
   ResponseHeadParser parser;
@@ -187,7 +196,8 @@ std::optional<AcquireReason> fetch_piece_run(FetchContext& ctx, const ResolvedSo
       const auto etag = header_value(head, "etag");
       if (!etag || *etag != src.etag) { body_error = AcquireReason::range_mismatch; return false; }
       const auto ranges = header_values(head, "content-range");
-      const std::string expected = "bytes " + std::to_string(lo) + "-" + std::to_string(hi) + "/" + std::to_string(file.size);
+      const std::string expected =
+          "bytes " + std::to_string(src.offset + lo) + "-" + std::to_string(src.offset + hi) + "/" + std::to_string(src.total);
       if (ranges.size() != 1 || ranges.front() != expected) { body_error = AcquireReason::range_mismatch; return false; }
     }
     if (bytes.empty()) return true;
@@ -262,7 +272,7 @@ std::optional<AttemptResult> run_parallel(FetchContext& ctx, const AcquireManife
       }
       std::optional<AcquireReason> error;
       for (std::uint32_t attempt = 0; attempt < kDownloadRunTries; ++attempt) {
-        error = fetch_piece_run(ctx, src, file, target, file_mutex, map, first, last);
+        error = fetch_piece_run(ctx, src, target, file_mutex, map, first, last);
         if (!error) break;
         if (is_run_fatal(*error) || *error == AcquireReason::interrupted || *error == AcquireReason::range_mismatch) break;
       }
@@ -343,7 +353,14 @@ AttemptResult run_attempt(FetchContext& ctx, const AcquireManifest& manifest, co
       if (verdict.kind != AddressVerdictKind::pinned) return fail(AcquireReason::address_not_allowed, current.host);
       request.pin = verdict.pinned;
     }  // else: the proxy resolves the target; §3.5 cannot see it (§13.2)
-    if (target.file.size() > 0) request.range_from = target.file.size();
+    // a window of its source (owner 2026-10-29): always the bounded rest of the window; else a resume from what is on disk
+    const std::optional<std::uint64_t> window = file.source_offset;
+    if (window) {
+      request.range_from = *window + target.file.size();
+      request.range_to = *window + file.size - 1U;
+    } else if (target.file.size() > 0) {
+      request.range_from = target.file.size();
+    }
 
     ResponseHeadParser parser;
     std::optional<HeadDecision> decision;
@@ -362,7 +379,8 @@ AttemptResult run_attempt(FetchContext& ctx, const AcquireManifest& manifest, co
           return false;
         }
         if (fed.state == ResponseHeadParser::State::need_more) return true;
-        decision = classify_head(parser.head(), HopExpectation{file.size, request.range_from});
+        decision = window ? classify_window_head(parser.head(), *request.range_from, *request.range_to)
+                          : classify_head(parser.head(), HopExpectation{file.size, request.range_from});
         bytes.remove_prefix(fed.consumed);
         if (decision->action == HeadAction::restart_from_zero) {
           if (state.restarted_after_ignored_range) {
@@ -377,7 +395,7 @@ AttemptResult run_attempt(FetchContext& ctx, const AcquireManifest& manifest, co
           writing = true;
         } else if (decision->action == HeadAction::write_body) {
           writing = true;
-          resumed = request.range_from.has_value();  // 206: appended to bytes already on disk
+          resumed = window ? target.file.size() > 0 : request.range_from.has_value();  // 206: appended to bytes on disk
         } else {
           return false;  // redirect or failure: the body is not needed
         }

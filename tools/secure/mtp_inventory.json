@@ -1,0 +1,193 @@
+{
+ "_": "Qwen3.8-Flash-Next MTP draft layer (owner 2026-10-29): where each of the 31 mtp.* tensors lies in the BF16 checkpoint at upstream tools/mtp_fetch.py PINNED_REVISION - its shard and byte range, as mtp_fetch.py inventory reads them from the shards' safetensors headers (mtp-inventory.json at that revision). The hashes are mtp_fetch.py SHA256 table, read by download_catalog.py from the pinned upstream tree.",
+ "repo": "Qwen/Qwen3.8-Flash-Next",
+ "revision": "de4b8e4d43b917e7706784d8bb445c9af86a3540",
+ "tensors": [
+  {
+   "name": "mtp.fc_embedding.weight",
+   "shard": "model-00120-of-00131.safetensors",
+   "offset": 1935412640,
+   "size": 13107200
+  },
+  {
+   "name": "mtp.fc_hidden.weight",
+   "shard": "model-00124-of-00131.safetensors",
+   "offset": 1716599928,
+   "size": 13107200
+  },
+  {
+   "name": "mtp.hyper_connection_mixer.hc_norm.weight",
+   "shard": "model-00037-of-00131.safetensors",
+   "offset": 1742326680,
+   "size": 20480
+  },
+  {
+   "name": "mtp.hyper_connection_mixer.input_mix_weight_down.weight",
+   "shard": "model-00041-of-00131.safetensors",
+   "offset": 1935412688,
+   "size": 6553600
+  },
+  {
+   "name": "mtp.hyper_connection_mixer.input_mix_weight_up.weight",
+   "shard": "model-00043-of-00131.safetensors",
+   "offset": 1832518416,
+   "size": 6553600
+  },
+  {
+   "name": "mtp.layers.0.attn_hyper_connection.block_inject_weight.weight",
+   "shard": "model-00047-of-00131.safetensors",
+   "offset": 1716599984,
+   "size": 81920
+  },
+  {
+   "name": "mtp.layers.0.attn_hyper_connection.hc_norm.weight",
+   "shard": "model-00049-of-00131.safetensors",
+   "offset": 1935412672,
+   "size": 20480
+  },
+  {
+   "name": "mtp.layers.0.attn_hyper_connection.input_mix_weight_down.weight",
+   "shard": "model-00053-of-00131.safetensors",
+   "offset": 1832518424,
+   "size": 6553600
+  },
+  {
+   "name": "mtp.layers.0.attn_hyper_connection.input_mix_weight_up.weight",
+   "shard": "model-00057-of-00131.safetensors",
+   "offset": 1935412680,
+   "size": 6553600
+  },
+  {
+   "name": "mtp.layers.0.mlp.experts.down_proj",
+   "shard": "model-00062-of-00131.safetensors",
+   "offset": 1832518400,
+   "size": 1677721600
+  },
+  {
+   "name": "mtp.layers.0.mlp.experts.gate_up_proj",
+   "shard": "model-00060-of-00131.safetensors",
+   "offset": 115918328,
+   "size": 3355443200
+  },
+  {
+   "name": "mtp.layers.0.mlp.gate.weight",
+   "shard": "model-00066-of-00131.safetensors",
+   "offset": 1716599952,
+   "size": 2621440
+  },
+  {
+   "name": "mtp.layers.0.mlp.shared_expert.down_proj.weight",
+   "shard": "model-00076-of-00131.safetensors",
+   "offset": 1935412680,
+   "size": 3276800
+  },
+  {
+   "name": "mtp.layers.0.mlp.shared_expert.gate_proj.weight",
+   "shard": "model-00072-of-00131.safetensors",
+   "offset": 1832518528,
+   "size": 3276800
+  },
+  {
+   "name": "mtp.layers.0.mlp.shared_expert.up_proj.weight",
+   "shard": "model-00072-of-00131.safetensors",
+   "offset": 1835795328,
+   "size": 3276800
+  },
+  {
+   "name": "mtp.layers.0.mlp.shared_expert_gate.weight",
+   "shard": "model-00070-of-00131.safetensors",
+   "offset": 1832518400,
+   "size": 5120
+  },
+  {
+   "name": "mtp.layers.0.mlp_hyper_connection.block_inject_weight.weight",
+   "shard": "model-00078-of-00131.safetensors",
+   "offset": 1832518424,
+   "size": 81920
+  },
+  {
+   "name": "mtp.layers.0.mlp_hyper_connection.hc_norm.weight",
+   "shard": "model-00082-of-00131.safetensors",
+   "offset": 1935412656,
+   "size": 20480
+  },
+  {
+   "name": "mtp.layers.0.mlp_hyper_connection.input_mix_weight_down.weight",
+   "shard": "model-00086-of-00131.safetensors",
+   "offset": 1935412696,
+   "size": 6553600
+  },
+  {
+   "name": "mtp.layers.0.mlp_hyper_connection.input_mix_weight_up.weight",
+   "shard": "model-00088-of-00131.safetensors",
+   "offset": 1832518424,
+   "size": 6553600
+  },
+  {
+   "name": "mtp.layers.0.self_attn.indexer.index_qk_proj.weight",
+   "shard": "model-00090-of-00131.safetensors",
+   "offset": 1832518416,
+   "size": 3276800
+  },
+  {
+   "name": "mtp.layers.0.self_attn.indexer.k_layernorm.weight",
+   "shard": "model-00094-of-00131.safetensors",
+   "offset": 1935412672,
+   "size": 256
+  },
+  {
+   "name": "mtp.layers.0.self_attn.indexer.q_layernorm.weight",
+   "shard": "model-00100-of-00131.safetensors",
+   "offset": 1716599968,
+   "size": 256
+  },
+  {
+   "name": "mtp.layers.0.self_attn.k_norm.weight",
+   "shard": "model-00102-of-00131.safetensors",
+   "offset": 1935412648,
+   "size": 512
+  },
+  {
+   "name": "mtp.layers.0.self_attn.k_proj.weight",
+   "shard": "model-00108-of-00131.safetensors",
+   "offset": 1832518624,
+   "size": 2621440
+  },
+  {
+   "name": "mtp.layers.0.self_attn.o_proj.weight",
+   "shard": "model-00106-of-00131.safetensors",
+   "offset": 1832518400,
+   "size": 31457280
+  },
+  {
+   "name": "mtp.layers.0.self_attn.q_norm.weight",
+   "shard": "model-00112-of-00131.safetensors",
+   "offset": 1935412664,
+   "size": 512
+  },
+  {
+   "name": "mtp.layers.0.self_attn.q_proj.weight",
+   "shard": "model-00108-of-00131.safetensors",
+   "offset": 1835140064,
+   "size": 62914560
+  },
+  {
+   "name": "mtp.layers.0.self_attn.v_proj.weight",
+   "shard": "model-00108-of-00131.safetensors",
+   "offset": 1898054624,
+   "size": 2621440
+  },
+  {
+   "name": "mtp.pre_fc_norm_embedding.weight",
+   "shard": "model-00114-of-00131.safetensors",
+   "offset": 1832518392,
+   "size": 5120
+  },
+  {
+   "name": "mtp.pre_fc_norm_hidden.weight",
+   "shard": "model-00118-of-00131.safetensors",
+   "offset": 1716599944,
+   "size": 20480
+  }
+ ]
+}

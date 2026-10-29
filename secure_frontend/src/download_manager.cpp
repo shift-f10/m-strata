@@ -574,6 +574,15 @@ std::uint64_t DownloadManager::total_of(const DownloadEntry& entry, const bool v
   for (const auto& file : entry.files) total += file.size.value_or(0);
   if (entry.mtp) total += entry.mtp->size.value_or(0);   // Gemma 4's MTP draft file: always fetched with the model
   if (vision && entry.mmproj) total += entry.mmproj->size.value_or(0);
+  return total + draft_layer_bytes(entry);
+}
+
+std::uint64_t DownloadManager::draft_layer_bytes(const DownloadEntry& entry) const {
+  // owner 2026-10-29: a Qwen3.8 model's draft layer comes with the first such download (none built in the folder yet)
+  const auto* layer = entry.draft_layer ? find_draft_layer(settings_.catalog, *entry.draft_layer) : nullptr;
+  if (layer == nullptr || mtp_runtime_at(settings_.downloads_root / "mtp")) return 0;
+  std::uint64_t total = 0;
+  for (const auto& tensor : layer->tensors) total += tensor.size;
   return total;
 }
 
@@ -845,7 +854,10 @@ std::string DownloadManager::list_json() {
       note = "download only: pick the model family it matches (its Download button) so a card can be made";
     else if (!qwen_ready) note = "download only: the prepare step is not configured (models.prepare_python, models.prepare_tools)";
     else if (gguf_direct) note = "after the download its tokenizer is prepared (a few seconds) and a card appears in Models";
-    else note = "after the download the pack is built (a few minutes) and a card appears in Models";
+    else if (const auto layer = draft_layer_bytes(e); layer > 0) {   // owner 2026-10-29: the first Qwen3.8 model's
+      note = "after the download the pack is built (a few minutes), then its MTP draft layer is fetched (" + decimal_gb(layer) +
+             " GB of the original checkpoint's draft tensors, once for every Qwen3.8 model) and built, and a card appears in Models";
+    } else note = "after the download the pack is built (a few minutes) and a card appears in Models";
     // Maya pins no sizes (read from Hugging Face at the start): until then the card's size is not known, not 0
     const bool size_known = std::all_of(e.files.begin(), e.files.end(), [](const CatalogFile& f) { return f.size.has_value(); });
     // owner 2026-10-28: what this PC already has of it - the page's and strata-tui's "Downloaded" / "Locally provided".
@@ -1451,7 +1463,7 @@ void DownloadManager::run_card(const std::size_t index) {
   log("[strata] downloads: " + card.entry.id + " is ready (a model card was added)");
 }
 
-bool DownloadManager::pull(const std::size_t index, const HfDownload& download, std::string& error) {
+bool DownloadManager::pull(const std::size_t index, const HfDownload& download, std::string& error, const std::uint64_t base) {
   const auto manifest = hf_manifest_json(download, "2026.10.23.1");
   if (const auto* reason = std::get_if<std::string_view>(&manifest)) {
     error = std::string{"the download could not be described: "} + std::string{*reason};
@@ -1518,7 +1530,7 @@ bool DownloadManager::pull(const std::size_t index, const HfDownload& download, 
       const auto now = std::chrono::steady_clock::now();
       std::lock_guard lock(mutex_);
       auto& c = cards_[index];
-      c.bytes = finished + *done;
+      c.bytes = base + finished + *done;
       const double seconds = std::chrono::duration<double>(now - last_at).count();
       if (seconds >= 1.0) {
         c.rate_bps = c.bytes > last_bytes ? static_cast<double>(c.bytes - last_bytes) / seconds : 0.0;
@@ -1531,7 +1543,7 @@ bool DownloadManager::pull(const std::size_t index, const HfDownload& download, 
         const auto size = sizes.find(w[1]);
         finished += size == sizes.end() ? 0U : size->second;
         std::lock_guard lock(mutex_);
-        cards_[index].bytes = finished;
+        cards_[index].bytes = base + finished;
       }
     } else if (w[0] == "RESULT" && w.size() == 2U) {
       result = std::string{w[1]};
@@ -1542,11 +1554,7 @@ bool DownloadManager::pull(const std::size_t index, const HfDownload& download, 
   if (!done && result == "ok") {
     // Owner 2026-10-28: a Gemma 4 download said ok, was published, and the downloader ended with another code. The
     // download folder has the last word.
-    std::string id;
-    {
-      std::lock_guard lock(mutex_);
-      id = cards_[index].entry.id;
-    }
+    const std::string& id = download.name;   // the model's id, or its draft layer's
     const auto version = settings_.seams.locate(store, id);
     done = version.has_value() && stored_whole(*version, download);
     if (done) {
@@ -1555,8 +1563,12 @@ bool DownloadManager::pull(const std::size_t index, const HfDownload& download, 
     }
   }
   if (done) {
+    std::uint64_t pulled = 0;
+    for (const auto& file : download.files) pulled += file.size;
     std::lock_guard lock(mutex_);
-    cards_[index].bytes = cards_[index].total;
+    // the card's whole size, or as far as this pull goes when its draft layer is still to come (a Qwen3.8 model)
+    const bool layer_to_come = base == 0 && draft_layer_bytes(cards_[index].entry) > 0;
+    cards_[index].bytes = base == 0 && !layer_to_come ? cards_[index].total : std::min(cards_[index].total, base + pulled);
     cards_[index].rate_bps = 0.0;
     return true;
   }
@@ -1726,6 +1738,10 @@ bool DownloadManager::native_prepare(const std::size_t index, std::string& error
   // model finds it - used when it is private (owner-only like the store)
   auto rt = mtp_runtime_at(store / "mtp");
   if (!rt) rt = find_mtp_runtime(shard.parent_path());
+  if (!rt && entry.draft_layer) {   // none yet: the catalog's layer, fetched and built here
+    rt = build_draft_layer(index, entry, store, error);
+    if (!rt) return false;
+  }
   if (rt && std::holds_alternative<CanonicalRoot>(open_root(*rt, RootPolicy::existing))) {
     request.mtp = *rt;
     log("[strata] downloads: " + entry.id + " drafts with the MTP draft layer in " + path_to_utf8(*rt));
@@ -1735,6 +1751,62 @@ bool DownloadManager::native_prepare(const std::size_t index, std::string& error
   }
   const auto card = card_for_pack(request);
   return write_download_card(entry, card.name, card.json, error);
+}
+
+std::optional<std::filesystem::path> DownloadManager::build_draft_layer(const std::size_t index, const DownloadEntry& entry,
+                                                                       const std::filesystem::path& store, std::string& error) {
+  const auto* layer = find_draft_layer(settings_.catalog, *entry.draft_layer);
+  const auto tool = native_prepare_tool();
+  if (layer == nullptr || !tool || !settings_.gguf_engine) {
+    error = "its MTP draft layer is not in the catalog, or strata-prepare is not beside the engine";
+    return std::nullopt;
+  }
+  const auto vocab = settings_.gguf_engine->parent_path() / "data" / "draft_vocab.bin";
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(vocab, ec)) {
+    error = "the MTP draft layer's vocabulary is not beside the engine (data/draft_vocab.bin)";
+    return std::nullopt;
+  }
+  // the tensors only: each the window of a .safetensors shard of the checkpoint at its pinned commit (an mtp manifest)
+  HfDownload download;
+  download.name = layer->id;
+  download.tag = std::string{kStoreTag};
+  download.profile = "mtp";
+  download.repo = layer->repo;
+  download.commit = layer->revision;
+  download.license_url = "https://huggingface.co/" + layer->repo;
+  std::uint64_t layer_bytes = 0;
+  for (const auto& tensor : layer->tensors) {
+    HfFile file{"tensors/" + tensor.name + ".bin", tensor.size, tensor.sha256, false};
+    file.source_path = tensor.shard;
+    file.source_offset = tensor.offset;
+    download.files.push_back(std::move(file));
+    layer_bytes += tensor.size;
+  }
+  std::uint64_t base = 0;
+  {
+    std::lock_guard lock(mutex_);
+    base = cards_[index].total > layer_bytes ? cards_[index].total - layer_bytes : 0U;
+  }
+  log("[strata] downloads: " + entry.id + ": fetching its MTP draft layer (" + layer->id + ": the checkpoint's draft tensors only)");
+  if (!pull(index, download, error, base)) {
+    error = "its MTP draft layer could not be downloaded: " + error;
+    return std::nullopt;
+  }
+  const auto version = settings_.seams.locate(store, layer->id);
+  if (!version) {
+    error = "its MTP draft layer's tensors are not in the download folder's index";
+    return std::nullopt;
+  }
+  set_state(index, State::preparing);
+  const auto rt = store / "mtp" / "rt";
+  if (!run_prepare_tool(*tool, {"mtp", "--src", path_to_utf8(*version), "--out", path_to_utf8(rt), "--draft-vocab", path_to_utf8(vocab)},
+                        error)) {
+    error = "its MTP draft layer could not be built: " + error;
+    return std::nullopt;
+  }
+  log("[strata] downloads: " + entry.id + ": its MTP draft layer is built in " + path_to_utf8(rt));
+  return rt;
 }
 
 bool DownloadManager::maya_prepare_ready(const DownloadEntry& entry) const {

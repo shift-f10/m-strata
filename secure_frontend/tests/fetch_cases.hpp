@@ -6,6 +6,8 @@ void dl03_truncated_body_rejected();
 void dl_parallel_assembles_pieces();
 void dl_parallel_falls_back_without_ranges();
 void dl_parallel_resumes_from_sidecar();
+void a_window_of_its_source_is_fetched_by_its_range();
+void dl_parallel_fetches_a_window();
 void dl03_oversize_body_rejected_mid_stream();
 void dl03_redirect_to_http_rejected();
 void dl03_redirect_off_allowlist_rejected();

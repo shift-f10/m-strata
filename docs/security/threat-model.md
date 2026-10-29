@@ -569,6 +569,30 @@ gguf") and decisions D1-D8; pause and resume added the same day.
   Maya's are checked again once their sizes are known; the pull checks while it writes. Pause
   keeps the partial files in the store's owner-only staging; Cancel deletes them (`strata rm
   --partials`).
+- **Qwen3.8's MTP draft layer (2026-10-29, owner: "check which models in the download needs draft
+  layers ... configured correctly automatically", "add it to strata prepare").** The one
+  exception to O4's `.gguf` rule, for this layer alone. A Qwen3.8-family catalog entry names the
+  catalog's draft layer. When the download's folder has none built, the step after its pack is
+  one more `strata pull` of an `mtp` manifest, then `strata-prepare mtp`.
+  - **The manifest.** It lists the 31 `mtp.*` tensors of Qwen3.8-Flash-Next's BF16 checkpoint at
+    upstream `tools/mtp_fetch.py`'s pinned revision, each `tensors/<name>.bin` with its size and
+    `mtp_fetch.py`'s SHA-256, sourced from its `.safetensors` shard on huggingface.co with a
+    `source_offset`.
+  - **A file with a `source_offset` is a window of its source.** Every request (one stream, a
+    resume, the parallel probe and pieces) asks for a bounded range inside the window. Only a
+    `206` whose `Content-Range` is exactly that range (of any total past it) and whose length
+    matches is written. A `200` (the whole shard, its header first: upstream's #327) or another
+    range is a `range_mismatch`, never a restart from byte 0. Each tensor is then checked
+    against its SHA-256 as every file is.
+  - **The `mtp` profile.** It lists only such windows, as `tensors/<name>.bin`, role weights,
+    with no launch keys and the family none. Release builds accept it, unlike `raw`.
+  - **`strata-prepare mtp`.** It has no network code. It reads only the store's verified tensors,
+    checks each one again against the SHA-256 compiled into it, and writes only the store's
+    `mtp/rt`: each file under a temporary name, renamed when whole, the vocabulary
+    (`engine/data/draft_vocab.bin`, shipped with the engine) last.
+  - **Revision and inventory.** The pinned revision and each tensor's place come from the
+    generated catalog (`tools/secure/mtp_inventory.json`, checked against `mtp_fetch.py`'s
+    tables by the generator).
 - **The native prepare step (2026-10-27, owner: "executables to handle what needs to be done so we
   don't have any other dependencies").** Where the server names an engine for new cards and
   `strata-prepare` is installed beside it, a Qwen3.8-family catalog download is packed by that

@@ -186,8 +186,8 @@ def stage(tmp_path: Path, platform: str, extra: tuple[str, ...] = (), skip: tupl
     exe = ".exe" if platform == "windows" else ""
     lib = (lambda n: n + ".dll") if platform == "windows" else (lambda n: "lib" + n + ".so")
     files = [f"strata-unified-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
-             f"engine/strata-vision{exe}", "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin", "engine/build.json",
-             "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + ["engine/profiles/" + p for p in MAYA_PROFILES] + \
+             f"engine/strata-vision{exe}", "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin",
+             "engine/data/draft_vocab.bin", "engine/build.json", "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + ["engine/profiles/" + p for p in MAYA_PROFILES] + \
         list(MINIMAX_FILES)
     files += ["engine/" + lib(n) for n in ("multiengine_strata", "multiengine_gemma4", "multiengine_flint",
                                            "multiengine_raon1", "multiengine_maya", "multiengine_maya_ds4",
@@ -240,6 +240,14 @@ def test_strata_prepare_and_the_expert_profiles_are_runtime_files(tmp_path):
     root = stage(tmp_path, "windows", skip=("engine/strata-prepare.exe", "engine/profiles/expert-profile.bin"))
     problems = "\n".join(make.layout_problems(root, options(), "windows"))
     assert "engine/strata-prepare.exe: missing" in problems and "engine/profiles/expert-profile.bin: missing" in problems, problems
+
+
+def test_the_draft_vocabulary_is_a_runtime_file(tmp_path):
+    """Owner, 2026-10-29 (Qwen3.8's MTP draft layer with no Python): the token subset strata-prepare mtp copies into a
+    draft layer (upstream's data/draft_vocab.bin) is part of every out folder."""
+    root = stage(tmp_path, "linux", skip=("engine/data/draft_vocab.bin",))
+    problems = "\n".join(make.layout_problems(root, options(platform="linux"), "linux"))
+    assert "engine/data/draft_vocab.bin: missing" in problems, problems
 
 
 def test_maya_expert_profiles_come_with_the_maya_families(tmp_path):

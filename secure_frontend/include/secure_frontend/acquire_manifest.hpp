@@ -19,7 +19,9 @@ namespace secure_frontend {
 // launch keys, never launched as a managed model.
 // deepseek and raon1 run on the merged unified engine (unified-engine design §2.5); they are
 // recognized here but gated in engine_gate until the merged engine is installed (plan 4).
-enum class ManifestProfile { qwen, glm53, gemma4, raw, gguf, deepseek, raon1 };
+// mtp (owner 2026-10-29): Qwen3.8's MTP draft layer's tensors, each a window of a checkpoint shard (built on this
+// machine by strata-prepare mtp; never launched)
+enum class ManifestProfile { qwen, glm53, gemma4, raw, gguf, deepseek, raon1, mtp };
 enum class ManifestFamily { strata, glm, gemma4, none, unified };
 // SP5 M1 Task 11 (D-9): FileRole gains mmproj — the vision encoder artifact, listed like
 // any other file, AT MOST ONE entry, named by the optional launch.mmproj (Ruling T11-bb).
@@ -39,6 +41,10 @@ struct ManifestFile final {
   std::string sha256;
   std::vector<std::string> sources;  // empty: arrives only by import (§2.7)
   std::optional<ManifestLicense> license;
+  // Owner 2026-10-29 (Qwen3.8's MTP draft layer, upstream's tools/mtp_fetch.py): the file is the window [offset,
+  // offset + size) of each source - a tensor of a checkpoint shard - fetched with that bounded range and taken only
+  // from a 206 of exactly it. Absent: the whole source.
+  std::optional<std::uint64_t> source_offset{};
 };
 
 struct ManifestLaunch final {

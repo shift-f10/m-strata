@@ -828,6 +828,18 @@ read side by side.
   diff in `engines/maya-ref`, never committed there); `RAON_PATTERN` is transcribed from ik_llama.cpp PR #2733
   (`LLAMA_VOCAB_PRE_TYPE_RAON`, MIT) as that diff has it. Proof: the parity script's `--raon-tools` (Maya v1.1.30's
   tools with that diff) on synthetic models and on the owner's raon-1-mini Q8_0 and IQ4_XS GGUFs.
+- **Qwen3.8's MTP draft layer** (added 2026-10-29, owner: "create native versions ... add it to strata prepare"):
+  `mtp_layer.cpp` ports upstream's `tools/mtp_pack.py` (the routed experts as Q2_0 with its per-block MSE scale search,
+  numpy's float32 arithmetic and pairwise sum kept) and `tools/mtp_rt.py` (`experts.bin`, `dense.bin` with Q8_0
+  projections and the norms + 1, `dense.txt`), fused into one step from the fetched tensors to the runtime folder (the
+  `mtp-q2_0.gguf` between them is not written). It pins `tools/mtp_fetch.py`'s `PINNED_REVISION` (Qwen/Qwen3.8-Flash-Next
+  `de4b8e4d43b917e7706784d8bb445c9af86a3540`, Apache-2.0) and its `SHA256` table; where each tensor lies at that
+  revision is `tools/secure/mtp_inventory.json`. The fetch itself is not ported here: our downloader reads the tensors as
+  windows of their shards. The out folder carries upstream's `data/draft_vocab.bin` (MIT, unmodified) in `engine/data/`,
+  copied into the layer as `refresh_draft_vocab` does. Proof: the parity script's `--mtp-src` (upstream's
+  `mtp_pack.py` and `mtp_rt.py` with numpy and the pinned gguf-py) on the owner's fetched tensors gave all four
+  runtime files byte-identical, and identical to the `rt` his engine runs; the unit tests check the quantizers against
+  numpy's bytes. Three tensors fetched live as windows of their shards were byte-identical to upstream's fetch.
 - **Maya's expert profiles:** `engine/third_party/maya/data/expert-profile-{glm,ds4,mm3}.bin` (Maya v1.1.30, MIT,
   unmodified; 106,008 / 61,440 / 30,720 bytes) are written by `engine/src/multiengine/sync_maya.py` from the clone's git
   objects with the rest of Maya's tree and installed in `engine/profiles/`; the server names the GLM one on every

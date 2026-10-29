@@ -1975,7 +1975,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         maya_sizes_meet_the_free_space_and_resume_keeps_the_commit a_resume_counts_its_rate_from_the_kept_bytes
         qwen36_is_runnable_with_a_tokenizer_note a_pasted_gguf_is_matched_to_a_profile
         a_multipart_paste_assembles_its_shards a_download_goes_to_the_chosen_folder a_downloaded_gguf_becomes_a_card
-        a_downloaded_model_can_be_removed a_downloaded_qwen36_becomes_a_card a_downloaded_qwen38_is_packed_natively a_downloaded_qwen38_drafts_with_the_stores_draft_layer a_downloaded_glm_is_packed_with_mayas_step
+        a_downloaded_model_can_be_removed a_downloaded_qwen36_becomes_a_card a_downloaded_qwen38_is_packed_natively a_downloaded_qwen38_drafts_with_the_stores_draft_layer
+        the_catalog_reads_the_qwen38_draft_layer a_downloaded_qwen38_fetches_and_builds_its_draft_layer a_downloaded_glm_is_packed_with_mayas_step
         a_downloaded_deepseek_is_packed_with_mayas_step a_downloaded_minimax_is_packed_with_mayas_step
         the_catalog_reads_our_pins_and_the_mtp_file a_downloaded_gemma4_brings_its_mtp_file a_download_never_writes_over_a_folder_card
         a_downloaded_raon1_is_packed_like_glm
@@ -1986,7 +1987,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_hf_source_tests tests/hf_source_test.cpp
         secure_frontend_hf_source secure_frontend_model_store)
     secure_frontend_add_cases(secure_frontend_hf_source_tests
-        links_only_huggingface_gguf urls_and_shard_sets manifests_are_huggingface_gguf_only cdn_redirects_are_admitted)
+        links_only_huggingface_gguf urls_and_shard_sets manifests_are_huggingface_gguf_only cdn_redirects_are_admitted
+        an_mtp_download_lists_windows_of_the_checkpoint)
 
     # Model launcher plan Task 2 (spec §4): the engine options a card lets the page set.
     secure_frontend_add_test_executable(secure_frontend_model_options_tests tests/model_options_test.cpp
@@ -2614,7 +2616,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_add_cases(secure_frontend_manifest_tests raw_profile_accepted_with_test_hooks
             typed_digest_must_match_catalog_bytes_too)
     endif()
-    secure_frontend_add_cases(secure_frontend_manifest_tests base_manifest_parses dl03_invalid_manifest_matrix
+    secure_frontend_add_cases(secure_frontend_manifest_tests base_manifest_parses an_mtp_manifest_lists_only_windows_of_tensors dl03_invalid_manifest_matrix
         dl03_http_url_rejected manifest_identity_is_sha256_of_exact_bytes trust_rules_catalog_digest_or_typed_digest)
     secure_frontend_add_cases(secure_frontend_manifest_tests dl05_catalog_pins_match_committed_list
         ARGS ${CMAKE_CURRENT_SOURCE_DIR}/catalog/CATALOG.sha256 ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/catalog/CATALOG.sha256
@@ -2671,6 +2673,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         free_space_rechecked_while_writing ipv6_only_hop_is_address_not_allowed
         range_ignored_twice_is_range_mismatch_then_restarts proxy_hop_skips_address_policy
         dl_parallel_assembles_pieces dl_parallel_falls_back_without_ranges dl_parallel_resumes_from_sidecar
+        a_window_of_its_source_is_fetched_by_its_range dl_parallel_fetches_a_window
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     if(SECURE_FRONTEND_TEST_HOOKS)
         secure_frontend_add_cases(secure_frontend_fetch_tests test_cacert_reaches_argv_in_hook_builds

@@ -34,10 +34,18 @@
 //       `STEP pack` (pack_gguf.py --text-only over the shard set and its *-maya-indexers.gguf, with Maya's chat template
 //       <file>, its `need` files checked - or nothing, for a whole pack these tools built whose files still match),
 //       `STEP sources` (stamp_pack's sources.json over every file, with the "tools"), `DONE`.
+//   strata-prepare mtp --src <dir> --out <rt> [--draft-vocab <file>] [--threads N]
+//       Qwen3.8's MTP draft layer (mtp_layer.hpp; owner 2026-10-29): upstream's tools/mtp_pack.py and tools/mtp_rt.py
+//       fused, byte for byte, from the tensors tools/mtp_fetch.py's layout holds (<dir>/tensors/<name>.bin, the pinned
+//       checkpoint's, each checked by its SHA-256) to the engine's runtime folder (experts.bin, dense.bin, dense.txt and
+//       the vocabulary as draft_vocab.bin, last). stdout: `STEP verify`, `STEP experts`, `STEP dense`, `STEP vocab`
+//       (with --draft-vocab), then `DONE`, or `ERROR <reason>` (bad_arguments, missing_tensor, wrong_size, wrong_sha256,
+//       bad_shape, missing_vocab, write_failed).
 #include "gguf_header.hpp"
 #include "iq_pack.hpp"
 #include "maya_moe_pack.hpp"
 #include "maya_pack.hpp"
+#include "mtp_layer.hpp"
 #include "pack_common.hpp"
 #include "py_json.hpp"
 #include "tokenizer_export.hpp"
@@ -80,7 +88,8 @@ constexpr const char* kUsage =
     "       strata-prepare pack --maya-mm3 --model <dir> [--out <dir>] --template <file> [--indexers <file>] [--shards <name>...]\n"
     "       strata-prepare tokenizer --gguf <gguf> --out <dir>\n"
     "       strata-prepare download [--maya] --gguf <shard 1> --out <pack> [--pack-arg FLAG ...] [--expert-profile <file>]\n"
-    "                                [--template <file>]\n";
+    "                                [--template <file>]\n"
+    "       strata-prepare mtp --src <dir> --out <rt> [--draft-vocab <file>] [--threads N]\n";
 
 // maya.py's PACK_FILES: what a GLM pack must hold once its builder is done
 constexpr std::array<const char*, 7> kMayaPackFiles{"index.txt", "native_experts.txt", "dense.bin", "tokenizer/vocab.json",
@@ -183,7 +192,7 @@ std::vector<fs::path> shard_list(const fs::path& first) {
   if (std::stoi(m[2].str()) != 1 || n < 1) throw Refusal{"not_first_shard"};
   std::vector<fs::path> shards;
   for (int k = 1; k <= n; ++k) {
-    char index[8];
+    char index[16];   // room for any int (gcc's -Wformat-truncation)
     std::snprintf(index, sizeof(index), "%05d", k);
     shards.push_back(first.parent_path() / path_from_utf8(m[1].str() + "-" + index + "-of-" + m[3].str() + m[4].str()));
   }
@@ -593,6 +602,34 @@ int download_command(const std::vector<std::string>& args) {
   return 0;
 }
 
+// mtp: the draft layer's runtime folder from its fetched tensors (the pinned table's 31)
+int mtp_command(const std::vector<std::string>& args) {
+  strata_prepare::MtpOptions options;
+  bool bad = false;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    const bool valued = i + 1 < args.size();
+    if (args[i] == "--src" && valued) options.src = path_from_utf8(args[++i]);
+    else if (args[i] == "--out" && valued) options.out = path_from_utf8(args[++i]);
+    else if (args[i] == "--draft-vocab" && valued) options.draft_vocab = path_from_utf8(args[++i]);
+    else if (args[i] == "--threads" && valued) {
+      const std::string& n = args[++i];
+      if (n.empty() || n.size() > 4U || !std::all_of(n.begin(), n.end(), [](const char c) { return c >= '0' && c <= '9'; })) bad = true;
+      else options.threads = static_cast<unsigned>(std::stoul(n));
+    } else bad = true;
+  }
+  if (bad || options.src.empty() || options.out.empty()) {
+    std::cout << "ERROR bad_arguments\n" << std::flush;
+    return 2;
+  }
+  const std::string reason = strata_prepare::mtp_runtime(options, strata_prepare::mtp_tensors(), std::cout, std::cerr);
+  if (!reason.empty()) {
+    std::cout << "ERROR " << reason << "\n" << std::flush;
+    return 1;
+  }
+  std::cout << "DONE\n" << std::flush;
+  return 0;
+}
+
 }  // namespace
 
 static int run(std::vector<std::string> args) {
@@ -605,6 +642,7 @@ static int run(std::vector<std::string> args) {
   if (verb == "pack") return pack_command(args);
   if (verb == "tokenizer") return tokenizer_command(args);
   if (verb == "download") return download_command(args);
+  if (verb == "mtp") return mtp_command(args);
   std::cerr << kUsage;
   return 2;
 }

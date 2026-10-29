@@ -61,6 +61,10 @@ struct HfFile final {
   bool mmproj{false};        // the vision encoder file (role mmproj)
   std::string repo{};        // its own repository and commit (an encoder pinned in another repository); empty: the download's
   std::string commit{};
+  // Owner 2026-10-29 (an mtp download: Qwen3.8's MTP draft layer): the file is the window of `source_path`, a
+  // .safetensors shard of the repository, that starts at `source_offset` (one tensor's bytes). Empty: the file itself.
+  std::string source_path{};
+  std::optional<std::uint64_t> source_offset{};
 };
 struct HfDownload final {
   std::string name;          // the SP4 model name (is_valid_model_name)

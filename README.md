@@ -472,8 +472,11 @@ On the page, open **Models**:
   into a drive or folder you choose; the free space is checked first. A large file comes over 16 connections at once
   (`pull.connections`, 1-32; 1 is one stream). A Qwen entry's **Vision files** box also fetches its picture encoder.
   When it is verified, it is packed if needed and appears as a card. Draft layers: Gemma 4's MTP file comes with it,
-  Qwen3.6's is inside its GGUF, and a Qwen3.8-family download (Qwen3.8, Swift, Coder, Unsloth, Gyro) drafts with
-  upstream's `mtp/rt` when the download folder holds one (`<folder>/mtp/rt`) or the model's folder is near one. The list says what is already on this PC:
+  Qwen3.6's is inside its GGUF, and every Qwen3.8-family model (Qwen3.8, Swift, Coder, Unsloth, Gyro) drafts with the
+  one layer upstream's setup builds. The first such download also fetches that layer's tensors from the original
+  Qwen3.8-Flash-Next checkpoint (5.2 GB, only those byte ranges of its shards, each checked by its SHA-256) and builds
+  it with `strata-prepare mtp` into `<folder>/mtp/rt`; later ones (and a folder that already holds upstream's
+  `mtp/rt`) use it. The list says what is already on this PC:
   **Downloaded**, or **Locally provided** for the same model added from a folder (no Download button for either), or
   **Other version on this PC** for a same-named file of another size (its Download fetches the catalog's). Each
   model family is a section you open (one with a download under way opens by itself; the page remembers the ones you
@@ -742,8 +745,8 @@ for a real install, which makes its own key at the first start.
   every family (Qwen, GLM, raon1, flint, Gemma 4, DeepSeek, MiniMax), with a switch on each card and in the chat; Qwen's and GLM's prompts tokenized exactly as
   upstream's and Maya's tokenizers do; pictures on Qwen cards (upstream's `strata-vision` beside the engine, the Vision
   files download, picture attachments in the chat; checked on Qwen3.8 IQ3_S on the GPU).
-- **Open:** DeepSeek and MiniMax end-to-end runs; GLM speed tuning; making Qwen3.8's MTP draft layer here (upstream's
-  three Python tools, natively; today it comes from upstream's setup); pictures on the other families; web search
+- **Open:** DeepSeek and MiniMax end-to-end runs; GLM speed tuning; a whole 5.2 GB fetch of the Qwen3.8 draft layer
+  (three of its tensors were fetched live from Hugging Face, byte-identical to upstream's); pictures on the other families; web search
   for DeepSeek and MiniMax checked on the GPU; several GPUs checked on a two-GPU PC, upstream's card order for a layer split (the faster
   card last), and a split for Gemma 4 and flint;
   long-prompt speed and long-context drift on raon1; Linux runs of the newest work; the server as a window with a

@@ -164,6 +164,9 @@ set(_me_install_targets multiengine ${_me_families} ${_me_prepare})
 # Maya's setup starts its families from (third_party/maya/data, MIT): the server passes expert-profile-glm.bin to every
 # GLM-5.3 launch, as Maya's setup writes it into every GLM config
 install(FILES data/expert-profile.bin data/expert-profile-coder.bin DESTINATION engine/profiles COMPONENT runtime)
+# the MTP draft layer's token subset upstream's setup copies into every mtp/rt (data/draft_vocab.bin, MIT; setup.py
+# refresh_draft_vocab, cjk by default), for strata-prepare mtp --draft-vocab (owner 2026-10-29)
+install(FILES data/draft_vocab.bin DESTINATION engine/data COMPONENT runtime)
 if(_me_external)
   install(FILES third_party/maya/data/expert-profile-glm.bin third_party/maya/data/expert-profile-ds4.bin
                 third_party/maya/data/expert-profile-mm3.bin DESTINATION engine/profiles COMPONENT runtime)

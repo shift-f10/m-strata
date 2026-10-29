@@ -142,10 +142,65 @@ std::optional<DownloadEntry> read_entry(const JsonValue& value) {
     if (std::any_of(e.files.begin(), e.files.end(), same) || gguf_shard_set(file->path).size() > 1U) return std::nullopt;
     e.mtp = std::move(*file);
   }
+  // owner 2026-10-29: the draft layer a packed Qwen3.8 model runs (the catalog's draft_layers name it)
+  if (const auto* layer = member(value, "draft_layer"); layer != nullptr && layer->kind() != JsonKind::null) {
+    if (layer->if_string() == nullptr || !valid_id(*layer->if_string()) || e.engine != "qwen" || e.prepare != "iq_pack") return std::nullopt;
+    e.draft_layer = *layer->if_string();
+  }
   return e;
 }
 
+// A tensor's name (mtp.<...>) and its shard's (<name>.safetensors): plain names, no folder
+bool tensor_name(const std::string_view name) {
+  return name.size() > 4U && name.size() <= 200U && name.starts_with("mtp.") && name.find("..") == std::string_view::npos &&
+         std::all_of(name.begin(), name.end(), [](const char c) {
+           return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_';
+         });
+}
+
+bool shard_name(const std::string_view name) {
+  return name.size() > 12U && name.size() <= 255U && name.ends_with(".safetensors") && name.front() != '.' &&
+         std::all_of(name.begin(), name.end(), [](const char c) {
+           return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+         });
+}
+
+// A draft layer of the catalog (owner 2026-10-29): its repository at a commit and 1..256 tensors, each pinned (a window
+// of a .safetensors shard, its size and SHA-256); nullopt when any of it is not.
+std::optional<CatalogDraftLayer> read_draft_layer(const std::string& id, const JsonValue& value) {
+  const auto repo = text(value, "repo");
+  const auto revision = text(value, "revision");
+  const auto* tensors = member(value, "tensors");
+  if (!valid_id(id) || !repo || !is_hf_repo(*repo) || !revision || !is_hf_commit(*revision) || tensors == nullptr ||
+      tensors->if_array() == nullptr || tensors->if_array()->empty() || tensors->if_array()->size() > 256U) {
+    return std::nullopt;
+  }
+  CatalogDraftLayer layer{id, *repo, *revision, {}};
+  std::set<std::string> names;
+  for (const auto& item : *tensors->if_array()) {
+    const auto name = text(item, "name");
+    const auto shard = text(item, "shard");
+    const auto sha = text(item, "sha256");
+    const auto* offset = member(item, "offset");
+    const auto* size = member(item, "size");
+    const auto* start = offset != nullptr ? offset->if_integer() : nullptr;
+    const auto* bytes = size != nullptr ? size->if_integer() : nullptr;
+    if (!name || !tensor_name(*name) || !shard || !shard_name(*shard) || !sha || !lower_hex64(*sha) || start == nullptr || *start < 0 ||
+        bytes == nullptr || *bytes < 1 || *bytes > (std::int64_t{1} << 40U) || !names.insert(*name).second) {
+      return std::nullopt;
+    }
+    layer.tensors.push_back(CatalogTensor{*name, *shard, static_cast<std::uint64_t>(*start), static_cast<std::uint64_t>(*bytes), *sha});
+  }
+  return layer;
+}
+
 }  // namespace
+
+const CatalogDraftLayer* find_draft_layer(const DownloadCatalog& catalog, const std::string_view id) noexcept {
+  const auto it = std::find_if(catalog.draft_layers.begin(), catalog.draft_layers.end(),
+                               [id](const CatalogDraftLayer& layer) { return layer.id == id; });
+  return it == catalog.draft_layers.end() ? nullptr : &*it;
+}
 
 DownloadCatalog parse_download_catalog(const std::string_view text_in) {
   DownloadCatalog catalog;
@@ -158,10 +213,16 @@ DownloadCatalog parse_download_catalog(const std::string_view text_in) {
       models->if_array() == nullptr) {
     return catalog;
   }
+  if (const auto* layers = member(*root, "draft_layers"); layers != nullptr && layers->if_object() != nullptr) {
+    for (const auto& layer : *layers->if_object()) {
+      if (auto read = read_draft_layer(layer.key, layer.value)) catalog.draft_layers.push_back(std::move(*read));
+    }
+  }
   std::set<std::string> ids;
   for (const auto& item : *models->if_array()) {
     auto entry = read_entry(item);
-    if (!entry || !ids.insert(entry->id).second) {
+    // an entry whose draft layer the catalog does not hold whole would run without it: not offered
+    if (!entry || !ids.insert(entry->id).second || (entry->draft_layer && find_draft_layer(catalog, *entry->draft_layer) == nullptr)) {
       ++catalog.dropped;
       continue;
     }

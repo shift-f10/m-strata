@@ -26,6 +26,13 @@ pinned (a 64-hex SHA-256; upstream: also a size and a 40-hex commit) is dropped 
 repository than the model (Unsloth's and Gyro's in ISTA-DASLab's, Maya-M-Derisked's in Maya's main repository).
 `mtp` (Gemma 4 only, owner 2026-10-28: "make sure we work that mtp in our gemma engine") is the model's MTP draft file
 in the same shape, always fetched with the model; null for every other entry.
+
+`draft_layers` (owner 2026-10-29: "check which models in the download needs draft layers ... configured correctly
+automatically"): every Qwen3.8-family entry (`draft_layer` names it; null for every other entry) drafts with the one MTP
+draft layer upstream's setup builds from Qwen3.8-Flash-Next's BF16 checkpoint - not a GGUF: the 31 mtp.* tensors, each a
+byte range of a .safetensors shard (the owner's extension of O4 for this layer alone), fetched as windows and built on
+this machine by `strata-prepare mtp`. Its revision and the tensors' SHA-256 are upstream/tools/mtp_fetch.py's
+PINNED_REVISION and SHA256; where each tensor lies is tools/secure/mtp_inventory.json (read at that revision).
 """
 
 from __future__ import annotations
@@ -84,6 +91,14 @@ RULES = {
         'download(fam["mmproj_hf"] + mmproj.name, mmproj, "vision encoder")',
         'pack = data / "packs" / tag.lower() # only the tokenizer: the engine reads the GGUF itself',
     ),
+    "mtp_fetch.py": (
+        # the checkpoint the tensors come from, at the pinned revision; every tensor checked against SHA256 (#327)
+        'PINNED = HF_ENDPOINT + "/Qwen/Qwen3.8-Flash-Next/resolve/%s/" % PINNED_REVISION',
+        'want = SHA256.get(r["name"]) if pinned() else None',
+        # a tensor is the byte range [start, end] of its shard: the shard's header length, then its data offsets
+        'rows.append(dict(name=name, shard=shard, dtype=meta["dtype"], shape=meta["shape"], start=base + a, end=base + b - 1, '
+        'bytes=b - a))',
+    ),
     "maya.py": (
         'HF = "https://huggingface.co/{repo}/resolve/{revision}/{path}"',
         'return HF.format(repo=repo, revision=revision, path=f"{folder}/{file}" if folder else file)',
@@ -96,7 +111,8 @@ RULES = {
 }
 # Names whose literal the catalog reads; any other assignment to them, anywhere in the file, is refused.
 READ = {"setup.py": ("MODELS", "FAMILIES", "OWN_PATH_FAMILIES", "REPO_PINS", "HF_REVISIONS"),
-        "maya.py": ("MODELS", "MODEL_NAME", "DS4_MODEL_NAME")}
+        "maya.py": ("MODELS", "MODEL_NAME", "DS4_MODEL_NAME"),
+        "mtp_fetch.py": ("PINNED_REVISION", "SHA256")}
 DS4_FAMILY = "deepseek"
 # MiniMax-M3.1-Flash (owner 2026-10-28): Maya v1.1.30's manifest, vendored in our copy of Maya's tree
 MM3_FAMILY = "minimax"
@@ -109,6 +125,12 @@ PIN_SOURCE = "m-strata"
 PIN_ENGINES = {"flint": "none", "gemma4": "none", "raon1": "maya_pack"}
 MTP_ENGINES = ("gemma4",)   # the engines that run an MTP draft file (--mtp <file>)
 PIN_KEYS = {"name", "family", "engine", "prepare", "license", "about", "repo", "revision", "files", "mtp"}
+# Qwen3.8's MTP draft layer (owner 2026-10-29): its id, checkpoint and tensors' places
+DRAFT_LAYER = "qwen3.8-flash-next-mtp"
+MTP_REPO = "Qwen/Qwen3.8-Flash-Next"
+MTP_INVENTORY = HERE / "mtp_inventory.json"
+TENSOR = re.compile(r"mtp\.[A-Za-z0-9_.]{1,200}")
+SAFETENSORS = re.compile(r"model-\d{5}-of-\d{5}\.safetensors")
 FILE_KEYS = ("path", "size", "sha256")
 MTP_FILE_KEYS = FILE_KEYS + ("repo", "revision")
 LICENSE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]{0,63}")   # an SPDX-style id, as Hugging Face's cardData.license
@@ -353,7 +375,7 @@ def upstream_entries(up: Source, notes: list[str]) -> list[dict]:
                     "revision": upstream_revision(revisions, repo), "files": files, "prepare": "iq_pack",
                     "pack_args": pack_args, "expert_profile": fam.get("profile", DEFAULT_PROFILE),
                     "mmproj": upstream_mmproj(pins, revisions, fam.get("mmproj_hf"), fam.get("mmproj"))
-                    if vision else None, "mtp": None})
+                    if vision else None, "mtp": None, "draft_layer": DRAFT_LAYER})
             except Dropped as why:
                 notes.append(f"dropped: strata {fam_key} {model}: {why}")
     for fam_key, fam in own.items():
@@ -372,7 +394,7 @@ def upstream_entries(up: Source, notes: list[str]) -> list[dict]:
                     # tokenizer only)
                     "prepare": "none", "pack_args": [], "expert_profile": None,
                     "mmproj": upstream_mmproj(pins, revisions, fam.get("mmproj_hf"), fam.get("mmproj"))
-                    if fam.get("vision") is not False else None, "mtp": None})
+                    if fam.get("vision") is not False else None, "mtp": None, "draft_layer": None})
             except Dropped as why:
                 notes.append(f"dropped: strata {fam_key} {model}: {why}")
     return out
@@ -423,7 +445,8 @@ def maya_entries(maya: Source, notes: list[str]) -> list[dict]:
                 "engine": "glm53", "about": ascii_text(spec["about"]), "repo": repo, "revision": rev, "files": files,
                 # Maya's GLM engine reads these from Maya's pack (maya.py pack_step), which the server builds with
                 # `strata-prepare download --maya` (owner 2026-10-27): runnable once packed
-                "prepare": "maya_pack", "pack_args": [], "expert_profile": None, "mmproj": mmproj, "mtp": None})
+                "prepare": "maya_pack", "pack_args": [], "expert_profile": None, "mmproj": mmproj, "mtp": None,
+                "draft_layer": None})
         except (Dropped, KeyError) as why:
             notes.append(f"dropped: maya {key}: {why if isinstance(why, Dropped) else f'no {why} in its entry'}")
     return out
@@ -459,7 +482,7 @@ def maya_ds4_entries(maya: Source, manifest: Path, notes: list[str]) -> list[dic
                     "id": f"{base}-{key.lower()}", "name": f"{doc['name']} {key}", "source": "maya", "family": DS4_FAMILY,
                     "engine": DS4_FAMILY, "about": about or ascii_text(spec["about"]), "repo": repo, "revision": rev,
                     "files": files, "prepare": "maya_pack", "pack_args": [], "expert_profile": None, "mmproj": None,
-                    "mtp": None})
+                    "mtp": None, "draft_layer": None})
             except (Dropped, KeyError) as why:
                 notes.append(f"dropped: maya deepseek {key}: {why if isinstance(why, Dropped) else f'no {why} in its entry'}")
     return out
@@ -492,7 +515,7 @@ def maya_mm3_entries(manifest: Path, notes: list[str]) -> list[dict]:
             out.append({
                 "id": key.lower(), "name": f"{name} {tier}", "source": "maya", "family": MM3_FAMILY, "engine": MM3_FAMILY,
                 "about": ascii_text(spec["about"]), "repo": repo, "revision": rev, "files": files, "prepare": "maya_pack",
-                "pack_args": [], "expert_profile": None, "mmproj": None, "mtp": None})
+                "pack_args": [], "expert_profile": None, "mmproj": None, "mtp": None, "draft_layer": None})
         except (Dropped, KeyError) as why:
             notes.append(f"dropped: maya minimax {key}: {why if isinstance(why, Dropped) else f'no {why} in its entry'}")
     return out
@@ -574,13 +597,42 @@ def pin_entries(pins: Path, notes: list[str]) -> list[dict]:
             out.append({
                 "id": key, "name": name, "source": PIN_SOURCE, "family": family, "engine": engine, "about": about,
                 "repo": repo, "revision": rev, "files": files, "prepare": prepare, "pack_args": [], "expert_profile": None,
-                "mmproj": None, "mtp": mtp})
+                "mmproj": None, "mtp": mtp, "draft_layer": None})
         except Dropped as why:
             notes.append(f"dropped: {PIN_SOURCE} {key}: {why}")
     return out
 
 
 # ------------------------------------------------------------------------------------------------ the catalog
+def draft_layers(fetch: Source, inventory: Path) -> dict:
+    """Qwen3.8's MTP draft layer: mtp_fetch.py's pinned revision and SHA-256 per tensor, joined with where each tensor
+    lies at that revision (mtp_inventory.json); sorted by name, as the tool fetches them."""
+    fetch.check_rules(RULES["mtp_fetch.py"])
+    revision, hashes = fetch.value("PINNED_REVISION"), fetch.value("SHA256")
+    if not isinstance(revision, str) or not HEX40.fullmatch(revision):
+        raise CatalogError("mtp_fetch.py: PINNED_REVISION is not a commit")
+    try:
+        inv = json.loads(inventory.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise CatalogError(f"{inventory.name}: cannot be read ({e.__class__.__name__})") from None
+    if inv.get("repo") != MTP_REPO or inv.get("revision") != revision:
+        raise CatalogError(f"{inventory.name}: not {MTP_REPO} at mtp_fetch.py's PINNED_REVISION")
+    rows = inv.get("tensors")
+    names = [r.get("name") for r in rows] if isinstance(rows, list) else []
+    if not isinstance(hashes, dict) or sorted(names) != sorted(hashes) or len(set(names)) != len(names):
+        raise CatalogError(f"{inventory.name}: its tensors are not mtp_fetch.py's SHA256 table's")
+    tensors = []
+    for r in sorted(rows, key=lambda r: r["name"]):
+        if set(r) != {"name", "shard", "offset", "size"} or not TENSOR.fullmatch(r["name"]) or \
+                not isinstance(r["shard"], str) or not SAFETENSORS.fullmatch(r["shard"]) or \
+                type(r["offset"]) is not int or r["offset"] < 0 or type(r["size"]) is not int or r["size"] < 1 or \
+                not isinstance(hashes[r["name"]], str) or not HEX64.fullmatch(hashes[r["name"]]):
+            raise CatalogError(f"{inventory.name}: {r.get('name')}: not a pinned tensor")
+        tensors.append({"name": r["name"], "shard": r["shard"], "offset": r["offset"], "size": r["size"],
+                        "sha256": hashes[r["name"]].lower()})
+    return {DRAFT_LAYER: {"repo": MTP_REPO, "revision": revision, "tensors": tensors}}
+
+
 def read_versions(upstream_version: Path, maya: Path) -> dict:
     try:
         up = upstream_version.read_text(encoding="ascii").strip()
@@ -594,7 +646,7 @@ def read_versions(upstream_version: Path, maya: Path) -> dict:
 
 
 def build(upstream: Path, maya: Path, upstream_version: Path, mm3_manifest: Path = MM3_MANIFEST,
-          pins: Path = PINS) -> tuple[dict, list[str]]:
+          pins: Path = PINS, inventory: Path = MTP_INVENTORY) -> tuple[dict, list[str]]:
     """The catalog document and the notes (what was left out by O4 and what was dropped, and why)."""
     notes: list[str] = []
     generated_from = read_versions(upstream_version, maya)
@@ -607,7 +659,9 @@ def build(upstream: Path, maya: Path, upstream_version: Path, mm3_manifest: Path
     if bad or len(set(ids)) != len(ids):
         raise CatalogError(f"catalog ids are not unique [a-z0-9._-]{{1,64}}: {sorted(set(bad) or ids)}")
     models.sort(key=lambda m: m["id"])
-    return {"schema_version": SCHEMA_VERSION, "generated_from": generated_from, "models": models}, notes
+    layers = draft_layers(Source(upstream / "tools" / "mtp_fetch.py"), inventory)
+    return {"schema_version": SCHEMA_VERSION, "generated_from": generated_from, "models": models,
+            "draft_layers": layers}, notes
 
 
 def render(doc: dict) -> bytes:

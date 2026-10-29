@@ -59,5 +59,9 @@ struct HeadDecision final {
 
 // Spec §3.4 status table.
 [[nodiscard]] HeadDecision classify_head(const ResponseHead& head, const HopExpectation& expectation);
+// A hop for a window of its source (ManifestFile::source_offset; owner 2026-10-29): bytes [first, last] asked for. Only
+// a 206 of exactly that range (of any total past it, the Content-Length its size) is written; a 200 is a range_mismatch,
+// never a restart from byte 0 (the whole source is not the file); redirects and failures as classify_head.
+[[nodiscard]] HeadDecision classify_window_head(const ResponseHead& head, std::uint64_t first, std::uint64_t last);
 
 }  // namespace secure_frontend

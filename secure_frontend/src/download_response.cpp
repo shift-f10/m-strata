@@ -158,4 +158,23 @@ HeadDecision classify_head(const ResponseHead& head, const HopExpectation& expec
   return fail(AcquireReason::http_status, status);
 }
 
+HeadDecision classify_window_head(const ResponseHead& head, const std::uint64_t first, const std::uint64_t last) {
+  const int status = head.status;
+  if (status == 200) return fail(AcquireReason::range_mismatch, status);   // the whole source, not the window
+  if (status != 206) return classify_head(head, HopExpectation{last + 1U - first, first});   // redirects and failures
+  const auto lengths = header_values(head, "content-length");
+  if (lengths.size() > 1) return fail(AcquireReason::response_malformed, status);
+  if (lengths.size() == 1) {
+    const auto length = parse_decimal(lengths.front());
+    if (!length) return fail(AcquireReason::response_malformed, status);
+    if (*length != last + 1U - first) return fail(AcquireReason::size_mismatch_announced, status);
+  }
+  const auto ranges = header_values(head, "content-range");
+  const std::string prefix = "bytes " + std::to_string(first) + "-" + std::to_string(last) + "/";
+  if (ranges.size() != 1 || !ranges.front().starts_with(prefix)) return fail(AcquireReason::range_mismatch, status);
+  const auto total = parse_decimal(ranges.front().substr(prefix.size()));
+  if (!total || *total <= last) return fail(AcquireReason::range_mismatch, status);
+  return HeadDecision{HeadAction::write_body, AcquireReason::response_malformed, false, {}, status};
+}
+
 }  // namespace secure_frontend

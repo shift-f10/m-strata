@@ -209,6 +209,12 @@ void manifest_field_rules_matrix() {
       {"files[0].sources[0]", "http source", [](auto& m) { m.files[0].sources = {"http://fixture.example/a"}; }},
       {"files[0].sources[0]", "[ in source URL", [](auto& m) { m.files[0].sources = {"https://fixture.example/a[1]"}; }},
       {"files[0].sources[0]", "source host not in hosts", [](auto& m) { m.files[0].sources = {"https://other.example/a"}; }},
+      // owner 2026-10-29: a window of its source (Qwen3.8's MTP tensors) has a source and lies inside 2^62
+      {"files[0].source_offset", "a window with no source", [](auto& m) {
+         m.files[0].source_offset = 5U;
+         m.files[0].sources.clear();
+       }},
+      {"files[0].source_offset", "a window past 2^62", [](auto& m) { m.files[0].source_offset = std::uint64_t{1} << 62U; }},
       {"files[0].sources", "9 sources", [](auto& m) { m.files[0].sources.assign(9, "https://fixture.example/a"); }},
       {"files[0].license.url", "file license validated",
        [](auto& m) { m.files[0].license = secure_frontend::ManifestLicense{"MIT", "ftp://x", true, ""}; }},
@@ -605,6 +611,49 @@ void gemma4_launch_keys_are_text_only() {
   expect(!secure_frontend::validate_manifest(sharded, rules()).has_value(), "a sharded gemma4 weights set is valid");
 }
 
+// Owner 2026-10-29 (Qwen3.8's MTP draft layer): the mtp profile lists only the draft layer's tensors - weights at
+// tensors/<name>.bin, each a window of its checkpoint shard - with no launch keys and the family none (never launched;
+// strata-prepare mtp builds the layer from them).
+void an_mtp_manifest_lists_only_windows_of_tensors() {
+  AcquireManifest m;
+  m.name = "qwen3.8-flash-next-mtp";
+  m.tag = "download";
+  m.version = "2026.10.29.1";
+  m.sequence = 1;
+  m.profile = ManifestProfile::mtp;
+  m.family = secure_frontend::ManifestFamily::none;
+  m.license = {"Apache-2.0", "https://fixture.example/license", false, "Notice."};
+  m.hosts = {"fixture.example"};
+  m.redirect_hosts = {"*.cdn.fixture.example"};
+  const auto tensor = [](const std::string& name) {
+    auto f = secure_frontend::ManifestFile{"tensors/" + name + ".bin", FileRole::weights, 10, hex64('a'),
+                                           {"https://fixture.example/model-00001-of-00002.safetensors"}, std::nullopt};
+    f.source_offset = 4096U;
+    return f;
+  };
+  m.files = {tensor("mtp.fc_hidden.weight"), tensor("mtp.layers.0.mlp.experts.down_proj")};
+  const auto issue = secure_frontend::validate_manifest(m, rules());
+  expect(!issue.has_value(), "the draft layer's tensors are a valid mtp manifest: " + (issue ? issue->key_path : std::string{}));
+  const auto with = [&m](const std::function<void(AcquireManifest&)>& change) {
+    AcquireManifest changed = m;
+    change(changed);
+    return changed;
+  };
+  expect_issue(with([](auto& x) { x.files[0].role = FileRole::pack; }), "files[0].role", "mtp lists only weights");
+  expect_issue(with([](auto& x) { x.files[0].path = "weights/mtp.fc_hidden.weight.bin"; }), "files[0].path", "only tensors/");
+  expect_issue(with([](auto& x) { x.files[0].path = "tensors/sub/x.bin"; }), "files[0].path", "no folder below tensors/");
+  expect_issue(with([](auto& x) { x.files[0].path = "tensors/x.gguf"; }), "files[0].path", "only .bin");
+  expect_issue(with([](auto& x) { x.files[1].source_offset.reset(); }), "files[1].source_offset", "only windows of their sources");
+  expect_issue(with([](auto& x) { x.launch.native = "tensors/mtp.fc_hidden.weight.bin"; }), "launch", "no launch keys");
+  expect_issue(with([](auto& x) { x.family = secure_frontend::ManifestFamily::strata; }), "engine.family", "the family none");
+  // the JSON names it
+  const std::string text = replaced(replaced(base_manifest(), "\"profile\": \"qwen\"", "\"profile\": \"mtp\""), "\"family\": \"strata\"",
+                                    "\"family\": \"none\"");
+  const auto parsed = secure_frontend::parse_manifest(text, secure_frontend::ManifestRules{});
+  const auto* problem = std::get_if<secure_frontend::ManifestIssue>(&parsed);
+  expect(problem == nullptr || problem->key_path != "profile", "the profile is named mtp in the JSON");
+}
+
 void base_manifest_parses() {
   const auto result = secure_frontend::parse_manifest(base_manifest(), secure_frontend::ManifestRules{});
   const auto* parsed = std::get_if<secure_frontend::ParsedManifest>(&result);
@@ -612,7 +661,15 @@ void base_manifest_parses() {
   if (parsed != nullptr) {
     expect(parsed->manifest.files.size() == 4 && parsed->manifest.files[1].sources.empty(), "sourceless file kept");
     expect(parsed->bytes == base_manifest(), "exact bytes kept");
+    expect(!parsed->manifest.files[0].source_offset.has_value(), "a whole source: no window");
   }
+  // owner 2026-10-29: a window of its source (bytes 1234.. of it)
+  const std::string base = base_manifest();
+  const std::string windowed = replaced(base, "\"size\": 1, \"sha256\": \"" + std::string(64, 'a'),
+                                        "\"source_offset\": 1234, \"size\": 1, \"sha256\": \"" + std::string(64, 'a'));
+  const auto window = secure_frontend::parse_manifest(windowed, secure_frontend::ManifestRules{});
+  const auto* with = std::get_if<secure_frontend::ParsedManifest>(&window);
+  expect(with != nullptr && with->manifest.files[0].source_offset == std::optional<std::uint64_t>{1234U}, "a window parses");
 }
 
 // Spec §10.3 DL-03 matrix.
@@ -645,6 +702,12 @@ void dl03_invalid_manifest_matrix() {
       {"BOM", "\xEF\xBB\xBF" + base, "manifest"},
       {"P1 reserved device component", replaced(base, "pack/index.txt\"", "pack/con.txt\""), "files[2].path"},
       {"P1 trailing dot", replaced(base, "pack/index.txt\"", "pack/index.\""), "files[2].path"},
+      {"negative window", replaced(base, "\"size\": 1, \"sha256\": \"" + std::string(64, 'a'),
+                                     "\"source_offset\": -1, \"size\": 1, \"sha256\": \"" + std::string(64, 'a')),
+       "files[0].source_offset"},
+      {"string window", replaced(base, "\"size\": 1, \"sha256\": \"" + std::string(64, 'a'),
+                                   "\"source_offset\": \"5\", \"size\": 1, \"sha256\": \"" + std::string(64, 'a')),
+       "files[0].source_offset"},
   };
   for (const auto& c : cases) {
     expect(rejected(c.text), "manifest_invalid: " + c.why);
@@ -783,6 +846,7 @@ int main(int argc, char** argv) {
 #endif
       {"engine_version_parsed_with_fourth_component", engine_version_parsed_with_fourth_component},
       {"base_manifest_parses", base_manifest_parses},
+      {"an_mtp_manifest_lists_only_windows_of_tensors", an_mtp_manifest_lists_only_windows_of_tensors},
       {"dl03_invalid_manifest_matrix", dl03_invalid_manifest_matrix},
       {"dl03_http_url_rejected", dl03_http_url_rejected},
       {"manifest_identity_is_sha256_of_exact_bytes", manifest_identity_is_sha256_of_exact_bytes},

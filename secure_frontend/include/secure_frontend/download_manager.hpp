@@ -169,7 +169,9 @@ class DownloadManager final {
   void run();
   void run_card(std::size_t index);
   [[nodiscard]] bool resolve_main(Card& card, std::string& error);
-  [[nodiscard]] bool pull(std::size_t index, const HfDownload& download, std::string& error);
+  // One strata pull of `download`; its bytes are counted after the card's first `base` (a download's second pull: a
+  // Qwen3.8 model's draft layer after the model, owner 2026-10-29).
+  [[nodiscard]] bool pull(std::size_t index, const HfDownload& download, std::string& error, std::uint64_t base = 0);
   [[nodiscard]] bool prepare(std::size_t index, const HfDownload& download, std::string& error);
   [[nodiscard]] bool gguf_card(std::size_t index, std::string& error);
   // strata-prepare (owner 2026-10-27, no Python): beside the engine for new cards (models.default_engine), with the
@@ -177,6 +179,13 @@ class DownloadManager final {
   [[nodiscard]] std::optional<std::filesystem::path> native_prepare_tool() const;
   [[nodiscard]] bool native_prepare_ready(const DownloadEntry& entry) const;
   [[nodiscard]] bool native_prepare(std::size_t index, std::string& error);
+  // Owner 2026-10-29: a Qwen3.8 model's draft layer when the catalog names one and none is built: its tensors pulled (an
+  // mtp manifest, windows of the checkpoint's shards), then built into <store>/mtp/rt by strata-prepare mtp with the
+  // vocabulary beside the engine (data/draft_vocab.bin). The runtime folder, else nullopt with `error`.
+  [[nodiscard]] std::optional<std::filesystem::path> build_draft_layer(std::size_t index, const DownloadEntry& entry,
+                                                                       const std::filesystem::path& store, std::string& error);
+  // The bytes of the entry's draft layer still to fetch: its tensors while the downloads folder has no layer built, else 0.
+  [[nodiscard]] std::uint64_t draft_layer_bytes(const DownloadEntry& entry) const;
   // A GLM-5.3, raon-1-mini, DeepSeek-V4.1 or MiniMax-M3.1 download (prepare maya_pack) is packed with it as Maya's setup
   // packs it (strata-prepare download --maya).
   [[nodiscard]] bool maya_prepare_ready(const DownloadEntry& entry) const;
