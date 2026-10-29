@@ -1898,10 +1898,8 @@ if(STRATA_NATIVE_EXPERTS)
     # NVFP4: W4A8 (default) in mmq_nvfp4_w4a8.cu with the plain architectures; the opt-in W4A4 needs RTX 50's FP4 MMA,
     # which exists only in the arch-specific target, so its one unit alone is built with 12x -> 12xa (the default
     # binary is unchanged and runs on sm_121; a card without that image falls back to W4A8 at run time)
-    set(_strata_w4a4_archs ${CMAKE_CUDA_ARCHITECTURES})
-    # (two steps: CMake before 3.29 rejects a \2 whose optional group did not match, "120" alone)
-    list(TRANSFORM _strata_w4a4_archs REPLACE "^(12[0-9])$" "\\1a")
-    list(TRANSFORM _strata_w4a4_archs REPLACE "^(12[0-9])-(real|virtual)$" "\\1a-\\2")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/strata_fp4_archs.cmake)
+    strata_fp4_cuda_archs(_strata_w4a4_archs)
     add_library(strata_mmq_w4a4 STATIC src/prefill/mmq_nvfp4_w4a4.cu)
     set_target_properties(strata_mmq_w4a4 PROPERTIES CUDA_ARCHITECTURES "${_strata_w4a4_archs}")
     target_include_directories(strata_mmq_w4a4 PRIVATE ${_strata_gg}/include ${_strata_gg}/src ${_strata_mmq})

@@ -1,6 +1,6 @@
 @echo off
 rem make.bat - build every binary and engine into one runtime-only folder (make.py; Windows).
-rem   make.bat --out D:\M-Strata-app [--ggml-dir D:\llama.cpp] [--cuda-arch native] [--without maya] [--with email,search]
+rem   make.bat --out D:\M-Strata-app [--ggml-dir D:\llama.cpp] [--cuda-arch auto] [--without maya] [--with email,search]
 rem See `make.bat --help`. Runs make.py with the repository's dev Python when there is one, else py -3 or python - one
 rem of them only, so a make that fails is never run a second time (no `a && b || c`, which runs c when b fails).
 setlocal

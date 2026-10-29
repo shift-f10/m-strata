@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """make.py - build every binary and engine into one folder that holds only what runs them (Windows and Linux).
 
-    python make.py --out DIR [--ggml-dir DIR] [--cuda-root DIR] [--cuda-arch native|"86;89"]
+    python make.py --out DIR [--ggml-dir DIR] [--cuda-root DIR] [--cuda-arch auto|compatible|"86;89"]
                    [--without maya,raon1,vision] [--with email,search] [--no-cuda-runtime] [--build-dir DIR] [--engine-build-dir DIR]
                    [--jobs N] [--cmake EXE] [--plan]
 
@@ -65,6 +65,73 @@ def _posix(text: str) -> str:
     return text.replace("\\", "/")
 
 
+# The GPU targets when none are given (owner 2026-10-29: "it should detect what card I have", then "to make it
+# lightweight ... detect the card and target that specifically, and if there is multiple cards, only those card types",
+# and "if they have unsupported cards, then we compile to only supported ones and if none is present we say no supported
+# card detected"): each supported card type nvidia-smi reports (compute capability 7.5 or newer, the engines' own rule),
+# once, as a number with its machine code only - CMake's "native" had left the NVFP4 W4A4 unit at a plain sm_120 on an
+# RTX 5090, which ptxas refuses. --cuda-arch compatible is every generation the engines build for - Turing, Ampere (A100,
+# RTX 30), Ada, Hopper, Blackwell (RTX 50), all built here 2026-10-29 - with PTX for the newest, which later GPUs compile
+# at load.
+OLDEST_SUPPORTED_GPU = 75
+COMPATIBLE_GPUS = (75, 80, 86, 89, 90, 120)
+NO_SUPPORTED_GPU = ("make: no supported NVIDIA card detected (the engines need compute capability 7.5 or newer: the RTX 20 "
+                    "series and later). To build anyway, name the targets: --cuda-arch compatible (every generation) or "
+                    "a list such as --cuda-arch \"86;89\"")
+
+
+def compute_capabilities_from(text: str) -> list[str]:
+    """nvidia-smi --query-gpu=compute_cap's lines ("12.0", one per GPU); anything else (N/A, [Not Supported]) is skipped."""
+    found = []
+    for line in text.splitlines():
+        major, dot, minor = line.strip().partition(".")
+        if dot and major.isdigit() and minor.isdigit():
+            found.append(line.strip())
+    return found
+
+
+def gpu_compute_capabilities() -> list[str]:
+    smi = shutil.which("nvidia-smi")
+    if not smi:
+        return []
+    try:
+        done = subprocess.run([smi, "--query-gpu=compute_cap", "--format=csv,noheader"], capture_output=True, text=True,
+                              timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return compute_capabilities_from(done.stdout) if done.returncode == 0 else []
+
+
+def cuda_targets(given: str) -> str:
+    """--cuda-arch: "auto" is this PC's supported card types (none: make stops), "compatible" every generation the
+    engines build for; anything else is passed to CMake as it is."""
+    if given == "compatible":
+        return ";".join([f"{target}-real" for target in COMPATIBLE_GPUS[:-1]] + [str(COMPATIBLE_GPUS[-1])])
+    if given != "auto":
+        return given
+    found = {int(major) * 10 + int(minor) for major, _, minor in (cap.partition(".") for cap in gpu_compute_capabilities())}
+    supported = sorted(target for target in found if target >= OLDEST_SUPPORTED_GPU)
+    for target in sorted(found - set(supported)):
+        print(f"make: leaving out a card of compute capability {target // 10}.{target % 10} (older than the engines support)",
+              flush=True)
+    if not supported:
+        raise SystemExit(NO_SUPPORTED_GPU)
+    return ";".join(f"{target}-real" for target in supported)
+
+
+def run_cuda_build(command: list[str], jobs: int, env: dict[str, str], plan: bool) -> None:
+    """A CUDA build at `jobs`, and once more at a quarter of them when it stops: under many parallel jobs CUDA's compiler
+    can die (here 2026-10-29: ptxas 0xC0000005 and cicc 0xC0000374 on two of llama.cpp's MMQ units, both built at 4)."""
+    try:
+        run([*command, "-j", str(jobs)], env, plan)
+    except subprocess.CalledProcessError:
+        if jobs <= 1:
+            raise
+        fewer = max(1, jobs // 4)
+        print(f"make: the build stopped; trying once more with {fewer} jobs (what is built is kept)", flush=True)
+        run([*command, "-j", str(fewer)], env, plan)
+
+
 def parse_args(argv: list[str], platform: str | None = None) -> Options:
     platform = platform or host_platform()
     ap = argparse.ArgumentParser(prog="make", description="Build every binary and engine into one runtime-only folder.")
@@ -73,7 +140,9 @@ def parse_args(argv: list[str], platform: str | None = None) -> Options:
                     help="the pinned llama.cpp checkout the engine builds ggml from (env STRATA_GGML_DIR)")
     ap.add_argument("--cuda-root", default=os.environ.get("CUDA_PATH", os.environ.get("CUDA_HOME", "")),
                     help="the CUDA toolkit (env CUDA_PATH / CUDA_HOME)")
-    ap.add_argument("--cuda-arch", default="native", help='GPU targets: "native" (this PC\'s GPU) or e.g. "86;89;120"')
+    ap.add_argument("--cuda-arch", default="auto",
+                    help='GPU targets: "auto" (each supported card type this PC has), "compatible" (every generation the '
+                         'engines build for: Turing to Blackwell), or a list such as "86;89;120"')
     ap.add_argument("--without", default="", help="families (or the picture encoder) to leave out: " + ", ".join(LEAVE_OUT))
     ap.add_argument("--with", dest="with_features", default="",
                     help="optional features to build in (off otherwise): " + ", ".join(OPTIONAL_FEATURES))
@@ -99,7 +168,7 @@ def parse_args(argv: list[str], platform: str | None = None) -> Options:
         raise SystemExit("make: --cuda-root (or CUDA_PATH) names the CUDA toolkit")
     build_dir = args.build_dir.absolute()
     return Options(out=args.out.absolute(), ggml_dir=_posix(args.ggml_dir), cuda_root=_posix(args.cuda_root),
-                   cuda_arch=args.cuda_arch, without=without, with_features=with_features,
+                   cuda_arch=cuda_targets(args.cuda_arch), without=without, with_features=with_features,
                    cuda_runtime=not args.no_cuda_runtime,
                    build_dir=build_dir,
                    engine_build_dir=(args.engine_build_dir or build_dir / "engine").absolute(), jobs=max(1, args.jobs),
@@ -501,10 +570,12 @@ def main(argv: list[str] | None = None) -> int:
     ninja = shutil.which("ninja", path=env.get("PATH")) or str(Path(cmake).parent / ("ninja.exe" if os.name == "nt" else "ninja"))
     stage = opts.build_dir / ("stage-" + time.strftime("%Y%m%d-%H%M%S"))
     jobs = ["-j", str(opts.jobs)]
+    print(f"make: GPU targets {opts.cuda_arch}", flush=True)
 
     run([cmake, *engine_configure_args(opts, platform), *make_program_args(opts.engine_build_dir, ninja)], env,
         opts.plan)
-    run([cmake, "--build", str(opts.engine_build_dir), "--target", "multiengine", "strata_kq", *jobs], env, opts.plan)
+    run_cuda_build([cmake, "--build", str(opts.engine_build_dir), "--target", "multiengine", "strata_kq"], opts.jobs, env,
+                   opts.plan)
     run([cmake, "--install", str(opts.engine_build_dir), "--prefix", str(stage), "--component", "runtime"], env, opts.plan)
     if opts.cuda_runtime:
         run([cmake, "--install", str(opts.engine_build_dir), "--prefix", str(stage), "--component", "cuda"], env,
@@ -513,7 +584,8 @@ def main(argv: list[str] | None = None) -> int:
         # upstream's picture encoder, into engine/ beside the launcher (it has no install rules: its one program is copied)
         run([cmake, *vision_configure_args(opts, platform), *make_program_args(opts.build_dir / "vision", ninja)], env,
             opts.plan)
-        run([cmake, "--build", str(opts.build_dir / "vision"), "--target", "strata-vision", *jobs], env, opts.plan)
+        run_cuda_build([cmake, "--build", str(opts.build_dir / "vision"), "--target", "strata-vision"], opts.jobs, env,
+                       opts.plan)
         program = "strata-vision" + (".exe" if platform == "windows" else "")
         print(f"+ copy {opts.build_dir / 'vision' / 'bin' / program} {stage / 'engine' / program}", flush=True)
         if not opts.plan:

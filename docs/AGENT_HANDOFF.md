@@ -280,6 +280,37 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z27 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner's install.bat on an RTX 5090, after z26: ptxas "Instruction 'mma with block scale' not supported on .target
+'sm_120'" in `mmq_nvfp4_w4a4.cu`; then "it should detect what card I have, it should also compile for turing", "detect
+and build all nvidia compatible if possible", "to make it lightweight ... detect the card and target that
+specifically, and if there is multiple cards, only those card types", and "if they have unsupported cards, then we
+compile to only supported ones and if none is present we say no supported card detected".
+
+- **The cause**: make passed `--cuda-arch native`, and the rule that builds the two NVFP4 W4A4 units (`strata_mmq_w4a4`,
+  gemma4's `g4core_w4a4`) for the arch-specific `sm_12xa` rewrote only a literal `12x`: with `native` on an RTX 50
+  they were compiled for a plain `sm_120`, and ptxas refuses RTX 50's FP4 MMA there. This PC (RTX 4080 SUPER, sm_89)
+  never enters that code. Reproduced with nvcc on the unit: `-arch=sm_120` gives the owner's errors; CMake's `120a`
+  form and `75;120a` compile.
+- **The FP4 units**: `engine/cmake/strata_fp4_archs.cmake` (`strata_fp4_cuda_archs`) spells out `native`, `all` and
+  `all-major` with CMake's own lists before `12x` becomes `12xa`; both units use it.
+- **make's targets** (`--cuda-arch`, default `auto`): each supported card type nvidia-smi reports (compute capability
+  7.5 or newer, the engines' own rule), once, as `NN-real` (machine code only); older cards are left out with a line,
+  and with none make stops: "no supported NVIDIA card detected", naming `--cuda-arch`. `compatible` is every generation
+  the engines build for, `75;80;86;89;90-real` and `120` (PTX on the newest only). A list is passed as it is. make
+  prints its targets.
+- **CUDA builds** (the engine, the picture encoder) run once more at a quarter of the jobs when they stop: under 20
+  jobs the six-target build here had ptxas 0xC0000005 and cicc 0xC0000374 on two of llama.cpp's MMQ units, which then
+  built at 4 jobs; a second failure stops make.
+- **Proof**: RED first (the auto, compatible and no-card cases; the FP4 function through `cmake -P`; the retry). The
+  make and install tests 38/38 on Windows and Linux. Live: every engine (`multiengine` and `strata_kq`: Strata, Gemma 4,
+  flint, raon1, Maya's GLM, DeepSeek and MiniMax) built here for `75;80;86;89;90;120` (33 minutes at 20 jobs; the two
+  compiler crashes rebuilt at 4); the 5090's configuration (`120-real`) gives 175 units `sm_120` and the two FP4 units
+  `sm_120a`, both built. With PTX for every target the engine libraries were about 7.5 times larger
+  (`multiengine_strata` 49 to 372 MiB); `compatible` keeps PTX for the newest only (not measured). Not run: the 5090
+  PC's build, any card but the 4080 SUPER, the picture encoder for other targets.
+
 ### Claude Code session, 2026-10-29 z26 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner's install.bat on another PC, after z25 (its plan found the Visual Studio C++ tools): "make: ... vcvars64.bat

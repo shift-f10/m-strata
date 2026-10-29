@@ -7,8 +7,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location("strata_make", ROOT / "make.py")
@@ -17,6 +21,12 @@ sys.modules["strata_make"] = make
 _spec.loader.exec_module(make)
 
 HOOK_MARKER = b"SECURE_FRONTEND_TEST_" + b"HOOKS_COMPILED_IN"
+
+
+@pytest.fixture(autouse=True)
+def an_rtx_5090(monkeypatch):
+    """The GPUs make finds (nvidia-smi's compute capabilities): one RTX 5090 unless a case says otherwise."""
+    monkeypatch.setattr(make, "gpu_compute_capabilities", lambda: ["12.0"], raising=False)
 
 
 def options(*extra: str, platform: str = "windows"):
@@ -33,9 +43,91 @@ def test_engine_configure_is_the_tested_box_build():
                      "-DSTRATA_BUILD_MAYA=ON", "-DSTRATA_BUILD_RAON1=ON", "-DSTRATA_GLM_WERROR=OFF",
                      "-DMULTIENGINE_BUNDLE_CUBLAS=ON", "-DSTRATA_GGML_DIR=G:/llama.cpp",
                      "-DCUDAToolkit_ROOT=C:/CUDA/v13.0", "-DCMAKE_CUDA_COMPILER=C:/CUDA/v13.0/bin/nvcc.exe",
-                     "-DCMAKE_CUDA_ARCHITECTURES=native"):
+                     "-DCMAKE_CUDA_ARCHITECTURES=120-real"):
         assert expected in args, expected
     assert args[args.index("-G") + 1] == "Ninja"
+
+
+EVERY_GENERATION = "75-real;80-real;86-real;89-real;90-real;120"
+
+
+def test_the_gpu_targets_are_this_pcs_card_types(monkeypatch):
+    """Owner 2026-10-29 ("I am building it for a 5090, it should detect what card I have"; a native build stopped in
+    ptxas on it; then "to make it lightweight ... detect the card and target that specifically, and if there is multiple
+    cards, only those card types"; "if they have unsupported cards, then we compile to only supported ones and if none is
+    present we say no supported card detected"): by default each supported card type nvidia-smi reports (compute
+    capability 7.5 or newer, the engines' own rule), once, as an explicit number with its machine code only; others are
+    left out, and with none make stops and says so. --cuda-arch compatible is every generation the engines build for -
+    Turing, Ampere, Ada, Hopper, Blackwell, all built here 2026-10-29 - with PTX for the newest, which later GPUs compile
+    at load. A list given is kept."""
+    for found, targets in ((["12.0"], "120-real"), (["8.9", "12.0", "12.0"], "89-real;120-real"), (["7.5"], "75-real"),
+                           (["12.1", "8.6"], "86-real;121-real"), (["6.1", "12.0", "7.0"], "120-real")):
+        monkeypatch.setattr(make, "gpu_compute_capabilities", lambda found=found: found)
+        assert options().cuda_arch == targets, (found, options().cuda_arch)
+    for found in ([], ["6.1"], ["6.1", "7.0"]):
+        monkeypatch.setattr(make, "gpu_compute_capabilities", lambda found=found: found)
+        with pytest.raises(SystemExit) as stopped:
+            options()
+        assert "no supported NVIDIA card detected" in str(stopped.value) and "--cuda-arch" in str(stopped.value), found
+
+    def never():
+        raise AssertionError("a list given is not looked up")
+    monkeypatch.setattr(make, "gpu_compute_capabilities", never)
+    assert options("--cuda-arch", "86;89").cuda_arch == "86;89" and options("--cuda-arch", "native").cuda_arch == "native"
+    assert options("--cuda-arch", "compatible").cuda_arch == EVERY_GENERATION
+
+
+def test_a_crashed_cuda_build_is_tried_once_more_with_fewer_jobs(monkeypatch):
+    """The every-generation engine build here (2026-10-29, 20 jobs): CUDA's compiler died on two of llama.cpp's MMQ units
+    (ptxas 0xC0000005, cicc 0xC0000374) and built them at 4 jobs. A failed CUDA build runs once more with a quarter of
+    the jobs (what is built is kept); a second failure stops make, and one job has nothing fewer to try."""
+    calls = []
+
+    def flaky(command, env, plan):
+        calls.append(list(command))
+        if len(calls) == 1:
+            raise subprocess.CalledProcessError(1, command)
+    monkeypatch.setattr(make, "run", flaky)
+    make.run_cuda_build(["cmake", "--build", "b", "--target", "multiengine"], 32, {}, False)
+    assert [c[-2:] for c in calls] == [["-j", "32"], ["-j", "8"]] and calls[1][:5] == ["cmake", "--build", "b", "--target", "multiengine"]
+
+    def broken(command, env, plan):
+        calls.append(list(command))
+        raise subprocess.CalledProcessError(1, command)
+    monkeypatch.setattr(make, "run", broken)
+    for jobs, tries in ((32, 2), (1, 1)):
+        calls.clear()
+        with pytest.raises(subprocess.CalledProcessError):
+            make.run_cuda_build(["cmake", "--build", "b"], jobs, {}, False)
+        assert len(calls) == tries, (jobs, calls)
+
+
+def test_nvidia_smis_compute_capabilities_are_read():
+    assert make.compute_capabilities_from("12.0\r\n8.9\n\n  7.5 \nN/A\n[Not Supported]\n") == ["12.0", "8.9", "7.5"]
+    assert make.compute_capabilities_from("") == []
+
+
+def test_the_fp4_units_get_the_arch_specific_targets(tmp_path):
+    """RTX 50's FP4 MMA (mma with block scale) exists only in the arch-specific sm_12xa, and a plain sm_120 is refused by
+    ptxas (the 5090's native build): engine/cmake/strata_fp4_archs.cmake gives the two NVFP4 W4A4 units the build's
+    targets with "native" / "all" spelled out by CMake and every 12x made 12xa; older targets stay as they are."""
+    cmake = shutil.which("cmake") or str(Path(sys.executable).parent / ("cmake.exe" if sys.platform == "win32" else "cmake"))
+    if not Path(cmake).exists() and not shutil.which("cmake"):
+        pytest.skip("cmake is not installed")
+    module = (ROOT / "engine" / "cmake" / "strata_fp4_archs.cmake").as_posix()
+    cases = (("75;120", "", "75;120a"), ("120-real;89-virtual", "", "120a-real;89-virtual"), ("native", "120-real", "120a-real"),
+             ("native", "89-real", "89-real"), ("75;native", "120-real;86-real", "75;120a-real;86-real"), ("121", "", "121a"))
+    for given, native, expected in cases:
+        script = tmp_path / "probe.cmake"
+        script.write_text(f'set(CMAKE_CUDA_ARCHITECTURES "{given}")\nset(CMAKE_CUDA_ARCHITECTURES_NATIVE "{native}")\n'
+                          f'include("{module}")\nstrata_fp4_cuda_archs(result)\nmessage(STATUS "FP4=[${{result}}]")\n',
+                          encoding="utf-8")
+        done = subprocess.run([cmake, "-P", str(script)], capture_output=True, text=True, timeout=60, check=False)
+        assert done.returncode == 0, done.stderr
+        assert f"FP4=[{expected}]" in done.stdout + done.stderr, (given, native, done.stdout, done.stderr)
+    for listing in ("engine/CMakeLists.txt", "engine/src/gemma4/CMakeLists.txt"):
+        text = (ROOT / listing).read_text(encoding="utf-8")
+        assert "strata_fp4_cuda_archs(" in text and 'REPLACE "^(12[0-9])$"' not in text, listing
 
 
 def test_an_existing_build_never_gets_its_compiler_respelled(tmp_path):
@@ -320,7 +412,7 @@ def test_the_build_record_names_each_engine_and_its_source(tmp_path):
     assert record["schema_version"] == 1 and record["commit"] == "0123456789ab" and record["built"] == "2026-10-27T23:00:00Z"
     ggml = (ROOT / "engine" / "third_party" / "ggml" / "VERSION.txt").read_text(encoding="utf-8").split()[0][:12]
     maya = (ROOT / "engine" / "third_party" / "maya" / "VERSION").read_text(encoding="utf-8").strip()
-    assert record["ggml"] == ggml and record["cuda_arch"] == "native" and record["features"] == []
+    assert record["ggml"] == ggml and record["cuda_arch"] == "120-real" and record["features"] == []
     engines = {e["library"]: e for e in record["engines"]}
     assert list(engines) == ["multiengine_strata.dll", "multiengine_gemma4.dll", "multiengine_flint.dll", "multiengine_raon1.dll",
                              "multiengine_maya.dll", "multiengine_maya_ds4.dll", "multiengine_maya_mm3.dll", "strata-vision.exe"]
