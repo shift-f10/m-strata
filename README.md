@@ -1,6 +1,5 @@
 # M-Strata (Multiengine Strata)
 
-Until 2026-10-28 the server was named `strata-secure-server`; an older out folder may still hold that file.
 **M-Strata** - Multiengine Strata - is our own inference engine for large mixture-of-experts (MoE) language models on a single consumer GPU, plus a
 security-first server in front of it. The engine keeps a model's hot experts in VRAM and the rest in pinned RAM
 (read from disk when RAM runs out), and computes some of them on the CPU while the GPU works: the expert tiering
@@ -31,7 +30,8 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   DeepSeek-V4.1, MiniMax-M3.1, Raon-1-mini, Gemma 4, flint); the server starts the right one for the model you pick.
 - **Expert tiering for MoE models larger than VRAM:** the hot experts stay in a VRAM cache, the rest in pinned RAM
   (read from disk when RAM runs out), and some are computed on the CPU while the GPU works, as Strata describes.
-- Batched prompt processing, speculative decoding (the model's MTP draft layer and prompt lookup on Qwen), several KV
+- Batched prompt processing, speculative decoding (the model's MTP draft layer and prompt lookup on Qwen; Gemma 4's MTP
+  draft model, which decodes about 1.2x faster here with the same output), several KV
   cache formats, KV streaming for long contexts, and contexts up to 1M tokens where the model allows it.
 - **`strata-prepare`** builds the packs Qwen3.8, GLM-5.3, DeepSeek-V4.1, MiniMax-M3.1 and Raon-1-mini need, natively
   (no Python), with the same bytes as upstream's and Project Maya's tools.
@@ -75,7 +75,13 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   quants, Qwen3.6, GLM-5.3, DeepSeek-V4.1 and MiniMax-M3.1 in Project Maya's packs), every file pinned by its SHA-256,
   or **any Hugging Face link** to a `.gguf` (a split model's whole set), shown for confirmation first.
 - Into a **drive or folder you choose**, its free space shown and checked first (plus a 2 GiB margin), or a new private
-  folder.
+  folder. The **Download to** panel at the top of the list shows the drive, the folder and a gauge of the drive's space,
+  with **Change...**, and warns when the largest download waiting there does not fit.
+- **What you already have:** a catalog model that is on this PC says so instead of offering a download - **Downloaded**
+  (it came from this download) or **Locally provided** (the same model file added from a folder, matched by its first
+  file's name and, where the catalog pins it, its size), with its card's name.
+- The catalog is grouped by model family, each group a section that opens on a click and sums up what it holds; a
+  group with a download under way, paused or failed opens by itself.
 - **16 connections at once** for a large file (`pull.connections`, 1-32), a progress line with speed and time left,
   **Pause** and **Resume** (it continues from the pieces already fetched), **Cancel** (deletes the partial files), and a
   queue: one download runs, the next starts when it ends.
@@ -108,8 +114,9 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 - **Chat** with Markdown, the model's reasoning in its own block, text-file and picture attachments (PNG, JPEG, WebP,
   while the running card reads pictures), saving a chat as Markdown, and
   the sampling drawer (thinking, temperature, top-p, max tokens, seed). **Monitor:** GPU load, VRAM, temperature, power,
-  PCIe, CPU and RAM, decode and prefill speed, the context fill, the experts in each tier, and the recent requests (never
-  their text). **About:** the engines this folder was built with and this PC's hardware. Light and dark; fits a phone.
+  PCIe, CPU, disk reads and RAM, decode and prefill speed, the context fill, the experts in each tier with the engine's
+  own memory, the conversation cache, and the recent requests (never their text); its live figures clear when no model
+  runs. **About:** the engines this folder was built with and this PC's hardware. Light and dark; fits a phone.
 - **OpenAI-compatible API:** `/v1/chat/completions` (streamed or not, with usage and `reasoning_effort`),
   `/v1/models`, `/health` and `/metrics`.
 - **Settings tab:** the API key (show, copy, rotate), where the server listens and which PCs may use it, limits and
@@ -122,6 +129,16 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   icon's menu opens the window, starts or stops a model, restarts the server and exits (the model stops in order
   first). Windows uses Microsoft Edge WebView2, part of Windows 10 and 11; Linux uses WebKitGTK and a tray icon
   (Ayatana AppIndicator).
+
+**The terminal app**
+
+- **`strata-tui`** (a build with `tui`) is the server in a terminal, for a PC with no desktop (a server over SSH) or
+  anyone who prefers one. It runs the server as its child, as the window does, and opens on a **Monitor dashboard**:
+  braille charts of decode speed, GPU use, CPU, GPU memory, temperature and power, with the engine, the machine and the
+  last requests beside them. Its other views have the page's controls: **Models** (start, stop, each card's options,
+  calibrate), **Downloads**, **Settings** (edit and save; the API key shown only when you ask, and its rotation),
+  **Log** and **About**. Keys: `1`-`6` or Tab for the views, the arrows, Enter, and `q` to quit (it asks, then stops
+  the model and the server in order).
 
 **Security**
 
@@ -188,8 +205,9 @@ by the server's tests (with fake engines where a GPU would be needed), but have 
 | **DeepSeek-V4.1 and MiniMax-M3.1** | Built and wired, not run end to end yet. Their GGUFs are large (DeepSeek's 277-508 GB, MiniMax's from 93 GB): with 96 GB of RAM most of their experts would come from disk, so a run here shows whether they work, not how fast they can be. |
 | **Other GPU makers** | Only NVIDIA CUDA builds are made and run. Upstream's AMD (HIP) and Intel (SYCL) paths are in the tree but neither built nor tested here. |
 | **Other NVIDIA generations** | Every speed and every run is from one RTX 4080 SUPER (compute capability 8.9). Other generations build with `--cuda-arch` but have not been run here; nor have GPUs with less than 16 GB, or PCs with less than 96 GB of RAM. |
-| **Linux** | Every change is written for Linux and Windows, but the newest work (the GUI-first install, the newer engines, web search, pictures, several GPUs, the window app) has been built and run on Windows only. |
-| **The window app on Linux** | `strata-window`'s Linux window (GTK 3, WebKitGTK 4.1, Ayatana AppIndicator) is written but has been neither compiled nor run: the development system has no Linux desktop. The part it shares with Windows (the server child, the sign-in, the log, the tray's requests) is built and tested on both. The Windows window was run here; its tray menu was driven through Windows' own messages and UI Automation, not by hand. |
+| **Linux** | Every change is written for Linux and Windows. Since 2026-10-28 the frontend is built and tested here on Linux too: GCC 13.3 and Clang 18.1 (CI's compilers) in a WSL 2 Ubuntu 24.04, with the whole test suite (1401 of 1402 pass with GCC on 2026-10-28, the one left only when run in parallel; tests that need a second user, real model packs or SearXNG skip). The CUDA engines have not been built or run on Linux here, so neither have the models. |
+| **The window app on Linux** | `strata-window`'s Linux window (GTK 3, WebKitGTK 4.1, Ayatana AppIndicator) was built and run in that WSL Ubuntu under WSLg, Windows 11's display for Linux apps. Checked there: the page signed in on the Monitor, closing to the tray, one window per data folder, an orderly stop, and the tray menu (start, stop, open, exit) driven over D-Bus. Not checked: a real Linux desktop, the tray icon itself (WSLg has no tray to show it in) and its notifications. |
+| **The terminal app** | `strata-tui` was run here in a real Windows console and, on Linux, under tmux with GCC's build: every view, editing and saving, resizes, quitting, and a terminal hangup (the server and its model stop in order). It runs with the test suite's fake engine, not a real model, and has not been tried over a real SSH connection or in other terminal programs. |
 | **The install scripts' installs** | `install.bat` was run here end to end, on a PC that already had every dependency, so its winget installs (Git, Python, Build Tools or the C++ workload, CUDA) have not run yet. `install.sh` is syntax-checked only: the development system has no Linux. |
 
 ## Install
@@ -253,7 +271,7 @@ To see first what it would do, without changing anything, run `.\install.bat -Pl
 | Option | What it does |
 | --- | --- |
 | `-Out D:\Apps\M-Strata` | The out folder (default: `M-Strata-app` beside the repository; `M-Strata-app-2` and so on if that one is taken). It must be new or empty. |
-| `-With email,search,window` | The optional features (default `email,search`); `window` adds `strata-window` and its SDK. |
+| `-With email,search,window,tui` | The optional features (default: all four, so both front ends are built and you pick one to start); `window` adds `strata-window` and its SDK, `tui` adds `strata-tui`. Leave one out to build only the other, for example `-With email,search,tui`. |
 | `-GgmlDir D:\llama.cpp` | Use this llama.cpp checkout (at the pinned commit) instead of fetching one. |
 | `-Plan` | Only list what it would install, fetch and build; nothing changes. |
 | `-Yes` | Do not ask before installing. |
@@ -271,8 +289,10 @@ git clone --recurse-submodules https://github.com/shift-f10/m-strata.git
 cd m-strata && ./install.sh
 ```
 
-Its options are `--out DIR`, `--with email,search,window`, `--ggml-dir DIR`, `--plan` and `--yes`, as above. On another
-distribution, install the packages of the table above its way and follow the steps by hand below.
+Its options are `--out DIR`, `--with email,search,window,tui`, `--ggml-dir DIR`, `--plan` and `--yes`, as above. Without
+`--with` it builds both front ends on a desktop, and only `strata-tui` on a machine with no display (no `DISPLAY` or
+`WAYLAND_DISPLAY`, as over SSH), so the window's GTK packages are not installed there. On another distribution, install
+the packages of the table above its way and follow the steps by hand below.
 
 ### Install by hand (Windows)
 
@@ -365,7 +385,7 @@ python3 -m venv .venv-dev && .venv-dev/bin/python -m pip install cmake ninja
 | `--ggml-dir DIR` | The pinned llama.cpp checkout (or set `STRATA_GGML_DIR`). |
 | `--cuda-root DIR` | The CUDA toolkit (default: `CUDA_PATH` / `CUDA_HOME`). |
 | `--cuda-arch native` | GPU targets: `native` (this PC's GPU) or a list such as `"86;89;120"`. |
-| `--with email,search,window` | Optional features, off otherwise: email alerts, web search for the models, and `strata-window`, the server in a window with a tray icon. |
+| `--with email,search,window,tui` | Optional features, off otherwise: email alerts, web search for the models, `strata-window` (the server in a window with a tray icon) and `strata-tui` (the server in a terminal). The install scripts turn on all four. |
 | `--without maya,raon1,vision` | Leave those engine families, or the picture encoder (`vision`), out (strata, Gemma 4 and flint are always built). |
 | `--no-cuda-runtime` | Do not bundle cuBLAS (the PC running it then needs a CUDA toolkit). |
 | `--jobs N` | Parallel compile jobs (default: the CPU count). |
@@ -375,7 +395,7 @@ python3 -m venv .venv-dev && .venv-dev/bin/python -m pip install cmake ninja
 The first build compiles the CUDA engine and takes a while; later builds are incremental (`out/make-build`). The out
 folder holds only what runs:
 - `strata-unified-server` and `strata`;
-- `strata-search` (with `--with search`) and `strata-window` (with `--with window`);
+- `strata-search` (with `--with search`), `strata-window` (with `--with window`) and `strata-tui` (with `--with tui`);
 - `engine/`: the launcher, one library per family, `strata-prepare`, `strata-vision` (upstream's picture encoder, built
   from `upstream/tools/vision` with the same pinned llama.cpp), the bundled cuBLAS, the expert profiles and, with the
   Maya families, `templates/minimax-m3.1/`;
@@ -421,6 +441,8 @@ strata-unified-server --check                             # validate data/config
 strata-unified-server --help                              # every option
 ```
 
+Until 2026-10-28 the server was named `strata-secure-server`; an older out folder may still hold that file.
+
 Options such as `--port`, `--host` or `--token-env` apply to that start on top of the data folder's `config.json`; to
 keep a port, set `listener.port` there. A relative `--data-dir` is taken from the current folder. `--data-dir` and
 `--config` exclude each other; `config.example.json` shows the config file's shape. (A start that names its model by
@@ -435,11 +457,17 @@ On the page, open **Models**:
   Raon-1-mini GGUFs have their pack built first by `strata-prepare` (seconds to minutes; a pack already beside the file
   and still matching it is reused). A Qwen3.8 model whose data folder holds upstream's MTP draft layer (`mtp/rt`, from
   upstream's setup) runs it, and its card shows the MTP settings (draft layer on/off, draft window, draft confidence).
+  A Gemma 4 model with its MTP draft file beside it (`mtp-<model>.gguf`, or in an `MTP/` folder; the catalog's Gemma 4
+  download brings it) drafts with it: its card has an MTP switch, a draft window (2-8, default 4) and a draft confidence
+  (0-1, default 0.6, the fastest measured on a 4080 SUPER).
   A Qwen3.8 or Qwen3.6 model with its picture encoder beside it (one `mmproj*.gguf` in the folder) reads pictures.
 - **Download** fetches a model from the built-in catalog (every file pinned by its SHA-256) or a Hugging Face link
   into a drive or folder you choose; the free space is checked first. A large file comes over 16 connections at once
   (`pull.connections`, 1-32; 1 is one stream). A Qwen entry's **Vision files** box also fetches its picture encoder.
-  When it is verified, it is packed if needed and appears as a card.
+  When it is verified, it is packed if needed and appears as a card. The list says what is already on this PC:
+  **Downloaded**, or **Locally provided** for the same model added from a folder (no Download button for either). Each
+  model family is a section you open (one with a download under way opens by itself; the page remembers the ones you
+  opened for the tab), under the **Download to** panel: the drive and folder, the drive's space, **Change...**.
 - **Start a model** starts and stops a card, with its options (context length, cache format, thinking, sampling).
   **Calibrate** tunes the engine settings that depend on this PC, once per card, for every model; it reruns after a
   settings change if you ask it to.
@@ -576,6 +604,28 @@ opens the page signed in on the Monitor, and puts an icon in the tray. Closing t
 tray icon's menu (right-click; on Linux, its menu) opens the window, starts or stops a model, restarts the server
 (how saved settings take effect) and exits. The server's output goes to `data/logs/server.log` (two files of at most
 4 MiB; the one-time login link is never written there). Starting it a second time shows the running window.
+
+### The terminal
+
+A build with `--with tui` has `strata-tui` beside the server. Start it in a terminal instead of the server, with the
+same options (`.\strata-tui.exe`, `./strata-tui --port 9090`, ...). It needs a terminal that shows colours and UTF-8,
+which is any current one: Windows Terminal, the Windows 10/11 console, or a Linux terminal over SSH. `NO_COLOR` turns
+the colours off; the Linux text console (`TERM=linux`) gets block charts instead of braille. It starts the server and
+opens on the Monitor:
+
+| Key | What it does |
+| --- | --- |
+| `1`-`6`, Tab, Shift-Tab, F1-F6 | Monitor, Models, Downloads, Settings, Log, About |
+| Up, Down, PageUp, PageDown | Move in a list; the mouse wheel scrolls the Log |
+| Models: Enter, `s`, `c`, `x`, `a` | Start the card, stop the model, calibrate, cancel the calibration, recalibrate when settings change |
+| Models: `o`, then Up/Down, Left/Right, Esc | The card's options: pick one, change it (a switch flips, a choice or number steps), back to the cards; `r` undoes the changes |
+| Downloads: Enter, `p`, `x` | Download (or resume), pause, cancel the selected one (a model already on this PC shows Downloaded or Locally provided, and its card, and is not downloaded again) |
+| Settings: Enter, `w`, `u`, `k`, `R` | Edit the setting (a switch flips; empty means its default), save the changes, undo them, show the API key, rotate it (type `ROTATE`) |
+| `q` or Ctrl-C | Quit: it asks, then stops the model and the server in order and gives the terminal back |
+
+Saved settings apply when the server starts again, as on the page. The server's output is in the Log view and in
+`data/logs/server.log`, as for the window, and the one-time login link is never shown or written. The views talk to the
+server over loopback with its API key, as the page does; the key stays in memory and is shown only when you press `k`.
 
 ### The API (OpenAI-compatible)
 

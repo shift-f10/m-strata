@@ -1,0 +1,45 @@
+{
+  "_": "M-Strata's own download-catalog pins (owner 2026-10-28: download cards for flint, raon-1-mini and Gemma 4 with its MTP draft file). Facts read from Hugging Face on 2026-10-28, never a download: each file's size and LFS SHA-256 (the resolve HEAD's X-Linked-Size and X-Linked-ETag) at the repository's commit (X-Repo-Commit), and the licence its model card names (the model API's cardData.license). Read as data by tools/secure/download_catalog.py (source m-strata); a later upstream change is a new pin here.",
+  "models": {
+    "flint-q8_0": {
+      "name": "flint Q8_0",
+      "family": "flint",
+      "engine": "flint",
+      "prepare": "none",
+      "license": "apache-2.0",
+      "about": "RecursiveSI's Flint Preview as unsloth's 8-bit Q8_0 GGUF, one file, run by our flint engine; its card is made from the GGUF once it is verified.",
+      "repo": "unsloth/flint-GGUF",
+      "revision": "20468edfc38ab43d6914cc88b08cbecb05d0fc62",
+      "files": [
+        {"path": "flint-Q8_0.gguf", "size": 42301076928, "sha256": "5df42b56859c7b5142228005d7d63c327ec9e34c99c72548016d805309a0d284"}
+      ]
+    },
+    "raon-1-mini-preview-q8_0": {
+      "name": "raon-1-mini Q8_0",
+      "family": "raon1",
+      "engine": "raon1",
+      "prepare": "maya_pack",
+      "license": "apache-2.0",
+      "about": "KRAFTON's Raon-1-mini preview as its own 8-bit Q8_0 GGUF, one file, run by our raon1 engine; strata-prepare packs it first (Maya's step with our raon1 port), then its card appears.",
+      "repo": "KRAFTON/Raon-1-mini-preview-gguf",
+      "revision": "cd61e81afcdfdf4b13cb345b3587c0ba4b918d00",
+      "files": [
+        {"path": "raon-1-mini-preview-Q8_0.gguf", "size": 30693555936, "sha256": "15582e05c3dc028b16d14ddf1a692a1602884b9ec48055fade2078369f99f6fc"}
+      ]
+    },
+    "gemma-4-26b-a4b-it-q8_0": {
+      "name": "Gemma 4 26B-A4B Q8_0",
+      "family": "gemma4",
+      "engine": "gemma4",
+      "prepare": "none",
+      "license": "apache-2.0",
+      "about": "Google's Gemma 4 26B-A4B instruct as unsloth's 8-bit Q8_0 GGUF with its MTP draft file (always fetched with it), run by our Gemma 4 engine; its card is made from the GGUF and drafts with the MTP file while its MTP option is on.",
+      "repo": "unsloth/gemma-4-26B-A4B-it-GGUF",
+      "revision": "c099eb48e663fd284577b04978a94ffccb261841",
+      "files": [
+        {"path": "gemma-4-26B-A4B-it-Q8_0.gguf", "size": 26859861728, "sha256": "5f7cbd0f4564e84342fc34321a09acb54b1a3da9215124e5bf444baa6dda152c"}
+      ],
+      "mtp": {"path": "MTP/mtp-gemma-4-26B-A4B-it-Q8_0.gguf", "size": 461766816, "sha256": "6326fb9f5e487aa8dcdd313a091e3c67724cb2a666ec3b7d2895b5b26d93ed1b"}
+    }
+  }
+}

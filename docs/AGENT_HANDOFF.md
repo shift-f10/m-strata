@@ -280,6 +280,224 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z16 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner: "when we point it to a local folder with the model, if it match the card of the model that is downloadable,
+we should change the banner from available to Locally Provided vs Downloaded", "put accordion control so that user can
+expand per related section instead of seeing a busy page", and "make prominent the device and download location
+selection so that it does not look just a bunch of text". Done by a worker; reviewed here.
+
+- **Why his models said "Available"**: a GLM-5.3, raon-1-mini, DeepSeek-V4.1 or MiniMax-M3.1 card made from a folder
+  sets `engine.model_id` to Maya's model name (`card_builder.cpp` `card_for_pack`), not the shard, and the launcher
+  reports `model_id` as the card's `file`, so the page's `carded()` never matched; Qwen3.8, Gemma 4, flint and Qwen3.6
+  matched by name only; `models.cards` cards reported no file.
+- **One rule, on the server**: each `GET /v1/strata/downloads` entry carries `have` (`"downloaded"` | `"local"` | null)
+  and `have_card`. `card_model_file` (card_builder) finds each card's model: `<roots.models>/<model_id>.gguf`, or for a
+  Maya pack card the shard the pack indexes, beside the pack (`native_experts.txt`, else `sources.json`; regular files,
+  bounded reads; the helpers moved from card_routes). "local" needs the file present, the same first-shard name, and
+  the same size where the catalog pins one; nothing is hashed. The launcher's cards reach the download manager through
+  `DownloadSettings::cards` (`ModelLauncher::cards()`, wired in `server_bootstrap`).
+- **Windows case collisions**: a download counted as ready when `<cards>/<id>.json` existed, and a folder card named
+  `Qwen3.6-35B-A3B-UD-Q4_K_XL.json` is that file on Windows; now only a card of that download's own (source
+  `download:<id>`, or none: an old prepare step's) counts (`download_card_file`). And a download never writes its card
+  over such a folder card: `write_download_card` refuses, saying the files are installed
+  (`a_download_never_writes_over_a_folder_card`, RED shown: the folder card was overwritten).
+- **The page**: entries the PC has are shown, not hidden, with a Downloaded / Locally provided badge, "Already on this
+  PC; its card: X" and no Download button. Each family group is an accordion section (a real button with
+  `aria-expanded`/`aria-controls`, a summary such as "3 models · 1 on this PC", open by itself while a download is under
+  way, paused, failed or just added; opened groups kept in `sessionStorage` - the page's tests and the threat model
+  forbid localStorage in it). A "Download to" panel: the drive, the path in a chip shortened in the middle, a space
+  gauge, Change…, a default marker and a room warning; phone widths 375/320 without horizontal scroll (`app.css`).
+- **strata-tui**: the Downloads view shows the same states; Enter does not download those entries.
+- **Proof**: RED for each behaviour (logs in the worker's scratch); MSVC and Linux gcc/clang 149/149 over the six
+  suites touched, the folder-card guard 26/26 in the download manager's; a scratch server with fake GGUFs (a sparse
+  file at the catalog's size gives "local"; a same-named flint file of another size gives null); the page checked at
+  375/320 px. Not seen live: the room warning (it needs a queued download larger than the free space).
+- **The whole tree, validated once all of z13-z16 were in (2026-10-28):** Windows windows-msvc ON (email, search, TUI;
+  the real packs named) 1352/1354 and OFF 1322/1324, failing only the two release-only cases a hooks-on dev build
+  cannot pass (`idle_unload_respawns_before_the_next_request` passes now: z15's wake fix); Linux gcc 13.3 1401/1402
+  (`egress_table_scan_during_lifecycle` fails only under `-j 8` and passes alone); pytest 140 passed, the 7
+  `test_build_release.py` cases needing Linux bash failing here as before (they pass on Linux, z13).
+
+### Claude Code session, 2026-10-28 z15 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner: "the System Ram reports MB usage only and not experts + mb usage. Also when the models are stop and nothing is
+loaded, the stats seem to stay", "make the panels symmetric and even, like make the Recent Request at the bottom and
+span the whole width", "the disk read metrics", and "the upstream strata has disk read and conversation cache as well
+which we are both missing". Done by a worker (the page and `/metrics`) and another (strata-tui); reviewed here.
+
+- **RAM showed GB only**: the page took the RAM experts from `ram_used` (only GLM-family STAT lines, every 8 tokens
+  while decoding) or `expert_slots - expert_slots_primary` (experts in RAM only for Gemma 4 and flint; on upstream's
+  engine the other GPUs' share), and `serve_monitor.cpp` kept only 9 engine keys, dropping each family's RAM-tier keys
+  (`ram_slots`, `ram_experts`, `pinned_gib`, `arena_mib`). Now `engine.memory` (`experts_ram`, `experts_ram_bytes`,
+  `experts_vram`, `process_bytes`) per family (`engine_memory_view`), plus the engine process's working set / VmRSS.
+  Qwen gives bytes only, GLM/raon1/MiniMax counts, DeepSeek counts, Gemma 4/flint all pinned; Qwen3.6's engine says
+  nothing (process memory only).
+- **Stale stats**: the engine's readings were hidden only for "none"; "starting" (also an idle unload) and "failed" kept
+  them, and the page cleared only on "stopped" and kept the last values when the server stopped answering. Now
+  `engine.loaded`/`engine.unloaded`, `live.state` "unloaded", readings only while ready or generating, replaced at each
+  READY, and the page clears every live figure when stopped, unloaded, failed or offline.
+- **Disk read/write**, upstream's (`serve/telemetry.py` `_disk`): `hardware.disk_read_mb`/`disk_write_mb` (MiB/s over
+  the last second, all physical disks, per-disk deltas, null when unknown) and `history.disk_read_mb`, read natively as
+  psutil does (Linux `/proc/diskstats` over `/sys/block`, Windows `IOCTL_DISK_PERFORMANCE`). The engine's own read rate
+  is not added: Windows' process counters miss the page faults of mapped expert files.
+- **The conversation cache**, upstream's (`serve/server.py` `conversation_cache_view`, `ConvCacheLog`): budget and slots
+  from the Qwen engine's INFO, parks/restores/evictions/bytes from its stderr lines, reuse from the request history; plus
+  `supported`. **The stderr exception** (threat model): only for `profile == qwen` (`EngineCommand::
+  read_conversation_cache`), through a drained pipe; a whole-line parser takes upstream's three forms and keeps their
+  integers and the event kind; every other line is dropped unread; nothing of stderr's text is kept or logged
+  (`stderr_gives_only_the_conversation_cache_numbers`, `stderr_flood_never_blocks_the_engine`).
+- **The page**: eight tiles (Disk read among them), two equal panels ("Context and memory", "Conversation cache"),
+  Recent requests across the whole width; checked headless at 1440/375/320 px.
+- **A supervisor bug** found on the way: `release()` and `note_request_finished()` armed the idle-unload window without
+  waking the supervisor thread - the cause of `idle_unload_respawns_before_the_next_request`'s long-known failure
+  (`idle_unload_fires_after_a_request_that_began_at_ready`, RED deterministic).
+- **strata-tui**: eight charts (Decode, GPU use, CPU, RAM - its own history of `ram_used` - GPU memory, temperature,
+  power, Disk read) in two rows of four from 120 columns; three equal panels (Engine with the memory figures and
+  "unloaded after idling", Machine with the disk rates, Conversation cache with gauges, "not used by this engine" /
+  "no model running"); Last requests across the full width when tall enough; "-" for every field an older server lacks.
+  A chart no longer draws an unknown sample as a 0 dot (RED: the braille case). 9/9 on MSVC, GCC, Clang.
+- **Proof**: the worker's six suites 258/258 on Windows and Linux gcc (one IPv6 listener case flaky under -j 8, passes
+  alone); the final whole-tree runs are in z16's proof line. Not proven: a real GPU engine's pinned memory in its
+  working set, the Windows CI job.
+
+### Claude Code session, 2026-10-28 z14 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner: "there are no download cards for the following: flint ..., raon1 ..., gemma4 ..." and "gemma4 has an mtp
+... make sure we work that mtp in our gemma engine". Done by a worker; reviewed here.
+
+- **Our own catalog pins**, `tools/secure/catalog_pins.json` (source `m-strata`, read by `download_catalog.py`
+  `pin_entries`). Each file has its commit, size, SHA-256 and licence, read from Hugging Face's HEAD and API metadata on
+  2026-10-28 (all `apache-2.0`; PROVENANCE has the table).
+  - flint Q8_0 and Gemma 4 26B-A4B Q8_0 become cards from their GGUF.
+  - raon-1-mini Q8_0 is packed like GLM-5.3 (`strata-prepare download --maya`, marker `raon1-mini.gguf`, then a raon1
+    card).
+  - The generator refuses an unpinned, unknown or misspelt entry, one with no licence, and an MTP file on another
+    engine or one colliding with a model file or a shard name.
+- **The MTP file**: a typed `mtp` file of a catalog entry (Gemma 4 only, at a commit with its size), always pulled with
+  the model.
+  - The card carries `engine.args --mtp <file>` and an `mtp` option (default on; off drops it from that start).
+  - The `strata_gemma4` allowlist takes `--mtp` only as an absolute `.gguf` path (`gguf_file`; a refusal never echoes
+    the path).
+  - Each launch holds the file to the picture encoder's rule (`trusted_side_file`).
+  - A Gemma 4 folder card finds `mtp-<model>.gguf` beside the model or in `MTP/`, inside the folder once resolved, and
+    never guesses in a folder with several models. A repoint moves it when the new folder holds it.
+- **Linux**: every `PackedCardRequest` and `GgufCardRequest` member has a `{}` default (clears
+  -Wmissing-field-initializers wherever they are built). The `snprintf` buffer is 40 (-Wformat-truncation). The unused
+  `active_child_` is gone. `card_routes_test`'s POSIX widen is 01777, and a plain 0777 parent is refused (422).
+- **A side effect**: a pasted link matched to gemma4 or flint now survives a restart, because `custom.json` no longer
+  drops those engines when read back.
+- **Proof**:
+  - pytest 35/35, `--check` current (32 models).
+  - RED shown in Python (15 failed) and in MSVC (0/11 of the new or changed cases).
+  - GREEN: MSVC 266/266 and Linux gcc 268/268, clang 268/268, across the download_manager, card_builder, card_routes,
+    model_options, engine_arguments, api_router, model_cards, typed_config and model_launcher tests.
+- **Not verified**: a real download, a GPU run of a downloaded card, and the page visually.
+- **The cards' draft options** (Gemma 4 MTP, z12; done here): a Gemma 4 card with its MTP file lists `spec` (Draft window, 2-8, default
+  4: three drafts, llama.cpp's default) and `spec_min_p` (Draft confidence, 0-1, default 0.6: the fastest measured above,
+  where llama.cpp's own default is 0; the card test was changed to it, with RED shown). The
+  `strata_gemma4` allowlist takes `--spec` (integer 2-8) and `--spec-min-p` (at most three places, 0-1) instead of
+  refusing them by name. `--spec-min-p` is written only while the MTP switch is on, rounded to three places (the page's
+  0.12345 is 0.123). `--spec` stays when the switch is off: the engine ignores it without `--mtp`. Gemma 4's
+  option-controlled flags gain the two; flint's stay its three. RED shown (5 cases: allowlist, table order, controlled
+  flags, composition, card defaults); GREEN 200/200 over model_options, engine_arguments, card_builder, model_cards,
+  api_router and typed_config.
+
+### Claude Code session, 2026-10-28 z13 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
+
+The owner: "an option to make a headless version of the frontend ... a TUI with the same settings and options via the
+TUI. Make the TUI look professional and make monitoring the default view in a nice graph dashboard TUI look", then
+"have the installer compile both as an option by default so the user can pick if they want the tui or window version or
+specify", and "download and install the needed toolchains for the tui compile".
+
+- **strata-tui** (spec `docs/superpowers/specs/2026-10-28-server-tui-design.md`; `SECURE_FRONTEND_TUI`, `make --with
+  tui`): the server in a terminal, strata-window's headless twin over the same `window_shell` (server child,
+  environment copy, `server.log` without the login link, stop in order).
+  - `tui_screen` (cells, rounded boxes, eighth-block gauges, braille or block charts, wide characters in two cells,
+    combining marks, controls C0/DEL/C1 drawn as spaces, VT output of only the changed cells), `tui_input` (VT keys,
+    SGR wheel, split sequences and UTF-8), `tui_app` (Monitor first: six charts of `/metrics` history and the Engine,
+    Machine and Last requests panels; Models with options, start (asks when another runs), stop, calibrate; Downloads;
+    Settings with editing, save, the key only on `k`, rotate; Log; About), `tui_terminal` (Windows console VT mode, POSIX
+    termios), `tui_main` (the program: a request worker, the UI loop, every way out restoring the terminal).
+  - Tests: `secure_frontend_tui_tests` (8 cases). The code came before its tests, so RED was shown by breaking each
+    behaviour on purpose and watching the case fail: the context step, a failed poll, the settings re-read, the hidden
+    key, `q` among the options, the ellipsis, a braille dot, the change-only renderer (a hang), Shift-Tab, a split
+    sequence; later fixes test-first. Driven in a real hidden Windows console (a scratch ctypes driver: every view,
+    editing, quitting) and on Linux under tmux (below).
+- **Installers build both front ends by default**: `install.ps1 -With email,search,window,tui`; `install.sh` both on a
+  desktop, the TUI only without a display. `test_install.py::test_both_front_ends_by_default` (RED shown).
+- **The review's fixes** (a reviewer worker with the `code-review` skill, then the same worker fixing them; RED in four
+  rounds, 8/8 on MSVC, GCC and Clang, also clean with `-Wconversion -Wsign-conversion -Wshadow`):
+  - the terminal is put back before the server stops, then a plain "stopping the server" line;
+  - Windows: the server's Ctrl-Break comes from `strata-tui --ctrl-break <pid>` (the program relaunched with no
+    console), on every way out, so the TUI never leaves its own console (ServerChild's `FreeConsole` would close a tab
+    the TUI alone holds, or wait while the console closes); the console closing stops it in order within Windows' ~5 s;
+  - a try/catch around the loop and in both threads; SIGINT/SIGQUIT quit; a vanished terminal quits; POSIX writes
+    retry EINTR/EAGAIN;
+  - no request starts after quit begins; polls time out at 5 s, actions at 15 s; the last lines reach the log;
+  - the key row tells a held key, a keyless server, an unreadable key and not-yet-known apart; poll failures (401, no
+    answer, a non-loopback server) are said, per poll, cleared when it answers again;
+  - one view switch for 1-6/Tab/F1-F6; integers checked with `from_chars` and the row's bounds; a pending list edit
+    re-opens as items; the Log scroll is clamped; wide characters take two cells and combining marks none; Enter asks
+    "Stop X and start Y?" / "Restart X with these options?"; the wheel moves lists;
+  - from the Linux run: Last requests newest first; the charts keep 300 samples of their own (five minutes); unsaved
+    settings shown like saved ones; About's sizes in GB; "no GPU" charts on a machine without one.
+  - Driven for real: Windows (a hidden conhost: q/y and WM_CLOSE, everything ends in under 0.5 s; the final lines
+    print on the console) and Linux (a pty driver: termios restored, exit 0, nothing left).
+- **window_shell**: the POSIX server child gets its own process group (`setpgid`: a terminal hangup or Ctrl-C reaches
+  the window/TUI, which stops it in order; RED on Linux: "the server leads its own process group"); the log's rotated
+  name is a path joined, not `path::string()` + ".1" (a folder name outside the code page; no RED with MSVC here, the
+  test stays as a guard); the refusal of init/--check names neither front end.
+- **The MiniMax prefill fallback** (from z10's GPU check: "not enough GPU memory ... a smaller --chunk" at 4096 on a
+  16 GB card): a run that ended by itself is measured again at `--chunk 1024`; a run stopped (cancelled, past the hour)
+  or never started is not. `a_prefill_calibration_falls_back_to_the_default_chunk` (RED shown). Verified on the GPU:
+  done at chunk 1024, 14.9 tok/s, through the server.
+- **The request log names every route** (`request_log.cpp`): 23 routes added since SP3 were logged as "other" (RED
+  shown); found by gcc's `-Wswitch`.
+- **Linux builds again**: main did not compile with GCC 13.3 / Clang 18.1 (CI's presets): -Wswitch,
+  -Wmissing-field-initializers, -Wrange-loop-construct, -Wformat-truncation, -Wunused-private-field in ~20 files,
+  none of which MSVC reports. Each field is now named in the initializer (`.client_gone = {}`, `.environment = {}`,
+  `.max_tokens = {}`, ...; mcp_client.cpp's local `Awaited` got `{}` defaults), range loops bind `const T&`,
+  `request_log.cpp` names every route, and the download cards' files were fixed by their worker. The whole tree builds
+  on both compilers. Linux suite (ctest -j 8, release-only excluded), on each compiler: 1368 passed, 11 skipped (no
+  second uid, no delegated cgroup, no real packs or SearXNG), 2 failed:
+  - `egress_table_scan_during_lifecycle`: an artefact of running in parallel. The uid-attributed scan sees other tests'
+    listeners under -j 8, and it passes alone (CI runs serially).
+  - `card_routes_tests.a_new_private_folder_is_made`: a test bug. It widened the drive folder to 0777, which
+    local_folders.cpp rightly refuses; it now uses 01777, the POSIX equivalent of the Windows case, and a plain 0777
+    parent is checked to be refused (422).
+  Note: ninja's order-only dependencies keep a failed library's dependents from compiling at all, so after a failure,
+  compile the held-back objects one by one to see every warning.
+- **The Linux build environment** (build tool only; PROVENANCE): WSL 2 distro `mstrata-linux`, Ubuntu 24.04's WSL
+  image in `.toolchains/wsl/`, apt gcc/clang/cmake/ninja/libssl-dev, GTK/WebKitGTK (owner OK), tmux, and xdotool,
+  wmctrl, x11-apps, x11-utils, imagemagick for the run checks.
+- **First Linux runs** (a worker, the `run` skill's pattern; scratch fake-engine card):
+  - strata-tui under tmux: every view, editing and saving, resizes 160x48 to 60x18, q/y, Ctrl-C/n, and a hangup
+    (`tmux kill-session` with a model running: the server and the engine were gone 0.54 s later, stopped in order).
+  - strata-window under WSLg: the page signed in on the Monitor; closing hides it; SIGTERM stops in order; the tray
+    menu over D-Bus (start, stop, open, exit). No tray icon or notification can show in WSLg.
+  - Found and fixed: a second start of the Linux window never exited (`g_application_hold` before `run` kept the
+    remote instance's loop alive; now held in the first instance's `activate`). Before the fix the second start was
+    killed by `timeout` (exit 124) with a `gtk_label_set_text` CRITICAL. After it, under gcc and clang: exit 0 in 0.03-0.12
+    s, the first window shown, nothing on stderr; SIGTERM and the tray's Exit still stop in order (exit 0, 0.21-0.24
+    s). The TUI's Last requests showed the oldest (`/metrics` lists newest first): fixed with the review's batch above.
+- **Python on Linux** (system Python 3.12 with apt `python3-pytest`, `python3-regex`): `tools/secure` 149 of 151 pass, 1
+  Windows-only skip. All 7 cases of `test_build_release.py` (never run here before) pass, given in-repo `out/` trees
+  with natively built release binaries (`/mnt/c` refuses cmake's `file(COPY_FILE)` for a non-root user). Git needed
+  `safe.directory` through the environment, because `/mnt/c` looks root-owned. The one real bug,
+  `make.py`'s `missing_cpp_tools_message` handling a Windows path as a `PosixPath` on Linux (`IndexError: 3`), now uses
+  `PureWindowsPath`; `test_make.py` passes 23/23 on both systems.
+- **Presets**: the TUI is on in `windows-msys2-clang` and `windows-llvm-mingw-cross` too.
+- **Windows clang** (a worker; the repo's pinned llvm-mingw `20261006`, sha256 checked, clang 23.1.3, on the WSL
+  distro's disk): `windows-llvm-mingw-cross` from the real source builds whole at `-Werror`, 94/94 executables, and
+  99/99 with email alerts and web search on too (SChannel, no OpenSSL). It found
+  `calibration.cpp:555: call to 'to_string' is ambiguous`: libc++'s file-clock count is `__int128`, so z10 had broken
+  CI's `windows-msys2-clang` (libc++ too). The count is now cast to `long long`, the same number on MSVC, so kept
+  records stay fresh. The binaries import only system DLLs and the UCRT. Tests not run (no wine). Note: CI's Windows
+  clang jobs leave email and search off, so in CI those files meet only MSVC.
+- **Unreaped engine timing** (z5's open item): MiniMax's engine took ~10-25 s to exit after a stop, beyond the server's
+  ~4 s bound (RF5): the owner's decision is still open.
+
 ### Claude Code session, 2026-10-28 z12 (Windows box, 4080 SUPER; owner-directed; committed with this entry, not pushed)
 
 The owner: "gemma4 has an mtp ... make sure we work that mtp in our gemma engine".

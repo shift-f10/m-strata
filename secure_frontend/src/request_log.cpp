@@ -24,6 +24,29 @@ std::string_view route_name(const RouteId route) {
     case RouteId::strata_download_pause: return "strata_download_pause";
     case RouteId::strata_download_cancel: return "strata_download_cancel";
     case RouteId::strata_download_link: return "strata_download_link";
+    case RouteId::strata_calibrate: return "strata_calibrate";
+    case RouteId::strata_calibrate_cancel: return "strata_calibrate_cancel";
+    case RouteId::strata_calibrate_auto: return "strata_calibrate_auto";
+    case RouteId::strata_login_link: return "strata_login_link";
+    case RouteId::strata_alerts: return "strata_alerts";
+    case RouteId::strata_alerts_settings: return "strata_alerts_settings";
+    case RouteId::strata_alerts_password: return "strata_alerts_password";
+    case RouteId::strata_alerts_test: return "strata_alerts_test";
+    case RouteId::strata_search: return "strata_search";
+    case RouteId::strata_search_settings: return "strata_search_settings";
+    case RouteId::strata_search_test: return "strata_search_test";
+    case RouteId::strata_config: return "strata_config";
+    case RouteId::strata_config_settings: return "strata_config_settings";
+    case RouteId::strata_key_rotate: return "strata_key_rotate";
+    case RouteId::strata_folders: return "strata_folders";
+    case RouteId::strata_folder_private: return "strata_folder_private";
+    case RouteId::strata_folder_new: return "strata_folder_new";
+    case RouteId::strata_card_add: return "strata_card_add";
+    case RouteId::strata_card_folder: return "strata_card_folder";
+    case RouteId::strata_card_delete_begin: return "strata_card_delete_begin";
+    case RouteId::strata_card_delete: return "strata_card_delete";
+    case RouteId::strata_folder_sharing: return "strata_folder_sharing";
+    case RouteId::strata_about: return "strata_about";
   }
   return "other";
 }

@@ -13,6 +13,7 @@
 #include "secure_frontend/engine_process.hpp"
 #include "secure_frontend/hf_source.hpp"
 #include "secure_frontend/http_request_handler.hpp"
+#include "secure_frontend/model_cards.hpp"
 #include "secure_frontend/request_router.hpp"
 
 #include <chrono>
@@ -84,11 +85,15 @@ struct DownloadSettings final {
   std::optional<std::filesystem::path> prepare_script;  // tools/secure/prepare_download.py
   std::optional<DownloadCardTemplate> card_template;
   // GUI-first start-up (spec 2026-10-27 §4.3): models.default_engine. Set, a Gemma 4 or flint GGUF becomes a card the
-  // moment it is verified (card_for_gguf: the tokenizer is read from the GGUF; source "download:<id>").
+  // moment it is verified (card_for_gguf: the tokenizer is read from the GGUF; source "download:<id>"; Gemma 4's MTP
+  // draft file, which every catalog entry with one brings, as its --mtp <file>).
   std::optional<std::filesystem::path> gguf_engine;
   std::map<std::string, std::string, std::less<>> child_environment;  // the closed environment
   std::uint64_t margin_bytes{std::uint64_t{2} << 30U};                // free space a start leaves
   CardWriter on_card{};                        // a card was written: the launcher loads it
+  // The launcher's cards (owner 2026-10-28): the list says which entries are already on this PC ("have": a card from this
+  // download, or another card running the same model file; card_model_file). Unset: none is.
+  std::function<std::vector<ModelCard>()> cards{};
   // GUI-first start-up (spec 2026-10-27 §5a): an alert (download_finished, download_failed) with its subject and text.
   std::function<void(std::string_view event, const std::string& subject, const std::string& body)> on_event{};
   std::function<void(std::string_view)> log{};
@@ -172,7 +177,8 @@ class DownloadManager final {
   [[nodiscard]] std::optional<std::filesystem::path> native_prepare_tool() const;
   [[nodiscard]] bool native_prepare_ready(const DownloadEntry& entry) const;
   [[nodiscard]] bool native_prepare(std::size_t index, std::string& error);
-  // A GLM-5.3 download (prepare maya_pack) is packed with it as Maya's setup packs it (strata-prepare download --maya).
+  // A GLM-5.3, raon-1-mini, DeepSeek-V4.1 or MiniMax-M3.1 download (prepare maya_pack) is packed with it as Maya's setup
+  // packs it (strata-prepare download --maya).
   [[nodiscard]] bool maya_prepare_ready(const DownloadEntry& entry) const;
   // MiniMax-M3.1 (owner 2026-10-28): Maya's chat template, which the install ships beside the engine
   // (engine/templates/minimax-m3.1/chat_template.jinja, with the MiniMax Community License); nullopt: not there.
@@ -211,7 +217,6 @@ class DownloadManager final {
   std::deque<Card> cards_;                 // stable addresses: cards are only appended
   std::deque<std::size_t> queue_;
   std::optional<std::size_t> active_;
-  std::unique_ptr<LineChild>* active_child_{nullptr};
   bool cancel_requested_{false};   // stop the active transfer now (pause or cancel)
   bool pause_requested_{false};    // ... and keep its partial files
   bool stopping_{false};

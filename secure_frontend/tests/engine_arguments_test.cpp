@@ -590,7 +590,10 @@ std::string joined(const std::vector<std::string>& args) {
 
 void gemma4_user_arguments_follow_the_strata_gemma4_allowlist() {
   using Code = secure_frontend::EngineArgumentsErrorCode;
+  // Owner 2026-10-28 ("gemma4 has an mtp"): --mtp takes the absolute path of the model's MTP draft file, a .gguf
+  const std::string mtp = secure_frontend::path_to_utf8(std::filesystem::temp_directory_path() / "m" / "MTP" / "mtp-g.gguf");
   const std::vector<std::vector<std::string>> accepted{
+      {"--mtp", mtp}, {"--max-context", "32768", "--mtp", mtp, "--chunk", "512"},
       {},
       {"--max-context", "1"}, {"--max-context", "262144"},
       {"--chunk", "1"}, {"--chunk", "8192"},
@@ -600,6 +603,9 @@ void gemma4_user_arguments_follow_the_strata_gemma4_allowlist() {
       {"--expert-slots", "0"}, {"--expert-slots", "128"},
       {"--hybrid-rows", "1"}, {"--hybrid-rows", "4096"},
       {"--cpu-threads", "1"}, {"--cpu-threads", "256"},
+      // the MTP drafter's window (1 + drafts) and confidence, as the Gemma 4 engine takes them (owner 2026-10-28)
+      {"--spec", "2"}, {"--spec", "8"}, {"--spec-min-p", "0"}, {"--spec-min-p", "1"}, {"--spec-min-p", "0.125"},
+      {"--mtp", mtp, "--spec", "4", "--spec-min-p", "0.5"},
       {"--max-context", "32768", "--kv", "f16", "--no-graph", "--expert-vram", "9", "--expert-slots", "40",
        "--hybrid-rows", "128", "--cpu-threads", "16", "--chunk", "512"}};
   for (const auto& args : accepted) {
@@ -643,7 +649,19 @@ void gemma4_user_arguments_follow_the_strata_gemma4_allowlist() {
       {{"--batch", "2"}, Code::unsupported_mode, ""},
       {{"--slots", "2"}, Code::unsupported_mode, ""},
       {{"--vision"}, Code::unsupported_mode, ""},
-      {{"--mtp", "3"}, Code::not_accepted, "--mtp"},
+      {{"--mtp", "3"}, Code::invalid_value, "--mtp"},
+      {{"--mtp", "relative-xyz/mtp-g.gguf"}, Code::invalid_value, "--mtp"},
+      {{"--mtp", mtp + ".xyz"}, Code::invalid_value, "--mtp"},
+      {{"--mtp"}, Code::invalid_value, "--mtp"},
+      {{"--mtp", "--chunk", "512"}, Code::invalid_value, "--mtp"},
+      {{"--mtp=" + mtp}, Code::not_accepted, "--mtp"},
+      {{"--mtp", mtp, "--mtp", mtp}, Code::invalid_value, "--mtp"},
+      {{"--spec", "1"}, Code::out_of_range, "--spec"},
+      {{"--spec", "9"}, Code::out_of_range, "--spec"},
+      {{"--spec"}, Code::invalid_value, "--spec"},
+      {{"--spec-min-p", "1.5"}, Code::out_of_range, "--spec-min-p"},
+      {{"--spec-min-p", "0.1234"}, Code::invalid_value, "--spec-min-p"},
+      {{"--spec-min-p", "-0.5"}, Code::invalid_value, "--spec-min-p"},
       {{"--pack", "pack/full"}, Code::not_accepted, "--pack"},
       {{"--model", "x.gguf"}, Code::not_accepted, "--model"},
       {{"--tokens", "1,2"}, Code::not_accepted, "--tokens"},
@@ -664,7 +682,7 @@ void gemma4_user_arguments_follow_the_strata_gemma4_allowlist() {
       expect(rejected->message.find(r.named) != std::string::npos, "the refusal names " + r.named + ": " + rejected->message);
     }
     expect(rejected->message.find("xyz") == std::string::npos && rejected->message.find("x.gguf") == std::string::npos &&
-               rejected->message.find("pack/full") == std::string::npos,
+               rejected->message.find("pack/full") == std::string::npos && rejected->message.find("mtp-g") == std::string::npos,
            "the refusal never echoes the operator's text: " + rejected->message);
   }
 }
@@ -1049,6 +1067,52 @@ void gemma4_expert_launch_composes_only_allowlisted_flags() {
          "strata_gemma4 builds the allowlisted args and --native");
 }
 
+// Owner 2026-10-28 ("gemma4 has an mtp ... make sure we work that mtp in our gemma engine"): a Gemma 4 card's MTP draft
+// file (engine.args --mtp <file>) reaches the engine as given, before --native, and is held at each launch to the rule a
+// card's picture encoder is: a regular file, not a link, in a folder no other user of this PC may change (unless
+// roots.allow_untrusted_media). A file that is missing or in such a folder is refused by name, never its path.
+void gemma4_expert_launch_checks_its_mtp_file() {
+  secure_frontend_test::cli::CliHarness h;
+  secure_frontend_test::make_private_directory(h.models_path / "gemma4");
+  secure_frontend_test::write_file(h.models_path / "gemma4" / "g.gguf", "GGUF");
+  const auto folder = h.models_path / "gemma4" / "MTP";
+  secure_frontend_test::make_private_directory(folder);
+  const auto mtp = folder / "mtp-g.gguf";
+  const auto launch_with = [&](const std::filesystem::path& file) {
+    h.write_config("");
+    std::string text = secure_frontend_test::read_file(h.config);
+    const std::string from = "\"model_id\": \"m\"";
+    text.replace(text.find(from), from.size(),
+                 "\"model_id\": \"g\", \"profile\": \"gemma4\", \"args\": [\"--mtp\", " +
+                     secure_frontend_test::json_literal(secure_frontend::path_to_utf8(file)) + "]");
+    secure_frontend_test::write_file(h.config, text);
+    return secure_frontend::compose_engine_launch(h.validated_config().get(), true);
+  };
+  const auto refused_by_name = [](const std::variant<secure_frontend::ComposedLaunch, secure_frontend::LaunchFailure>& composed) {
+    const auto* failure = std::get_if<secure_frontend::LaunchFailure>(&composed);
+    return failure != nullptr && !failure->messages.empty() && failure->messages.front().find("--mtp") != std::string::npos &&
+           failure->messages.front().find("mtp-g") == std::string::npos;
+  };
+  expect(refused_by_name(launch_with(mtp)), "an MTP file that is not there is refused by name");
+  secure_frontend_test::write_file(mtp, "GGUF");
+  const auto composed = launch_with(mtp);
+  const auto* launch = std::get_if<secure_frontend::ComposedLaunch>(&composed);
+  expect(launch != nullptr, "a Gemma 4 launch with its MTP file composes");
+  if (launch == nullptr) {
+    for (const auto& m : std::get<secure_frontend::LaunchFailure>(composed).messages) std::cerr << "  " << m << '\n';
+    return;
+  }
+  const auto native = secure_frontend::path_to_utf8((h.validated_config().get().roots.models.path() / "gemma4" / "g.gguf").make_preferred());
+  expect(launch->engine_args == std::vector<std::string>{"--mtp", secure_frontend::path_to_utf8(mtp), "--native", native},
+         "--mtp <file> as given, then --native");
+#if defined(_WIN32)
+  expect(secure_frontend_test::grant_everyone_write(folder), "the test widens the MTP folder");
+#else
+  ::chmod(folder.c_str(), 0777);
+#endif
+  expect(refused_by_name(launch_with(mtp)), "an MTP file in a folder other users may change is refused by name");
+}
+
 // SP5 M1 Task 5 (parity rows reasoning_* / fit_max_tokens). Only ONE of the pin's reasoning values
 // reaches the engine launch: effort_position "end" composes --tail-role-token with the tokenizer's
 // single "system" token id (effort_end_args serve/server.py:2836-2856, appended to the engine argv at
@@ -1300,6 +1364,7 @@ int main(int argc, char** argv) {
       {"unified_user_arguments_follow_the_allowlist", unified_user_arguments_follow_the_allowlist},
       {"managed_glm_rows_refused_for_qwen_manifest", managed_glm_rows_refused_for_qwen_manifest},
       {"gemma4_expert_launch_composes_only_allowlisted_flags", gemma4_expert_launch_composes_only_allowlisted_flags},
+      {"gemma4_expert_launch_checks_its_mtp_file", gemma4_expert_launch_checks_its_mtp_file},
       {"reasoning_config_reaches_engine_launch_and_env", reasoning_config_reaches_engine_launch_and_env},
       {"mtp_false_drops_the_mtp_arg", mtp_false_drops_the_mtp_arg},
       {"vram_reserve_mib_becomes_the_pinned_flag", vram_reserve_mib_becomes_the_pinned_flag},

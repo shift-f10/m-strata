@@ -85,6 +85,9 @@ struct ExecOptions final {
   std::span<const int> keep_fds;  // lifted with F_DUPFD_CLOEXEC >= kLiftFloor before the 0..3 dup2 sequence; spared by the sweep
   PreExecHook pre_exec{nullptr};  // after the sweep, before execve; non-zero → 'H' + errno on kReportFd, _exit
   const void* ctx{nullptr};
+  // The engine's conversation cache reader (EngineCommand::read_conversation_cache): when >= 0 and null_stderr is
+  // true, fd 2 is this descriptor (a pipe's write end) instead of /dev/null. -1: the behaviour before it.
+  int stderr_fd{-1};
 };
 // First byte of a hook (or keep_fds lift) failure report; an execve failure has no marker.
 inline constexpr char kHookFailureMarker = 'H';
@@ -266,7 +269,7 @@ inline void close_above_report(const int* kept, const std::size_t count, const i
   if ((stdin_fd >= 0 && in < 0) || (stdout_fd >= 0 && out < 0)) fail(report);
   int err = -1;
   if (null_stderr) {
-    const int sink = open("/dev/null", O_WRONLY | O_CLOEXEC);
+    const int sink = options.stderr_fd >= 0 ? options.stderr_fd : open("/dev/null", O_WRONLY | O_CLOEXEC);
     err = lift(sink);
     if (err < 0) fail(report);
   }

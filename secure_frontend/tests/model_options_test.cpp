@@ -2,6 +2,7 @@
 // options a model card lets the page set, per engine profile — the tables, the card's "options"
 // object, the page's values against the card's bounds, their flags and config keys, the GET
 // /v1/strata/models description and the remembered-options file (D7).
+#include "secure_frontend/canonical_path.hpp"
 #include "secure_frontend/engine_arguments.hpp"
 #include "secure_frontend/frontend_config.hpp"
 #include "secure_frontend/json.hpp"
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -189,8 +191,9 @@ void option_tables_per_profile() {
                                                   "expert_cache", "prefill", "thinking", "temperature", "top_p", "top_k", "min_p",
                                                   "vision", "web_search", "gpus"},
          "the qwen options in display order: " + joined(names_of(EngineProfile::qwen)));
-  expect(names_of(EngineProfile::gemma4) ==
-             Strings{"max_context", "chunk", "expert_vram", "thinking", "temperature", "top_p", "top_k", "min_p", "web_search", "gpus"},
+  // mtp since 2026-10-28 (the owner: "gemma4 has an mtp ... make sure we work that mtp in our gemma engine")
+  expect(names_of(EngineProfile::gemma4) == Strings{"max_context", "chunk", "expert_vram", "mtp", "spec", "spec_min_p", "thinking",
+                                                    "temperature", "top_p", "top_k", "min_p", "web_search", "gpus"},
          "the gemma4 options in display order: " + joined(names_of(EngineProfile::gemma4)));
   // D10 met (owner 2026-10-27): Maya's own GLM choices - its context menu, the engine's --kv, the sampling defaults
   expect(names_of(EngineProfile::glm53) == Strings{"max_context", "kv", "temperature", "top_p", "top_k", "min_p", "web_search", "gpus"},
@@ -637,6 +640,58 @@ void options_apply_as_flags_and_keys() {
          "--expert-vram N passes the Gemma engine's allowlist");
 }
 
+// Owner 2026-10-28 ("gemma4 has an mtp ... make sure we work that mtp in our gemma engine"): a Gemma 4 card's MTP option
+// is a switch; on keeps the card's --mtp <file>, off drops it (flag and value) for that start - and only it. Neither
+// writes engine.mtp, a row the Gemma engine has no use for (the config refuses it on gemma4 by name). flint has none.
+void gemma4_mtp_off_drops_the_mtp_file() {
+  const auto* spec = secure_frontend::find_model_option(EngineProfile::gemma4, "mtp");
+  expect(spec != nullptr && spec->kind == ModelOptionKind::boolean && !spec->label.empty() && !spec->help.empty(),
+         "gemma4 has an MTP switch");
+  expect(secure_frontend::find_model_option(EngineProfile::flint, "mtp") == nullptr, "flint's engine runs no MTP file");
+  expect(secure_frontend::option_flags(EngineProfile::gemma4, "mtp").empty(), "the switch sets no flag of its own (the card's --mtp stays the card's)");
+  const Strings card{"--expert-slots", "8", "--mtp", "C:\\m\\MTP\\mtp-gemma-4-Q8_0.gguf", "--cpu-threads", "16"};
+  auto on = draft_with_args(card);
+  secure_frontend::apply_option_values(EngineProfile::gemma4, ModelOptionValues{{"mtp", true}, {"chunk", std::int64_t{512}}}, on);
+  expect(args_of(on) == Strings{"--expert-slots", "8", "--mtp", "C:\\m\\MTP\\mtp-gemma-4-Q8_0.gguf", "--cpu-threads", "16", "--chunk", "512"} &&
+             entry_of(on, "engine.mtp") == nullptr,
+         "mtp on: the card's --mtp <file> stays, no engine.mtp row: " + joined(args_of(on)));
+  auto off = draft_with_args(card);
+  secure_frontend::apply_option_values(EngineProfile::gemma4, ModelOptionValues{{"mtp", false}, {"chunk", std::int64_t{512}}}, off);
+  expect(args_of(off) == Strings{"--expert-slots", "8", "--cpu-threads", "16", "--chunk", "512"} && entry_of(off, "engine.mtp") == nullptr,
+         "mtp off: --mtp and its file go, nothing else, no engine.mtp row: " + joined(args_of(off)));
+  auto none = draft_with_args({"--expert-slots", "8"});
+  secure_frontend::apply_option_values(EngineProfile::gemma4, ModelOptionValues{{"mtp", false}}, none);
+  expect(args_of(none) == Strings{"--expert-slots", "8"} && entry_of(none, "engine.mtp") == nullptr, "off without an --mtp: nothing changes");
+
+  // the drafter's window and confidence (the Gemma 4 engine's --spec 2-8 and --spec-min-p 0-1): bounded as the engine's
+  // allowlist bounds them; --spec-min-p only while the MTP switch is on, rounded to the three places the allowlist takes
+  using secure_frontend::EngineArgumentsProfile;
+  const auto* window = secure_frontend::find_model_option(EngineProfile::gemma4, "spec");
+  expect(window != nullptr && window->minimum == 2 && window->maximum == 8 && engine_accepts(EngineArgumentsProfile::strata_gemma4, "--spec", 2) &&
+             engine_accepts(EngineArgumentsProfile::strata_gemma4, "--spec", 8) &&
+             !engine_accepts(EngineArgumentsProfile::strata_gemma4, "--spec", 9) &&
+             !engine_accepts(EngineArgumentsProfile::strata_gemma4, "--spec", 1),
+         "gemma4's draft window is the engine's --spec 2-8");
+  const auto* confidence = secure_frontend::find_model_option(EngineProfile::gemma4, "spec_min_p");
+  expect(confidence != nullptr && confidence->kind == ModelOptionKind::decimal && confidence->minimum_decimal == 0.0 &&
+             confidence->maximum_decimal == 1.0,
+         "gemma4's draft confidence is a decimal 0-1");
+  // (an MTP file absolute on this system, as the allowlist wants it: C:\... is not absolute on Linux)
+  const std::string here = secure_frontend::path_to_utf8(std::filesystem::temp_directory_path() / "m" / "MTP" / "mtp-gemma-4-Q8_0.gguf");
+  auto drafting = draft_with_args({"--expert-slots", "8", "--mtp", here, "--cpu-threads", "16"});
+  secure_frontend::apply_option_values(EngineProfile::gemma4,
+                                       ModelOptionValues{{"mtp", true}, {"spec", std::int64_t{6}}, {"spec_min_p", 0.33333}}, drafting);
+  expect(args_of(drafting) == Strings{"--expert-slots", "8", "--mtp", here, "--cpu-threads", "16", "--spec", "6", "--spec-min-p", "0.333"},
+         "mtp on: the window and the confidence (three places): " + joined(args_of(drafting)));
+  expect(!secure_frontend::validate_engine_user_arguments(EngineArgumentsProfile::strata_gemma4, args_of(drafting)).has_value(),
+         "and the Gemma engine's allowlist takes them");
+  auto plain = draft_with_args(card);
+  secure_frontend::apply_option_values(EngineProfile::gemma4,
+                                       ModelOptionValues{{"mtp", false}, {"spec", std::int64_t{6}}, {"spec_min_p", 0.25}}, plain);
+  expect(args_of(plain) == Strings{"--expert-slots", "8", "--cpu-threads", "16", "--spec", "6"},
+         "mtp off: the file and the confidence go; --spec stays, which the engine ignores without --mtp: " + joined(args_of(plain)));
+}
+
 // flint: the Gemma 4 option set (its engine is built the same way) bounded by multiengine_flint's own argument rules
 // (strata_flint); thinking off/on is reasoning.effort none/high, and the composed args pass the flint allowlist.
 void flint_options_follow_the_flint_engine() {
@@ -748,7 +803,10 @@ void controlled_flags_listed() {
          "the qwen option-controlled flags: " + joined(qwen));
   expect(std::find(qwen.begin(), qwen.end(), "--mtp") == qwen.end(), "--mtp is the card's, not an option's");
   const auto gemma = as_strings(EngineProfile::gemma4);
-  expect(gemma == Strings{"--max-context", "--chunk", "--expert-vram"}, "the gemma4 option-controlled flags: " + joined(gemma));
+  expect(gemma == Strings{"--max-context", "--chunk", "--expert-vram", "--spec", "--spec-min-p"},
+         "the gemma4 option-controlled flags: " + joined(gemma));
+  const auto flint = as_strings(EngineProfile::flint);
+  expect(flint == Strings{"--max-context", "--chunk", "--expert-vram"}, "flint's (no drafter): " + joined(flint));
   expect(secure_frontend::option_controlled_flags(EngineProfile::glm53).empty(), "glm53 has none");
 
   // Every flag an option writes is in its profile's list.
@@ -1176,5 +1234,6 @@ int main(int argc, char** argv) {
       {"minimax_options_are_mayas", minimax_options_are_mayas},
       {"the_vision_option_writes_the_encoder_rows", the_vision_option_writes_the_encoder_rows},
       {"gpus_choose_the_cards_a_model_runs_on", gpus_choose_the_cards_a_model_runs_on},
+      {"gemma4_mtp_off_drops_the_mtp_file", gemma4_mtp_off_drops_the_mtp_file},
   }, failures);
 }

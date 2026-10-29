@@ -163,7 +163,7 @@ std::variant<ServerInvocation, CliError> parse_server_command_line(const int arg
 
 std::string server_usage() {
   std::string text =
-      "Usage: strata-unified-server                 (first start: creates data/ beside it, then serves)\n"
+      "Usage: strata-unified-server                (first start: creates data/ beside it, then serves)\n"
       "       strata-unified-server [--data-dir DIR] [options]\n"
       "                                            (data/ or that data folder; options such as --port\n"
       "                                            apply to this start on top of its config.json)\n"

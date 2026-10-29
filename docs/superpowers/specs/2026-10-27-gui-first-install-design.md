@@ -72,7 +72,7 @@ folder owner-only (Windows: a protected owner-only DACL; POSIX: `go-w` on the tr
 
 ```
 <out>/
-  strata-unified-server(.exe)     the server and its page
+  strata-unified-server(.exe)    the server and its page
   strata(.exe)                   the CLI (downloads child, key show/rotate)
   engine/multiengine(.exe)       the launcher
   engine/multiengine_<family>    one library per family (.dll / .so), strata_kq
@@ -201,8 +201,30 @@ is added to the card it disappears in the download section."
 - The Download section has two ways in: download a model, or **use model files already on this PC** - a folder (4.2's
   folder browser), whose GGUF files are listed; choosing one builds its card exactly as 4.2 (no copy, no move: the card
   points at that folder). It works with no card yet (the launcher boots card-less, §3).
-- A model that has a card is no longer offered in the Download section: the page hides a download whose id a card's
-  `source` names (`download:<id>`), or whose model file (`"file"`: the first shard's stem) is a card's model.
+- A model that has a card is no longer offered in the Download section. Since 2026-10-28 (owner: "if it match the card
+  of the model that is downloadable, we should change the banner from available to Locally Provided vs Downloaded.
+  That way the user knows what they already have in the system") it is shown with what this PC has, not hidden. The
+  server decides, one rule for the page and strata-tui: each entry of `GET /v1/strata/downloads` carries `have` and
+  `have_card` (the card's name, or null):
+  - `"downloaded"`: a card names this download as its `source` (`download:<id>`), or the download is ready or
+    installed;
+  - `"local"`: another card runs the same model - the entry's first model file (a split model's first shard) by name,
+    and by size where the catalog pins one and the card's file is there (another quant of that name is not it; nothing
+    is hashed). A card's model file is its model folder's `<engine.model_id>.gguf`; a card on a Maya pack (GLM-5.3,
+    raon-1-mini, DeepSeek-V4.1, MiniMax-M3.1) names the pack and Maya's model name, so its model is the shard the pack
+    was built from, beside the pack (`native_experts.txt`'s, else the first `sources.json` lists; `card_model_file`);
+  - `null` otherwise.
+  The page's badge reads **Downloaded** or **Locally provided**, the entry says "Already on this PC; its card: <name>",
+  and it has no Download button (a download under way or paused keeps its own state and controls). A download counts
+  as set up (ready) only when `<cards>/<id>.json` is its own card (its source that download's, or none); a card added
+  from a folder whose file only shares that name (another case on Windows) does not.
+- **The Download list's layout (owner, 2026-10-28):** "make prominent the device and download location selection" - a
+  **Download to** panel heads the list (the drive, the folder in a chip shortened in its middle, a gauge of the drive's
+  space, **Change...**, the server's folder as the default, a warning in words when the largest download pending there
+  does not fit); "put accordion control so that user can expand per related section" - each model family is a section
+  behind a button (`aria-expanded`, `aria-controls`) that names the family and what it holds, closed by default, open by
+  itself with a download under way, paused or failed or a link just added, the sections opened remembered for the tab
+  (sessionStorage: the threat model keeps the page script off `localStorage`).
 
 ### 4.4 Moving a model
 

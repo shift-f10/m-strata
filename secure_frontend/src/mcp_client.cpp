@@ -65,9 +65,9 @@ std::string seconds_g(const std::chrono::milliseconds timeout) {
 }
 
 struct Awaited final {
-  std::optional<JsonValue> result;
-  std::optional<std::string> error;  // "message (code N)", or why nothing came
-  std::optional<std::int64_t> code;
+  std::optional<JsonValue> result{};
+  std::optional<std::string> error{};  // "message (code N)", or why nothing came
+  std::optional<std::int64_t> code{};
   bool cancelled{false};
 };
 

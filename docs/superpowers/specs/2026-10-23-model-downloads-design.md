@@ -83,3 +83,27 @@ catalog's generated pins, the disk-space arithmetic and refusal text, the child'
 on a fake curl (the existing `fake_curl` harness), resume, cancel, a SHA-256 mismatch, the routes'
 switch and key. On the box: one small catalog GGUF (the Qwen mmproj, 0.91 GB) and one pasted link
 end to end, an oversized one refused for space.
+
+## 6. Our own pins: flint, raon-1-mini, Gemma 4 and its MTP file (owner 2026-10-28)
+
+Owner: "there are no download cards for the following: flint ..., raon1 ..., gemma4 ..." and "gemma4 has an mtp ...
+make sure we work that mtp in our gemma engine".
+
+- **The pins.** Neither upstream's `setup.py` nor Maya's tables name these models, so the catalog gains a third
+  source: `tools/secure/catalog_pins.json`, ours (catalog `source` `m-strata`; the page shows it as "Built from"),
+  read by the generator's `pin_entries`. Each file is pinned by commit, size and SHA-256 as read from Hugging Face's
+  HEAD headers on 2026-10-28, each entry names the licence its model card names (stated on the card), and anything
+  unpinned, unknown or misspelt drops the entry (reported). PROVENANCE lists the values.
+- **flint Q8_0 and Gemma 4 26B-A4B Q8_0** (`prepare` `none`): a card is made from the GGUF the moment it is verified
+  (§4.3 of the GUI-first spec; `models.default_engine` set). **raon-1-mini Q8_0** (`maya_pack`): packed as a raon1
+  folder card is - the GGUF hard-linked into `<store>/packs/<id>/`, `strata-prepare download --maya` into `pack/`
+  there, the marker `raon1-mini.gguf` - then its raon1 card.
+- **Gemma 4's MTP draft file.** A typed optional `mtp` file of a catalog entry (the image encoder's shape, its
+  repository and revision the entry's unless it names its own; Gemma 4 entries only, pinned to a commit with its
+  size). It is always fetched with the model (0.46 GB), counted in the card's size and file count, pulled as a
+  `weights` file of the same manifest, and handed to the card: `engine.args` `--mtp <the stored file>` and a boolean
+  `mtp` option, on by default, listed only on a card that has the file; off drops `--mtp <file>` for that start. A
+  Gemma 4 card made from a folder finds the folder's one `mtp-*.gguf` (beside the model or in `MTP/`; none or two:
+  none), held to the model folders' rule. The Gemma engine's allowlist takes `--mtp` with an absolute `.gguf` path,
+  and each launch checks the file as a card's picture encoder is checked (a regular file, not a link, in a folder no
+  other user may change). A moved model folder takes an MTP file inside it along.

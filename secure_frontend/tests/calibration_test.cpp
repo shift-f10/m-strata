@@ -325,8 +325,8 @@ void prefill_records_round_trip() {
   expect(secure_frontend::read_prefill_measurement(engine_json, measured) && measured.chunk == 4096 && measured.gemm == "blas" &&
              measured.tok_s == 1201.3 && measured.default_tok_s == 1100.0,
          "the engine's measurement is read");
-  for (const std::string bad : {std::string{"{}"}, std::string{R"({"chunk": 0, "gemm": "blas", "tok_s": 1, "default_tok_s": 1})"},
-                                std::string{R"({"chunk": 1024, "gemm": "cublaslt", "tok_s": 1, "default_tok_s": 1})"}, std::string{"not json"}}) {
+  for (const std::string& bad : {std::string{"{}"}, std::string{R"({"chunk": 0, "gemm": "blas", "tok_s": 1, "default_tok_s": 1})"},
+                                 std::string{R"({"chunk": 1024, "gemm": "cublaslt", "tok_s": 1, "default_tok_s": 1})"}, std::string{"not json"}}) {
     expect(!secure_frontend::read_prefill_measurement(bad, measured), "not the engine's measurement: " + bad);
   }
 }

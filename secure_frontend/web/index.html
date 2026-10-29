@@ -251,12 +251,26 @@
         <div class="downloads-body" id="downloads-body">
           <p class="muted small">GGUF models from Hugging Face. The server knows each file's size and SHA-256 before the
             transfer, checks the free space first and every file at the end.</p>
-          <div class="downloads-dest" id="downloads-dest">
-            <span class="st-label">Downloads go to</span>
-            <div class="model-folder__row"><code id="downloads-dest-path"></code>
-              <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="downloads-dest-change">Change...</button></div>
-          </div>
-          <p class="downloads-disk" id="downloads-disk" hidden></p>
+          <!-- Owner 2026-10-28: where downloads go, a panel heading the list: the drive, the folder, the drive's space, Change -->
+          <section class="dl-dest" id="downloads-dest" aria-labelledby="downloads-dest-title">
+            <div class="dl-dest__head">
+              <svg class="st-icon dl-dest__icon" aria-hidden="true"><use href="/ui/sprite.svg#i-disk"/></svg>
+              <h3 class="dl-dest__title" id="downloads-dest-title">Download to</h3>
+              <div class="dl-dest__actions">
+                <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="downloads-dest-reset" hidden>Use the default</button>
+                <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="downloads-dest-change" aria-describedby="downloads-dest-title">Change&hellip;</button>
+              </div>
+            </div>
+            <dl class="dl-dest__where">
+              <dt>Drive</dt><dd class="dl-dest__drive" id="downloads-dest-drive">-</dd>
+              <dt>Folder</dt><dd><code class="dl-dest__path" id="downloads-dest-path"></code></dd>
+            </dl>
+            <p class="dl-dest__which" id="downloads-dest-default"></p>
+            <div class="st-progress dl-dest__gauge" id="downloads-dest-gauge" role="meter" aria-label="Space used on the drive downloads go to"
+                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><div class="st-progress__bar" id="downloads-dest-gauge-bar"></div></div>
+            <p class="downloads-disk" id="downloads-disk" hidden></p>
+            <p class="msg-warn" id="downloads-dest-warn" role="status" hidden></p>
+          </section>
           <div class="downloads-list" id="downloads-list"></div>
           <form class="downloads-link" id="downloads-link-form" autocomplete="off" novalidate>
             <label class="st-label" for="downloads-url">Hugging Face link to a .gguf file</label>
@@ -441,6 +455,7 @@
             <span class="st-badge st-badge--queued" data-s="queued">Queued</span>
             <span class="st-badge st-badge--error" data-s="error">Error</span>
             <span class="st-badge st-badge--stopped" data-s="stopped">Stopped</span>
+            <span class="st-badge st-badge--stopped" data-s="unloaded">Unloaded</span>
           </span>
         </div>
         <div class="state-card__row"><span id="state-label">Waiting for a request</span><span class="muted" id="state-detail"></span></div>
@@ -448,12 +463,14 @@
       </div>
 
       <div class="metrics" id="metrics">
-        <!-- filled by app.js: Speed, GPU load, VRAM, GPU temp, Power, PCIe, CPU -->
+        <!-- filled by app.js: Speed, GPU load, VRAM, GPU temp, Power, PCIe, CPU, Disk read (eight: even rows at 4, 2, 1) -->
       </div>
 
+      <!-- Owner 2026-10-28 ("make the panels symmetric and even"): two equal panels side by side, then the recent
+           requests across the whole width -->
       <div class="monitor-row" id="monitor-row">
         <div class="st-card ctx-card">
-          <span class="card-title">Context fill</span>
+          <span class="card-title">Context and memory</span>
           <div class="ctx-gauge">
             <svg class="st-gauge" viewBox="0 0 120 120" aria-hidden="true">
               <circle class="st-gauge__track" cx="60" cy="60" r="50" fill="none" stroke-width="10" stroke-linecap="round"
@@ -470,19 +487,32 @@
           <div class="bar-row"><span>GPU temperature</span><span class="muted" id="temp-text">&ndash;</span></div>
           <div class="st-progress" data-tone="warn"><div class="st-progress__bar bar" id="temp-bar"></div></div>
         </div>
-        <div class="st-card req-card">
-          <div class="req-head"><span class="card-title">Recent requests</span>
-            <button type="button" class="st-btn st-btn--secondary" id="req-all" hidden>Show all</button></div>
-          <div class="table-wrap" id="req-wrap">
-            <table class="st-table">
-              <thead><tr><th>Time</th><th>Model</th><th>Status</th><th class="num">Prompt</th><th class="num">Reused</th><th class="num">Output</th>
-                <th class="num" title="New prompt tokens per second, excluding reused tokens (the engine's prompt time)">Prefill t/s</th>
-                <th class="num">Decode t/s</th><th class="num">Duration</th></tr></thead>
-              <tbody id="req-body"><tr><td colspan="9" class="muted">No requests yet</td></tr></tbody>
-            </table>
+        <!-- upstream's Conversation cache card (serve/web/index.html cc-card), on /metrics conversation_cache -->
+        <div class="st-card cc-card" id="cc-card">
+          <div class="req-head"><span class="card-title">Conversation cache</span><span class="muted small" id="cc-sum"></span></div>
+          <div class="cc-bars" id="cc-bars" hidden>
+            <div><div class="bar-row"><span>Parked conversations</span><span class="muted" id="cc-slots-text">&ndash;</span></div>
+              <div class="st-progress"><div class="st-progress__bar bar" id="cc-slots-bar"></div></div></div>
+            <div><div class="bar-row"><span>Their memory (RAM)</span><span class="muted" id="cc-mem-text">&ndash;</span></div>
+              <div class="st-progress"><div class="st-progress__bar bar" id="cc-mem-bar"></div></div></div>
           </div>
-          <p class="muted req-totals" id="req-totals"></p>
+          <dl class="facts cc-facts" id="cc-facts"></dl>
+          <p class="muted small cc-note" id="cc-note"></p>
         </div>
+      </div>
+
+      <div class="st-card req-card" id="req-card">
+        <div class="req-head"><span class="card-title">Recent requests</span>
+          <button type="button" class="st-btn st-btn--secondary" id="req-all" hidden>Show all</button></div>
+        <div class="table-wrap" id="req-wrap">
+          <table class="st-table">
+            <thead><tr><th>Time</th><th>Model</th><th>Status</th><th class="num">Prompt</th><th class="num">Reused</th><th class="num">Output</th>
+              <th class="num" title="New prompt tokens per second, excluding reused tokens (the engine's prompt time)">Prefill t/s</th>
+              <th class="num">Decode t/s</th><th class="num">Duration</th></tr></thead>
+            <tbody id="req-body"><tr><td colspan="9" class="muted">No requests yet</td></tr></tbody>
+          </table>
+        </div>
+        <p class="muted req-totals" id="req-totals"></p>
       </div>
     </div>
   </section>

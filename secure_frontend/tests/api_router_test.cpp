@@ -793,8 +793,57 @@ void web_ui_monitor_shows_stopped_and_the_model() {
          "each row shows its model");
 }
 
+// Owner 2026-10-28: the RAM card shows the experts and the engine's memory, not the PC's GB alone; the live figures
+// reset when no engine is up (stopped, unloaded, failed) or the server does not answer; upstream's disk read tile and
+// conversation cache card; and the panels in even rows, the recent requests last across the whole width.
+void web_ui_monitor_is_even_and_shows_memory_disk_and_cache() {
+  const std::string html{secure_frontend::find_web_asset("/")->body};
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  const std::string css{secure_frontend::find_web_asset("/ui/app.css")->body};
+  expect(js.find("var mem = loaded && eng.memory ? eng.memory : {};") != std::string::npos &&
+             js.find("has(mem.experts_ram)") != std::string::npos && js.find("has(mem.experts_ram_bytes)") != std::string::npos &&
+             js.find("\"engine \" + size(mem.process_bytes)") != std::string::npos && js.find("has(mem.experts_vram)") != std::string::npos,
+         "the RAM and VRAM lines read engine.memory: the experts, their GB, the engine process");
+  expect(js.find("ex.expert_slots - ex.expert_slots_primary") == std::string::npos,
+         "the old guess (all the experts less the VRAM ones) is gone: on upstream's engine it is the other GPUs' share");
+  expect(js.find("var loaded = eng.loaded === undefined ? !stopped && !offline : eng.loaded === true;") != std::string::npos &&
+             js.find("var last = loaded ? requests[0] : null;") != std::string::npos,
+         "the last request's figures only while an engine is up");
+  expect(js.find("live.state === \"unloaded\"") != std::string::npos &&
+             html.find("<span class=\"st-badge st-badge--stopped\" data-s=\"unloaded\">Unloaded</span>") != std::string::npos,
+         "an engine unloaded after idling says so");
+  expect(js.find("renderMonitor(offlineSnapshot(monitor.last));") != std::string::npos && js.find("The server is not answering") != std::string::npos,
+         "a server that does not answer leaves no live figure on the page");
+  expect(js.find("{ key: \"disk\", label: \"Disk read\", icon: \"i-disk\", series: \"disk_read_mb\", tone: \"info\" }") != std::string::npos &&
+             js.find("hw.disk_read_mb >= 1000") != std::string::npos && js.find("\"peak \" + rate(diskPeak)") != std::string::npos,
+         "upstream's Disk read tile: MB/s, GB/s past 1000, with its peak");
+  expect(html.find("id=\"cc-card\"") != std::string::npos && html.find("id=\"cc-bars\"") != std::string::npos &&
+             html.find("id=\"cc-facts\"") != std::string::npos && html.find("id=\"cc-note\"") != std::string::npos &&
+             js.find("renderConvCache(m.conversation_cache, live.state);") != std::string::npos &&
+             js.find("Not used by this engine") != std::string::npos,
+         "upstream's Conversation cache card, with the state of an engine that has none");
+  const auto row = html.find("id=\"monitor-row\"");
+  const auto cache = html.find("id=\"cc-card\"");
+  const auto requests = html.find("id=\"req-card\"");
+  expect(row != std::string::npos && cache != std::string::npos && requests != std::string::npos && row < cache && cache < requests &&
+             html.find("\n      <div class=\"monitor-row\" id=\"monitor-row\">") != std::string::npos &&
+             html.find("\n      <div class=\"st-card req-card\" id=\"req-card\">") != std::string::npos,
+         "the two panels side by side in their row, the recent requests after it at the same level (the whole width)");
+  expect(css.find(".monitor-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));") != std::string::npos &&
+             css.find(".metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));") != std::string::npos,
+         "even rows: two equal panels, the tiles four across");
+  std::size_t tiles = 0;
+  for (std::size_t at = js.find("var METRICS = ["); at != std::string::npos && at < js.find("];", js.find("var METRICS = ["));
+       at = js.find("{ key: \"", at + 1U)) {
+    if (js.compare(at, 8U, "{ key: \"") == 0) ++tiles;
+  }
+  expect(tiles == 8U, "eight tiles: even rows at four, two and one across (" + std::to_string(tiles) + ")");
+}
+
 // §4.3, §4.3a: downloads go to a chosen drive or folder (its free space shown, the folder sent with every start and link
-// check), and a model that already has a card - from its download, or the same file added from this PC - is not offered.
+// check), and a model that already has a card - from its download, or the same file added from this PC - is not offered
+// for download; since 2026-10-28 (owner: "change the banner from available to Locally Provided vs Downloaded") it is
+// shown as what this PC has, not hidden (web_ui_downloads_say_what_is_on_this_pc).
 void web_ui_downloads_go_to_a_chosen_folder() {
   const std::string html{secure_frontend::find_web_asset("/")->body};
   const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
@@ -807,11 +856,123 @@ void web_ui_downloads_go_to_a_chosen_folder() {
              js.find("jsonPost(withFolder({ url: offer.url, confirm: true }))") != std::string::npos &&
              js.find("jsonPost(withFolder(body))") != std::string::npos,
          "a start, a link's start and a link check name the folder");
-  expect(js.find("function carded(") != std::string::npos && js.find("\"download:\" + card.id") != std::string::npos &&
-             js.find("return !carded(card);") != std::string::npos,
-         "a download whose model has a card is not listed");
+  expect(js.find("var startable = !onPc && oneOf(DL_STARTABLE, card.state);") != std::string::npos,
+         "a download whose model is already on this PC is not offered for download");
   expect(js.find("$(\"models-subtab-download\").hidden = !on && !launcher.enabled;") != std::string::npos,
          "the Download sub-tab stays for model files on this PC even with downloads off");
+}
+
+// Owner 2026-10-28: "when we point it to a local folder with the model, if it match the card of the model that is
+// downloadable, we should change the banner from available to Locally Provided vs Downloaded. That way the user knows
+// what they already have in the system." The server's list says it ("have", "have_card": one rule for the page and
+// strata-tui); the page shows those entries, no longer hidden, with a badge of their own and the card's name, and offers
+// no Download for them.
+void web_ui_downloads_say_what_is_on_this_pc() {
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  const std::string css{secure_frontend::find_web_asset("/ui/app.css")->body};
+  expect(js.find("function carded(") == std::string::npos && js.find("!carded(card)") == std::string::npos,
+         "no download is hidden for having a card");
+  expect(js.find("var DL_HAVE = { downloaded: [\"st-badge--generating\", \"Downloaded\"], local: [\"st-badge--reading\", \"Locally provided\"] };") !=
+             std::string::npos,
+         "the two badges: Downloaded and Locally provided");
+  expect(js.find("function haveOf(card) {") != std::string::npos && js.find("card.have === \"downloaded\" || card.have === \"local\"") != std::string::npos,
+         "the badge comes from the server's have");
+  expect(js.find("function onThisPc(card) {") != std::string::npos &&
+             js.find("return have !== null && !oneOf(DL_ACTIVE, card.state) && card.state !== \"paused\" ? have : null;") != std::string::npos &&
+             js.find("var have = onThisPc(card);") != std::string::npos && js.find("var onPc = have !== null;") != std::string::npos &&
+             js.find("head.appendChild(onPc ? haveBadge(have) : dlBadge(card.state));") != std::string::npos,
+         "an entry on this PC wears its have badge (a download under way keeps its own)");
+  expect(js.find("\"Already on this PC\" + (card.have_card ? \"; its card: \" + String(card.have_card) : \"\")") != std::string::npos &&
+             js.find("if (card.state === \"failed\" && !onPc) {") != std::string::npos,
+         "the entry says it is already here and names its card (an old failed attempt is not shown)");
+  expect(js.find("var offerVision = !onPc && visionBytes > 0") != std::string::npos, "nor are its vision files offered");
+  expect(css.find(".dl-card[data-have=") != std::string::npos, "an entry on this PC is styled");
+}
+
+// Owner 2026-10-28: "To make the download catalog easier to view and not so busy, maybe we can put accordion control so
+// that user can expand per related section instead of seeing a busy page". Each family group is an accordion section:
+// a real button (aria-expanded, aria-controls) naming the family and what it holds; closed by default unless it holds a
+// download under way, a paused or failed one, or a link just added; what the viewer opened is remembered for the tab
+// (the page's guarded sessionStorage helpers: the threat model pins no localStorage in app.js), the page working without it.
+void web_ui_downloads_groups_are_accordions() {
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  const std::string css{secure_frontend::find_web_asset("/ui/app.css")->body};
+  expect(js.find("var toggle = el(\"button\", \"dl-group__head\");") != std::string::npos && js.find("toggle.type = \"button\";") != std::string::npos &&
+             js.find("toggle.setAttribute(\"aria-expanded\", open ? \"true\" : \"false\");") != std::string::npos &&
+             js.find("toggle.setAttribute(\"aria-controls\", panel.id);") != std::string::npos,
+         "each group's header is a button that says whether it is open and what it opens");
+  expect(js.find("panel.hidden = !open;") != std::string::npos && js.find("panel.setAttribute(\"role\", \"region\");") != std::string::npos &&
+             js.find("panel.setAttribute(\"aria-labelledby\", toggle.id);") != std::string::npos,
+         "its cards are a region labelled by the header, hidden while closed");
+  expect(js.find("function groupSummary(members) {") != std::string::npos &&
+             js.find("fmt(members.length) + (members.length === 1 ? \" model\" : \" models\")") != std::string::npos &&
+             js.find("\" on this PC\"") != std::string::npos && js.find("\" downloading\"") != std::string::npos &&
+             js.find("var here = count(function (card) { return onThisPc(card) !== null; });") != std::string::npos,
+         "the header sums the group up: models, downloads under way, those on this PC (as its cards show them)");
+  expect(js.find("function groupWantsOpen(members) {") != std::string::npos &&
+             js.find("oneOf(DL_ACTIVE, card.state) || card.state === \"paused\" || (card.state === \"failed\" && onThisPc(card) === null) ||") !=
+                 std::string::npos &&
+             js.find("card.id === downloads.justAdded") != std::string::npos,
+         "a group holding anything under way, paused, failed (and not on this PC) or just added opens itself");
+  expect(js.find("var DL_OPEN_SLOT = \"strata.downloads.open\";") != std::string::npos &&
+             js.find("var saved = load(DL_OPEN_SLOT, null);") != std::string::npos &&
+             js.find("function saveOpenGroups() { save(DL_OPEN_SLOT, downloads.open); }") != std::string::npos &&
+             js.find("localStorage") == std::string::npos,
+         "the groups opened are remembered for the tab through the guarded storage helpers, never localStorage");
+  expect(js.find("downloads.justAdded = answer.body && typeof answer.body.id === \"string\" ? answer.body.id : \"\";") != std::string::npos,
+         "a link just started opens its group");
+  expect(css.find(".dl-group__head {") != std::string::npos && css.find(".dl-group__head:focus-visible") != std::string::npos &&
+             css.find(".dl-group__head[aria-expanded=\"true\"] .dl-group__chevron") != std::string::npos,
+         "the header is styled, with a focus ring and a chevron that turns");
+  const auto phone = css.find("@media (max-width: 640px) {");
+  const std::string block = phone == std::string::npos ? std::string{} : css.substr(phone, css.find("\n}", phone) - phone);
+  expect(block.find(".dl-group__head") != std::string::npos, "the header has a phone-width rule");
+}
+
+// Owner 2026-10-28: "we should also make prominent the device and download location selection so that it does not look
+// just a bunch of text". Where downloads go is a panel at the top of the list: "Download to", the drive and the folder
+// (the path in a chip that shortens in its middle), a free-space gauge (used, free, total), a real Change button that
+// opens the folder picker, the server's folder marked as the default, and a warning (in words) when the free space
+// cannot hold the largest download queued, under way, paused or confirmed. The picker and withFolder are as before.
+void web_ui_downloads_destination_is_a_panel() {
+  const std::string html{secure_frontend::find_web_asset("/")->body};
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  const std::string css{secure_frontend::find_web_asset("/ui/app.css")->body};
+  const auto panel = html.find("<section class=\"dl-dest\" id=\"downloads-dest\" aria-labelledby=\"downloads-dest-title\">");
+  expect(panel != std::string::npos && panel < html.find("id=\"downloads-list\""), "a destination panel heads the list");
+  expect(html.find("<h3 class=\"dl-dest__title\" id=\"downloads-dest-title\">Download to</h3>") != std::string::npos,
+         "it is headed Download to");
+  for (const char* id : {"id=\"downloads-dest-drive\"", "id=\"downloads-dest-path\"", "id=\"downloads-dest-default\"", "id=\"downloads-dest-gauge\"",
+                         "id=\"downloads-dest-gauge-bar\"", "id=\"downloads-disk\"", "id=\"downloads-dest-warn\"", "id=\"downloads-dest-reset\""}) {
+    expect(html.find(id) != std::string::npos, std::string{"the panel has "} + id);
+  }
+  expect(html.find("<button type=\"button\" class=\"st-btn st-btn--secondary st-btn--sm\" id=\"downloads-dest-change\" "
+                   "aria-describedby=\"downloads-dest-title\">Change&hellip;</button>") != std::string::npos,
+         "a real Change button");
+  expect(html.find("role=\"meter\"") != std::string::npos && js.find("gauge.setAttribute(\"aria-valuenow\", String(used));") != std::string::npos &&
+             js.find("gauge.setAttribute(\"aria-valuetext\", ") != std::string::npos,
+         "the gauge is a meter with its value in words");
+  expect(js.find("function middleChip(node, path) {") != std::string::npos && js.find("node.title = path;") != std::string::npos,
+         "the path shortens in its middle and keeps the whole path as its title");
+  expect(js.find("\"The server's downloads folder (default)\"") != std::string::npos, "the server's folder is the default");
+  expect(js.find("Number(disk.total_bytes) > 0 ? disk.free_bytes : null;") != std::string::npos,
+         "a drive the server could not read (0 of 0 bytes) has no free space known, so no false warning");
+  expect(js.find("function sameFolder(a, b) {") != std::string::npos && js.find("sameFolder(card.folder, here)") != std::string::npos,
+         "the downloads pending there are found whatever the path's case or trailing separator");
+  expect(js.find("function destinationShort() {") != std::string::npos &&
+             js.find("\"Not enough room for \" + short.name + \": \" + dgb(short.bytes) + \" GB needed, \" + dgb(free) + \" GB free\"") !=
+                 std::string::npos &&
+             js.find("box.setAttribute(\"data-short\", short ? \"true\" : \"false\");") != std::string::npos,
+         "a warning in words when the largest pending download cannot fit");
+  expect(js.find("$(\"downloads-dest-change\").addEventListener(\"click\", chooseDestination);") != std::string::npos &&
+             js.find("downloads.folder = picked.folder;") != std::string::npos,
+         "Change opens the folder picker, as before");
+  expect(css.find(".dl-dest {") != std::string::npos && css.find(".dl-dest__path") != std::string::npos &&
+             css.find(".dl-dest[data-short=\"true\"]") != std::string::npos,
+         "the panel, its chip and its warning state are styled");
+  const auto phone = css.find("@media (max-width: 640px) {");
+  const std::string block = phone == std::string::npos ? std::string{} : css.substr(phone, css.find("\n}", phone) - phone);
+  expect(block.find(".dl-dest") != std::string::npos, "the panel has a phone-width rule");
 }
 
 // Model downloads plan Task 5 (spec sections 3-4, O1-O4): a Downloads section on the Models tab.
@@ -860,7 +1021,10 @@ void web_ui_models_tab_subtabs_and_family_groups() {
                           "[\"glm53\", \"GLM-5.3-Flash (Project Maya)\"]", "[\"custom\", \"Your downloads\"]",
                           // owner 2026-10-28: Maya's DeepSeek quants and MiniMax's, its licence named in its heading
                           "[\"deepseek\", \"DeepSeek-V4.1-Flash (Project Maya)\"]",
-                          "[\"minimax\", \"MiniMax-M3.1-Flash (Project Maya; MiniMax Community License)\"]"}) {
+                          "[\"minimax\", \"MiniMax-M3.1-Flash (Project Maya; MiniMax Community License)\"]",
+                          // owner 2026-10-28: our own pins - Gemma 4 with its MTP draft file, flint, raon-1-mini
+                          "[\"gemma4\", \"Gemma 4 (Google)\"]", "[\"flint\", \"flint (RecursiveSI)\"]",
+                          "[\"raon1\", \"Raon-1-mini (KRAFTON)\"]"}) {
     expect(js.find(fam) != std::string::npos, std::string{"a friendly family heading: "} + fam);
   }
   expect(js.find("card.family") != std::string::npos, "the cards are grouped by their family field");
@@ -1645,6 +1809,9 @@ int main(int argc, char** argv) {
       {"config_routes_need_their_handler_and_the_key", config_routes_need_their_handler_and_the_key},
       {"web_ui_cards_from_this_pc_and_the_danger_zone", web_ui_cards_from_this_pc_and_the_danger_zone},
       {"web_ui_downloads_go_to_a_chosen_folder", web_ui_downloads_go_to_a_chosen_folder},
+      {"web_ui_downloads_say_what_is_on_this_pc", web_ui_downloads_say_what_is_on_this_pc},
+      {"web_ui_downloads_groups_are_accordions", web_ui_downloads_groups_are_accordions},
+      {"web_ui_downloads_destination_is_a_panel", web_ui_downloads_destination_is_a_panel},
       {"web_ui_models_tab_calibrates", web_ui_models_tab_calibrates},
       {"web_ui_has_email_alert_settings", web_ui_has_email_alert_settings},
       {"web_ui_has_server_settings", web_ui_has_server_settings},
@@ -1653,6 +1820,7 @@ int main(int argc, char** argv) {
       {"web_ui_has_web_search_settings", web_ui_has_web_search_settings},
       {"web_ui_has_model_folder_setting", web_ui_has_model_folder_setting},
       {"web_ui_monitor_shows_stopped_and_the_model", web_ui_monitor_shows_stopped_and_the_model},
+      {"web_ui_monitor_is_even_and_shows_memory_disk_and_cache", web_ui_monitor_is_even_and_shows_memory_disk_and_cache},
       {"web_ui_about_lists_the_engines_and_this_pc", web_ui_about_lists_the_engines_and_this_pc},
       {"web_ui_search_box_limit_note_and_engine_table", web_ui_search_box_limit_note_and_engine_table},
       {"web_ui_chat_can_turn_search_off", web_ui_chat_can_turn_search_off},

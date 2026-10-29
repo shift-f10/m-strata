@@ -1,6 +1,5 @@
 # Secure frontend scaffold
 
-Until 2026-10-28 the server was named `strata-secure-server`; an older out folder may still hold that file.
 This is a dependency-free C++20 foundation for the portable Strata frontend.
 It currently provides configuration validation, secret-source metadata,
 protected-file token reading on Linux and Windows, exact Host/Origin/CORS policy checks, a
@@ -280,6 +279,8 @@ the table below); the two exclude each other. Other options (`--port 9090`, `--h
 that start on top of the data folder's config (`uses_data_folder`); only a bring-up start that names its model by
 flags (`--expert`, `--models-root`, `--engine`, `--model-id`, `--profile`, `--tokenizer-pack`) reads no data folder.
 
+Until 2026-10-28 the server was named `strata-secure-server`; an older out folder may still hold that file.
+
 **The Models tab** (model control on, loopback clients only):
 
 - **Add a model** from files already on this PC: pick a drive and folder (free space shown), then a GGUF file (a split
@@ -298,9 +299,27 @@ flags (`--expert`, `--models-root`, `--engine`, `--model-id`, `--profile`, `--to
   files, is used as it is and its permissions are never changed.
 - **Download** into a drive or folder you choose. Its free space must cover the files plus a 2 GiB margin, and "New
   private folder" makes an owner-only folder on a shared drive. A downloaded Gemma 4, flint or Qwen3.6 GGUF becomes a
-  card when it is verified; a Qwen3.8, GLM-5.3, DeepSeek-V4.1 or MiniMax-M3.1 download is packed by `strata-prepare`
-  first (a GLM pack beside hard links to the store's shards in the store's `packs/`, a DeepSeek or MiniMax pack there
-  reading the store's files in place). A model that has a card no longer shows in the Download list.
+  card when it is verified; a Qwen3.8, GLM-5.3, raon-1-mini, DeepSeek-V4.1 or MiniMax-M3.1 download is packed by
+  `strata-prepare` first (a GLM or raon-1-mini pack beside hard links to the store's files in the store's `packs/`, a
+  DeepSeek or MiniMax pack there reading the store's files in place). A model already on this PC is shown, not
+  offered: each entry of `GET /v1/strata/downloads` carries `have` - `"downloaded"` (a card from this download, or the
+  download ready or installed), `"local"` (another card runs the same model: the entry's first model file by name, and
+  by size where the catalog pins one and the card's file is there, so another quant of that name is not it; nothing is
+  hashed; a Maya pack card's model is the shard its pack was built from, beside the pack) or `null` - and `have_card`,
+  that card's name. The page's badge says **Downloaded** or **Locally provided** with "its card: <name>" and offers no
+  Download; strata-tui shows the same and Enter downloads none of them. A card added from a folder whose file only
+  shares a download's card file name (another case on Windows) no longer marks that download done.
+- **The Download list** (owner 2026-10-28): a **Download to** panel heads it - the drive, the folder in a chip that
+  shortens in its middle, a gauge of the drive's space (used, free, total), **Change...** (the folder picker), the
+  server's folder marked as the default with "Use the default" back to it, and a warning in words when the largest
+  download queued, under way, paused or confirmed there does not fit. Each model family is an accordion section: a
+  button naming the family and what it holds ("6 models · 2 on this PC"), closed by default, open by itself while it
+  holds a download under way, a paused or failed one, or a link just added; the sections opened are remembered for the
+  tab (sessionStorage, like the rest of the page).
+- **Gemma 4's MTP draft file** (owner 2026-10-28): the Gemma 4 26B-A4B download brings it (`MTP/mtp-*.gguf`, always,
+  counted in its size), and a Gemma 4 card added from a folder finds the folder's one `mtp-*.gguf` beside the model or in
+  `MTP/`. The card then runs it (`--mtp <file>`) and lists an **MTP** switch, on by default; off starts the engine
+  without it. The file is held to the model folders' rule at each start, as a picture encoder is.
 - **GLM-5.3 cards** take Maya's options (context 8K-128K, the KV format, sampling) and Maya's shipped expert profile;
   the page sends no `reasoning_effort` to them (the profile has no thinking switch).
 - **DeepSeek-V4.1 cards** run Maya's DeepSeek engine (`multiengine --pack`) with Maya's options (context 32K-1M, 64K;
@@ -394,7 +413,33 @@ refuses `init`, `--check` and `--help`, which stay with `strata-unified-server`.
   3 s, and a middle click on the icon opens the window.
 - **Tests:** the shared part (`window_shell.hpp`: the console lines, navigation, the tray's list and requests, the key,
   the log, the server child) is built and tested in every configuration (`secure_frontend_window_shell_tests`,
-  driving `secure_frontend_fake_server_child`); the Linux runs come from CI.
+  driving `secure_frontend_fake_server_child`); the Linux runs come from CI. The Linux window was also run here, in
+  WSL 2 under WSLg: the page, closing to the tray, one window per data folder, an orderly stop, and the tray menu over
+  D-Bus. WSLg has no tray to show the icon in.
+
+### strata-tui: the server in a terminal (2026-10-28)
+
+`-DSECURE_FRONTEND_TUI=ON` (`make.py --with tui`; on in the dev presets that build web search, so CI compiles it on
+Linux and Windows) builds `strata-tui` (spec `docs/superpowers/specs/2026-10-28-server-tui-design.md`), the window's
+headless twin. It takes the server's own options, as the window does, through the same `window_shell` code: the server
+child, the environment copy, `<data>/logs/server.log` without the login link, and the stop in order.
+
+- **The views.** Monitor first (charts of `/metrics`' history: decode tok/s, GPU use, CPU, GPU memory, temperature and
+  power, with the Engine, Machine and Last requests panels), then Models, Downloads, Settings, Log and About. They
+  poll the page's own routes every second over loopback with the key (`/metrics`, `/v1/strata/models`, and the view's
+  route), and the keys send the page's own requests (`models/start` with the card's edited options, `stop`,
+  `calibrate`, `calibrate/cancel`, `calibrate/auto`, `downloads/start|pause|cancel`, `config/settings`,
+  `key/rotate`). A refusal is shown in the server's own words on the status line.
+- **The screen.** `tui_screen` keeps a grid of cells (boxes, eighth-block gauges, braille charts or, on `TERM=linux`,
+  block charts) and writes only the cells that changed between frames; `NO_COLOR` drops the colours. Controls in any
+  text are drawn as spaces. `tui_input` decodes VT keys (arrows, Home/End, PageUp/Down, F1-F12, Shift-Tab, the SGR mouse
+  wheel), a sequence or a UTF-8 character split across reads included.
+- **The terminal.** `tui_terminal` is the one platform part: the Windows console in VT mode with UTF-8 code pages, or
+  POSIX termios raw mode, `poll` and `TIOCGWINSZ`, on the alternate screen, and it is put back on every way out.
+- **Tests:** `secure_frontend_tui_tests` (the screen and its VT output, the keys, the views drawn from the server's
+  answers, and the keys' requests) runs in every configuration. The program was driven in a real Windows console and,
+  on Linux (GCC 13.3 and Clang 18.1 in a WSL build environment), under tmux: every view, editing, resizes, quitting,
+  and a terminal hangup. The Linux runs of record still come from CI.
 
 ## Runnable smoke server
 
@@ -1879,15 +1924,19 @@ from any other server, and reach no route.
     or answer directly, Low, Medium and High all meaning thinking on), temperature, top-p,
     max tokens, seed, show thinking.
   - **Monitor** (with `listener.monitor`, below): upstream's dashboard — the model
-    state, speed (decode and prefill), GPU load, VRAM, GPU temperature, power, PCIe and
-    CPU cards with a minute of history, the context fill, GPU memory, RAM and
-    temperature bars, and the recent requests with their totals. Without the switch
-    the tab says the Monitor is off.
+    state, eight tiles with a minute of history (speed: decode and prefill, GPU load, VRAM,
+    GPU temperature, power, PCIe, CPU, disk read), then two equal panels (the context fill
+    with the GPU memory, RAM and temperature bars; upstream's conversation cache card),
+    then the recent requests with their totals across the whole width (owner 2026-10-28:
+    even rows, no hole, at desktop, 375 and 320 px). The live figures go to "-" when no
+    engine is up (stopped, starting, failed, unloaded) or the server does not answer; the
+    history stays. A PC without a GPU reading keeps the GPU tiles, each saying so. Without
+    the switch the tab says the Monitor is off.
   - **About:** the model, the engine state, and the base URL for other clients.
   - **Storage:** the chat and the settings live in that tab; the theme choice is in
     `localStorage` (`strata.theme`, nothing else).
-  - **Left out:** upstream's Images and MCP views, its conversation-cache card and its
-    server-side settings need features this server does not have.
+  - **Left out:** upstream's Images and MCP views and its server-side settings need
+    features this server does not have.
   - **Phones** (owner, 2026-10-23): below 640 px the header takes two rows (the brand and
     the controls, then the tabs across the width), and every view fits 320 px without
     sideways scrolling. A browser loads the page's files over up to six connections at once;
@@ -1919,7 +1968,9 @@ page's Monitor tab, in upstream's `/metrics` shape. Like every route it needs th
 the switch off it answers 404. It reports:
 
 - the served model name, the context from the engine's `READY`, and the engine's state
-  (`starting`, `idle`, `reading`, `generating`, `error`) with the queue length;
+  (`starting`, `idle`, `reading`, `generating`, `error`, `stopped`, and `unloaded` for an
+  engine the supervisor unloaded after idling) with the queue length; `engine.loaded` says
+  whether an engine is up, and only then are its context, experts and memory reported;
 - the last 100 generations: when each ended, how (`stop`, `length`, `cancel`,
   `disconnect`, `error`), the prompt, reused and output token counts and the engine's own
   prompt and decode times (from its `DONE` record), with totals since the start. Never a
@@ -1933,12 +1984,25 @@ the switch off it answers 404. It reports:
   start, read from the machine registry — nothing is inherited from the server's
   environment), and stopped with the server. No NVIDIA library is
   loaded into the server. Without `nvidia-smi` the GPU cards stay empty and say why;
-- for an expert (MoE) model, the number of experts loaded, beside the memory on the VRAM and
-  RAM cards (the engine's `expert_slots` total, with `expert_slots_primary` the VRAM tier and
-  the rest the RAM tier). These come from the engine's own startup `INFO`, captured when the
-  model reaches `READY` (owner, 2026-10-23), so a just-started model shows them without a first
-  chat; the GLM engine's live `STAT` cadence updates them during generation. GB-only when the
-  engine reports no expert figures.
+- every disk's reads and writes over the last second (`hardware.disk_read_mb`,
+  `disk_write_mb`, MiB/s, and `history.disk_read_mb`), as upstream's telemetry reads them
+  through psutil: Linux `/proc/diskstats` over the whole disks in `/sys/block`, Windows
+  `IOCTL_DISK_PERFORMANCE` on each `\\.\PhysicalDriveN`; null when unknown;
+- for an expert (MoE) model, `engine.memory` (owner 2026-10-28: "the System Ram reports MB
+  usage only and not experts + mb usage"): the experts held in VRAM and in RAM and their RAM
+  bytes, read from each family's own words (Gemma 4 and flint `pinned_gib`; upstream's
+  engine `expert_slots` and `arena_mib`; Maya's GLM and raon1 `ram_slots`/`ram_gb`, then
+  `ram_used`; DeepSeek `ram_experts`; MiniMax `ram_slots`; Qwen 3.6 MoE says nothing), and
+  the engine process's own memory (`process_bytes`: Windows working set, Linux VmRSS). They
+  come from the engine's startup `INFO` at every `READY` (a restart's replace the last one's),
+  so a just-started model shows them before any chat; the engines' `STAT` cadence updates them
+  while they decode. The page's RAM line reads "N experts loaded (X GB) · engine Y GB · used /
+  total GB";
+- upstream's `conversation_cache` (serve/server.py:827-837): the Qwen engine's
+  `--conversation-cache-mib` budget and slots from its `INFO`, its parks, restores and
+  evictions from the lines it writes to stderr (only their numbers are read; see the threat
+  model), and how much of the prompts the requests reused; `supported` is false for an engine
+  without the cache.
 
 `listener.loopback_without_key = true` answers the API and the page with no key
 at all. On the page, the login is skipped. It is accepted only with a loopback
@@ -2060,10 +2124,12 @@ download pause and resume functionality". Spec
   `STRATA_GGUF_PY` when the server has it), its working folder `<roots.state>/downloads` and the
   Job. One download runs at a time; the others queue.
 - **The cards:** the catalog (`catalog/downloads.json`, generated by
-  `tools/secure/download_catalog.py` from upstream's `setup.py` and Maya's `maya.py` pins, checked
-  with `--check`, embedded at build) has one card per GGUF variant: upstream's with commit, size
-  and SHA-256 per file; Maya's with SHA-256 per shard at `main`, resolved at start (the commit
-  and sizes come from Hugging Face, and every reported SHA-256 must equal the pinned one). A
+  `tools/secure/download_catalog.py` from upstream's `setup.py` and Maya's `maya.py` pins and our own
+  `tools/secure/catalog_pins.json`, checked with `--check`, embedded at build) has one card per GGUF variant:
+  upstream's with commit, size and SHA-256 per file; Maya's with SHA-256 per shard at `main`, resolved at start (the
+  commit and sizes come from Hugging Face, and every reported SHA-256 must equal the pinned one); ours (built from
+  `m-strata`: flint Q8_0, raon-1-mini Q8_0, Gemma 4 26B-A4B Q8_0 with its MTP draft file) with commit, size and SHA-256
+  per file and the licence each model card names. A
   pasted link (`https://huggingface.co/<owner>/<repo>/resolve|blob/<revision>/<path>.gguf`, split
   files expanded to the whole set) is looked up, shown for confirmation (commit, files, sizes,
   total, whether it fits) and becomes a "Your downloads" card (kept in
@@ -2086,7 +2152,9 @@ download pause and resume functionality". Spec
   `<downloads_root>/packs/<id>/`, then writes a model card (`<roots.state>/cards/<id>.json`,
   owner-only) with the engine settings of `models.download_engine_card`; the launcher adds it at
   once, and at every boot. GLM-5.3 and Qwen3.6 files and pasted links are downloaded only (their
-  card says so).
+  card says so). Where the server names an engine for new cards (`models.default_engine`), a Gemma 4, flint or
+  Qwen3.6 download becomes a card from its GGUF (Gemma 4 with its MTP draft file, `--mtp <file>`), and a Qwen3.8,
+  GLM-5.3, raon-1-mini, DeepSeek-V4.1 or MiniMax-M3.1 one is packed by `strata-prepare` beside that engine first.
 - **Routes** (off unless `models.downloads`; keyed; loopback clients unless
   `models.control_remote`, else 403 `control_not_allowed`): `GET /v1/strata/downloads` (the disk,
   the running transfer, every card with its state: available, queued, downloading, verifying,

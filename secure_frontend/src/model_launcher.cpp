@@ -259,6 +259,11 @@ std::optional<ModelLauncher::HeldCard> ModelLauncher::card(const std::string_vie
   return HeldCard{settings_.cards[*found], page_card_[*found], status_[*found].state};
 }
 
+std::vector<ModelCard> ModelLauncher::cards() const {
+  std::lock_guard lock(mutex_);
+  return settings_.cards;
+}
+
 void ModelLauncher::alert(const std::string_view event, const std::string& subject, const std::string& body) const {
   if (settings_.on_event) settings_.on_event(event, subject, body);
 }
@@ -525,6 +530,7 @@ std::optional<PrefillRecord> ModelLauncher::read_prefill(const std::string_view 
 // pack's prefill-tune.txt, which every later start reads; the record here says the measurement ran.
 bool ModelLauncher::run_prefill_calibration(const Job& job) {
   constexpr std::size_t kPrefillTokens = 4096U;            // Maya's TOKENS
+  constexpr int kDefaultPrefillChunk = 1024;               // the engine's default chunk (mm3_main.cpp kDefChunk)
   constexpr auto kPrefillTimeout = std::chrono::hours(1);  // Maya's TIMEOUT_S, the model's load included
   constexpr std::array<std::string_view, 5> kPrefillFlags{"--chunk", "--prefill-gemm", "--prefill-tune", "--no-prefill-tune",
                                                           "--calibrate-prefill"};
@@ -604,33 +610,57 @@ bool ModelLauncher::run_prefill_calibration(const Job& job) {
   plan.command.arguments = std::move(arguments);
   plan.command.insert_serve = false;
   PrefillRecord record{card.name, utc_now(), false, 0, {}, 0.0, 0.0, calibration_key(card, job.values)};
-  auto spawned = settings_.factory(std::move(plan))(1U);
   bool cancelled = false;
-  std::optional<ExitStatus> ended;
-  if (auto* process = std::get_if<std::unique_ptr<SupervisedProcess>>(&spawned)) {
-    const auto until = std::chrono::steady_clock::now() + kPrefillTimeout;
-    while (!(ended = (*process)->try_reap())) {
-      if (stop_asked() || std::chrono::steady_clock::now() > until) {
-        cancelled = stop_asked();
-        (*process)->kill_group();
-        for (int i = 0; i < 50 && !(ended = (*process)->try_reap()); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        ended.reset();  // stopped, not finished
-        break;
+  // How one run of the engine's measurement ended: with its JSON; ended by itself without it (a refusal such as "not
+  // enough GPU memory ... a smaller --chunk", or a crash); stopped by us (cancelled, or past kPrefillTimeout); or never
+  // started. Only a run that ended by itself is worth another try at a smaller chunk.
+  enum class Run { finished, ended, stopped, not_started };
+  const auto attempt = [&](const std::vector<std::string>& extra, const std::uint64_t generation) {
+    EngineLaunchPlan run = plan;
+    run.command.arguments.insert(run.command.arguments.end(), extra.begin(), extra.end());
+    auto spawned = settings_.factory(std::move(run))(generation);
+    std::optional<ExitStatus> ended;
+    bool stopped = false;
+    if (auto* process = std::get_if<std::unique_ptr<SupervisedProcess>>(&spawned)) {
+      const auto until = std::chrono::steady_clock::now() + kPrefillTimeout;
+      while (!(ended = (*process)->try_reap())) {
+        if (stop_asked() || std::chrono::steady_clock::now() > until) {
+          cancelled = stop_asked();
+          stopped = true;
+          (*process)->kill_group();
+          for (int i = 0; i < 50 && !(ended = (*process)->try_reap()); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          ended.reset();  // stopped, not finished
+          break;
+        }
+        // its stdout is drained (an engine's stderr goes nowhere: the server logs no engine output)
+        if ((*process)->transport().read_line(std::chrono::milliseconds(200)).kind != EngineReadKind::line) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
       }
-      // its stdout is drained (the measurement's lines go to the server's log through its stderr)
-      if ((*process)->transport().read_line(std::chrono::milliseconds(200)).kind != EngineReadKind::line) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      }
+      (*process)->release_resources(settings_.stop_bound);
+    } else {
+      log("[strata] models: " + card.name + ": the prefill calibration's engine did not start: " + std::get<SpawnFailure>(spawned).message);
+      return Run::not_started;
     }
-    (*process)->release_resources(settings_.stop_bound);
-  } else {
-    log("[strata] models: " + card.name + ": the prefill calibration's engine did not start: " + std::get<SpawnFailure>(spawned).message);
+    std::ifstream out(out_path, std::ios::binary);
+    const std::string measured{std::istreambuf_iterator<char>(out), std::istreambuf_iterator<char>()};
+    out.close();
+    std::filesystem::remove(out_path, ec);
+    if (ended && !ended->signaled && ended->value == 0U && read_prefill_measurement(measured, record)) return Run::finished;
+    return stopped ? Run::stopped : Run::ended;
+  };
+  // The measurement sizes its buffers for its largest chunk (4096 tokens); where the GPU lacks the memory for that (a
+  // 16 GB card with MiniMax-M3.1: "not enough GPU memory for MiniMax-M3.1's dense part ... a smaller --chunk"), the
+  // larger chunks could not run anyway (they need every expert in VRAM), so it measures again at the default chunk -
+  // the engine's own advice - for the GEMMs and this PC's prompt speed. A run stopped (cancelled, timed out) or never
+  // started is not tried again.
+  Run outcome = attempt({}, 1U);
+  if (outcome == Run::ended) {
+    log("[strata] models: " + card.name + ": the measurement did not finish at its largest prompt chunk; measuring at the default one (" +
+        std::to_string(kDefaultPrefillChunk) + ")");
+    outcome = attempt({"--chunk", std::to_string(kDefaultPrefillChunk)}, 2U);
   }
-  std::ifstream out(out_path, std::ios::binary);
-  const std::string measured{std::istreambuf_iterator<char>(out), std::istreambuf_iterator<char>()};
-  out.close();
-  record.finished = ended && !ended->signaled && ended->value == 0U && read_prefill_measurement(measured, record);
-  std::filesystem::remove(out_path, ec);
+  record.finished = outcome == Run::finished;
   std::filesystem::remove(ids_path, ec);
   if (cancelled) {
     log("[strata] models: " + card.name + ": the prefill calibration was cancelled; nothing was kept");
@@ -1260,8 +1290,16 @@ std::string ModelLauncher::metrics_json() const {
     std::lock_guard lock(mutex_);
     return settings_.monitor->render_json({.model = "", .engine = switching_ || busy_ ? "starting" : "none", .queued = 0U});
   }
-  return settings_.monitor->render_json(
-      {.model = runtime->model_id(), .engine = runtime->port().snapshot().engine, .queued = runtime->gate().waiting()});
+  const auto snapshot = runtime->port().snapshot();
+  return settings_.monitor->render_json({.model = runtime->model_id(), .engine = snapshot.engine, .queued = runtime->gate().waiting(),
+                                         .unloaded = snapshot.state == SupervisorState::unloaded});
+}
+
+std::optional<EngineSample> ModelLauncher::engine_sample() const {
+  // the same runtime metrics_json() reports (the one running still serves while another card's start composes)
+  const auto runtime = running_runtime();
+  if (runtime == nullptr) return std::nullopt;
+  return runtime->supervisor().engine_sample();
 }
 
 void ModelLauncher::begin_shutdown() noexcept {

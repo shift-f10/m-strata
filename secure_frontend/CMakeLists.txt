@@ -25,6 +25,9 @@ option(SECURE_FRONTEND_WEB_SEARCH "Build the optional web search (strata-search:
 # strata-window (spec 2026-10-28-server-window-design, Part 2): the server in a window with a tray icon. `make --with
 # window` turns it on; Windows needs the WebView2 SDK (SECURE_FRONTEND_WEBVIEW2_DIR), Linux GTK 3 and WebKitGTK 4.1.
 option(SECURE_FRONTEND_WINDOW "Build strata-window: the server in a window with a tray icon (WebView2 / WebKitGTK)" OFF)
+# strata-tui (spec 2026-10-28-server-tui-design): the server in a terminal, the headless twin of strata-window. `make
+# --with tui` turns it on (the dev presets do); it needs nothing beyond the C++ standard library and the system's console.
+option(SECURE_FRONTEND_TUI "Build strata-tui: the server in a terminal, with a dashboard" OFF)
 if(SECURE_FRONTEND_TEST_HOOKS)
     add_compile_definitions(SECURE_FRONTEND_TEST_HOOKS=1)
 endif()
@@ -844,6 +847,11 @@ secure_frontend_add_library(secure_frontend_window_shell SOURCES src/window_shel
 if(WIN32)
     target_link_libraries(secure_frontend_window_shell PUBLIC secure_frontend_engine_stdio_process)
 endif()
+# strata-tui's portable half (spec 2026-10-28-server-tui-design): the screen (cells, boxes, gauges, braille charts and
+# the VT output between frames), the keys, and the views drawn from the server's answers. Built and tested in every
+# configuration; the program (its terminal and its loop) waits for SECURE_FRONTEND_TUI.
+secure_frontend_add_library(secure_frontend_tui SOURCES src/tui_screen.cpp src/tui_input.cpp src/tui_app.cpp
+    LINKS secure_frontend_json)
 
 secure_frontend_add_library(secure_frontend_server_bootstrap
     SOURCES src/server_bootstrap.cpp
@@ -977,6 +985,18 @@ if(SECURE_FRONTEND_WINDOW)
     add_dependencies(strata-window strata-unified-server)  # the window runs the server beside it
     install(TARGETS strata-window RUNTIME DESTINATION . COMPONENT runtime)
 endif()
+if(SECURE_FRONTEND_TUI)
+    # strata-tui: the server as this console program's child (the window's shell), its views over loopback
+    add_executable(strata-tui src/tui_main.cpp src/tui_terminal.cpp)
+    target_link_libraries(strata-tui PRIVATE secure_frontend_tui secure_frontend_window_shell)
+    if(WIN32)
+        target_link_libraries(strata-tui PRIVATE secure_frontend_utf8_argv)
+    endif()
+    target_compile_features(strata-tui PRIVATE cxx_std_20)
+    secure_frontend_set_warnings(strata-tui)
+    add_dependencies(strata-tui strata-unified-server)  # it runs the server beside it
+    install(TARGETS strata-tui RUNTIME DESTINATION . COMPONENT runtime)
+endif()
 if(MSVC)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION .)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT runtime)
@@ -1107,7 +1127,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_engine_stdio_process_tests tests/engine_stdio_process_test.cpp
         secure_frontend_engine_stdio_process)
     set(_stdio_cases test_round_trip test_invalid_record write_line_fails_once_deadline_passed read_line_rejects_oversize_on_all_platforms
-        read_line_waits_for_a_record_split_across_writes)
+        read_line_waits_for_a_record_split_across_writes stderr_gives_only_the_conversation_cache_numbers
+        stderr_flood_never_blocks_the_engine resident_bytes_read_the_running_engine)
     if(WIN32)
         list(APPEND _stdio_cases job_object_terminates_grandchild)
     else()
@@ -1365,8 +1386,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     # before any child runs); also smoke-run under wine. PROCESS: real
     # fake-engine children. LINUX / WINDOWS: platform-only process cases. Later
     # tasks append case names to these four set() lines only.
-    set(SECURE_FRONTEND_SUPERVISOR_UNIT_CASES supervisor_health_literals_per_state supervisor_captures_startup_readings_at_ready proc04_restart_backoff_then_circuit_open proc04_healthy_window_resets_failure_count proc04_missing_engine_opens_circuit_without_spinning proc04_client_err_lines_open_circuit_until_restart supervisor_retires_ended_generation_on_its_own_thread proc04_monitor_fallback_without_pidfd proc04_backoff_survives_stale_wake proc04_fatal_line_before_ready_kills_as_fatal_line proc04_unreaped_child_opens_circuit supervisor_unreaped_at_shutdown_reports_engine_left proc06_nnp_hint_when_exit_status_lags supervisor_exception_opens_circuit supervisor_shutdown_sends_eof_first_then_kills supervisor_lease_outliving_shutdown_is_safe supervisor_wait_wakes_on_lease_release supervisor_wait_wakes_on_shutdown proc06_refuses_privileged_start engine_environment_uses_cache_root_when_set sp3_d2_kill_reason_follows_stop_cause sp3_d2_client_stop_drain_failure_restarts_uncounted sp3_d2_timeout_stop_drain_failure_still_counts sp3_d2_client_stop_counts_when_engine_ended_itself sp3_d2_uncounted_end_resets_count_after_healthy_window sp3_d2_uncounted_streak_is_bounded sp3_d2_done_resets_uncounted_streak sp6_env_strata_family_renders_unchanged sp6_env_forced_values_override_and_add sp6_env_forced_values_reject_never_list sp6_env_forcible_names_are_the_ruled_set sp6_env_hook_derives_values_from_environment sp6_env_hook_suppresses_only_optional_rows sp6_env_refused_family_is_spawn_failure idle_unload_tears_down_then_respawns_on_next_request idle_unload_never_fires_during_a_generation lazy_load_defers_the_first_spawn glm_child_env_is_exactly_the_named_typed_set forced_defaults_stay_forced_unless_the_table_moves_them several_glm_gpus_split_as_mayas_engine_does dflash_never_reaches_the_child)
-    set(SECURE_FRONTEND_SUPERVISOR_PROCESS_CASES proc04_recovers_after_transient_crash proc04_monitor_detects_idle_crash proc04_fatal_prefix_kills_engine proc04_ready_timeout_kills_and_counts proc04_drain_failure_kills_and_restarts proc04_no_leak_across_restarts proc02_child_env_is_exact_allowlist supervisor_serving_api_is_thread_safe proc04_slow_stdin_write_bounded_by_request_deadline sp6_env_derived_value_reaches_child fake_maya_dialect_round_trips_only_under_the_maya_dialect fake_maya_vram_records_reach_ready_only_under_the_maya_dialect vision_child_launches_with_pinned_args_when_enabled vision_child_argv_matches_maya_vision_grammar_at_pin vision_child_argv_follows_upstreams_strata_vision vision_child_respects_resource_limits vision_encode_round_trip_at_the_pin vision_encode_failures_take_the_pinned_paths)
+    set(SECURE_FRONTEND_SUPERVISOR_UNIT_CASES supervisor_health_literals_per_state supervisor_captures_startup_readings_at_ready supervisor_samples_the_engine_that_is_up proc04_restart_backoff_then_circuit_open proc04_healthy_window_resets_failure_count proc04_missing_engine_opens_circuit_without_spinning proc04_client_err_lines_open_circuit_until_restart supervisor_retires_ended_generation_on_its_own_thread proc04_monitor_fallback_without_pidfd proc04_backoff_survives_stale_wake proc04_fatal_line_before_ready_kills_as_fatal_line proc04_unreaped_child_opens_circuit supervisor_unreaped_at_shutdown_reports_engine_left proc06_nnp_hint_when_exit_status_lags supervisor_exception_opens_circuit supervisor_shutdown_sends_eof_first_then_kills supervisor_lease_outliving_shutdown_is_safe supervisor_wait_wakes_on_lease_release supervisor_wait_wakes_on_shutdown proc06_refuses_privileged_start engine_environment_uses_cache_root_when_set sp3_d2_kill_reason_follows_stop_cause sp3_d2_client_stop_drain_failure_restarts_uncounted sp3_d2_timeout_stop_drain_failure_still_counts sp3_d2_client_stop_counts_when_engine_ended_itself sp3_d2_uncounted_end_resets_count_after_healthy_window sp3_d2_uncounted_streak_is_bounded sp3_d2_done_resets_uncounted_streak sp6_env_strata_family_renders_unchanged sp6_env_forced_values_override_and_add sp6_env_forced_values_reject_never_list sp6_env_forcible_names_are_the_ruled_set sp6_env_hook_derives_values_from_environment sp6_env_hook_suppresses_only_optional_rows sp6_env_refused_family_is_spawn_failure idle_unload_tears_down_then_respawns_on_next_request idle_unload_never_fires_during_a_generation lazy_load_defers_the_first_spawn glm_child_env_is_exactly_the_named_typed_set forced_defaults_stay_forced_unless_the_table_moves_them several_glm_gpus_split_as_mayas_engine_does dflash_never_reaches_the_child)
+    set(SECURE_FRONTEND_SUPERVISOR_PROCESS_CASES idle_unload_fires_after_a_request_that_began_at_ready proc04_recovers_after_transient_crash proc04_monitor_detects_idle_crash proc04_fatal_prefix_kills_engine proc04_ready_timeout_kills_and_counts proc04_drain_failure_kills_and_restarts proc04_no_leak_across_restarts proc02_child_env_is_exact_allowlist supervisor_serving_api_is_thread_safe proc04_slow_stdin_write_bounded_by_request_deadline sp6_env_derived_value_reaches_child fake_maya_dialect_round_trips_only_under_the_maya_dialect fake_maya_vram_records_reach_ready_only_under_the_maya_dialect vision_child_launches_with_pinned_args_when_enabled vision_child_argv_matches_maya_vision_grammar_at_pin vision_child_argv_follows_upstreams_strata_vision vision_child_respects_resource_limits vision_encode_round_trip_at_the_pin vision_encode_failures_take_the_pinned_paths)
     set(SECURE_FRONTEND_SUPERVISOR_LINUX_CASES proc05_setsid_grandchild_is_reaped proc05_setsid_grandchild_is_reaped_at_shutdown supervisor_start_refuses_without_wake shutdown_signal_preserves_errno proc05_cgroup_kill_when_delegated)
     set(SECURE_FRONTEND_SUPERVISOR_WINDOWS_CASES proc04_windows_abort_does_not_stall proc04_windows_crash_does_not_stall proc04_windows_write_timeout_kills_engine)
     if(WIN32)
@@ -1468,7 +1489,10 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         parses_nvidia_smi_lines nvidia_smi_command_is_fixed nvidia_smi_environment_is_program_files_only
         monitor_records_generations monitor_reports_live_states a_stopped_engine_reads_stopped_and_requests_name_their_model
         engine_readings_reach_the_engine_block
-        monitor_keeps_a_bounded_history engine_change_drops_the_old_engines_readings)
+        monitor_keeps_a_bounded_history engine_change_drops_the_old_engines_readings
+        engine_memory_reads_every_familys_ram_tier engine_readings_show_only_while_an_engine_is_up an_unloaded_engine_reads_unloaded
+        the_engine_sample_reaches_the_monitor diskstats_add_up_the_whole_disks disk_readings_reach_the_json
+        conversation_cache_lines_parse_exactly conversation_cache_reaches_the_json)
     secure_frontend_add_cases(secure_frontend_serve_monitor_tests host_readings_are_plausible gpu_sampler_reads_a_fake_tool
         gpu_sampler_reads_the_real_tool_when_present
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 120)
@@ -1479,9 +1503,11 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         alert_routes_need_their_handler_and_the_key search_routes_need_their_handler_and_the_key
         config_routes_need_their_handler_and_the_key
         web_ui_cards_from_this_pc_and_the_danger_zone web_ui_downloads_go_to_a_chosen_folder
+        web_ui_downloads_say_what_is_on_this_pc web_ui_downloads_groups_are_accordions web_ui_downloads_destination_is_a_panel
         web_ui_models_tab_calibrates web_ui_has_email_alert_settings web_ui_has_server_settings web_ui_claims_a_login_link_at_load_and_on_hashchange web_ui_opens_the_view_its_address_names
         web_ui_has_web_search_settings web_ui_has_model_folder_setting
-        web_ui_monitor_shows_stopped_and_the_model web_ui_about_lists_the_engines_and_this_pc
+        web_ui_monitor_shows_stopped_and_the_model web_ui_monitor_is_even_and_shows_memory_disk_and_cache
+        web_ui_about_lists_the_engines_and_this_pc
         web_ui_search_box_limit_note_and_engine_table web_ui_chat_can_turn_search_off
         login_link_route_answers_without_the_key_only_when_on
         served_models_follow_the_running_card
@@ -1579,6 +1605,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         managed_launch_argv_is_utf8_for_non_ascii_models_root launch_refuses_model_not_installed
         engine_args_reject_weight_flags_for_managed_model managed_launch_renders_typed_gpu_list
         managed_glm_rows_refused_for_qwen_manifest gemma4_expert_launch_composes_only_allowlisted_flags
+        gemma4_expert_launch_checks_its_mtp_file
         glm_kv_renders_the_cache_format glm_launch_names_mayas_shipped_expert_profile
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # Pure in-memory (F-63): wine runs it too.
@@ -1928,6 +1955,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_qwen36_card_reads_its_tokenizer_from_the_gguf
         calibration_finds_the_win_and_starts_with_it a_first_start_calibrates_first
         a_minimax_card_measures_its_prompt_reading_first a_failed_prefill_calibration_is_not_retried_by_itself
+        a_prefill_calibration_falls_back_to_the_default_chunk
         a_calibration_can_be_cancelled
         removing_a_card_removes_its_calibration failures_raise_alerts
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
@@ -1943,6 +1971,9 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_multipart_paste_assembles_its_shards a_download_goes_to_the_chosen_folder a_downloaded_gguf_becomes_a_card
         a_downloaded_model_can_be_removed a_downloaded_qwen36_becomes_a_card a_downloaded_qwen38_is_packed_natively a_downloaded_glm_is_packed_with_mayas_step
         a_downloaded_deepseek_is_packed_with_mayas_step a_downloaded_minimax_is_packed_with_mayas_step
+        the_catalog_reads_our_pins_and_the_mtp_file a_downloaded_gemma4_brings_its_mtp_file a_download_never_writes_over_a_folder_card
+        a_downloaded_raon1_is_packed_like_glm
+        the_list_says_what_is_already_on_this_pc
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # Model downloads (plan 2026-10-23-model-downloads Task 1): the link rules and the manifests (O4).
@@ -1960,7 +1991,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         mtp_off_drops_the_draft_options controlled_flags_listed description_json_shape
         remembered_options_round_trip_and_tolerate_junk context_and_kv_streaming_offer_fixed_values
         past_trained_context_adds_yarn flint_options_follow_the_flint_engine glm_options_write_the_glm_rows
-        deepseek_options_are_mayas web_search_is_a_checkbox_of_the_tool_profiles minimax_options_are_mayas the_vision_option_writes_the_encoder_rows gpus_choose_the_cards_a_model_runs_on)
+        deepseek_options_are_mayas web_search_is_a_checkbox_of_the_tool_profiles minimax_options_are_mayas the_vision_option_writes_the_encoder_rows gpus_choose_the_cards_a_model_runs_on
+        gemma4_mtp_off_drops_the_mtp_file)
 
     # Model launcher (plan 2026-10-23 Task 1): card files, their refusals, the main + card merge.
     secure_frontend_add_test_executable(secure_frontend_model_cards_tests tests/model_cards_test.cpp
@@ -2126,7 +2158,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_card_follows_its_moved_folder a_new_private_folder_is_made delete_needs_the_code_the_key_and_permanent
         a_running_card_is_not_deleted a_downloaded_model_leaves_its_store_too listed_remote_clients_use_the_file_routes
         a_shared_folder_is_used_as_it_is_when_the_owner_allows_it the_shared_folders_setting_is_read_and_saved
-        a_raon1_model_is_added_from_its_folder
+        a_raon1_model_is_added_from_its_folder a_gemma4_model_beside_its_mtp_file_drafts_with_it
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
 
     # GUI-first start-up (spec 2026-10-27 §4.2, §4.3): the drives and folders the page may pick, a model folder made private.
@@ -2170,7 +2202,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         other_architectures_are_not_addable_yet packed_families_and_their_cards a_qwen38_pack_with_its_draft_layer_offers_mtp a_deepseek_pack_makes_a_deepseek_card
         a_minimax_pack_makes_a_minimax_card
         a_raon1_pack_makes_a_raon1_card repointing_rewrites_only_the_folder delete_codes_are_one_time
-        deleting_removes_only_the_model_files
+        a_gemma4_card_runs_its_mtp_file repointing_moves_the_mtp_file_with_the_folder
+        deleting_removes_only_the_model_files a_cards_model_file_is_the_gguf_it_runs
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # The page's About (owner 2026-10-27): the engine build record, this PC's hardware, their JSON.
@@ -2187,6 +2220,14 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     target_compile_features(secure_frontend_fake_server_child PRIVATE cxx_std_20)
     target_include_directories(secure_frontend_fake_server_child PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     secure_frontend_set_warnings(secure_frontend_fake_server_child)
+    # strata-tui (spec 2026-10-28-server-tui-design): the screen and its VT output, the keys, the views from the
+    # server's answers and the keys' requests.
+    secure_frontend_add_test_executable(secure_frontend_tui_tests tests/tui_test.cpp secure_frontend_tui)
+    secure_frontend_add_cases(secure_frontend_tui_tests
+        the_screen_draws_text_boxes_and_gauges charts_are_braille_or_blocks only_the_changes_are_written
+        keys_decode_from_vt_sequences the_monitor_draws_the_servers_readings the_views_switch_and_keys_become_requests
+        settings_are_edited_then_saved quitting_asks_first downloads_say_what_is_on_this_pc)
+
     secure_frontend_add_test_executable(secure_frontend_window_shell_tests tests/window_shell_test.cpp
         secure_frontend_window_shell secure_frontend_first_start secure_frontend_token_reader)
     secure_frontend_add_cases(secure_frontend_window_shell_tests

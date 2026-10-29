@@ -132,6 +132,9 @@ class ModelLauncher final {
     CardState state{CardState::stopped};
   };
   [[nodiscard]] std::optional<HeldCard> card(std::string_view name) const;
+  // Every card held, in the list's order (copies): the Download list says which catalog models are already on this PC
+  // (owner 2026-10-28).
+  [[nodiscard]] std::vector<ModelCard> cards() const;
 
   // GET /v1/strata/models (the plan's JSON shape).
   [[nodiscard]] std::string list_json() const;
@@ -144,6 +147,9 @@ class ModelLauncher final {
   [[nodiscard]] HealthView health() const;
   // GET /metrics: the Monitor's JSON for the running model.
   [[nodiscard]] std::string metrics_json() const;
+  // The Monitor's sampler, once a second: the running model's engine while it is up (EngineSupervisor::engine_sample);
+  // nullopt while nothing runs, a switch is retiring it, or its engine is not up.
+  [[nodiscard]] std::optional<EngineSample> engine_sample() const;
 
   // The pool's shutdown hook: no more starts; every runtime's generation ends like a shutdown.
   void begin_shutdown() noexcept;

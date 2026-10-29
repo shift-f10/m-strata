@@ -2,6 +2,7 @@
 
 #include "secure_frontend/frontend_config.hpp"
 #include "secure_frontend/gguf_metadata.hpp"
+#include "secure_frontend/model_cards.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -12,19 +13,25 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 namespace secure_frontend {
 
 // Cards the page writes (docs/superpowers/specs/2026-10-27-gui-first-install-design.md §4.2-§4.5).
 
+// Every member has a default, so a designated initializer may leave any out (-Wmissing-field-initializers).
 struct GgufCardRequest final {
-  std::filesystem::path folder;   // the model folder: the card's roots.models
-  std::string file;               // the GGUF file in it (a split model's first shard)
-  std::filesystem::path engine;   // the engine the card runs (models.default_engine)
-  std::string source;             // where the model came from: "folder", or the download's id (the Download list hides it)
+  std::filesystem::path folder{};   // the model folder: the card's roots.models
+  std::string file{};               // the GGUF file in it (a split model's first shard)
+  std::filesystem::path engine{};   // the engine the card runs (models.default_engine)
+  std::string source{};             // where the model came from: "folder", or the download's id (the Download list hides it)
   // Vision for cards (spec 2026-10-28): the model's picture encoder (an mmproj GGUF, absolute). A qwen card names it
   // (vision.mmproj) and lists the Pictures option, on the GPU by default; the other families read no pictures here.
   std::optional<std::filesystem::path> mmproj{};
+  // Owner 2026-10-28 ("gemma4 has an mtp ... make sure we work that mtp in our gemma engine"): the model's MTP draft file
+  // (a GGUF, absolute). A Gemma 4 card runs it (engine.args --mtp <file>) and lists the MTP option, on by default (off
+  // drops --mtp <file>); the other families run none.
+  std::optional<std::filesystem::path> mtp{};
 };
 struct CardText final {
   std::string name;
@@ -61,20 +68,21 @@ inline constexpr std::string_view kRaon1ModelName = "raon1-mini";
 // MiniMax-M3.1-Flash's (maya.py MM3_MODEL_NAME): its pack's marker is <pack>/minimax-m3.1-flash.gguf.
 inline constexpr std::string_view kMinimaxModelName = "minimax-m3.1-flash";
 
+// Every member has a default, so a designated initializer names only what its family uses (-Wmissing-field-initializers).
 struct PackedCardRequest final {
   PackedFamily family{PackedFamily::qwen38};
-  std::string name;                          // the card's name
-  std::filesystem::path engine;              // the engine the card runs (models.default_engine)
-  std::string source;                        // "folder", or "download:" and the download's id
-  std::filesystem::path pack;                // the pack strata-prepare built
+  std::string name{};                        // the card's name
+  std::filesystem::path engine{};            // the engine the card runs (models.default_engine)
+  std::string source{};                      // "folder", or "download:" and the download's id
+  std::filesystem::path pack{};              // the pack strata-prepare built
   // qwen38 only: the model folder and the first shard's stem (the model), the PLE shard, the bundled expert profile
-  std::filesystem::path folder;
-  std::string model_id;
-  std::optional<std::string> ple_gguf;       // UTF-8
-  std::optional<std::filesystem::path> expert_profile;
+  std::filesystem::path folder{};
+  std::string model_id{};
+  std::optional<std::string> ple_gguf{};     // UTF-8
+  std::optional<std::filesystem::path> expert_profile{};
   // qwen38: the MTP draft layer's runtime folder (upstream's mtp/rt: dense.bin, experts.bin, draft_vocab.bin), when one
   // was found (find_mtp_runtime); the card then runs it as upstream's setup does and lists its settings
-  std::optional<std::filesystem::path> mtp;
+  std::optional<std::filesystem::path> mtp{};
   // qwen38: the model's picture encoder, as GgufCardRequest's
   std::optional<std::filesystem::path> mmproj{};
 };
@@ -96,6 +104,21 @@ struct PackedCardRequest final {
 // write_pack_marker with Maya's GLM model name (<pack>/glm-5.3-flash.gguf).
 [[nodiscard]] bool write_glm_pack_marker(const std::filesystem::path& pack);
 
+// maya.py pack_source: the first .gguf a pack indexes (native_experts.txt's header names it), or nullopt.
+[[nodiscard]] std::optional<std::string> pack_indexed_gguf(const std::filesystem::path& pack);
+// A Maya pack's model files as its sources.json lists them (maya.py stamp_pack's {"files": [{"name", ...}]}), or nullopt
+// (no record there).
+[[nodiscard]] std::optional<std::vector<std::string>> pack_recorded_files(const std::filesystem::path& pack);
+
+// The model file a card runs (owner 2026-10-28: the Download list says which catalog models are already on this PC): its
+// model folder's <engine.model_id>.gguf - a card from a GGUF's, a Qwen3.8 pack card's (a split model's first shard).
+// A card on a Maya pack (glm53, raon1, deepseek, minimax) names the pack as its model folder and Maya's model name (the
+// pack's marker), so its model is the first shard the pack was built from, beside the pack: the one native_experts.txt
+// indexes, else the first whole model or first shard sources.json lists (never MiniMax's *-maya-indexers.gguf). Only those
+// two small files of a pack are read; a source named as a path is not used. nullopt: the card names no model folder or
+// model, or its pack names no source.
+[[nodiscard]] std::optional<std::filesystem::path> card_model_file(const ModelCard& card);
+
 // The card name a model file's stem gives (a split model's -NNNNN-of-NNNNN goes; made a valid card name; empty: none).
 [[nodiscard]] std::string card_name_for_file(std::string_view stem);
 // Whether a model file's stem is a whole model's or a split model's first shard (-00001-of-NNNNN).
@@ -110,7 +133,15 @@ struct PackedCardRequest final {
 // regular file and not a link. None, or more than one: nullopt (a card never guesses between encoders).
 [[nodiscard]] std::optional<std::filesystem::path> find_mmproj(const std::filesystem::path& folder);
 
-// A card's text with roots.models set to `folder` (the model moved); everything else as it was.
+// A Gemma 4 model's MTP draft file in its folder (owner 2026-10-28): an mtp-*.gguf (names in any case) beside the model
+// or in the folder's MTP/ folder (unsloth's layout; that folder not a link), a regular file and not a link - the one
+// named for the model (mtp-<model_file>), else the folder's only one when the folder holds no other model. None, or a
+// guess between files or models: nullopt. Its folder's privacy is the caller's to check.
+[[nodiscard]] std::optional<std::filesystem::path> find_mtp_gguf(const std::filesystem::path& folder, std::string_view model_file);
+
+// A card's text with roots.models set to `folder` (the model moved); everything else as it was, but for a Gemma 4 card's
+// MTP file inside the old folder (engine.args --mtp <old folder>/...), which moves with it when `folder` holds it at the
+// same place (else it stays where it was: the model alone moved).
 [[nodiscard]] std::variant<std::string, CardError> card_with_folder(std::string_view card_json, const std::filesystem::path& folder);
 
 // The danger zone's first check (§4.5): a one-time code the page shows and the user types back. XXXX-XXXX from an

@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -421,6 +422,328 @@ void engine_change_drops_the_old_engines_readings() {
   expect(after.find("\"expert_slots\":3840") != std::string::npos && after.find("\"expert_slots_primary\":870") != std::string::npos,
          "the new engine's readings show: " + after);
 }
+
+// --- owner 2026-10-28: experts + memory on the RAM card, stale stats, disk reads, the conversation cache ----------
+constexpr double kGiB = 1073741824.0;
+constexpr double kMiB = 1048576.0;
+
+// "The System Ram reports MB usage only and not experts + mb usage": every family says how much of the model it holds
+// in RAM, each in its own words; engine.memory carries it in one shape. The rows are each engine's own startup INFO
+// (before READY) and its STAT cadence (while it decodes), key for key.
+void engine_memory_reads_every_familys_ram_tier() {
+  struct Row final {
+    std::string family;
+    std::map<std::string, std::string> readings;
+    std::optional<double> ram;        // experts held in RAM
+    std::optional<double> ram_bytes;  // their bytes
+    std::optional<double> vram;       // experts held in VRAM
+  };
+  const std::vector<Row> rows{
+      // Qwen on upstream's engine (generate.cpp:11114): expert_slots is every VRAM tier, the RAM arena is arena_mib.
+      {"qwen", {{"expert_slots", "4232"}, {"expert_cache_mib", "8269"}, {"expert_slots_primary", "4232"},
+                {"expert_cache_primary_mib", "8269"}, {"vram_free_mib", "900"}, {"arena_mib", "20480"}},
+       std::nullopt, 20480.0 * kMiB, 4232.0},
+      // GLM and raon1 (Maya generate.cpp:1049, project-maya glm_driver.cpp:829): the RAM tier's slots and GiB.
+      {"glm", {{"expert_slots", "870"}, {"expert_cache_mib", "12800"}, {"experts", "19456"}, {"vram_slots", "870"},
+               {"vram_gb", "12.5"}, {"ram_slots", "6000"}, {"ram_gb", "24.0"}},
+       6000.0, 24.0 * kGiB, 870.0},
+      // ... and once it decodes (generate.cpp:2121): the slots in use.
+      {"glm decoding", {{"expert_slots", "870"}, {"vram_slots", "870"}, {"ram_slots", "6000"}, {"ram_gb", "24.0"},
+                        {"vram_used", "850"}, {"ram_used", "5900"}, {"vram_gb", "12.5"}},
+       5900.0, 24.0 * kGiB, 850.0},
+      // DeepSeek (Maya ds4_model.cu:13433): expert_slots are the VRAM ones, ram_experts the RAM-held ones.
+      {"deepseek", {{"expert_slots", "1200"}, {"cpu_experts", "9000"}, {"ram_experts", "7000"}}, 7000.0, std::nullopt, 1200.0},
+      // ... decoding (ds4_main.cpp:1078): its ram_gb is decimal GB (tr.ram * cpu_blob / 1e9).
+      {"deepseek decoding", {{"expert_slots", "1200"}, {"ram_experts", "7000"}, {"vram_used", "1180"}, {"ram_used", "6900"},
+                             {"vram_gb", "10.50"}, {"ram_gb", "30.20"}},
+       6900.0, 30.2e9, 1180.0},
+      // MiniMax (Maya mm3_main.cpp:276): the resident and the pooled experts.
+      {"minimax", {{"experts_vram", "500"}, {"experts", "15000"}, {"expert_slots", "500"}, {"ram_slots", "14500"}},
+       14500.0, std::nullopt, 500.0},
+      // ... decoding (mm3_main.cpp:437): ram_gb is the pinned pool in GiB.
+      {"minimax decoding", {{"experts_vram", "500"}, {"ram_slots", "14500"}, {"vram_used", "510"}, {"ram_used", "14490"},
+                            {"vram_gb", "9.00"}, {"ram_gb", "40.00"}},
+       14490.0, 40.0 * kGiB, 510.0},
+      // Gemma 4 and flint (g4_cli.cpp:234, f_cli.cpp:209): every expert pinned in RAM (pinned_gib), some in VRAM slots.
+      {"gemma4", {{"expert_slots", "3840"}, {"expert_slots_primary", "870"}, {"pinned_gib", "13.25"}}, 3840.0, 13.25 * kGiB, 870.0},
+      {"flint", {{"expert_slots", "12032"}, {"expert_slots_primary", "2000"}, {"pinned_gib", "40.00"}}, 12032.0, 40.0 * kGiB, 2000.0},
+      // Qwen 3.6 MoE (q36_engine.cu:3679) prints no expert readings at all.
+      {"qwen35moe", {}, std::nullopt, std::nullopt, std::nullopt},
+  };
+  for (const auto& row : rows) {
+    Clocked c;
+    c.monitor.on_engine_stats(row.readings);
+    const auto json = c.json("ready");
+    const auto* memory = at(at(&json, "engine"), "memory");
+    expect(memory != nullptr, row.family + ": engine.memory while the engine is up");
+    const auto check = [&](const char* key, const std::optional<double> want) {
+      const auto* value = at(memory, key);
+      const bool ok = want.has_value() ? close_to(number(value), *want) : is_null(value);
+      expect(ok, row.family + ": " + key + " is " + (want ? std::to_string(*want) : std::string{"null"}));
+    };
+    check("experts_ram", row.ram);
+    check("experts_ram_bytes", row.ram_bytes);
+    check("experts_vram", row.vram);
+  }
+}
+
+// "When the models are stop and nothing is loaded, the stats seem to stay": the engine's own readings (its context,
+// its expert tier, its memory) show only while an engine is up - not while one starts, has failed or is unloaded.
+void engine_readings_show_only_while_an_engine_is_up() {
+  Clocked c;
+  c.monitor.on_engine_stats({{"expert_slots", "3840"}, {"expert_slots_primary", "870"}, {"pinned_gib", "13.25"}});
+  c.monitor.generation_started(10, 20, 8192, "Gemma");
+  c.monitor.on_token(1);
+  c.monitor.generation_ended("stop");
+  const auto up = c.json("ready");
+  expect(at(at(&up, "engine"), "experts") != nullptr && at(at(&up, "engine"), "memory") != nullptr &&
+             number(at(at(&up, "engine"), "max_context")) == std::optional<double>{8192.0},
+         "up: its readings");
+  for (const char* engine : {"starting", "failed", "none"}) {
+    const auto down = c.json(engine);
+    const auto* block = at(&down, "engine");
+    expect(at(block, "experts") == nullptr && at(block, "memory") == nullptr && is_null(at(block, "max_context")),
+           std::string{engine} + ": none of the engine's readings");
+    expect(size_of(at(&down, "requests")) == 1U, std::string{engine} + ": the history stays");
+  }
+}
+
+// An engine the supervisor unloaded after idling (engine.idle_unload_s): /health still says "starting" (the next
+// request loads it), the Monitor says unloaded, as upstream's does (serve/server.py:4611).
+void an_unloaded_engine_reads_unloaded() {
+  Clocked c;
+  c.monitor.on_engine_stats({{"expert_slots", "384"}});
+  const auto loaded = c.json("ready");
+  expect(at(at(&loaded, "engine"), "loaded") != nullptr && at(at(&loaded, "engine"), "loaded")->if_boolean() != nullptr &&
+             *at(at(&loaded, "engine"), "loaded")->if_boolean(),
+         "engine.loaded while it is up");
+  const std::string rendered = c.monitor.render_json({.model = "qwen-test", .engine = "starting", .queued = 0, .unloaded = true});
+  const auto unloaded = parsed(rendered).value_or(secure_frontend::JsonValue{});
+  expect(text(at(at(&unloaded, "live"), "state")) == "unloaded", "live.state unloaded: " + rendered.substr(0, 300));
+  const auto* flag = at(at(&unloaded, "engine"), "unloaded");
+  const auto* up = at(at(&unloaded, "engine"), "loaded");
+  expect(flag != nullptr && flag->if_boolean() != nullptr && *flag->if_boolean() && up != nullptr && up->if_boolean() != nullptr && !*up->if_boolean(),
+         "engine.unloaded true, engine.loaded false");
+  expect(at(at(&unloaded, "engine"), "experts") == nullptr, "no expert readings of the engine that unloaded");
+}
+
+// The engine that is up, once a second (EngineSupervisor::engine_sample): its process's memory, and its startup
+// readings per generation - a restarted engine's readings replace the last one's, its STAT values included.
+void the_engine_sample_reaches_the_monitor() {
+  Clocked c;
+  secure_frontend::HostSample sample;
+  sample.engine = secure_frontend::EngineSample{.generation = 1U, .readings = {{"expert_slots", "4232"}, {"arena_mib", "20480"}},
+                                                .resident_bytes = 30ULL << 30U, .conversation_cache = std::nullopt};
+  c.monitor.add_host_sample(sample);
+  const auto first = c.json("ready");
+  expect(close_to(number(at(at(at(&first, "engine"), "memory"), "process_bytes")), 30.0 * kGiB) &&
+             close_to(number(at(at(at(&first, "engine"), "memory"), "experts_ram_bytes")), 20480.0 * kMiB),
+         "the engine process's memory and its experts' share, before any chat");
+  c.monitor.on_engine_stats({{"ram_used", "77"}});
+  sample.engine->generation = 2U;
+  sample.engine->readings = {{"expert_slots", "4000"}, {"arena_mib", "10240"}};
+  c.monitor.add_host_sample(sample);
+  const std::string second = c.monitor.render_json({.model = "q", .engine = "ready", .queued = 0});
+  expect(second.find("\"experts\":{\"arena_mib\":10240,\"expert_slots\":4000}") != std::string::npos,
+         "a new generation: its own readings only (the old one's STAT ram_used is gone): " + second.substr(0, 400));
+  c.monitor.add_host_sample(secure_frontend::HostSample{});
+  const auto gone = c.json("ready");
+  expect(is_null(at(at(at(&gone, "engine"), "memory"), "process_bytes")), "no engine sample: no process memory");
+}
+
+// Upstream's disk reading (serve/telemetry.py:586-600, through psutil.disk_io_counters): every whole disk's
+// /proc/diskstats sectors (x512), partitions not counted twice.
+void diskstats_add_up_the_whole_disks() {
+  const std::string text =
+      "   8       0 sda 1000 10 2048 100 500 5 4096 50 0 150 150 0 0 0 0\n"
+      "   8       1 sda1 900 10 2000 90 400 5 4000 40 0 130 130 0 0 0 0\n"
+      " 259       0 nvme0n1 2000 0 8192 200 1000 0 16384 100 0 300 300 0 0 0 0 0 0\n"
+      " 259       1 nvme0n1p1 1900 0 8000 190 900 0 16000 90 0 280 280 0 0 0 0 0 0\n"
+      "   7       0 loop0 10 0 20 1 0 0 0 0\n"
+      "   8      16 sdb 1 2 three 4 5 6 7 8 9 10 11 12 13 14 15\n"
+      "garbage\n";
+  const auto whole = [](const std::string_view name) { return name == "sda" || name == "nvme0n1" || name == "loop0" || name == "sdb"; };
+  const auto devices = secure_frontend::parse_diskstats(text, whole);
+  expect(devices.has_value() && devices->size() == 2U && devices->count("sda") == 1U && devices->count("nvme0n1") == 1U &&
+             devices->at("sda").read_bytes == 2048ULL * 512ULL && devices->at("sda").write_bytes == 4096ULL * 512ULL &&
+             devices->at("nvme0n1").read_bytes == 8192ULL * 512ULL && devices->at("nvme0n1").write_bytes == 16384ULL * 512ULL,
+         "sda and nvme0n1 only: a partition is in its disk already; an 11-field or non-numeric line is skipped");
+  expect(!secure_frontend::parse_diskstats(text, [](std::string_view) { return false; }).has_value() &&
+             !secure_frontend::parse_diskstats("", whole).has_value(),
+         "no whole disk: no reading (upstream's None)");
+  using Devices = secure_frontend::DiskDevices;
+  const auto disk = [](const std::uint64_t read, const std::uint64_t written) {
+    return secure_frontend::DiskCounters{.read_bytes = read, .write_bytes = written};
+  };
+  secure_frontend::DiskMeter meter;
+  const auto t0 = std::chrono::steady_clock::time_point{} + 100s;
+  expect(!meter.next(Devices{{"sda", disk(1ULL << 30U, 1ULL << 29U)}}, t0).has_value(), "the first sample has nothing to compare with");
+  const auto rates = meter.next(Devices{{"sda", disk((1ULL << 30U) + (4ULL << 20U), (1ULL << 29U) + (2ULL << 20U))}}, t0 + 2s);
+  expect(rates.has_value() && close_to(rates->read_mb, 2.0) && close_to(rates->write_mb, 1.0), "MiB/s over the interval: 4 MiB in 2 s");
+  expect(!meter.next(std::nullopt, t0 + 3s).has_value(), "no counters: no reading");
+  expect(!meter.next(Devices{{"sda", disk(5U, 5U)}}, t0 + 4s).has_value(), "counters that went back: no reading");
+  const auto after = meter.next(Devices{{"sda", disk(5U + (1ULL << 20U), 5U)}}, t0 + 5s);
+  expect(after.has_value() && close_to(after->read_mb, 1.0) && close_to(after->write_mb, 0.0), "and on from the new counters");
+  // A disk missing from one reading (unplugged, or it did not answer) never adds its lifetime count to one second.
+  const auto two = meter.next(Devices{{"sda", disk(6U + (2ULL << 20U), 5U)}, {"sdb", disk(500ULL << 30U, 0U)}}, t0 + 6s);
+  const auto gone = meter.next(Devices{{"sda", disk(6U + (3ULL << 20U), 5U)}}, t0 + 7s);
+  const auto back = meter.next(Devices{{"sda", disk(6U + (4ULL << 20U), 5U)}, {"sdb", disk((500ULL << 30U) + (1ULL << 20U), 0U)}}, t0 + 8s);
+  expect(two.has_value() && close_to(two->read_mb, 1.0) && gone.has_value() && close_to(gone->read_mb, 1.0) && back.has_value() &&
+             close_to(back->read_mb, 1.0),
+         "sdb's 500 GB since boot never shows as one second's reads");
+  const auto real = secure_frontend::read_disk_counters();
+  std::cerr << "note: this machine's disk counters " << (real ? "read" : "are not readable") << '\n';
+}
+
+// /metrics: hardware.disk_read_mb and disk_write_mb (MiB/s, null when unknown) and history.disk_read_mb, as upstream's.
+void disk_readings_reach_the_json() {
+  Clocked c;
+  secure_frontend::HostSample sample;
+  sample.disk_read_mb = 12.5;
+  sample.disk_write_mb = 3.25;
+  c.monitor.add_host_sample(sample);
+  const auto json = c.json();
+  expect(close_to(number(at(at(&json, "hardware"), "disk_read_mb")), 12.5) && close_to(number(at(at(&json, "hardware"), "disk_write_mb")), 3.25),
+         "the newest rates");
+  expect(size_of(at(at(&json, "history"), "disk_read_mb")) == 1U && close_to(number(item(at(at(&json, "history"), "disk_read_mb"), 0)), 12.5),
+         "the read rate's history");
+  c.monitor.add_host_sample(secure_frontend::HostSample{});
+  const auto unknown = c.json();
+  expect(is_null(at(at(&unknown, "hardware"), "disk_read_mb")) && is_null(at(at(&unknown, "hardware"), "disk_write_mb")) &&
+             is_null(item(at(at(&unknown, "history"), "disk_read_mb"), 1)),
+         "unknown: null");
+}
+
+// The engine's conversation cache lines (generate.cpp:9519, :9650, :12953; upstream ConvCacheLog's patterns), whole
+// lines only, numbers only.
+void conversation_cache_lines_parse_exactly() {
+  using secure_frontend::ConversationCacheEvent;
+  const auto parked = secure_frontend::parse_conversation_cache_line(
+      "strata serve: conversation cache: parked 1234 tokens in 12.5 ms; parked=2 bytes=1048576 evictions=1 snapshot_bytes=524288 "
+      "reused_kv_bytes=0");
+  expect(parked.has_value() && parked->event == ConversationCacheEvent::parked && parked->tokens == 1234U && parked->parked == 2U &&
+             parked->bytes == std::optional<std::uint64_t>{1048576U} && parked->evictions == std::optional<std::uint64_t>{1U},
+         "a park");
+  const auto skipped = secure_frontend::parse_conversation_cache_line(
+      "strata serve: conversation cache: skipped 99 tokens in 0.4 ms; parked=2 bytes=1048576 evictions=1 snapshot_bytes=0 reused_kv_bytes=0");
+  expect(skipped.has_value() && skipped->event == ConversationCacheEvent::skipped && skipped->tokens == 99U, "a skip");
+  for (const char* from : {"live", "checkpoint"}) {
+    const auto restored = secure_frontend::parse_conversation_cache_line(
+        std::string{"strata serve: conversation cache: restored 1200 tokens ("} + from + ") in 3.0 ms; parked=1 bytes=524288");
+    expect(restored.has_value() && restored->event == ConversationCacheEvent::restored && restored->tokens == 1200U &&
+               restored->parked == 1U && restored->bytes == std::optional<std::uint64_t>{524288U} && !restored->evictions,
+           std::string{"a restore from "} + from);
+  }
+  const auto copies = secure_frontend::parse_conversation_cache_line(
+      "strata serve: conversation cache: dropped 2 superseded copies of this conversation; parked=3");
+  const auto copy = secure_frontend::parse_conversation_cache_line(
+      "strata serve: conversation cache: dropped 1 superseded copy of this conversation; parked=0");
+  expect(copies.has_value() && copies->event == ConversationCacheEvent::dropped && copies->parked == 3U && copy.has_value() && copy->parked == 0U,
+         "a drop");
+  // upstream's pattern takes a park without the newer tail fields too
+  expect(secure_frontend::parse_conversation_cache_line("strata serve: conversation cache: parked 5 tokens in 1.0 ms; parked=1 bytes=2").has_value() &&
+             secure_frontend::parse_conversation_cache_line(
+                 "strata serve: conversation cache: parked 5 tokens in 1.0 ms; parked=1 bytes=2 evictions=0").has_value(),
+         "the shorter tails upstream's pattern allows");
+  for (const std::string& refused : std::vector<std::string>{
+           "",
+           "strata serve: conversation cache: skip parking (12 tokens, below the 512 minimum; parked=1)",
+           "strata serve: conversation cache: parked 12 tokens in 1.0 ms; parked=1 bytes=2 evictions=3 snapshot_bytes=4 reused_kv_bytes=5 user text",
+           "strata serve: conversation cache: parked 12 tokens in 1.0 ms; parked=1 bytes=2 user text",
+           "xstrata serve: conversation cache: parked 12 tokens in 1.0 ms; parked=1 bytes=2",
+           " strata serve: conversation cache: parked 12 tokens in 1.0 ms; parked=1 bytes=2",
+           "strata serve: conversation cache: parked -1 tokens in 1.0 ms; parked=1 bytes=2",
+           "strata serve: conversation cache: parked 12 tokens in ms; parked=1 bytes=2",
+           "strata serve: conversation cache: parked 12 tokens in 1.0 ms; parked=1 bytes=99999999999999999999999",
+           "strata serve: conversation cache: parked 12 tokens in 1.0 ms; parked=1 bytes=2\r",
+           "strata serve: conversation cache: restored 12 tokens (a secret prompt) in 1.0 ms; parked=1 bytes=2",
+           "strata serve: conversation cache: restored 12 tokens (live) in 1.0 ms; parked=1 bytes=2 evictions=1",
+           "strata serve: conversation cache: dropped 2 superseded copies of this conversation; parked=3 bytes=4",
+           "strata serve: conversation cache: dropped 2 superseded copies of that conversation; parked=3",
+           "strata serve: conversation cache: borrowed 100 tokens from a parked conversation",
+           "strata serve: session 0: prompt 1200 tokens = 1000 reused + 200 read in 20 ms",
+       }) {
+    expect(!secure_frontend::parse_conversation_cache_line(refused).has_value(), "refused: [" + refused + "]");
+  }
+  secure_frontend::ConversationCacheState state;
+  secure_frontend::apply_conversation_cache_line(state, *parked, 100);
+  secure_frontend::apply_conversation_cache_line(state, *skipped, 101);
+  expect(state.parks == 1U && state.restores == 0U && state.last_event == std::optional<ConversationCacheEvent>{ConversationCacheEvent::parked} &&
+             state.last_tokens == std::optional<std::uint64_t>{1234U} && state.last_at == std::optional<std::int64_t>{100} &&
+             state.parked == 2U && state.bytes == 1048576U && state.evictions == 1U,
+         "a skip counts nothing and is not the last event");
+  secure_frontend::apply_conversation_cache_line(state, *secure_frontend::parse_conversation_cache_line(
+                                                            "strata serve: conversation cache: restored 1200 tokens (live) in 3.0 ms; parked=1 bytes=524288"),
+                                                 102);
+  secure_frontend::apply_conversation_cache_line(state, *copies, 103);
+  expect(state.restores == 1U && state.last_event == std::optional<ConversationCacheEvent>{ConversationCacheEvent::restored} &&
+             state.last_tokens == std::optional<std::uint64_t>{1200U} && state.last_at == std::optional<std::int64_t>{102} &&
+             state.parked == 3U && state.bytes == 524288U && state.evictions == 1U,
+         "a restore counts; a drop sets only the parked count");
+}
+
+// /metrics' conversation_cache: upstream's object (serve/server.py:827-837) field for field - the engine's INFO
+// budget and slots, what its stderr told, and how much of the prompts the requests reused.
+void conversation_cache_reaches_the_json() {
+  Clocked c;
+  const auto none = c.json("none");
+  const auto* off = at(&none, "conversation_cache");
+  expect(off != nullptr && off->if_boolean() == nullptr && at(off, "enabled") != nullptr && at(off, "enabled")->if_boolean() != nullptr &&
+             !*at(off, "enabled")->if_boolean() && is_null(at(off, "budget_mib")) && is_null(at(off, "slots")) &&
+             number(at(off, "parked")) == std::optional<double>{0.0} && number(at(off, "requests")) == std::optional<double>{0.0} &&
+             is_null(at(off, "last_event")) && is_null(at(off, "last_reused")),
+         "no engine: not enabled, nothing parked");
+  c.monitor.on_engine_stats({{"conversation_cache_mib", "8192"}, {"conversation_cache_slots", "4"}});
+  secure_frontend::ConversationCacheState state;
+  state.parked = 2U;
+  state.bytes = 1ULL << 30U;
+  state.parks = 3U;
+  state.restores = 1U;
+  state.evictions = 1U;
+  state.last_event = secure_frontend::ConversationCacheEvent::restored;
+  state.last_tokens = 1200U;
+  state.last_at = 1'700'000'005;
+  secure_frontend::HostSample sample;
+  // the engine's READY readings ride with every sample (a new generation's replace the last one's)
+  sample.engine = secure_frontend::EngineSample{.generation = 1U,
+                                                .readings = {{"conversation_cache_mib", "8192"}, {"conversation_cache_slots", "4"}},
+                                                .resident_bytes = std::nullopt, .conversation_cache = state};
+  c.monitor.add_host_sample(sample);
+  c.monitor.generation_started(1200, 50, 8192);
+  c.monitor.on_token(1);
+  c.monitor.on_done({.prompt_tokens = 1200U, .prompt_ms = 10.0, .decode_ms = 10.0, .reused = 1000U});
+  c.monitor.generation_ended("stop");
+  c.monitor.generation_started(300, 50, 8192);
+  c.monitor.on_token(1);
+  c.monitor.on_done({.prompt_tokens = 300U, .prompt_ms = 10.0, .decode_ms = 10.0, .reused = 0U});
+  c.monitor.generation_ended("stop");
+  const auto on = c.json("ready");
+  const auto* cache = at(&on, "conversation_cache");
+  const auto boolean = [](const secure_frontend::JsonValue* value) { return value != nullptr && value->if_boolean() != nullptr && *value->if_boolean(); };
+  expect(boolean(at(cache, "enabled")) && number(at(cache, "budget_mib")) == std::optional<double>{8192.0} &&
+             number(at(cache, "slots")) == std::optional<double>{4.0} && boolean(at(cache, "supported")),
+         "the engine's budget and slots");
+  expect(number(at(cache, "parked")) == std::optional<double>{2.0} && close_to(number(at(cache, "bytes")), kGiB) &&
+             number(at(cache, "parks")) == std::optional<double>{3.0} && number(at(cache, "restores")) == std::optional<double>{1.0} &&
+             number(at(cache, "evictions")) == std::optional<double>{1.0} && text(at(cache, "last_event")) == "restored" &&
+             number(at(cache, "last_tokens")) == std::optional<double>{1200.0} && number(at(cache, "last_at")) == std::optional<double>{1'700'000'005.0},
+         "what its stderr told");
+  expect(number(at(cache, "requests")) == std::optional<double>{2.0} && number(at(cache, "requests_reused")) == std::optional<double>{1.0} &&
+             number(at(cache, "reused_tokens")) == std::optional<double>{1000.0} && number(at(cache, "prompt_tokens")) == std::optional<double>{1500.0} &&
+             number(at(cache, "last_reused")) == std::optional<double>{0.0} && number(at(cache, "last_prompt")) == std::optional<double>{300.0},
+         "the requests' reuse, the newest last");
+  const auto stopped = c.json("none");
+  const auto* after = at(&stopped, "conversation_cache");
+  expect(at(after, "enabled") != nullptr && at(after, "enabled")->if_boolean() != nullptr && !*at(after, "enabled")->if_boolean() &&
+             number(at(after, "parked")) == std::optional<double>{0.0} && is_null(at(after, "last_event")) &&
+             number(at(after, "requests")) == std::optional<double>{2.0},
+         "stopped: nothing parked any more; the requests' history stays");
+  Clocked other;
+  other.monitor.on_engine_stats({{"expert_slots", "3840"}});
+  const auto gemma = other.json("ready");
+  const auto* supported = at(at(&gemma, "conversation_cache"), "supported");
+  expect(supported != nullptr && supported->if_boolean() != nullptr && !*supported->if_boolean(), "an engine without the cache says so");
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -437,5 +760,13 @@ int main(int argc, char** argv) {
       {"host_readings_are_plausible", host_readings_are_plausible},
       {"gpu_sampler_reads_a_fake_tool", gpu_sampler_reads_a_fake_tool},
       {"gpu_sampler_reads_the_real_tool_when_present", gpu_sampler_reads_the_real_tool_when_present},
+      {"engine_memory_reads_every_familys_ram_tier", engine_memory_reads_every_familys_ram_tier},
+      {"engine_readings_show_only_while_an_engine_is_up", engine_readings_show_only_while_an_engine_is_up},
+      {"an_unloaded_engine_reads_unloaded", an_unloaded_engine_reads_unloaded},
+      {"the_engine_sample_reaches_the_monitor", the_engine_sample_reaches_the_monitor},
+      {"diskstats_add_up_the_whole_disks", diskstats_add_up_the_whole_disks},
+      {"disk_readings_reach_the_json", disk_readings_reach_the_json},
+      {"conversation_cache_lines_parse_exactly", conversation_cache_lines_parse_exactly},
+      {"conversation_cache_reaches_the_json", conversation_cache_reaches_the_json},
   }, failures);
 }

@@ -3,7 +3,10 @@
 // the pull's argv and the manifest it is given (O4 through hf_source), progress, failure and
 // cancel, Maya's "main" pins resolved and checked, and a pasted link (O3) checked then started.
 #include "secure_frontend/canonical_path.hpp"
+#include "secure_frontend/card_builder.hpp"
 #include "secure_frontend/download_manager.hpp"
+#include "secure_frontend/gguf_metadata.hpp"
+#include "secure_frontend/engine_arguments.hpp"
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/manifest_json.hpp"
 #include "secure_frontend/model_cards.hpp"
@@ -149,7 +152,28 @@ std::string catalog_text() {
          "\",\"files\":[{\"path\":\"M/m-IQ1_S-00001-of-00002.gguf\",\"size\":1000,\"sha256\":\"" + kShaA +
          "\"},{\"path\":\"M/m-IQ1_S-00002-of-00002.gguf\",\"size\":2000,\"sha256\":\"" + kShaB +
          "\"},{\"path\":\"M/m-maya-indexers.gguf\",\"size\":100,\"sha256\":\"" + kShaA +
-         "\"}],\"prepare\":\"maya_pack\",\"pack_args\":[],\"expert_profile\":null,\"mmproj\":null}]}";
+         "\"}],\"prepare\":\"maya_pack\",\"pack_args\":[],\"expert_profile\":null,\"mmproj\":null},"
+         // our own pins (owner 2026-10-28): Gemma 4 with its MTP draft file (here from a repository of its own), and
+         // raon-1-mini, packed first
+         "{\"id\":\"gemma-small\",\"name\":\"Gemma small\",\"source\":\"m-strata\",\"family\":\"gemma4\",\"engine\":\"gemma4\","
+         "\"about\":\"its card from the GGUF\",\"repo\":\"acme/Gemma-GGUF\",\"revision\":\"" + std::string{kCommit} +
+         "\",\"files\":[{\"path\":\"gemma-small-Q8_0.gguf\",\"size\":1000,\"sha256\":\"" + kShaA +
+         "\"}],\"prepare\":\"none\",\"pack_args\":[],\"expert_profile\":null,\"mmproj\":null,\"mtp\":{\"path\":"
+         "\"MTP/mtp-gemma-small-Q8_0.gguf\",\"size\":50,\"sha256\":\"" + kShaB + "\",\"repo\":\"acme/Gemma-MTP-GGUF\",\"revision\":\"" +
+         std::string{kCommit} + "\"}},"
+         "{\"id\":\"raon-small\",\"name\":\"Raon small\",\"source\":\"m-strata\",\"family\":\"raon1\",\"engine\":\"raon1\","
+         "\"about\":\"packed first\",\"repo\":\"acme/Raon-GGUF\",\"revision\":\"" + std::string{kCommit} +
+         "\",\"files\":[{\"path\":\"raon-small-Q8_0.gguf\",\"size\":2000,\"sha256\":\"" + kShaA +
+         "\"}],\"prepare\":\"maya_pack\",\"pack_args\":[],\"expert_profile\":null,\"mmproj\":null,\"mtp\":null}]}";
+}
+
+// One catalog entry of the given engine and source, its "mtp" member as written (JSON).
+std::string catalog_entry(const std::string& id, const std::string& engine, const std::string& source, const std::string& mtp,
+                          const std::string& revision = std::string{kCommit}) {
+  return "{\"id\":\"" + id + "\",\"name\":\"N " + id + "\",\"source\":\"" + source + "\",\"family\":\"" + engine + "\",\"engine\":\"" +
+         engine + "\",\"about\":\"x\",\"repo\":\"acme/G-GGUF\",\"revision\":\"" + revision + "\",\"files\":[{\"path\":\"g.gguf\",\"size\":" +
+         (revision == "main" ? std::string{"null"} : std::string{"1000"}) + ",\"sha256\":\"" + kShaA +
+         "\"}],\"prepare\":\"none\",\"pack_args\":[],\"expert_profile\":null,\"mmproj\":null,\"mtp\":" + mtp + "}";
 }
 
 struct Fixture final {
@@ -160,6 +184,7 @@ struct Fixture final {
   bool with_gguf_engine = false;  // set before start(): a downloaded Gemma 4 / flint GGUF becomes a card on this engine
   std::vector<std::string> carded;  // the cards on_card was told about
   std::vector<std::string> events;  // the alerts raised (spec 2026-10-27 §5a)
+  std::vector<secure_frontend::ModelCard> held;   // the launcher's cards, as the list reads them (owner 2026-10-28)
   void start(const std::uint64_t free_bytes) {
     for (const char* name : {"downloads", "work", "cards"}) secure_frontend_test::make_private_directory(dir / name);
     open(free_bytes);
@@ -196,6 +221,7 @@ struct Fixture final {
     settings.on_event = [this](const std::string_view event, const std::string& subject, const std::string&) {
       events.push_back(std::string{event} + ": " + subject);
     };
+    settings.cards = [this] { return held; };
     settings.seams = spawner.seams(free_bytes);
     manager = std::make_unique<DownloadManager>(std::move(settings));
   }
@@ -1150,6 +1176,231 @@ void the_vision_files_come_with_the_download_when_asked() {
          "the Qwen3.6 card names its encoder file");
 }
 
+// Owner 2026-10-28 ("there are no download cards for ... flint, raon1, gemma4"; "gemma4 has an mtp"): the embedded
+// catalog's own pins (source m-strata) are read whole - flint and Gemma 4 on their engines, raon-1-mini packed first,
+// Gemma 4's MTP draft file pinned by its commit, size and SHA-256. An MTP file is Gemma 4's only, always fetched, so it
+// must be pinned to a commit with its size; an unknown source or engine is refused.
+void the_catalog_reads_our_pins_and_the_mtp_file() {
+  const auto catalog = secure_frontend::parse_download_catalog(secure_frontend::embedded_download_catalog());
+  expect(catalog.dropped == 0U, "the embedded catalog is read whole: " + std::to_string(catalog.dropped) + " dropped");
+  const auto find = [&catalog](const std::string_view id) -> const secure_frontend::DownloadEntry* {
+    for (const auto& entry : catalog.entries) {
+      if (entry.id == id) return &entry;
+    }
+    return nullptr;
+  };
+  const auto* flint = find("flint-q8_0");
+  const auto* raon = find("raon-1-mini-preview-q8_0");
+  const auto* gemma = find("gemma-4-26b-a4b-it-q8_0");
+  expect(flint != nullptr && flint->source == "m-strata" && flint->engine == "flint" && flint->prepare == "none" && !flint->mtp &&
+             flint->files.size() == 1U && flint->files[0].size == std::optional<std::uint64_t>{42301076928ULL},
+         "flint Q8_0: our pin, the flint engine, its card from the GGUF");
+  expect(raon != nullptr && raon->source == "m-strata" && raon->engine == "raon1" && raon->prepare == "maya_pack" && !raon->mtp,
+         "raon-1-mini Q8_0: our pin, the raon1 engine, packed first");
+  expect(gemma != nullptr && gemma->source == "m-strata" && gemma->engine == "gemma4" && gemma->mtp.has_value() &&
+             gemma->mtp->path == "MTP/mtp-gemma-4-26B-A4B-it-Q8_0.gguf" &&
+             gemma->mtp->size == std::optional<std::uint64_t>{461766816ULL} &&
+             gemma->mtp->sha256 == "6326fb9f5e487aa8dcdd313a091e3c67724cb2a666ec3b7d2895b5b26d93ed1b" &&
+             gemma->mtp->repo == "unsloth/gemma-4-26B-A4B-it-GGUF" && gemma->mtp->revision == gemma->revision,
+         "Gemma 4 26B-A4B Q8_0 with its MTP draft file, from its repository and commit");
+  const auto read = [](const std::string& entry) {
+    return secure_frontend::parse_download_catalog("{\"schema_version\":1,\"models\":[" + entry + "]}");
+  };
+  const std::string mtp = "{\"path\":\"MTP/mtp-g.gguf\",\"size\":50,\"sha256\":\"" + kShaB + "\"}";
+  const auto kept = read(catalog_entry("g", "gemma4", "m-strata", mtp));
+  expect(kept.entries.size() == 1U && kept.entries[0].mtp && kept.entries[0].mtp->repo.empty() && kept.entries[0].mtp->size == std::optional<std::uint64_t>{50U},
+         "an MTP file without its own repository and revision is the entry's");
+  expect(read(catalog_entry("g", "flint", "m-strata", mtp)).dropped == 1U, "an MTP file on an engine that runs none: refused");
+  expect(read(catalog_entry("g", "gemma4", "m-strata", "{\"path\":\"MTP/mtp-g.gguf\",\"size\":null,\"sha256\":\"" + kShaB + "\"}")).dropped == 1U,
+         "an MTP file without its size: refused (it is always fetched)");
+  expect(read(catalog_entry("g", "gemma4", "m-strata", "{\"path\":\"MTP/mtp-g.gguf\",\"size\":50,\"sha256\":\"" + kShaB +
+                                                           "\",\"revision\":\"main\"}")).dropped == 1U,
+         "an MTP file at main: refused (pinned to a commit)");
+  expect(read(catalog_entry("g", "gemma4", "m-strata", mtp, "main")).dropped == 1U, "an MTP file of an entry at main: refused");
+  expect(read(catalog_entry("g", "gemma4", "m-strata", "{\"path\":\"MTP/mtp-g.bin\",\"size\":50,\"sha256\":\"" + kShaB + "\"}")).dropped == 1U,
+         "an MTP file that is not a .gguf (O4): refused");
+  expect(read(catalog_entry("g", "gemma4", "m-strata", "{\"path\":\"g.gguf\",\"size\":50,\"sha256\":\"" + kShaB + "\"}")).dropped == 1U,
+         "an MTP file that is the model's own file: refused");
+  expect(read(catalog_entry("g", "gemma4", "m-strata", "{\"path\":\"MTP/mtp-g-00001-of-00002.gguf\",\"size\":50,\"sha256\":\"" + kShaB + "\"}"))
+                 .dropped == 1U,
+         "an MTP file named as a shard: refused");
+  expect(read(catalog_entry("g", "gemma4", "elsewhere", "null")).dropped == 1U, "an unknown source: refused");
+  expect(read(catalog_entry("g", "llama", "m-strata", "null")).dropped == 1U, "an unknown engine: refused");
+  for (const auto* engine : {"gemma4", "flint", "raon1"}) {
+    expect(read(catalog_entry("g", engine, "custom", "null")).entries.size() == 1U,
+           std::string{"a custom paste matched to "} + engine + " reads back (custom.json after a restart)");
+  }
+}
+
+// Owner 2026-10-28 ("gemma4 has an mtp ... make sure we work that mtp in our gemma engine"): a Gemma 4 download brings
+// its MTP draft file - counted in the size and the files, pulled with the model as a weights file from its own pin - and
+// the card made from the GGUF runs it: engine.args --mtp <the stored MTP file>, the MTP option on by default.
+// A card added from a folder whose file is named like a download's (the page names a card's file after the card; on
+// Windows "Gemma-Small.json" is this very file) is never written over by that download's card: the download says why.
+void a_download_never_writes_over_a_folder_card() {
+  Fixture f;
+  f.with_gguf_engine = true;
+  f.spawner.pulls.push_back(Script{{"MANIFEST gemma-small:download " + std::string(64, 'c'), "FILE gemma-small-Q8_0.gguf 1000",
+                                    "FINISHED gemma-small-Q8_0.gguf ok", "FILE MTP/mtp-gemma-small-Q8_0.gguf 50",
+                                    "FINISHED MTP/mtp-gemma-small-Q8_0.gguf ok", "RESULT ok"}});
+  const auto installed = f.dir / "installed";
+  secure_frontend_test::make_private_directory(installed);
+  secure_frontend_test::make_private_directory(installed / "MTP");
+  secure_frontend_test::write_file(installed / "gemma-small-Q8_0.gguf",
+                                   test_support::gguf_with_tokenizer(test_support::spm_tokenizer(), "gemma4", "gemma4")
+                                       .u32("gemma4.context_length", 262144U)
+                                       .bytes());
+  secure_frontend_test::write_file(installed / "MTP" / "mtp-gemma-small-Q8_0.gguf", "GGUF");
+  for (const char* name : {"downloads", "work", "cards"}) secure_frontend_test::make_private_directory(f.dir / name);
+  const std::string folder_card =
+      R"({"schema_version":1,"name":"gemma-small","source":"folder","options":{"temperature":{"default":1.0}}})";
+  secure_frontend_test::write_file(f.dir / "cards" / "gemma-small.json", folder_card);
+  f.start(1U << 30U);
+  {
+    std::lock_guard lock(f.spawner.mutex);
+    f.spawner.installed = installed;
+  }
+  expect(!f.manager->start("gemma-small").has_value() && f.manager->wait_idle(std::chrono::seconds(10)), "it downloads");
+  expect(secure_frontend_test::read_file(f.dir / "cards" / "gemma-small.json") == folder_card, "the folder's card is as it was");
+  const std::string listed = f.manager->list_json();
+  const auto at = listed.find("\"id\":\"gemma-small\"");
+  const std::string entry = at == std::string::npos ? std::string{} : listed.substr(at, listed.find("{\"id\":", at + 1U) - at);
+  expect(has(entry, "\"state\":\"failed\"") && has(entry, "already has a card") && has(entry, "gemma-small.json"),
+         "the download says its card was not written over the folder's: " + entry);
+}
+
+void a_downloaded_gemma4_brings_its_mtp_file() {
+  Fixture f;
+  f.with_gguf_engine = true;
+  f.spawner.pulls.push_back(Script{{"MANIFEST gemma-small:download " + std::string(64, 'c'), "FILE gemma-small-Q8_0.gguf 1000",
+                                    "FINISHED gemma-small-Q8_0.gguf ok", "FILE MTP/mtp-gemma-small-Q8_0.gguf 50",
+                                    "FINISHED MTP/mtp-gemma-small-Q8_0.gguf ok", "RESULT ok"}});
+  const auto installed = f.dir / "installed";
+  secure_frontend_test::make_private_directory(installed);
+  secure_frontend_test::make_private_directory(installed / "MTP");   // the store keeps the catalog's subfolder
+  secure_frontend_test::write_file(installed / "gemma-small-Q8_0.gguf",
+                                   test_support::gguf_with_tokenizer(test_support::spm_tokenizer(), "gemma4", "gemma4")
+                                       .u32("gemma4.context_length", 262144U)
+                                       .bytes());
+  secure_frontend_test::write_file(installed / "MTP" / "mtp-gemma-small-Q8_0.gguf", "GGUF");
+  f.start(1U << 30U);
+  const auto entry_of = [&f]() {
+    const std::string listed = f.manager->list_json();
+    const auto at = listed.find("\"id\":\"gemma-small\"");
+    return at == std::string::npos ? std::string{} : listed.substr(at, listed.find('}', at) - at);
+  };
+  expect(has(entry_of(), "\"size_bytes\":1050") && has(entry_of(), "\"files\":2,") && has(entry_of(), "\"runnable\":true") &&
+             has(entry_of(), "MTP"),
+         "the MTP file counts in its size and files, and the note names it: " + entry_of());
+  {
+    std::lock_guard lock(f.spawner.mutex);
+    f.spawner.installed = installed;
+  }
+  expect(!f.manager->start("gemma-small").has_value() && f.manager->wait_idle(std::chrono::seconds(10)), "it downloads");
+  expect(has(entry_of(), "\"state\":\"ready\""), "ready - a card was made: " + entry_of());
+  expect(f.spawner.recorded.size() == 1U, "one child, the pull: nothing to prepare");
+  std::ifstream in(f.dir / "work" / "gemma-small.manifest.json", std::ios::binary);
+  std::ostringstream text;
+  text << in.rdbuf();
+  secure_frontend::ManifestRules release;
+  release.allow_raw_profile = false;
+  const auto parsed = secure_frontend::parse_manifest(text.str(), release);
+  const auto* manifest = std::get_if<secure_frontend::ParsedManifest>(&parsed);
+  expect(manifest != nullptr && manifest->manifest.files.size() == 2U, "the manifest lists the model and its MTP file: " + text.str());
+  if (manifest != nullptr && manifest->manifest.files.size() == 2U) {
+    const auto& mtp = manifest->manifest.files[1];
+    expect(mtp.role == secure_frontend::FileRole::weights && mtp.path == "MTP/mtp-gemma-small-Q8_0.gguf" && mtp.size == 50U &&
+               mtp.sha256 == kShaB &&
+               mtp.sources == std::vector<std::string>{"https://huggingface.co/acme/Gemma-MTP-GGUF/resolve/" + std::string{kCommit} +
+                                                       "/MTP/mtp-gemma-small-Q8_0.gguf"},
+           "the MTP file: a weights file at its own pin");
+  }
+  const auto read = secure_frontend::read_model_card(f.dir / "cards" / "gemma-small.json");
+  const auto* card = std::get_if<secure_frontend::ModelCard>(&read);
+  expect(card != nullptr, "the card reads");
+  if (card == nullptr) {
+    for (const auto& issue : std::get<secure_frontend::ConfigErrors>(read)) std::cerr << "  " << issue.key_path << ": " << issue.reason << '\n';
+    return;
+  }
+  const auto& rows = card->config.entries;
+  const auto args = rows.contains("engine.args") ? std::get<std::vector<std::string>>(rows.at("engine.args").value) : std::vector<std::string>{};
+  const std::string stored = secure_frontend::path_to_utf8((installed / "MTP" / "mtp-gemma-small-Q8_0.gguf").make_preferred());
+  expect(card->profile == secure_frontend::EngineProfile::gemma4 && card->source == "download:gemma-small" &&
+             args == std::vector<std::string>{"--mtp", stored},
+         "the card: gemma4, from that download, drafting with the stored MTP file");
+  expect(!secure_frontend::validate_engine_user_arguments(secure_frontend::EngineArgumentsProfile::strata_gemma4, args).has_value(),
+         "--mtp <file> passes the Gemma engine's allowlist");
+  const bool mtp_on = std::any_of(card->options.begin(), card->options.end(), [](const secure_frontend::ModelOptionLimits& o) {
+    return o.spec != nullptr && o.spec->name == "mtp" && std::get_if<bool>(&o.default_value) != nullptr && *std::get_if<bool>(&o.default_value);
+  });
+  expect(mtp_on, "the card lists the MTP option, on by default");
+}
+
+// raon-1-mini (owner 2026-10-28, our pin): packed as its folder card is - strata-prepare download --maya on the GGUF
+// hard-linked beside the pack (<store>/packs/<id>/, the pack in pack/), as GLM-5.3's - then its card: raon1 on the pack,
+// the served model name its marker. Deleting it takes that folder with it.
+void a_downloaded_raon1_is_packed_like_glm() {
+  Fixture f;
+  f.with_gguf_engine = true;
+#if defined(_WIN32)
+  const auto tool = f.dir / "strata-prepare.exe";
+#else
+  const auto tool = f.dir / "strata-prepare";
+#endif
+  f.spawner.pulls.push_back(Script{{"MANIFEST raon-small:download " + std::string(64, 'c'), "FILE raon-small-Q8_0.gguf 2000",
+                                    "FINISHED raon-small-Q8_0.gguf ok", "RESULT ok"}});
+  f.spawner.pulls.push_back(Script{{"STEP pack", "DONE"}});
+  const auto installed = f.dir / "installed";
+  secure_frontend_test::make_private_directory(installed);
+  secure_frontend_test::write_file(installed / "raon-small-Q8_0.gguf", "raon");
+  const auto folder = f.dir / "downloads" / "packs" / "raon-small";
+  bool linked = false;
+  f.spawner.on_spawn = [&](const secure_frontend::EngineCommand& command) {
+    if (command.executable != tool) return;
+    std::error_code ec;
+    linked = std::filesystem::equivalent(folder / "raon-small-Q8_0.gguf", installed / "raon-small-Q8_0.gguf", ec);
+    std::filesystem::create_directories(folder / "pack" / "tokenizer");
+  };
+  f.start(1U << 30U);
+  const auto entry_of = [&f]() {
+    const std::string listed = f.manager->list_json();
+    const auto at = listed.find("\"id\":\"raon-small\"");
+    return at == std::string::npos ? std::string{} : listed.substr(at, listed.find('}', at) - at);
+  };
+  expect(has(entry_of(), "\"runnable\":false") && has(entry_of(), "download only"), "without strata-prepare: download only: " + entry_of());
+  secure_frontend_test::write_file(tool, "tool");
+  expect(has(entry_of(), "\"runnable\":true") && has(entry_of(), "the raon-1-mini pack is built"), "runnable, packed first: " + entry_of());
+  {
+    std::lock_guard lock(f.spawner.mutex);
+    f.spawner.installed = installed;
+  }
+  expect(!f.manager->start("raon-small").has_value() && f.manager->wait_idle(std::chrono::seconds(10)), "it downloads");
+  expect(has(entry_of(), "\"state\":\"ready\""), "ready - a card was made: " + entry_of());
+  expect(f.spawner.recorded.size() == 2U, "two children: the pull and strata-prepare");
+  if (f.spawner.recorded.size() != 2U) return;
+  expect(f.spawner.recorded[1].command.executable == tool &&
+             f.spawner.recorded[1].command.arguments ==
+                 std::vector<std::string>{"download", "--maya", "--gguf", secure_frontend::path_to_utf8(folder / "raon-small-Q8_0.gguf"), "--out",
+                                          secure_frontend::path_to_utf8(folder / "pack")},
+         "strata-prepare download --maya: the linked GGUF, the pack beside it");
+  expect(linked, "the GGUF is a hard link to the store's file when the pack is made");
+  expect(std::filesystem::exists(folder / "pack" / "raon1-mini.gguf"), "the pack's marker: the served model name");
+  const auto read = secure_frontend::read_model_card(f.dir / "cards" / "raon-small.json");
+  const auto* card = std::get_if<secure_frontend::ModelCard>(&read);
+  expect(card != nullptr, "the card reads");
+  if (card == nullptr) return;
+  const auto& rows = card->config.entries;
+  expect(card->profile == secure_frontend::EngineProfile::raon1 && card->source == "download:raon-small" &&
+             std::get<std::string>(rows.at("roots.models").value) == secure_frontend::path_to_utf8(folder / "pack") &&
+             std::get<std::string>(rows.at("roots.tokenizer_pack").value) == secure_frontend::path_to_utf8(folder / "pack" / "tokenizer") &&
+             std::get<std::string>(rows.at("engine.model_id").value) == "raon1-mini",
+         "the card: raon1, from that download, the pack and its tokenizer, the served model name");
+  f.spawner.pulls.push_back(Script{{"removed raon-small:download"}});
+  expect(!f.manager->remove_installed("raon-small").has_value() && !std::filesystem::exists(folder) &&
+             std::filesystem::exists(installed / "raon-small-Q8_0.gguf"),
+         "removed: the link and the pack go, the store's own file is the store's to remove");
+}
+
 void download_routes_answer_the_contract() {
   using secure_frontend::RouteId;
   Fixture f;
@@ -1207,6 +1458,112 @@ void download_routes_answer_the_contract() {
   expect(wrong_route.status == 500, "another route is an internal error");
 }
 
+// Owner 2026-10-28: "when we point it to a local folder with the model, if it match the card of the model that is
+// downloadable, we should change the banner from available to Locally Provided vs Downloaded. That way the user knows
+// what they already have in the system." Each entry of the list says what this PC has of it (one rule for the page and
+// strata-tui): "downloaded" - a card from this download, or the download ready or installed; "local" - another card
+// runs the same model, its file there: its first model file's name (a Maya pack card's is the shard its pack was built
+// from, beside the pack), and its size where the catalog pins one (another quant of that name is not it); null
+// otherwise. have_card names the card. Nothing is hashed.
+void the_list_says_what_is_already_on_this_pc() {
+  Fixture f;
+  const auto local = f.dir / "local";
+  secure_frontend_test::make_private_directory(local);
+  const auto card_of = [&f](const std::string& json) {
+    auto parsed = secure_frontend::parse_model_card(json, f.dir);
+    expect(std::holds_alternative<secure_frontend::ModelCard>(parsed), "a valid card");
+    if (auto* card = std::get_if<secure_frontend::ModelCard>(&parsed)) f.held.push_back(std::move(*card));
+  };
+  const auto sized = [](const std::filesystem::path& file, const std::size_t bytes) {
+    secure_frontend_test::make_private_directory(file.parent_path());
+    secure_frontend_test::write_file(file, std::string(bytes, 'x'));
+  };
+  const auto engine = f.dir / "multiengine.exe";
+  // Gemma 4 from its folder: the catalog's file, its pinned size
+  secure_frontend::GgufMetadata gemma;
+  gemma.version = 3U;
+  gemma.values["general.architecture"] = std::string{"gemma4"};
+  sized(local / "gemma" / "gemma-small-Q8_0.gguf", 1000U);
+  const auto made = secure_frontend::card_for_gguf(gemma, {.folder = local / "gemma", .file = "gemma-small-Q8_0.gguf", .engine = engine,
+                                                           .source = "folder"});
+  if (const auto* text = std::get_if<secure_frontend::CardText>(&made)) card_of(text->json);
+  // raon-1-mini and GLM-5.3 on their packs (native_experts.txt names the shard), the shards beside them
+  using secure_frontend::PackedFamily;
+  sized(local / "raon" / "raon-small-Q8_0.gguf", 2000U);
+  secure_frontend_test::make_private_directory(local / "raon" / "pack");
+  secure_frontend_test::write_file(local / "raon" / "pack" / "native_experts.txt", "# ... absolute offsets in raon-small-Q8_0.gguf, or ...)\n");
+  card_of(secure_frontend::card_for_pack({.family = PackedFamily::raon1, .name = "my-raon", .engine = engine, .source = "folder",
+                                          .pack = local / "raon" / "pack"}).json);
+  sized(local / "glm" / "g-00001-of-00002.gguf", 1000U);
+  secure_frontend_test::make_private_directory(local / "glm" / "pack");
+  secure_frontend_test::write_file(local / "glm" / "pack" / "native_experts.txt", "# ... absolute offsets in g-00001-of-00002.gguf, or ...)\n");
+  card_of(secure_frontend::card_for_pack({.family = PackedFamily::glm53, .name = "my-glm", .engine = engine, .source = "folder",
+                                          .pack = local / "glm" / "pack"}).json);
+  // DeepSeek-V4.1: the same name, another size - another quant, not this entry's
+  sized(local / "ds" / "d-00001-of-00002.gguf", 999U);
+  secure_frontend_test::make_private_directory(local / "ds" / "maya-ds4");
+  secure_frontend_test::write_file(local / "ds" / "maya-ds4" / "sources.json", "{\"files\": [{\"name\": \"d-00001-of-00002.gguf\", \"size\": 999}]}");
+  card_of(secure_frontend::card_for_pack({.family = PackedFamily::deepseek, .name = "my-ds", .engine = engine, .source = "folder",
+                                          .pack = local / "ds" / "maya-ds4"}).json);
+  // MiniMax-M3.1: sources.json names the shard (its indexers file after it)
+  sized(local / "mm" / "m-IQ1_S-00001-of-00002.gguf", 1000U);
+  secure_frontend_test::make_private_directory(local / "mm" / "maya-mm3");
+  secure_frontend_test::write_file(local / "mm" / "maya-mm3" / "sources.json",
+                                   "{\"files\": [{\"name\": \"m-IQ1_S-00001-of-00002.gguf\"}, {\"name\": \"m-maya-indexers.gguf\"}]}");
+  card_of(secure_frontend::card_for_pack({.family = PackedFamily::minimax, .name = "my-mm", .engine = engine, .source = "folder",
+                                          .pack = local / "mm" / "maya-mm3"}).json);
+  // GLM-5.3 whose catalog pins no size: its shard not there (deleted, or a drive not plugged in) - not on this PC
+  secure_frontend_test::make_private_directory(local / "glm1");
+  secure_frontend_test::make_private_directory(local / "glm1" / "pack");
+  secure_frontend_test::write_file(local / "glm1" / "pack" / "native_experts.txt", "# ... absolute offsets in g-00001-of-00001.gguf, or ...)\n");
+  card_of(secure_frontend::card_for_pack({.family = PackedFamily::glm53, .name = "my-glm1", .engine = engine, .source = "folder",
+                                          .pack = local / "glm1" / "pack"}).json);
+  // a Qwen3.8 card from this download (source download:qwen-small), its files in the store
+  card_of(secure_frontend::card_for_pack({.family = PackedFamily::qwen38, .name = "Qwen-small", .engine = engine,
+                                          .source = "download:qwen-small", .pack = f.dir / "packs" / "q", .folder = f.dir / "store" / "q",
+                                          .model_id = "m-00001-of-00002"}).json);
+  expect(f.held.size() == 7U, "seven cards are held");
+  // Qwen3.6's download made its card earlier (its card file in the cards folder: ready; a card from before cards named
+  // their source), which the launcher did not take
+  for (const char* name : {"downloads", "work", "cards"}) secure_frontend_test::make_private_directory(f.dir / name);
+  secure_frontend_test::write_file(f.dir / "cards" / "qwen36-small.json", "{}");
+  // a card added from a folder whose file is named like a download's (the page names a card's file after the card; on
+  // Windows "Gemma-Small.json" is this very file): not that download's card, so the download is not ready
+  secure_frontend_test::write_file(f.dir / "cards" / "gemma-small.json",
+                                   R"({"schema_version":1,"name":"gemma-small","source":"folder","options":{"temperature":{"default":1.0},"min_p":{"default":0.05}}})");
+  f.start(1U << 30U);
+  std::string listed = f.manager->list_json();
+  const auto entry = [&listed](const std::string& id) {
+    const auto at = listed.find("{\"id\":\"" + id + "\"");
+    if (at == std::string::npos) return std::string{"absent"};
+    const auto next = listed.find("{\"id\":", at + 1U);
+    return listed.substr(at, next == std::string::npos ? std::string::npos : next - at);
+  };
+  const auto says = [&entry](const std::string& id, const std::string& have, const std::string& card) {
+    const std::string text = entry(id);
+    const std::string want = ",\"have\":" + have + ",\"have_card\":" + card + "}";
+    expect(has(text, want), id + " says " + want + ": " + text);
+  };
+  says("gemma-small", "\"local\"", "\"gemma-small-Q8_0\"");
+  says("raon-small", "\"local\"", "\"my-raon\"");
+  says("glm-maya", "\"local\"", "\"my-glm\"");
+  says("ds-maya", "null", "null");
+  says("mm-maya", "\"local\"", "\"my-mm\"");
+  says("qwen-small", "\"downloaded\"", "\"Qwen-small\"");
+  says("qwen36-small", "\"downloaded\"", "null");
+  says("glm-small", "null", "null");
+  expect(has(entry("gemma-small"), "\"state\":\"available\"") && has(entry("qwen36-small"), "\"state\":\"ready\""),
+         "the states are as before: " + entry("gemma-small"));
+  // its shard back in place: on this PC by its name (the catalog pins no size to compare)
+  secure_frontend_test::write_file(local / "glm1" / "g-00001-of-00001.gguf", "GGUF");
+  listed = f.manager->list_json();
+  says("glm-small", "\"local\"", "\"my-glm1\"");
+  // a card that goes is no longer counted
+  f.held.erase(f.held.begin());
+  listed = f.manager->list_json();
+  says("gemma-small", "null", "null");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1232,5 +1589,10 @@ int main(int argc, char** argv) {
       {"a_multipart_paste_assembles_its_shards", a_multipart_paste_assembles_its_shards},
       {"download_routes_answer_the_contract", download_routes_answer_the_contract},
       {"the_vision_files_come_with_the_download_when_asked", the_vision_files_come_with_the_download_when_asked},
+      {"the_catalog_reads_our_pins_and_the_mtp_file", the_catalog_reads_our_pins_and_the_mtp_file},
+      {"a_downloaded_gemma4_brings_its_mtp_file", a_downloaded_gemma4_brings_its_mtp_file},
+      {"a_download_never_writes_over_a_folder_card", a_download_never_writes_over_a_folder_card},
+      {"a_downloaded_raon1_is_packed_like_glm", a_downloaded_raon1_is_packed_like_glm},
+      {"the_list_says_what_is_already_on_this_pc", the_list_says_what_is_already_on_this_pc},
   }, failures);
 }

@@ -258,7 +258,7 @@ void strata_search_answers_over_stdio() {
                                    R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"web_search","arguments":{"query":"rust 1.90"}}})" "\n");
   const auto result = secure_frontend_test::run_to_completion(
       {.executable = program, .arguments = {"--url", "http://127.0.0.1:" + std::to_string(searxng.port()), "--results", "1"},
-       .stdin_file = dir / "in.jsonl"});
+       .environment = {}, .stdin_file = dir / "in.jsonl"});
   expect(result.exit_code == 0, "strata-search ends at its input's end: " + std::to_string(result.exit_code) + " " + result.err);
   std::vector<std::string> lines;
   for (std::size_t at = 0; at < result.out.size();) {
@@ -275,7 +275,7 @@ void strata_search_answers_over_stdio() {
          "the call's text is the fake's first result (--results 1): " + (lines.size() == 3U ? lines[2] : result.out));
   expect(searxng.requests() == std::vector<std::string>{"GET /search?q=rust%201.90&format=json HTTP/1.1"}, "one GET reached the instance");
   expect(result.out.find('\r') == std::string::npos, "lines end in LF only");
-  const auto bad = secure_frontend_test::run_to_completion({.executable = program, .arguments = {"--url", "ftp://x"}});
+  const auto bad = secure_frontend_test::run_to_completion({.executable = program, .arguments = {"--url", "ftp://x"}, .environment = {}});
   expect(bad.exit_code == 2 && bad.err.find("--url") != std::string::npos, "a bad URL: exit 2, said so");
 }
 
@@ -419,7 +419,7 @@ void search_routes_read_save_and_test() {
   settings.log = [](std::string_view) {};
   secure_frontend::SearchRoutes routes(std::move(settings));
   const auto post = [&routes](const secure_frontend::RouteId route, const std::string& body, const bool loopback = true) {
-    return routes.answer(route, body, secure_frontend::RequestContext{.loopback_peer = loopback});
+    return routes.answer(route, body, secure_frontend::RequestContext{.client_gone = {}, .loopback_peer = loopback});
   };
   const auto has = [](const std::string& text, const std::string_view part) { return text.find(part) != std::string::npos; };
   const auto first = post(secure_frontend::RouteId::strata_search, "{}");
@@ -464,7 +464,7 @@ void search_routes_let_in_the_clients_the_rule_lists() {
   };
   secure_frontend::SearchRoutes routes(std::move(settings));
   const auto from = [&routes](const secure_frontend::RouteId route, const std::string& body, const unsigned char subnet) {
-    secure_frontend::RequestContext context{.loopback_peer = false};
+    secure_frontend::RequestContext context{.client_gone = {}, .loopback_peer = false};
     context.peer[0] = 4U;
     context.peer[1] = 172U;
     context.peer[2] = 16U;

@@ -1,8 +1,8 @@
 ﻿<#
 install.ps1 - from a fresh Windows 10/11 PC to a built M-Strata in one step (run it through install.bat).
 
-  .\install.bat                                        build into ..\M-Strata-app with email alerts and web search
-  .\install.bat -Out D:\Apps\M-Strata -With email,search,window
+  .\install.bat                                        build into ..\M-Strata-app: email alerts, web search, the window and the TUI
+  .\install.bat -Out D:\Apps\M-Strata -With email,search,tui      (no window: only the terminal one)
   .\install.bat -Plan                                  only say what it would install, fetch and run
   .\install.bat -Yes                                   do not ask before installing
 
@@ -22,7 +22,7 @@ from GitHub, the WebView2 SDK from nuget.org. Nothing else is downloaded, and no
 #>
 param(
   [string]$Out = "",
-  [string]$With = "email,search",
+  [string]$With = "email,search,window,tui",
   [string]$GgmlDir = "",
   [switch]$Plan,
   [switch]$Yes
@@ -309,6 +309,7 @@ if ($LASTEXITCODE -ne 0) { Fail "make stopped (exit code $LASTEXITCODE); its mes
 Step 'Done'
 Say "  M-Strata is in $Out. Start it with:"
 if ($features -contains 'window') { Say "    $Out\strata-window.exe        (a window with the page, and a tray icon)" }
+if ($features -contains 'tui') { Say "    $Out\strata-tui.exe           (the same server in this terminal, with a dashboard)" }
 Say "    $Out\strata-unified-server.exe  (prints a one-time login link: open it in a browser on this PC)"
 if (-not $driver) { Say '  No NVIDIA driver was found: install it before starting a model.' }
 if ($restartAfter) { Say '  An installer asked for a restart to finish: restart Windows before the first start.' }

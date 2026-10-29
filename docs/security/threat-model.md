@@ -144,6 +144,15 @@ Trust boundaries:
   card's GPUs choice is typed: `"auto"` or GPU numbers 0-63, never free text,
   written only to `engine.gpu` or `glm.gpu`. Residual: that tool is the
   driver vendor's code, trusted like the driver the engine already uses.
+  (Owner 2026-10-28) The Monitor also reads, in-process and without any child or
+  vendor library: every disk's read and write byte counters (Linux
+  `/proc/diskstats` over the devices in `/sys/block`; Windows
+  `IOCTL_DISK_PERFORMANCE` on `\\.\PhysicalDrive0-32`, each opened with no
+  access rights, as upstream's psutil does), and the running engine's resident
+  memory (Windows `GetProcessMemoryInfo` on the handle the server holds; Linux
+  `/proc/<pid>/status` VmRSS). Only numbers are published (MiB/s, bytes); the new
+  disclosure to a key holder is this machine's disk activity and the engine's
+  memory size.
 - CORS is disabled by default: no `Access-Control-Allow-Origin` header is
   emitted. When configured, emit only exact allowed origins; never reflect an
   arbitrary origin and never combine `*` with credentials.
@@ -205,6 +214,13 @@ Trust boundaries:
   every other card's launch refuses `vision.enabled` by name. The same `data:`
   URL rule and caps as above hold, and the page sends pictures only while the
   running card says it reads them.
+- (2026-10-28) A Gemma 4 card's MTP draft file (`engine.args --mtp <file>`,
+  which the Gemma allowlist takes only as an absolute `.gguf` path) is held at
+  each launch to the picture encoder's rule above: a regular file, not a link,
+  in a folder no other user may change. It is refused by name, never by its
+  path. A folder card uses one only if, once resolved, it is still inside its
+  model folder, so no junction leads out. The catalog pins it (commit, size,
+  SHA-256) like the model, and the card's MTP option takes it out of a start.
 
 ### Configuration and filesystem
 
@@ -311,7 +327,30 @@ Trust boundaries:
   (`engine.allow_new_privileges` turns it off for a GPU stack that needs it).
   Its stdout is the bounded strict protocol pipe; stderr is discarded to the
   platform null device so diagnostics cannot corrupt protocol framing or leak
-  prompts into logs.
+  prompts into logs. The one exception (owner 2026-10-28, the Monitor's
+  conversation cache) is the Qwen profile's engine (`EngineCommand::
+  read_conversation_cache`, set only for `profile == qwen`): its stderr goes
+  to a pipe (owner-only, not inheritable on our side) that one thread drains
+  continuously, so the engine never blocks on it. That thread looks at each
+  line (at most `kStderrLineBytes` = 4 KiB; a longer one is dropped unread to
+  its line end) only through `parse_conversation_cache_line`, a strict
+  whole-line parser for exactly three forms (`strata serve: conversation
+  cache: parked|skipped N tokens in F ms; parked=P bytes=B [evictions=E
+  [snapshot_bytes=S reused_kv_bytes=R]]`, `... restored N tokens (live|
+  checkpoint) in F ms; parked=P bytes=B`, `... dropped N superseded
+  copy|copies of this conversation; parked=P`). What is kept is only the
+  numbers and the event kind of a matching line (`ConversationCacheState`:
+  integers, an enum, the time it was read); nothing else is. No stderr text,
+  matching or not, is stored, logged, printed or forwarded, and the line and
+  read buffers are overwritten with zeros after each line and chunk
+  (`stderr_gives_only_the_conversation_cache_numbers` checks that a
+  user-text-looking payload written to stderr is nowhere in the server
+  process's writable memory afterwards; `stderr_flood_never_blocks_the_engine`
+  checks that 16 MiB of stderr does not stall the engine). The reader ends
+  with the child (EOF) or within one 100 ms (POSIX poll) / 20 ms (Windows)
+  wait of `cleanup()` setting its stop flag, so a stop never hangs on it.
+  `/metrics` publishes only those numbers (`conversation_cache`), behind the
+  API key like the rest of the Monitor.
 - The child is reached only by private stdio in the current profile; clients
   never receive an engine address. Any future private loopback/IPC bridge must
   be authenticated and blocked from non-frontend peers.
@@ -775,6 +814,25 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
   model stops in order. After 60 s the server's Job is ended, or SIGKILL is sent. One window runs per data folder
   (a named mutex; a GApplication unique name).
 
+### The terminal app (2026-10-28; built only with `SECURE_FRONTEND_TUI`)
+
+- **What it is.** `strata-tui` is the window's headless twin. It runs `strata-unified-server` beside it as a child
+  through the window's own code (`window_shell`: the same child, environment copy, kill-on-close Job or parent-death
+  signal, and stop in order), and draws the page's views in the terminal it was started in. It listens on nothing: it
+  is a client of the server over loopback, sending the page's requests to the server's own loopback address and port.
+- **The one-time link.** The server's sign-in line never reaches the screen, the Log view or `server.log` (the window's
+  `loggable` filter). The TUI does not sign in through it; it uses the key.
+- **The key.** It reads the key as the window does (as `strata key show` would) and keeps it in memory. It is sent only
+  in the Authorization header of its loopback requests. Settings shows it only after `k`; it is not drawn otherwise.
+  Rotating it needs `ROTATE` typed in full.
+- **Text from the server.** Everything drawn (model names, log lines, error messages, settings help, About) goes
+  through the screen's text cells, which draw every C0 control, DEL and C1 control (U+0080-U+009F) as a space. A line
+  from the server or the engine cannot carry a terminal escape sequence (clear the screen, retitle the window, set the
+  clipboard). The program's own sequences are the only ones written.
+- **The terminal.** It is put back on every way out the program sees: quit (`q` and `y`), Ctrl-C as a key, SIGTERM and
+  SIGHUP, the console closing (Windows' console control handler), and the destructor. A SIGKILL leaves the terminal
+  raw (`reset` restores it); the server still ends with it.
+
 ### Extensions and MCP
 
 - MCP, tool execution, arbitrary plugins, and remote command execution are
@@ -841,7 +899,12 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
   `--token-env` start it keeps that variable in its copy of the environment. Another program of the same user can read
   either, as it can read the key file. WebView2 (Microsoft's Edge runtime, updated by Windows) and WebKitGTK (updated by
   the distribution) render the server's own page; a flaw in them meets only that page, since other navigation is
-  refused or handed to the browser. The Linux window has not been built or run on the development PC.
+  refused or handed to the browser. The Linux window is built and run on the development PC (GCC 13.3 and Clang 18.1
+  in WSL 2, shown through WSLg), not on a real Linux desktop.
+- **Terminal residual (2026-10-28, TUI builds only):** like the window, `strata-tui` holds the API key in memory and
+  keeps a `--token-env` variable in its copy of the environment, where another program of the same user can read them.
+  Anyone who can see the terminal (a shared screen, or a recorded or attached `tmux`/`screen` session) sees what it
+  draws: the key too, after `k`.
 - **Model folders as they are residual (2026-10-27, accepted by the owner, opt-in):** with
   `roots.allow_untrusted_media` on, another user of this PC who can write a model folder can
   replace or change its GGUF, tokenizer or pack files, between the page's checks or before a

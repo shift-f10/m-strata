@@ -85,7 +85,7 @@ struct Fixture final {
     secure_frontend::ModelCard op;
     op.name = "Op";
     launcher = std::make_unique<secure_frontend::ModelLauncher>(secure_frontend::LauncherSettings{
-        .main = main, .cards = {op}, .operator_cards = 1U, .log = [](std::string_view) {}});
+        .main = main, .cards = {op}, .operator_cards = 1U, .memory_file = {}, .gate = {}, .log = [](std::string_view) {}});
     secure_frontend_test::make_private_directory(data.state / "cards");
     secure_frontend::CardRouteSettings settings{.cards_dir = data.state / "cards", .engine = engine, .main = main};
     if (keyed) settings.key_matches = [](const std::string_view key) { return key == kKey; };
@@ -126,12 +126,12 @@ struct Fixture final {
         file, test_support::gguf_with_tokenizer(test_support::spm_tokenizer(), "gemma4", arch).u32(arch + ".context_length", 32768U).bytes());
   }
   secure_frontend::HttpResponse post(const secure_frontend::RouteId route, const std::string& body, const bool loopback = true) {
-    return routes->answer(route, body, secure_frontend::RequestContext{.loopback_peer = loopback});
+    return routes->answer(route, body, secure_frontend::RequestContext{.client_gone = {}, .loopback_peer = loopback});
   }
   // A remote client at an IPv4 address a.b.c.d (the accepted socket's peer).
   secure_frontend::HttpResponse post_from(const secure_frontend::RouteId route, const std::string& body,
                                           const std::array<unsigned char, 4> address) {
-    secure_frontend::RequestContext context{.loopback_peer = false};
+    secure_frontend::RequestContext context{.client_gone = {}, .loopback_peer = false};
     context.peer[0] = 4U;
     std::copy(address.begin(), address.end(), context.peer.begin() + 1);
     return routes->answer(route, body, context);
@@ -243,6 +243,53 @@ void a_qwen_model_beside_its_encoder_reads_pictures() {
   const auto [row, listed] = encoder_of("Seer-Q8_0");
   expect(row == secure_frontend::path_to_utf8(std::filesystem::canonical(seer) / "mmproj-F16.gguf") && listed,
          "its card names the encoder and lists Pictures: " + row);
+}
+
+// Owner 2026-10-28 ("gemma4 has an mtp ... make sure we work that mtp in our gemma engine"): a Gemma 4 model added from
+// a folder that holds its MTP draft file (unsloth's MTP/mtp-*.gguf, or an mtp-*.gguf beside it) gets a card that drafts
+// with it - engine.args --mtp <the file>, the MTP option; one in a folder other users may change is not used (the card
+// runs without it) unless model folders are used as they are.
+void a_gemma4_model_beside_its_mtp_file_drafts_with_it() {
+  const auto args_of = [](Fixture& f, const std::string& name) {
+    const auto held = f.launcher->card(name);
+    if (!held) return std::string{"<no card>"};
+    std::string all;
+    const auto found = held->card.config.entries.find("engine.args");
+    if (found != held->card.config.entries.end()) {
+      for (const auto& a : std::get<std::vector<std::string>>(found->second.value)) all += " " + a;
+    }
+    for (const auto& limit : held->card.options) {
+      if (limit.spec->name == "mtp") all += " option:mtp";
+    }
+    return all;
+  };
+  const auto gemma_folder = [](Fixture& f, const std::string& name) {
+    const auto folder = f.root / name;
+    secure_frontend_test::make_private_directory(folder);
+    secure_frontend_test::make_private_directory(folder / "MTP");
+    Fixture::write_gguf(folder / (name + "-Q8_0.gguf"), "gemma4");
+    secure_frontend_test::write_file(folder / "MTP" / ("mtp-" + name + "-Q8_0.gguf"), "GGUF");
+    return folder;
+  };
+  Fixture f;
+  const auto plain = f.add(f.models, kModelFile);
+  expect(plain.status == 201 && args_of(f, "tiny-gemma-Q8_0").empty(), "no MTP file beside it: no --mtp: " + args_of(f, "tiny-gemma-Q8_0"));
+  const auto folder = gemma_folder(f, "gemma-mtp");
+  const auto added = f.add(folder, "gemma-mtp-Q8_0.gguf");
+  expect(added.status == 201, "a Gemma 4 model beside its MTP file is added: " + shown(added));
+  const std::string mtp = secure_frontend::path_to_utf8(std::filesystem::canonical(folder) / "MTP" / "mtp-gemma-mtp-Q8_0.gguf");
+  expect(args_of(f, "gemma-mtp-Q8_0") == " --mtp " + mtp + " option:mtp", "its card drafts with it: " + args_of(f, "gemma-mtp-Q8_0"));
+  const auto open = gemma_folder(f, "gemma-open");
+  Fixture::widen(open / "MTP");
+  const auto shared = f.add(open, "gemma-open-Q8_0.gguf");
+  expect(shared.status == 201 && args_of(f, "gemma-open-Q8_0").empty(),
+         "an MTP file other users may change is not used: " + shown(shared) + args_of(f, "gemma-open-Q8_0"));
+  Fixture as_they_are(true, {}, true, true);
+  const auto open_too = gemma_folder(as_they_are, "gemma-open");
+  Fixture::widen(open_too / "MTP");
+  const auto used = as_they_are.add(open_too, "gemma-open-Q8_0.gguf");
+  expect(used.status == 201 && args_of(as_they_are, "gemma-open-Q8_0").find(" --mtp ") == 0U,
+         "with model folders used as they are, it is used: " + shown(used) + args_of(as_they_are, "gemma-open-Q8_0"));
 }
 
 std::string value_after(const std::vector<std::string>& arguments, const std::string& flag) {
@@ -506,14 +553,20 @@ void a_new_private_folder_is_made() {
   Fixture f;
   const auto shared = f.root / "drive";
   secure_frontend_test::make_private_directory(shared);
-#if defined(_WIN32)
-  expect(secure_frontend_test::grant_everyone_write(shared), "the test widens a folder");
-#else
-  ::chmod(shared.c_str(), 0777);
-#endif
   const auto make = [&f, &shared](const std::string& name) {
     return f.post(secure_frontend::RouteId::strata_folder_new, "{\"parent\":" + json_path(shared) + ",\"name\":" + json_text(name) + "}");
   };
+#if defined(_WIN32)
+  expect(secure_frontend_test::grant_everyone_write(shared), "the test widens a folder");
+#else
+  // POSIX: a parent others may write without the sticky bit lets them rename what is in it - refused; with the sticky
+  // bit (a shared drive's usual 1777, as /tmp) it is the Windows case ("everyone may write")
+  ::chmod(shared.c_str(), 0777);
+  const auto no_sticky = make("strata models");
+  expect(no_sticky.status == 422 && has(no_sticky, "\"code\":\"folder_refused\"") && !std::filesystem::exists(shared / "strata models"),
+         "a parent anyone may rename in (0777, no sticky bit) is refused: " + shown(no_sticky));
+  ::chmod(shared.c_str(), 01777);
+#endif
   const auto made = make("strata models");
   expect(made.status == 201 && has(made, "\"path\":" + json_path(shared / "strata models")), "a new folder: " + shown(made));
   expect(std::holds_alternative<secure_frontend::CanonicalRoot>(secure_frontend::open_root(shared / "strata models")),
@@ -810,6 +863,7 @@ int main(int argc, char** argv) {
       {"folders_list_the_drives_and_one_folder", folders_list_the_drives_and_one_folder},
       {"a_card_is_added_from_a_folder", a_card_is_added_from_a_folder},
       {"a_qwen_model_beside_its_encoder_reads_pictures", a_qwen_model_beside_its_encoder_reads_pictures},
+      {"a_gemma4_model_beside_its_mtp_file_drafts_with_it", a_gemma4_model_beside_its_mtp_file_drafts_with_it},
       {"qwen38_and_glm_models_are_added_with_their_packs", qwen38_and_glm_models_are_added_with_their_packs},
       {"a_qwen38_model_finds_its_draft_layer", a_qwen38_model_finds_its_draft_layer},
       {"a_deepseek_model_is_added_with_mayas_ds4_pack", a_deepseek_model_is_added_with_mayas_ds4_pack},

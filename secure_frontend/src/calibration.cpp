@@ -552,7 +552,9 @@ std::string file_fact(const std::filesystem::path& file) {
   if (ec) return {};
   const auto written = std::filesystem::last_write_time(file, ec);
   if (ec) return {};
-  return std::to_string(size) + ":" + std::to_string(written.time_since_epoch().count());
+  // (the count as a long long: libc++'s file clock may count in __int128, which to_string does not take; the same number
+  // as before on MSVC and libstdc++, so the records already kept stay fresh)
+  return std::to_string(size) + ":" + std::to_string(static_cast<long long>(written.time_since_epoch().count()));
 }
 
 std::string cpu_fact() {

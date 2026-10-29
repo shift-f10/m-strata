@@ -1,8 +1,9 @@
 #!/bin/sh
 # install.sh - from a fresh Ubuntu 24.04 (or newer) / Debian PC to a built M-Strata in one step (install.bat's twin).
 #
-#   ./install.sh                                    build into ../M-Strata-app with email alerts and web search
-#   ./install.sh --out /opt/m-strata --with email,search,window
+#   ./install.sh                                    build into ../M-Strata-app: email alerts, web search, the window and the
+#                                                   TUI (without a display - DISPLAY, WAYLAND_DISPLAY - the TUI only)
+#   ./install.sh --out /opt/m-strata --with email,search,tui
 #   ./install.sh --plan                             only say what it would install, fetch and run
 #   ./install.sh --yes                              do not ask before installing
 #
@@ -28,7 +29,7 @@ CUDA_PACKAGE=cuda-toolkit-13-0
 CUDA_ROOT=/usr/local/cuda-13.0
 
 out=""
-with="email,search"
+with=""
 ggml=""
 plan=0
 yes=0
@@ -51,6 +52,12 @@ has_feature() { case ",$with," in *",$1,"*) return 0 ;; esac; return 1; }
 installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'; }
 
 # --- 1. what is there ------------------------------------------------------------------------------------------------
+# both front ends by default, the user picks one to run; a machine with no display (a server over SSH) gets the TUI only
+if [ -z "$with" ]; then
+  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then with="email,search,window,tui"
+  else with="email,search,tui"; no_display=1; fi
+fi
+
 step 'Looking at what this PC has'
 [ "$(uname -s)" = Linux ] || fail 'install.sh is for Linux; on Windows run install.bat'
 [ "$(uname -m)" = x86_64 ] || fail 'M-Strata builds on x86_64 only'
@@ -104,6 +111,7 @@ if [ "$in_repo" = 0 ]; then say "  clone $REPO_URL (with its submodules) into $r
 say "  CMake and Ninja into $repo/.venv-dev (pip, from PyPI)"
 if [ "$ggml_given" = 1 ]; then say "  llama.cpp: $ggml, as it is"; else say "  llama.cpp at $LLAMA_PIN in $ggml"; fi
 say "  make.sh --out $out --with $with"
+if [ "${no_display:-0}" = 1 ]; then say "  (no display here: the TUI only; --with email,search,window,tui adds the window)"; fi
 if [ "$plan" = 1 ]; then say ''; say 'install: --plan given - nothing was installed or changed.'; exit 0; fi
 if [ "$yes" = 0 ]; then
   printf 'Go ahead? [y/N] '
@@ -178,5 +186,6 @@ step "Building into $out (the first build compiles the CUDA engine: allow an hou
 step 'Done'
 say "  M-Strata is in $out. Start it with:"
 if has_feature window; then say "    $out/strata-window          (a window with the page, and a tray icon)"; fi
-say "    $out/strata-unified-server   (prints a one-time login link: open it in a browser on this PC)"
+if has_feature tui; then say "    $out/strata-tui             (the same server in this terminal, with a dashboard)"; fi
+say "    $out/strata-unified-server  (prints a one-time login link: open it in a browser on this PC)"
 if [ -z "$driver" ]; then say '  No NVIDIA driver was found: install it before starting a model.'; fi

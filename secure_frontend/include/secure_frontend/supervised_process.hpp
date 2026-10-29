@@ -1,5 +1,6 @@
 #pragma once
 
+#include "secure_frontend/conversation_cache_log.hpp"
 #include "secure_frontend/engine_protocol_client.hpp"
 #include "secure_frontend/exit_status.hpp"
 #include "secure_frontend/supervisor_wake.hpp"
@@ -38,6 +39,11 @@ class SupervisedProcess {
   virtual void release_resources(std::chrono::milliseconds bound) noexcept = 0;
   // Leader pid for logs and sweeps; -1 when unknown.
   [[nodiscard]] virtual long pid() const noexcept = 0;
+  // The Monitor (owner 2026-10-28), read by EngineSupervisor::engine_sample under the supervisor's lock while this is
+  // its READY generation (the exception to the thread contract above): the child's resident memory, and its
+  // conversation cache as its stderr told it. nullopt when unknown or not read.
+  [[nodiscard]] virtual std::optional<std::uint64_t> resident_bytes() const noexcept { return std::nullopt; }
+  [[nodiscard]] virtual std::optional<ConversationCacheState> conversation_cache() const { return std::nullopt; }
 };
 
 // A spawn that did not produce a running child. `message` is fixed text, no paths.

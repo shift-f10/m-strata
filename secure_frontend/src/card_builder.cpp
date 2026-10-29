@@ -12,7 +12,9 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <sstream>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace secure_frontend {
@@ -54,6 +56,20 @@ std::optional<std::pair<std::string, int>> split_shard(const std::string_view st
   return std::pair<std::string, int>{std::string{stem.substr(0, stem.size() - kTail)}, count};
 }
 
+// The JSON string literal whose opening quote is text[at] (as this module writes them): its closing quote's index and
+// its value. nullopt: not one.
+std::optional<std::pair<std::size_t, std::string>> json_string_at(const std::string_view text, const std::size_t at) {
+  if (at >= text.size() || text[at] != '"') return std::nullopt;
+  std::size_t end = at + 1U;
+  while (end < text.size() && text[end] != '"') end += text[end] == '\\' ? 2U : 1U;
+  if (end >= text.size()) return std::nullopt;
+  const auto parsed = parse_json(text.substr(at, end - at + 1U), JsonLimits{.max_bytes = 1U << 16U, .max_depth = 2U, .max_container_entries = 1U,
+                                                                           .max_string_bytes = 1U << 15U, .allow_fractions = false});
+  const auto* value = std::get_if<JsonValue>(&parsed);
+  if (value == nullptr || value->if_string() == nullptr) return std::nullopt;
+  return std::pair<std::size_t, std::string>{end, *value->if_string()};
+}
+
 std::string card_name_from(const std::string_view stem) {
   std::string base{stem};
   if (const auto split = split_shard(stem)) base = split->first;
@@ -92,6 +108,8 @@ std::variant<CardText, CardError> card_for_gguf(const GgufMetadata& metadata, co
   const bool qwen = profile == EngineProfile::qwen;
   // the MTP draft layer the file carries (Unsloth's Qwen3.6 GGUFs do): upstream runs it with two drafts
   const bool mtp = qwen && metadata.integer(*arch + ".nextn_predict_layers").value_or(0) > 0;
+  // Gemma 4's MTP draft file (owner 2026-10-28), a GGUF of its own: the Gemma engine's --mtp <file>
+  const bool drafts = profile == EngineProfile::gemma4 && request.mtp.has_value();
   const std::string_view file = request.file;
   if (file.size() <= 5U || file.substr(file.size() - 5U) != ".gguf") return CardError{"the model file must be a .gguf file"};
   const std::string stem{file.substr(0, file.size() - 5U)};
@@ -117,6 +135,11 @@ std::variant<CardText, CardError> card_for_gguf(const GgufMetadata& metadata, co
   json += ", \"model_id\": ";
   append_json_string(&json, stem);
   if (mtp) json += ", \"args\": [\"--mtp\", \"2\"]";
+  if (drafts) {
+    json += ", \"args\": [\"--mtp\", ";
+    append_json_string(&json, path_to_utf8(*request.mtp));
+    json += "]";
+  }
   json += "},\n    \"roots\": {\"models\": ";
   append_json_string(&json, path_to_utf8(request.folder));
   json += "}";
@@ -138,6 +161,12 @@ std::variant<CardText, CardError> card_for_gguf(const GgufMetadata& metadata, co
     json += "    \"thinking\": {\"default\": \"high\"}";
   } else {
     json += "    \"expert_vram\": {\"default\": \"auto\"},\n";
+    if (drafts) {
+      json += "    \"mtp\": {\"default\": true},\n";   // the MTP switch: off drops --mtp <file> for a start
+      // its window and confidence: a window of 4 (llama.cpp's 3 drafts) and a 0.6 floor, measured fastest on a 4080 SUPER
+      // (86.5-91.9 tok/s served; 81.2 at llama.cpp's p_min 0; 74-76 without the drafter)
+      json += "    \"spec\": {\"default\": 4},\n    \"spec_min_p\": {\"default\": 0.6},\n";
+    }
     json += std::string{"    \"thinking\": {\"default\": \""} + (thinking ? "on" : "off") + "\"}";
   }
   if (const auto temperature = metadata.real("general.sampling.temp"); temperature && *temperature >= 0.0 && *temperature <= 2.0) {
@@ -258,6 +287,44 @@ std::optional<std::filesystem::path> find_mmproj(const std::filesystem::path& fo
   return found;
 }
 
+std::optional<std::filesystem::path> find_mtp_gguf(const std::filesystem::path& folder, const std::string_view model_file) {
+  const auto lower = [](std::string text) {
+    for (auto& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return text;
+  };
+  const auto gguf = [](const std::string& name) { return name.size() > 5U && name.compare(name.size() - 5U, 5U, ".gguf") == 0; };
+  const std::string named_for = "mtp-" + lower(std::string{model_file});
+  std::vector<std::filesystem::path> found;        // every mtp-*.gguf
+  std::vector<std::filesystem::path> subfolders;   // MTP/ (unsloth's layout), in any case, never a link
+  std::size_t models = 0;                          // the folder's other model files (a split model's first shard)
+  const auto scan = [&](const std::filesystem::path& dir, const bool top) {
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+      const std::string name = lower(path_to_utf8(it->path().filename()));
+      std::error_code type_ec;
+      if (it->is_symlink(type_ec)) continue;
+      if (top && name == "mtp" && it->is_directory(type_ec)) {
+        subfolders.push_back(it->path());
+        continue;
+      }
+      if (!gguf(name) || !it->is_regular_file(type_ec)) continue;
+      if (name.size() > 9U && name.compare(0, 4, "mtp-") == 0) found.push_back(it->path());
+      else if (top && name.compare(0, 6, "mmproj") != 0 && first_shard_or_whole(name.substr(0, name.size() - 5U))) ++models;
+    }
+  };
+  scan(folder, true);
+  for (const auto& sub : subfolders) scan(sub, false);
+  // the one named for the model (mtp-<its file>, unsloth's naming); else the folder's one MTP file, but only in a folder
+  // that holds this model alone (another model's drafter is never guessed)
+  std::vector<std::filesystem::path> named;
+  for (const auto& file : found) {
+    if (lower(path_to_utf8(file.filename())) == named_for) named.push_back(file);
+  }
+  if (named.size() == 1U) return named.front();
+  if (named.empty() && found.size() == 1U && models <= 1U) return found.front();
+  return std::nullopt;
+}
+
 std::optional<std::filesystem::path> find_mtp_runtime(const std::filesystem::path& folder) {
   std::filesystem::path at = folder;
   for (int up = 0; up < 3 && !at.empty(); ++up) {
@@ -284,6 +351,87 @@ bool write_pack_marker(const std::filesystem::path& pack, const std::string_view
   return static_cast<bool>(out);
 }
 
+std::optional<std::string> pack_indexed_gguf(const std::filesystem::path& pack) {
+  // its header line only (the first 4 KiB), of a regular file (never a pipe left in its place)
+  const auto file = pack / "native_experts.txt";
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(file, ec)) return std::nullopt;
+  std::ifstream in(file, std::ios::binary);
+  std::string head(4096, '\0');
+  in.read(head.data(), static_cast<std::streamsize>(head.size()));
+  head.resize(static_cast<std::size_t>(in.gcount()));
+  const std::string line = head.substr(0, head.find('\n'));
+  if (line.empty()) return std::nullopt;
+  constexpr std::string_view kKey = "absolute offsets in ";
+  const auto at = line.find(kKey);
+  if (at == std::string::npos) return std::nullopt;
+  const auto from = at + kKey.size();
+  const auto end = line.find_first_of(",)\r", from);
+  return line.substr(from, end == std::string::npos ? std::string::npos : end - from);
+}
+
+std::optional<std::vector<std::string>> pack_recorded_files(const std::filesystem::path& pack) {
+  // a regular file within the parse's own bound, read only then
+  const auto file = pack / "sources.json";
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(file, ec)) return std::nullopt;
+  const auto size = std::filesystem::file_size(file, ec);
+  if (ec || size > (1U << 20U)) return std::nullopt;
+  std::ifstream in(file, std::ios::binary);
+  if (!in) return std::nullopt;
+  std::ostringstream text;
+  text << in.rdbuf();
+  const auto parsed = parse_json(text.str(), JsonLimits{.max_bytes = 1U << 20U, .max_depth = 4U, .max_container_entries = 4096U,
+                                                        .max_string_bytes = 4096U, .allow_fractions = false});
+  const auto* record = std::get_if<JsonValue>(&parsed);
+  const auto* members = record != nullptr ? record->if_object() : nullptr;
+  if (members == nullptr) return std::nullopt;
+  std::vector<std::string> names;
+  for (const auto& member : *members) {
+    const auto* files = member.key == "files" ? member.value.if_array() : nullptr;
+    if (files == nullptr) continue;
+    for (const auto& entry : *files) {
+      const auto* fields = entry.if_object();
+      if (fields == nullptr) continue;
+      for (const auto& field : *fields) {
+        if (field.key == "name" && field.value.if_string() != nullptr) names.push_back(*field.value.if_string());
+      }
+    }
+  }
+  return names;
+}
+
+std::optional<std::filesystem::path> card_model_file(const ModelCard& card) {
+  const auto row = [&card](const std::string_view key) -> const std::string* {
+    const auto found = card.config.entries.find(std::string{key});
+    return found == card.config.entries.end() ? nullptr : std::get_if<std::string>(&found->second.value);
+  };
+  const auto* folder = row("roots.models");
+  const auto* model = row("engine.model_id");
+  if (folder == nullptr || model == nullptr || folder->empty() || model->empty()) return std::nullopt;
+  const auto models = path_from_utf8(*folder);
+  const bool maya_pack = card.profile == EngineProfile::glm53 || card.profile == EngineProfile::raon1 ||
+                         card.profile == EngineProfile::deepseek || card.profile == EngineProfile::minimax;
+  if (!maya_pack) return models / path_from_utf8(*model + ".gguf");
+  // a model file's name beside the pack: a GGUF, a whole model or a split model's first shard, never a path
+  const auto usable = [](const std::string& name) {
+    constexpr std::string_view kIndexers = "-maya-indexers.gguf";
+    if (name.size() <= 5U || name.compare(name.size() - 5U, 5U, ".gguf") != 0 || name.find_first_of("/\\:") != std::string::npos) return false;
+    if (name.size() >= kIndexers.size() && name.compare(name.size() - kIndexers.size(), kIndexers.size(), kIndexers) == 0) return false;
+    return first_shard_or_whole(std::string_view{name}.substr(0, name.size() - 5U));
+  };
+  std::optional<std::string> source = pack_indexed_gguf(models);
+  if (source && !usable(*source)) return std::nullopt;
+  if (!source) {
+    const auto recorded = pack_recorded_files(models);
+    if (!recorded) return std::nullopt;
+    const auto first = std::find_if(recorded->begin(), recorded->end(), usable);
+    if (first == recorded->end()) return std::nullopt;
+    source = *first;
+  }
+  return models.parent_path() / path_from_utf8(*source);
+}
+
 std::string card_name_for_file(const std::string_view stem) { return card_name_from(stem); }
 
 bool first_shard_or_whole(const std::string_view stem) {
@@ -306,7 +454,25 @@ std::variant<std::string, CardError> card_with_folder(const std::string_view car
   if (end >= card_json.size()) return CardError{"the card is not one the page wrote"};
   std::string value;
   append_json_string(&value, path_to_utf8(folder));
-  return std::string{card_json.substr(0, start)} + value + std::string{card_json.substr(end + 1U)};
+  std::string out = std::string{card_json.substr(0, start)} + value + std::string{card_json.substr(end + 1U)};
+  // Gemma 4's MTP file ("--mtp", "<file>", as card_for_gguf writes it) inside the old folder moves with it when the new
+  // folder holds it at the same place; otherwise it stays where it is (the model alone moved, or it is kept elsewhere).
+  const auto old_folder = json_string_at(card_json, start);
+  constexpr std::string_view kMtp = "\"--mtp\", ";
+  const auto mtp_at = out.find(kMtp);
+  if (!old_folder || mtp_at == std::string::npos) return out;
+  const std::size_t literal_at = mtp_at + kMtp.size();
+  const auto mtp = json_string_at(out, literal_at);
+  if (!mtp) return out;
+  const auto relative = path_from_utf8(mtp->second).lexically_relative(path_from_utf8(old_folder->second));
+  if (relative.empty() || relative == "." || *relative.begin() == "..") return out;   // not inside the old folder
+  const auto moved = folder / relative;
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(moved, ec)) return out;
+  std::string moved_text;
+  append_json_string(&moved_text, path_to_utf8(moved));
+  out.replace(literal_at, mtp->first - literal_at + 1U, moved_text);
+  return out;
 }
 
 std::optional<std::string> DeleteCodes::issue(const std::string_view card, const Clock::time_point now) {
@@ -346,8 +512,9 @@ std::variant<DeletedFiles, CardError> delete_gguf_model_files(const std::filesys
   if (const auto split = split_shard(model_id); split && split->second > 1 && split->second <= 99999) {
     files.clear();
     for (int k = 1; k <= split->second; ++k) {
-      char suffix[24];
-      std::snprintf(suffix, sizeof(suffix), "-%05d-of-%05d.gguf", k, split->second);
+      // room for any two ints ("-" + 11 + "-of-" + 11 + ".gguf" + NUL = 33), so no output can be cut (-Wformat-truncation)
+      char suffix[40];
+      (void)std::snprintf(suffix, sizeof(suffix), "-%05d-of-%05d.gguf", k, split->second);
       files.push_back(folder / (split->first + suffix));
     }
   }

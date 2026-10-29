@@ -33,6 +33,11 @@ struct HostSample final {
   std::optional<MemoryReading> memory{};
   std::optional<GpuReading> gpu{};
   std::string gpu_note{};  // why there is no GPU reading (GpuSampler::note); empty when there is
+  // Every disk's reads and writes over the last second, MiB/s (DiskMeter; upstream's disk_read_mb / disk_write_mb).
+  std::optional<double> disk_read_mb{};
+  std::optional<double> disk_write_mb{};
+  // The engine that is up; nullopt when none is (stopped, starting, failed, unloaded).
+  std::optional<EngineSample> engine{};
 };
 
 // What the route adds at the moment of each request.
@@ -42,7 +47,20 @@ struct MonitorView final {
   // then says stopped and leaves out what the engine that ran reported)
   std::string_view engine;
   std::size_t queued;       // GenerationGate::waiting()
+  // The supervisor unloaded the engine after idling (engine.idle_unload_s): /health says "starting" (the next request
+  // loads it); the Monitor says unloaded. `{false}`: designated initializers that omit it keep compiling (-Werror).
+  bool unloaded{false};
 };
+
+// The engine's RAM and VRAM share in one shape (owner 2026-10-28: the RAM card shows the experts and the memory), from
+// each family's own readings: experts_ram / experts_vram count experts, experts_ram_bytes is their bytes in RAM;
+// nullopt where the engine says nothing (Qwen 3.6 MoE says nothing at all; upstream's engine gives only the bytes).
+struct EngineMemoryView final {
+  std::optional<std::uint64_t> experts_ram{};
+  std::optional<std::uint64_t> experts_ram_bytes{};
+  std::optional<std::uint64_t> experts_vram{};
+};
+[[nodiscard]] EngineMemoryView engine_memory_view(const std::map<std::string, std::string>& readings);
 
 // The finish a generation ended with, as the Monitor names it (upstream's badges):
 // stop | length | cancel | disconnect | error.
@@ -109,6 +127,7 @@ class ServeMonitor final : public GenerationMeter {
   };
 
   void end_locked(std::string_view finish);
+  void store_readings_locked(const std::map<std::string, std::string>& readings);
   [[nodiscard]] std::optional<double> live_tok_s_locked() const;
 
   const std::size_t kept_;
@@ -122,6 +141,12 @@ class ServeMonitor final : public GenerationMeter {
   // Whitelisted numeric engine readings (expert_slots & friends), validated in
   // on_engine_stats; rendered into the engine block as `experts`.
   std::map<std::string, std::string> experts_;
+  // The engine's conversation cache budget and slots (its INFO), validated like experts_.
+  std::map<std::string, std::string> cache_info_;
+  // The newest engine sample: its generation (a new one replaces the readings), its process memory, its cache.
+  std::optional<std::uint64_t> engine_generation_{};
+  std::optional<std::uint64_t> engine_resident_{};
+  std::optional<ConversationCacheState> conversation_cache_{};
   // Totals since start.
   std::size_t total_requests_{0};
   std::size_t total_prompt_tokens_{0};
@@ -132,7 +157,7 @@ class ServeMonitor final : public GenerationMeter {
   // The newest host reading and its history.
   HostSample host_{};
   std::string gpu_name_;  // the last GPU name seen
-  Series tok_s_, gpu_util_, gpu_mem_used_, gpu_temp_, gpu_power_, cpu_;
+  Series tok_s_, gpu_util_, gpu_mem_used_, gpu_temp_, gpu_power_, cpu_, disk_read_;
 };
 
 }  // namespace secure_frontend

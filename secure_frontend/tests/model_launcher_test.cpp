@@ -664,7 +664,7 @@ struct CalibrationFixture final {
       cards.push_back(std::get<secure_frontend::ModelCard>(std::move(parsed)));
     }
     secure_frontend::LauncherSettings settings{.main = main, .cards = operator_cards ? cards : std::vector<secure_frontend::ModelCard>{},
-                                               .operator_cards = operator_cards ? cards.size() : 0U};
+                                               .operator_cards = operator_cards ? cards.size() : 0U, .memory_file = {}, .gate = {}};
     settings.calibration_dir = data.state / "calibration";
     settings.log = [](std::string_view) {};
     settings.on_event = [list = events](const std::string_view event, const std::string& subject, const std::string&) {
@@ -811,7 +811,7 @@ struct MinimaxFixture final {
     const auto made = secure_frontend::card_for_pack(
         {.family = secure_frontend::PackedFamily::minimax, .name = name, .engine = engine, .source = "download:mm", .pack = pack});
     auto parsed = secure_frontend::parse_model_card(made.json, data.root);
-    secure_frontend::LauncherSettings settings{.main = main, .cards = {}, .operator_cards = 0U};
+    secure_frontend::LauncherSettings settings{.main = main, .cards = {}, .operator_cards = 0U, .memory_file = {}, .gate = {}};
     settings.calibration_dir = data.state / "calibration";
     settings.log = [](std::string_view) {};
     launcher = std::make_unique<secure_frontend::ModelLauncher>(std::move(settings));
@@ -865,15 +865,29 @@ void a_minimax_card_measures_its_prompt_reading_first() {
   expect(f.start_and_stop() && f.prefill_runs().size() == 1U, "a later start does not measure again");
 }
 
-// An engine that stops before it finishes: the start goes on (the engine's defaults), the record says so, and only
-// Calibrate measures again (Maya: "a failed one is not tried again by itself").
+// An engine that stops before it finishes, at its largest chunk and again at the default one: the start goes on (the
+// engine's defaults), the record says so, and only Calibrate measures again (Maya: "a failed one is not tried again by
+// itself").
 void a_failed_prefill_calibration_is_not_retried_by_itself() {
   MinimaxFixture f({"--prefill-fail"});
   expect(f.start_and_stop(), "the card still runs");
   const auto record = secure_frontend::parse_prefill(secure_frontend_test::read_file(f.calibration(f.name + ".prefill.json")));
   expect(record.has_value() && !record->finished, "the record says it did not finish");
   expect(f.launcher->list_json().find("\"prefill\":{\"state\":\"failed\"") != std::string::npos, "the list shows it");
-  expect(f.start_and_stop() && f.prefill_runs().size() == 1U, "the next start does not try again: " + std::to_string(f.prefill_runs().size()));
+  expect(f.prefill_runs().size() == 2U, "measured at the largest chunk, then at the default one: " + std::to_string(f.prefill_runs().size()));
+  expect(f.start_and_stop() && f.prefill_runs().size() == 2U, "the next start does not try again: " + std::to_string(f.prefill_runs().size()));
+}
+
+// A GPU without the memory for the measurement's largest chunk (16 GB with MiniMax-M3.1: the engine refuses and advises a
+// smaller --chunk): measured again at the default chunk, which it can run - the GEMMs and this PC's prompt speed.
+void a_prefill_calibration_falls_back_to_the_default_chunk() {
+  MinimaxFixture f({"--prefill-fail-above=1024"});
+  expect(f.start_and_stop(), "the card runs");
+  const auto runs = f.prefill_runs();
+  expect(runs.size() == 2U && runs[0].find("--chunk") == std::string::npos && runs[1].find("--chunk 1024") != std::string::npos,
+         "the second run at the default chunk: " + (runs.size() > 1U ? runs[1] : std::string{}));
+  const auto record = secure_frontend::parse_prefill(secure_frontend_test::read_file(f.calibration(f.name + ".prefill.json")));
+  expect(record.has_value() && record->finished && record->tok_s == 950.5, "and it finished");
 }
 
 // §4.5: a page card removed (the danger zone's delete) takes its calibration and its switch with it, so a later card
@@ -937,6 +951,11 @@ void page_cards_can_be_replaced_and_removed() {
   const auto replaced = launcher.card("Gamma");
   expect(replaced && std::get<std::string>(replaced->card.config.entries.at("roots.models").value) == "D:/moved" && replaced->page_card,
          "the new folder is held");
+  // every card held, in order, as the Download list reads them (owner 2026-10-28: what is already on this PC)
+  const auto every = launcher.cards();
+  expect(every.size() == 3U && every[0].name == "Alpha" && every[1].name == "Loaded" && every[1].source == "download:loaded" &&
+             every[2].name == "Gamma" && std::get<std::string>(every[2].config.entries.at("roots.models").value) == "D:/moved",
+         "the cards held, in order, with their sources and folders");
   secure_frontend::ModelCard nobody;
   nobody.name = "Nobody";
   expect(launcher.replace_card(nobody) == CardChange::not_found && launcher.remove_card("Nobody") == CardChange::not_found,
@@ -1077,6 +1096,7 @@ int main(int argc, char** argv) {
       {"a_first_start_calibrates_first", a_first_start_calibrates_first},
       {"a_minimax_card_measures_its_prompt_reading_first", a_minimax_card_measures_its_prompt_reading_first},
       {"a_failed_prefill_calibration_is_not_retried_by_itself", a_failed_prefill_calibration_is_not_retried_by_itself},
+      {"a_prefill_calibration_falls_back_to_the_default_chunk", a_prefill_calibration_falls_back_to_the_default_chunk},
       {"a_calibration_can_be_cancelled", a_calibration_can_be_cancelled},
       {"removing_a_card_removes_its_calibration", removing_a_card_removes_its_calibration},
       {"failures_raise_alerts", failures_raise_alerts},

@@ -179,9 +179,18 @@ void EngineSupervisor::note_request_started() {
 void EngineSupervisor::note_request_finished() {
   if (config_.idle_unload.count() == 0) return;
   if (in_flight_.load() > 0U) --in_flight_;
-  std::lock_guard lock(mutex_);
-  if (state_ == SupervisorState::ready) idle_deadline_ = clock_->now() + config_.idle_unload;
-  changed_.notify_all();
+  bool armed = false;
+  {
+    std::lock_guard lock(mutex_);
+    if (state_ == SupervisorState::ready) {
+      idle_deadline_ = clock_->now() + config_.idle_unload;
+      armed = true;
+    }
+    changed_.notify_all();
+  }
+  // The supervisor thread may be waiting on the engine without a bound (it last looked while a generation ran): wake
+  // it so its wait keeps the window just armed (idle_unload_fires_after_a_request_that_began_at_ready).
+  if (armed) wake_.notify();
 }
 
 std::optional<std::chrono::milliseconds> EngineSupervisor::idle_unload_deadline() const {
@@ -242,18 +251,24 @@ std::optional<Lease> EngineSupervisor::acquire() {
 // retired one wakes the supervisor thread so it is swept promptly.
 void EngineSupervisor::release(std::shared_ptr<EngineInstance> instance) noexcept {
   bool retired = false;
+  bool armed = false;
   {
     std::lock_guard lock(mutex_);
     if (state_ == SupervisorState::generating && current_ == instance) {
       state_ = SupervisorState::ready;
       // SP5 M1 Task 6 (idle_unload_s): the idle window restarts from the release.
-      if (config_.idle_unload.count() > 0) idle_deadline_ = clock_->now() + config_.idle_unload;
+      if (config_.idle_unload.count() > 0) {
+        idle_deadline_ = clock_->now() + config_.idle_unload;
+        armed = true;
+      }
       changed_.notify_all();
     }
     retired = current_ != instance;
     instance.reset();
   }
-  if (retired) wake_.notify();
+  // A window just armed wakes the supervisor thread too: it may be waiting on the engine without a bound
+  // (idle_unload_fires_after_a_request_that_began_at_ready).
+  if (retired || armed) wake_.notify();
 }
 
 void EngineSupervisor::report_fatal(const Lease& lease, const KillReason reason) {
@@ -448,13 +463,25 @@ std::map<std::string, std::string> EngineSupervisor::ready_readings() const {
   return ready_readings_;
 }
 
+std::optional<EngineSample> EngineSupervisor::engine_sample() const {
+  std::lock_guard lock(mutex_);
+  if ((state_ != SupervisorState::ready && state_ != SupervisorState::generating) || !current_ || !current_->process) return std::nullopt;
+  return EngineSample{.generation = ready_serial_,
+                      .readings = ready_readings_,
+                      .resident_bytes = current_->process->resident_bytes(),
+                      .conversation_cache = current_->process->conversation_cache()};
+}
+
 KillReason EngineSupervisor::supervise(EngineInstance& instance, std::chrono::milliseconds& healthy_for) {
   EngineReady ready{};
   if (const auto reason = await_ready(instance, ready); reason.has_value()) return *reason;
   {
-    // The engine's startup INFO is complete at READY; the Monitor reads the expert tier from it.
+    // The engine's startup INFO is complete at READY; the Monitor reads the expert tier from it. Each READY gets a
+    // number no other READY in this process has (engine_sample: a restart's readings replace the last one's).
+    static std::atomic<std::uint64_t> ready_serials{0};
     std::lock_guard lock(mutex_);
     ready_readings_ = instance.protocol->engine_readings();
+    ready_serial_ = ready_serials.fetch_add(1U) + 1U;
   }
   instance.chat = std::make_unique<ChatExecutionService>(*instance.protocol, config_.chat_limits, config_.profile);
   instance.chat->adopt_ready(ready);

@@ -226,7 +226,7 @@ void alert_routes_read_save_and_test() {
   settings.log = [](std::string_view) {};
   secure_frontend::AlertRoutes routes(std::move(settings));
   const auto post = [&routes](const secure_frontend::RouteId route, const std::string& body, const bool loopback = true) {
-    return routes.answer(route, body, secure_frontend::RequestContext{.loopback_peer = loopback});
+    return routes.answer(route, body, secure_frontend::RequestContext{.client_gone = {}, .loopback_peer = loopback});
   };
   const auto first = post(secure_frontend::RouteId::strata_alerts, "{}");
   expect(first.status == 200 && has(first.body, "\"built\":true") && has(first.body, "\"enabled\":false") &&
@@ -272,7 +272,7 @@ void alert_routes_let_in_the_clients_the_rule_lists() {
   };
   secure_frontend::AlertRoutes routes(std::move(settings));
   const auto from = [&routes](const secure_frontend::RouteId route, const std::string& body, const unsigned char subnet) {
-    secure_frontend::RequestContext context{.loopback_peer = false};
+    secure_frontend::RequestContext context{.client_gone = {}, .loopback_peer = false};
     context.peer[0] = 4U;
     context.peer[1] = 172U;
     context.peer[2] = 16U;

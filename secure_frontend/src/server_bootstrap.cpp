@@ -60,6 +60,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -162,23 +163,32 @@ bool state_dir_is_usable(const FrontendConfig& config) {
 // listener.monitor (session log step 16): this machine's readings once a second; the GPU's
 // through the system's nvidia-smi, its own child (no shell, ProgramFiles alone, the Job),
 // started after bind like every child and stopped (before the supervisor) on every way out.
+// Owner 2026-10-28: also every disk's reads and writes (upstream's telemetry.py _disk()) and the engine that is up
+// (its process's memory, its READY readings, its conversation cache), from `engine` - which outlives this sampler.
 struct HostSampler final {
+  using EngineSampler = std::function<std::optional<secure_frontend::EngineSample>()>;
   secure_frontend::ServeMonitor* monitor{nullptr};
   secure_frontend::GpuSampler gpu;
   std::atomic<bool> stopping{false};
   std::thread thread;
-  void start(secure_frontend::ServeMonitor& target) {
+  void start(secure_frontend::ServeMonitor& target, EngineSampler engine) {
     monitor = &target;
     gpu.start({.executable = secure_frontend::nvidia_smi_path(), .arguments = secure_frontend::nvidia_smi_arguments(),
                .environment = secure_frontend::nvidia_smi_environment(), .no_new_privileges = true, .insert_serve = false});
-    thread = std::thread([this] {
+    thread = std::thread([this, engine = std::move(engine)] {
       secure_frontend::CpuMeter cpu;
+      secure_frontend::DiskMeter disk;
       while (!stopping.load()) {
         secure_frontend::HostSample sample;
         sample.cpu_percent = cpu.sample();
         sample.memory = secure_frontend::read_memory();
         sample.gpu = gpu.latest();
         if (!sample.gpu.has_value()) sample.gpu_note = gpu.note();
+        if (const auto rates = disk.sample()) {
+          sample.disk_read_mb = rates->read_mb;
+          sample.disk_write_mb = rates->write_mb;
+        }
+        if (engine) sample.engine = engine();
         monitor->add_host_sample(sample);
         for (int slice = 0; slice < 10 && !stopping.load(); ++slice) std::this_thread::sleep_for(std::chrono::milliseconds(100));
       }
@@ -359,7 +369,9 @@ int server_run_impl(const FrontendConfig& config, const bool expert) {
       .web_ui = config.listener.web_ui,
       .require_key = !keyless,
       .metrics = monitor.has_value() ? secure_frontend::MetricsProvider{[&monitor, &port, &gate, &model_id] {
-        return monitor->render_json({.model = model_id, .engine = port.snapshot().engine, .queued = gate.waiting()});
+        const auto snapshot = port.snapshot();
+        return monitor->render_json({.model = model_id, .engine = snapshot.engine, .queued = gate.waiting(),
+                                     .unloaded = snapshot.state == secure_frontend::SupervisorState::unloaded});
       }}
                                      : secure_frontend::MetricsProvider{},
       .about = about_provider(config.engine.executable.path(), monitor)});
@@ -385,7 +397,7 @@ int server_run_impl(const FrontendConfig& config, const bool expert) {
     ~StopSupervisor() { supervisor.shutdown(secure_frontend::config_defaults::kShutdownBound); }
   } stop_supervisor{supervisor};
   HostSampler host_sampler;
-  if (monitor.has_value()) host_sampler.start(*monitor);
+  if (monitor.has_value()) host_sampler.start(*monitor, [&supervisor] { return supervisor.engine_sample(); });
   // SP5 M1 Task 11 (Ruling T11-z): resident (the pin's eager default, serve/server.py:
   // 2511) starts the encoder now — no READY within the policy, and boot fails, because
   // vision.enabled is a promise of images. resident=false stays stopped until the FIRST
@@ -898,6 +910,8 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       if (usable_card_config(main, card) == nullptr) return false;
       return launcher.add_card(std::move(card));
     };
+    // owner 2026-10-28: the list says which entries are already on this PC (a card from the download, or one from a folder)
+    settings.cards = [&launcher] { return launcher.cards(); };
     settings.log = [](const std::string_view line) { std::cerr << line << '\n' << std::flush; };
 #if defined(SECURE_FRONTEND_EMAIL_ALERTS)
     settings.on_event = raise_alert;
@@ -1058,7 +1072,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
                                       : std::string{" (control off)"})
             << (config.models.downloads ? ", downloads on" : "") << '\n' << std::flush;
   HostSampler host_sampler;
-  if (monitor.has_value()) host_sampler.start(*monitor);
+  if (monitor.has_value()) host_sampler.start(*monitor, [&launcher] { return launcher.engine_sample(); });
   if (keyless) {
     std::cerr << "strata: warning: listener.loopback_without_key is true: the API and the page answer without a key on "
               << authority << " (loopback only; Host and Origin are still checked)\n";

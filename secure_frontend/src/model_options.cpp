@@ -163,14 +163,21 @@ constexpr std::array<ModelOptionSpec, 17> kQwenOptions{{
 }};
 
 // Our strata-gemma4-engine (strata_gemma4): the bounds are kGemma4Flags (engine_arguments.cpp). Web search since
-// 2026-10-28 (Gemma 4's own tool form).
-constexpr std::array<ModelOptionSpec, 10> kGemmaOptions{{
+// 2026-10-28 (Gemma 4's own tool form). The MTP switch since 2026-10-28 (the owner: "gemma4 has an mtp ... make sure we
+// work that mtp in our gemma engine"): a card that has the model's MTP draft file lists it; off drops the card's
+// --mtp <file> for that start (write_option); its window and confidence are the engine's --spec and --spec-min-p (the
+// latter only while the switch is on).
+constexpr std::array<ModelOptionSpec, 13> kGemmaOptions{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (up to the model's trained 256K)",
                           1, 262144),
            kGemmaContexts),
     integer_option("chunk", "Prompt chunk", "Prompt tokens processed per batch", 1, 8192),
     integer_option("expert_vram", "Expert VRAM", "GiB of VRAM for the experts, or auto to let the engine decide", 0, 1024,
                    Kind::integer_or_auto),
+    boolean_option("mtp", "MTP draft model", "Guess tokens ahead with the model's MTP draft file (off: the engine runs without it)"),
+    integer_option("spec", "Draft window", "Tokens checked per step with the MTP draft model: its guesses plus one (2-8)", 2, 8),
+    decimal_option("spec_min_p", "Draft confidence", "How sure the MTP draft model must be to guess another token (0-1; 0 always guesses)",
+                   0.0, 1.0),
     choice_option("thinking", "Thinking", "Whether requests that name no thinking level think", kGemmaThinking),
     kTemperature,
     kTopP,
@@ -279,7 +286,9 @@ constexpr std::array<std::string_view, 2> kMinimaxFlags{"--max-context", "--kv-c
 constexpr std::array<std::string_view, 10> kQwenFlags{"--max-context", "--rope-scaling", "--rope-scale",   "--kv",
                                                       "--kv-resident", "--kv-grow",      "--spec",         "--spec-min-p",
                                                       "--expert-cache", "--prefill"};
-constexpr std::array<std::string_view, 3> kGemmaFlags{"--max-context", "--chunk", "--expert-vram"};
+constexpr std::array<std::string_view, 3> kGemmaFlags{"--max-context", "--chunk", "--expert-vram"};   // flint's too
+// Gemma 4's: flint's, and its MTP drafter's window and confidence (owner 2026-10-28)
+constexpr std::array<std::string_view, 5> kGemma4Flags{"--max-context", "--chunk", "--expert-vram", "--spec", "--spec-min-p"};
 
 // --- Values ---------------------------------------------------------------------------------
 
@@ -586,6 +595,22 @@ void set_entry(FrontendConfigDraft& draft, const std::string_view key, ConfigDra
   draft.entries.insert_or_assign(std::string{key}, ConfigDraftEntry{std::move(value), ConfigSource::file});
 }
 
+// The card's `flag` and its value (the next argument, unless that is another flag) taken out of the draft's engine.args.
+void drop_card_flag(FrontendConfigDraft& draft, const std::string_view flag) {
+  const auto args = draft.entries.find("engine.args");
+  auto* list = args == draft.entries.end() ? nullptr : std::get_if<std::vector<std::string>>(&args->second.value);
+  if (list == nullptr) return;
+  std::vector<std::string> kept;
+  for (std::size_t i = 0; i < list->size(); ++i) {
+    if ((*list)[i] != flag) {
+      kept.push_back((*list)[i]);
+      continue;
+    }
+    if (i + 1U < list->size() && (*list)[i + 1U].rfind("--", 0) != 0) ++i;   // its value goes too
+  }
+  *list = std::move(kept);
+}
+
 void write_option(const EngineProfile profile, const std::string_view name, const ModelOptionValue& value, const bool draft_layer_on,
                   std::vector<std::string>& flags, FrontendConfigDraft& draft) {
   const auto* integer = std::get_if<std::int64_t>(&value);
@@ -615,6 +640,10 @@ void write_option(const EngineProfile profile, const std::string_view name, cons
     if (*integer > 0) flag_with("--kv-resident", std::to_string(*integer));
   } else if (name == "kv_grow" && on != nullptr) {
     if (*on) flags.emplace_back("--kv-grow");
+  } else if (name == "mtp" && on != nullptr && profile == EngineProfile::gemma4) {
+    // Gemma 4's MTP draft file: off takes the card's --mtp <file> out of this start's arguments (the Gemma engine has no
+    // engine.mtp row: the config refuses it on gemma4 by name); on writes nothing.
+    if (!*on) drop_card_flag(draft, "--mtp");
   } else if (name == "mtp" && on != nullptr) {
     // Off: engine.mtp false, so the launch composition strips the card's --mtp <dir> (and any
     // other draft-layer flag) at every start, draft_layer.py's rule; on writes nothing.
@@ -625,7 +654,9 @@ void write_option(const EngineProfile profile, const std::string_view name, cons
     // start at all (generate.cpp:3706-3709).
     flag_with("--spec", std::to_string(*integer));
   } else if (name == "spec_min_p" && decimal != nullptr) {
-    if (draft_layer_on) flag_with("--spec-min-p", decimal_text(*decimal));
+    // (the Gemma engine's allowlist takes at most three places: a page's 0.12345 is its 0.123)
+    const double floor_p = profile == EngineProfile::gemma4 ? std::round(*decimal * 1000.0) / 1000.0 : *decimal;
+    if (draft_layer_on) flag_with("--spec-min-p", decimal_text(floor_p));
   } else if ((name == "expert_cache" || name == "prefill") && (integer != nullptr || text != nullptr)) {
     flag_with(name == "expert_cache" ? "--expert-cache" : "--prefill", integer_or_auto());
   } else if (name == "chunk" && integer != nullptr) flag_with("--chunk", std::to_string(*integer));
@@ -876,7 +907,7 @@ void apply_option_values(const EngineProfile profile, const ModelOptionValues& v
 std::span<const std::string_view> option_controlled_flags(const EngineProfile profile) noexcept {
   switch (profile) {
     case EngineProfile::qwen: return kQwenFlags;
-    case EngineProfile::gemma4: return kGemmaFlags;
+    case EngineProfile::gemma4: return kGemma4Flags;
     case EngineProfile::glm53: return {};
     case EngineProfile::deepseek: return kDeepseekFlags;  // maya-ds4's --max-context
     case EngineProfile::raon1: return {};

@@ -27,7 +27,8 @@
       },
       "cacheVariables": {
         "SECURE_FRONTEND_EMAIL_ALERTS": "ON",
-        "SECURE_FRONTEND_WEB_SEARCH": "ON"
+        "SECURE_FRONTEND_WEB_SEARCH": "ON",
+        "SECURE_FRONTEND_TUI": "ON"
       }
     },
     {
@@ -50,7 +51,8 @@
       },
       "cacheVariables": {
         "SECURE_FRONTEND_EMAIL_ALERTS": "ON",
-        "SECURE_FRONTEND_WEB_SEARCH": "ON"
+        "SECURE_FRONTEND_WEB_SEARCH": "ON",
+        "SECURE_FRONTEND_TUI": "ON"
       }
     },
     {
@@ -61,7 +63,8 @@
       "architecture": "x64",
       "cacheVariables": {
         "SECURE_FRONTEND_EMAIL_ALERTS": "ON",
-        "SECURE_FRONTEND_WEB_SEARCH": "ON"
+        "SECURE_FRONTEND_WEB_SEARCH": "ON",
+        "SECURE_FRONTEND_TUI": "ON"
       }
     },
     {
@@ -79,7 +82,8 @@
       "generator": "Ninja",
       "toolchainFile": "${sourceDir}/cmake/toolchains/llvm-mingw-x86_64.cmake",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "SECURE_FRONTEND_TUI": "ON"
       }
     },
     {
@@ -88,7 +92,8 @@
       "inherits": "secure-frontend-base",
       "generator": "Ninja",
       "cacheVariables": {
-        "CMAKE_EXE_LINKER_FLAGS": "-static"
+        "CMAKE_EXE_LINKER_FLAGS": "-static",
+        "SECURE_FRONTEND_TUI": "ON"
       },
       "environment": {
         "CC": "clang",

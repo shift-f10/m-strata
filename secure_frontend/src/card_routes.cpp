@@ -302,55 +302,33 @@ HttpResponse CardRoutes::add(const std::string_view body) {
   if (!std::holds_alternative<OpenedFile>(opened)) return refused(ApiError::card_refused, "the model file is not in that folder (or is a link)");
   const auto header = read_gguf_metadata(std::get<OpenedFile>(opened));
   if (!std::holds_alternative<GgufMetadata>(header)) return refused(ApiError::card_refused, "the file is not a GGUF model, or its header is damaged");
-  if (const auto family = packed_family(std::get<GgufMetadata>(header))) return add_packed(*family, std::get<GgufMetadata>(header), root, *file);
+  const auto& metadata = std::get<GgufMetadata>(header);
+  if (const auto family = packed_family(metadata)) return add_packed(*family, metadata, root, *file);
+  // Gemma 4's MTP draft file (owner 2026-10-28): the model's mtp-*.gguf beside it or in MTP/ (find_mtp_gguf), inside
+  // the model folder once resolved (no junction out of it) and held to the model folder's rule (private, unless model
+  // folders are used as they are); else the card runs without it
+  std::optional<std::filesystem::path> mtp;
+  if (const auto* arch = metadata.string("general.architecture"); arch != nullptr && *arch == "gemma4") {
+    mtp = find_mtp_gguf(root.path(), *file);
+    std::error_code ec;
+    const auto resolved = mtp ? std::filesystem::canonical(*mtp, ec) : std::filesystem::path{};
+    if (mtp && (ec || !is_within(root.path(), resolved))) {
+      log("[strata] models: the MTP draft file " + path_to_utf8(mtp->filename()) + " leads out of the model folder: the card runs without it");
+      mtp.reset();
+    } else if (mtp && !std::holds_alternative<CanonicalRoot>(open_root(mtp->parent_path(), shared_folders_ ? RootPolicy::external : RootPolicy::existing))) {
+      log("[strata] models: the MTP draft file " + path_to_utf8(mtp->filename()) +
+          " is in a folder other users of this PC can change: the card runs without it");
+      mtp.reset();
+    } else if (mtp) {
+      log("[strata] models: the card drafts with the MTP file " + path_to_utf8(mtp->filename()));
+    }
+  }
   // vision for cards (spec 2026-10-28): the folder's one mmproj*.gguf is the model's picture encoder (a qwen card's)
-  const auto made = card_for_gguf(std::get<GgufMetadata>(header), {.folder = root.path(), .file = *file, .engine = *settings_.engine,
-                                                                   .source = "folder", .mmproj = find_mmproj(root.path())});
+  const auto made = card_for_gguf(metadata, {.folder = root.path(), .file = *file, .engine = *settings_.engine, .source = "folder",
+                                             .mmproj = find_mmproj(root.path()), .mtp = std::move(mtp)});
   if (const auto* error = std::get_if<CardError>(&made)) return refused(ApiError::card_refused, error->message);
   return publish(std::get<CardText>(made));
 }
-
-// maya.py pack_source: the first .gguf a pack indexes (its native_experts.txt's header names it), or nullopt
-namespace {
-std::optional<std::string> pack_source(const std::filesystem::path& pack) {
-  std::ifstream in(pack / "native_experts.txt", std::ios::binary);
-  std::string line;
-  if (!in || !std::getline(in, line)) return std::nullopt;
-  constexpr std::string_view kKey = "absolute offsets in ";
-  const auto at = line.find(kKey);
-  if (at == std::string::npos) return std::nullopt;
-  const auto from = at + kKey.size();
-  const auto end = line.find_first_of(",)\r", from);
-  return line.substr(from, end == std::string::npos ? std::string::npos : end - from);
-}
-
-// A DeepSeek pack's model files as its sources.json lists them (maya.py stamp_pack's {"files": [{"name", ...}]}), or
-// nullopt (no record there)
-std::optional<std::vector<std::string>> pack_sources(const std::filesystem::path& pack) {
-  std::ifstream in(pack / "sources.json", std::ios::binary);
-  if (!in) return std::nullopt;
-  std::ostringstream text;
-  text << in.rdbuf();
-  const auto parsed = parse_json(text.str(), JsonLimits{.max_bytes = 1U << 20U, .max_depth = 4U, .max_container_entries = 4096U,
-                                                        .max_string_bytes = 4096U, .allow_fractions = false});
-  const auto* record = std::get_if<JsonValue>(&parsed);
-  const auto* members = record != nullptr ? record->if_object() : nullptr;
-  if (members == nullptr) return std::nullopt;
-  std::vector<std::string> names;
-  for (const auto& member : *members) {
-    const auto* files = member.key == "files" ? member.value.if_array() : nullptr;
-    if (files == nullptr) continue;
-    for (const auto& entry : *files) {
-      const auto* fields = entry.if_object();
-      if (fields == nullptr) continue;
-      for (const auto& field : *fields) {
-        if (field.key == "name" && field.value.if_string() != nullptr) names.push_back(*field.value.if_string());
-      }
-    }
-  }
-  return names;
-}
-}  // namespace
 
 // Owner 2026-10-27 ("Then work on the add model"): a Qwen3.8 or GLM-5.3 model's card needs its pack, which
 // strata-prepare builds first, as for a download - Qwen3.8's (upstream's iq_pack, with --compat-bf16 so any quant packs)
@@ -447,7 +425,7 @@ HttpResponse CardRoutes::add_packed(const PackedFamily family, const GgufMetadat
       extra = {"--template", path_to_utf8(chat_template)};
     }
     request.pack = root.path() / path_from_utf8(folder_name);
-    if (const auto sources = pack_sources(request.pack); sources && std::find(sources->begin(), sources->end(), file) == sources->end()) {
+    if (const auto sources = pack_recorded_files(request.pack); sources && std::find(sources->begin(), sources->end(), file) == sources->end()) {
       std::string lower_name = name;
       for (auto& c : lower_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
       request.pack = root.path() / path_from_utf8(folder_name + "-" + lower_name);
@@ -464,7 +442,7 @@ HttpResponse CardRoutes::add_packed(const PackedFamily family, const GgufMetadat
     }
   } else {
     request.pack = root.path() / "pack";
-    if (const auto source = pack_source(request.pack); source && *source != file) {
+    if (const auto source = pack_indexed_gguf(request.pack); source && *source != file) {
       std::string lower_name = name;
       for (auto& c : lower_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
       request.pack = root.path() / path_from_utf8("pack-" + lower_name);

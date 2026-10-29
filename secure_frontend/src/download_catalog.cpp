@@ -4,7 +4,9 @@
 #include "secure_frontend/json.hpp"
 
 #include <algorithm>
+#include <array>
 #include <set>
+#include <span>
 
 namespace secure_frontend {
 namespace {
@@ -55,6 +57,30 @@ std::optional<CatalogFile> read_file(const JsonValue& value) {
   return file;
 }
 
+// A side file of an entry (the image encoder, the MTP draft file): a pinned file, with its own repository and revision
+// when it names them (empty: the entry's).
+std::optional<CatalogFile> read_side_file(const JsonValue& value) {
+  auto file = read_file(value);
+  if (!file) return std::nullopt;
+  if (const auto own_repo = text(value, "repo")) {
+    if (!is_hf_repo(*own_repo)) return std::nullopt;
+    file->repo = *own_repo;
+  }
+  if (const auto own_revision = text(value, "revision")) {
+    if (!is_hf_commit(*own_revision) && *own_revision != "main") return std::nullopt;
+    file->revision = *own_revision;
+  }
+  return file;
+}
+
+// strata | maya: upstream's and Maya's pins; m-strata: our own (tools/secure/catalog_pins.json); custom: a pasted link
+constexpr std::array<std::string_view, 4> kSources{"strata", "maya", "m-strata", "custom"};
+constexpr std::array<std::string_view, 7> kEngines{"qwen", "glm53", "deepseek", "minimax", "gemma4", "flint", "raon1"};
+
+bool one_of(const std::span<const std::string_view> names, const std::string_view name) {
+  return std::find(names.begin(), names.end(), name) != names.end();
+}
+
 std::optional<DownloadEntry> read_entry(const JsonValue& value) {
   DownloadEntry e;
   const auto id = text(value, "id");
@@ -63,10 +89,8 @@ std::optional<DownloadEntry> read_entry(const JsonValue& value) {
   const auto engine = text(value, "engine");
   const auto repo = text(value, "repo");
   const auto revision = text(value, "revision");
-  if (!id || !valid_id(*id) || !name || !printable(*name, 128) || name->empty() || !source || (*source != "strata" && *source != "maya" && *source != "custom") ||
-      !engine || (*engine != "qwen" && *engine != "glm53" && *engine != "deepseek" && *engine != "minimax") || !repo ||
-      !is_hf_repo(*repo) || !revision ||
-      (!is_hf_commit(*revision) && *revision != "main")) {
+  if (!id || !valid_id(*id) || !name || !printable(*name, 128) || name->empty() || !source || !one_of(kSources, *source) || !engine ||
+      !one_of(kEngines, *engine) || !repo || !is_hf_repo(*repo) || !revision || (!is_hf_commit(*revision) && *revision != "main")) {
     return std::nullopt;
   }
   e.id = *id;
@@ -79,7 +103,8 @@ std::optional<DownloadEntry> read_entry(const JsonValue& value) {
   e.about = text(value, "about").value_or("");
   if (!printable(e.about, 1024) || !printable(e.family, 64)) return std::nullopt;
   e.prepare = text(value, "prepare").value_or("none");
-  // maya_pack: a GLM-5.3, DeepSeek-V4.1 or MiniMax-M3.1 download packed as Maya's setup packs it (strata-prepare download --maya)
+  // maya_pack: a GLM-5.3, raon-1-mini, DeepSeek-V4.1 or MiniMax-M3.1 download packed as Maya's setup packs it
+  // (strata-prepare download --maya)
   if (e.prepare != "iq_pack" && e.prepare != "none" && e.prepare != "maya_pack" && e.prepare != "unsupported") return std::nullopt;
   const auto* files = member(value, "files");
   if (files == nullptr || files->if_array() == nullptr || files->if_array()->empty()) return std::nullopt;
@@ -101,17 +126,21 @@ std::optional<DownloadEntry> read_entry(const JsonValue& value) {
     e.expert_profile = *profile;
   }
   if (const auto* mmproj = member(value, "mmproj"); mmproj != nullptr && mmproj->kind() != JsonKind::null) {
-    auto file = read_file(*mmproj);
+    auto file = read_side_file(*mmproj);
     if (!file) return std::nullopt;
-    if (const auto own_repo = text(*mmproj, "repo")) {
-      if (!is_hf_repo(*own_repo)) return std::nullopt;
-      file->repo = *own_repo;
-    }
-    if (const auto own_revision = text(*mmproj, "revision")) {
-      if (!is_hf_commit(*own_revision) && *own_revision != "main") return std::nullopt;
-      file->revision = *own_revision;
-    }
     e.mmproj = std::move(*file);
+  }
+  // Gemma 4's MTP draft file (owner 2026-10-28): its engine's only, always fetched with the model - so pinned to a
+  // commit (its own or the entry's) with its size
+  if (const auto* mtp = member(value, "mtp"); mtp != nullptr && mtp->kind() != JsonKind::null) {
+    auto file = read_side_file(*mtp);
+    if (!file || e.engine != "gemma4" || !file->size || !is_hf_commit(file->revision.empty() ? e.revision : file->revision)) {
+      return std::nullopt;
+    }
+    // a file of its own: neither one of the model's files nor a shard (the manifest's weights are the model's shard set)
+    const auto same = [&file](const CatalogFile& model) { return model.path == file->path; };
+    if (std::any_of(e.files.begin(), e.files.end(), same) || gguf_shard_set(file->path).size() > 1U) return std::nullopt;
+    e.mtp = std::move(*file);
   }
   return e;
 }

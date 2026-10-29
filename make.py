@@ -27,17 +27,18 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 ROOT = Path(__file__).resolve().parent
 OPTIONAL_FAMILIES = ("maya", "raon1")   # the families a build may leave out; strata, gemma4 and flint are always built
 # what --without takes: those families, and the picture encoder (strata-vision: a Qwen card reads pictures with it)
 LEAVE_OUT = OPTIONAL_FAMILIES + ("vision",)
 # built only when asked (off by default): email alerts (SECURE_FRONTEND_EMAIL_ALERTS), web search through a SearXNG
-# instance (SECURE_FRONTEND_WEB_SEARCH: strata-search, an MCP server beside the server) and the server in a window with a
+# instance (SECURE_FRONTEND_WEB_SEARCH: strata-search, an MCP server beside the server), the server in a window with a
 # tray icon (SECURE_FRONTEND_WINDOW: strata-window; Windows needs the WebView2 SDK in .toolchains/webview2, Linux GTK 3,
-# WebKitGTK 4.1 and Ayatana AppIndicator)
-OPTIONAL_FEATURES = ("email", "search", "window")
+# WebKitGTK 4.1 and Ayatana AppIndicator) and the server in a terminal (SECURE_FRONTEND_TUI: strata-tui, the headless
+# twin of the window; nothing beyond the C++ standard library and the system's console)
+OPTIONAL_FEATURES = ("email", "search", "window", "tui")
 
 
 @dataclass
@@ -146,13 +147,15 @@ def frontend_configure_args(opts: Options, platform: str) -> list[str]:
             "-DSECURE_FRONTEND_TEST_HOOKS=OFF", "-DSECURE_FRONTEND_WERROR=ON",
             "-DSECURE_FRONTEND_EMAIL_ALERTS=" + _on_off("email" in opts.with_features),
             "-DSECURE_FRONTEND_WEB_SEARCH=" + _on_off("search" in opts.with_features),
-            "-DSECURE_FRONTEND_WINDOW=" + _on_off("window" in opts.with_features)]
+            "-DSECURE_FRONTEND_WINDOW=" + _on_off("window" in opts.with_features),
+            "-DSECURE_FRONTEND_TUI=" + _on_off("tui" in opts.with_features)]
 
 
 def frontend_build_targets(opts: Options) -> list[str]:
-    """The frontend's programs to build: the server (strata-search comes with it) and strata, and strata-window, which
-    needs the server but is not needed by it."""
-    return ["strata-unified-server", "strata"] + (["strata-window"] if "window" in opts.with_features else [])
+    """The frontend's programs to build: the server (strata-search comes with it) and strata, and strata-window and
+    strata-tui, which need the server but are not needed by it."""
+    return (["strata-unified-server", "strata"] + (["strata-window"] if "window" in opts.with_features else []) +
+            (["strata-tui"] if "tui" in opts.with_features else []))
 
 
 # ---- the out folder's layout ----------------------------------------------------------------------------------------
@@ -179,6 +182,8 @@ def required_files(opts: Options, platform: str) -> list[str]:
     search = [f"strata-search{exe}"] if "search" in opts.with_features else []
     # the window: strata-window, which runs the server beside it
     window = [f"strata-window{exe}"] if "window" in opts.with_features else []
+    # the terminal: strata-tui, which runs the server beside it as the window does
+    window += [f"strata-tui{exe}"] if "tui" in opts.with_features else []
     # the picture encoder beside the launcher, where the server looks for it (spec 2026-10-28)
     vision = [] if "vision" in opts.without else [f"engine/strata-vision{exe}"]
     # engine/build.json: the build record the server's About shows (build_record)
@@ -364,7 +369,13 @@ def readme_text(opts: Options, platform: str) -> str:
               "            The same server in a window with the page inside, signed in for you, and an icon in the tray.\n"
               "            Closing the window keeps the server running; the tray icon's menu opens it, starts and stops\n"
               "            models, restarts the server and exits." if "window" in opts.with_features else "")
+    tui_exe = ".\\strata-tui.exe" if windows else "./strata-tui"
+    window += ("\nTerminal:   " + tui_exe + "   (takes the same options)\n"
+               "            The same server in this terminal (over SSH too): a dashboard of its GPU, CPU, memory and speed,\n"
+               "            the models (start, stop, options, calibrate), downloads, settings and the log; q quits and stops\n"
+               "            the server." if "tui" in opts.with_features else "")
     window_contents = ("\n            strata-window: the server in a window with a tray icon" if "window" in opts.with_features else "")
+    window_contents += ("\n            strata-tui: the server in a terminal, with a dashboard" if "tui" in opts.with_features else "")
     maya = "maya" not in opts.without
     templates = ", templates/minimax-m3.1/ (MiniMax's chat template and licence)" if maya else ""
     minimax = (",\n            and the permission to combine it with MiniMax-M3.1-Flash's template and model, which stay under"
@@ -407,8 +418,10 @@ def _find_vcvars() -> Path | None:
 def missing_cpp_tools_message(vcvars: Path) -> str:
     """What to do when vcvars64 sets up no compiler: Visual Studio (or its Build Tools) is installed without its C++
     workload."""
+    vcvars = PureWindowsPath(vcvars)  # a Windows install's path, whichever system formats the message (the tests: Linux too)
     install = vcvars.parents[3]  # <install>\VC\Auxiliary\Build\vcvars64.bat
-    installer = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer"
+    installer = (PureWindowsPath(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" /
+                 "Installer")
     return (f"make: {vcvars} did not set up the MSVC x64 environment (cl was not found after it).\n"
             f"      Visual Studio at {install} is installed without its C++ tools. Open Visual Studio Installer, choose\n"
             f"      Modify on it, tick \"Desktop development with C++\" (the MSVC v143 x64 compiler and a Windows SDK) and\n"

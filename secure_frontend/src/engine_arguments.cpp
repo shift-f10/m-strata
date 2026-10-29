@@ -1,5 +1,7 @@
 #include "secure_frontend/engine_arguments.hpp"
 
+#include "secure_frontend/json.hpp"
+
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -27,7 +29,8 @@ std::string_view flag_name(const std::string_view argument) {
 
 // The serve flags of an engine built on our own family code (Gemma 4 plan 1 Task 1, spec §4.8; flint), a closed
 // allowlist: each flag at most once, in the `--flag VALUE` spelling only, its value bounded.
-enum class FamilyValue { none, integer, kv_precision, gibibytes, fraction, on_off, mm3_kv_cache };
+// gguf_file: the absolute path of a .gguf file (Gemma 4's MTP draft file); never echoed in a refusal.
+enum class FamilyValue { none, integer, kv_precision, gibibytes, fraction, on_off, mm3_kv_cache, gguf_file };
 struct FamilyFlag final {
   std::string_view name;
   FamilyValue kind;
@@ -44,18 +47,24 @@ struct FamilyArguments final {
 };
 
 // Gemma 4: --max-context up to the trained context (262,144, spec §2.1); --expert-slots up to the 128 experts of a
-// layer; --kv the two cache precisions (D3); --expert-vram GiB with at most two decimal places.
-constexpr std::array<FamilyFlag, 8> kGemma4Flags{{{"--max-context", FamilyValue::integer, 1, 262144},
+// layer; --kv the two cache precisions (D3); --expert-vram GiB with at most two decimal places; --mtp the model's MTP
+// draft file (owner 2026-10-28: "gemma4 has an mtp ... make sure we work that mtp in our gemma engine"), an absolute
+// .gguf path its card names (each launch holds the file to the model folders' rule, launch_composition.cpp); --spec
+// its verify window (1 + drafts, 2-8) and --spec-min-p the drafter's confidence floor (0-1), the engine's own bounds.
+constexpr std::array<FamilyFlag, 11> kGemma4Flags{{{"--max-context", FamilyValue::integer, 1, 262144},
                                                   {"--chunk", FamilyValue::integer, 1, 8192},
                                                   {"--kv", FamilyValue::kv_precision, 0, 0},
                                                   {"--no-graph", FamilyValue::none, 0, 0},
                                                   {"--expert-vram", FamilyValue::gibibytes, 0, 1024},
                                                   {"--expert-slots", FamilyValue::integer, 0, 128},
                                                   {"--hybrid-rows", FamilyValue::integer, 1, 4096},
-                                                  {"--cpu-threads", FamilyValue::integer, 1, 256}}};
-constexpr std::array<std::string_view, 31> kGemma4RefusedByName{
+                                                  {"--cpu-threads", FamilyValue::integer, 1, 256},
+                                                  {"--mtp", FamilyValue::gguf_file, 0, 0},
+                                                  {"--spec", FamilyValue::integer, 2, 8},
+                                                  {"--spec-min-p", FamilyValue::fraction, 0, 1}}};
+constexpr std::array<std::string_view, 28> kGemma4RefusedByName{
     "--model",          "--tokens",          "--force",           "--dump-full-logits", "--dump-layers",
-    "--bench-pp",       "--bench-tg",        "--mtp",             "--spec",             "--spec-min-p",
+    "--bench-pp",       "--bench-tg",
     "--batch-mtp",      "--draft-vocab",     "--pack",            "--ple-gguf",         "--embd-gguf",
     "--native-head-gguf", "--native-dense-gguf", "--tail-role-token", "--emb",          "--ctx",
     "--prefill",        "--pool-workers",    "--no-token-graph",  "--no-warmup",        "--greedy",
@@ -174,6 +183,14 @@ std::optional<EngineArgumentsError> family_decimal(const FamilyArguments& family
   return std::nullopt;
 }
 
+// An absolute path, in UTF-8, of a file whose name ends ".gguf" (any case).
+bool absolute_gguf(const std::string_view value) {
+  if (value.size() <= 5U || !is_valid_utf8(value)) return false;
+  std::string extension{value.substr(value.size() - 5U)};
+  for (auto& c : extension) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+  return extension == ".gguf" && path_from_utf8(value).is_absolute();
+}
+
 std::optional<EngineArgumentsError> validate_family_arguments(const FamilyArguments& family,
                                                               const std::vector<std::string>& user_arguments) {
   std::vector<std::string_view> seen;
@@ -227,6 +244,11 @@ std::optional<EngineArgumentsError> validate_family_arguments(const FamilyArgume
       case FamilyValue::mm3_kv_cache:
         if (value != "bf16" && value != "int8" && value != "fp8" && value != "fp4") {
           refused = family_refusal(family, EngineArgumentsErrorCode::invalid_value, flag->name, "must be bf16, int8, fp8 or fp4");
+        }
+        break;
+      case FamilyValue::gguf_file:
+        if (!absolute_gguf(value)) {
+          refused = family_refusal(family, EngineArgumentsErrorCode::invalid_value, flag->name, "takes the absolute path of a .gguf file");
         }
         break;
     }
@@ -471,8 +493,9 @@ EngineArgumentsResult build_engine_arguments(const EngineArgumentsProfile profil
   // SP5 M1 Task 6 (parity row mtp, runconfig.py:36 + draft_layer.is_off): an explicit
   // false strips the draft layer's own options at every start, before anything else is
   // composed. The GLM profile returns above: its runner does not speak these flags. The
-  // Gemma engine has no draft layer (spec D5) and its allowlist refuses those flags, so
-  // nothing is stripped for strata_gemma4 (Gemma 4 plan 1 Task 3).
+  // Gemma engine has no draft layer (spec D5) and nothing is stripped for strata_gemma4 here
+  // (Gemma 4 plan 1 Task 3): its one MTP flag, --mtp <file> (owner 2026-10-28), is the card's,
+  // and the card's MTP switch takes it out of a start (model_options.cpp write_option).
   if (!mtp_on && profile == EngineArgumentsProfile::strata_0143) strip_mtp_flags(arguments, nullptr);
   const auto* relative = std::get_if<RelativePath>(&parsed);
   if (relative == nullptr) {

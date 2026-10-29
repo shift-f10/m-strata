@@ -34,7 +34,10 @@ ISTA = "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF"
 ISTA_REV = "ed59f92082b1e93c0e96d60a8b11aab089b52f09"
 MAYA_REPO = "peasantsmith/GLM-5.3-Flash-Maya-GGUF"
 KEYS = {"id", "name", "source", "family", "engine", "about", "repo", "revision", "files", "prepare", "pack_args",
-        "expert_profile", "mmproj"}
+        "expert_profile", "mmproj", "mtp"}
+FLINT_REPO, FLINT_REV = "unsloth/flint-GGUF", "20468edfc38ab43d6914cc88b08cbecb05d0fc62"
+RAON_REPO, RAON_REV = "KRAFTON/Raon-1-mini-preview-gguf", "cd61e81afcdfdf4b13cb345b3587c0ba4b918d00"
+GEMMA_REPO, GEMMA_REV = "unsloth/gemma-4-26B-A4B-it-GGUF", "c099eb48e663fd284577b04978a94ffccb261841"
 
 
 @pytest.fixture(scope="module")
@@ -47,7 +50,7 @@ def by_id(doc: dict) -> dict:
 
 
 def every_file(m: dict) -> list:
-    return m["files"] + ([m["mmproj"]] if m["mmproj"] else [])
+    return m["files"] + ([m["mmproj"]] if m["mmproj"] else []) + ([m["mtp"]] if m["mtp"] else [])
 
 
 def test_iq3_s_comes_from_ista_at_its_pinned_commit(generated):
@@ -72,7 +75,9 @@ def test_one_entry_per_gguf_variant_of_each_family(generated):
     doc, _ = generated
     assert Counter((m["source"], m["family"]) for m in doc["models"]) == {
         ("strata", "qwen"): 4, ("strata", "swift"): 3, ("strata", "coder"): 1, ("strata", "unsloth"): 5,
-        ("strata", "gyro"): 2, ("strata", "qwen36"): 3, ("maya", "glm53"): 5, ("maya", "deepseek"): 4, ("maya", "minimax"): 2}
+        ("strata", "gyro"): 2, ("strata", "qwen36"): 3, ("maya", "glm53"): 5, ("maya", "deepseek"): 4, ("maya", "minimax"): 2,
+        # our own pins (tools/secure/catalog_pins.json, owner 2026-10-28)
+        ("m-strata", "flint"): 1, ("m-strata", "raon1"): 1, ("m-strata", "gemma4"): 1}
     ids = set(by_id(doc))
     assert {"qwen3.8-flash-next-q2_0", "qwen3.8-flash-next-iq2_xs", "qwen3.8-flash-next-iq3_xxs",
             "qwen3.8-flash-next-iq3_s"} <= ids
@@ -89,7 +94,7 @@ def test_only_hugging_face_gguf_files_o4(generated):
             assert f["path"].lower().endswith(".gguf"), (m["id"], f["path"])
             assert "safetensors" not in f["path"].lower()
             assert not f["path"].startswith("/") and ".." not in f["path"].split("/")
-        for repo in [m["repo"]] + ([m["mmproj"]["repo"]] if m["mmproj"] else []):
+        for repo in [m["repo"]] + [side["repo"] for side in (m["mmproj"], m["mtp"]) if side]:
             assert REPO_NAME.fullmatch(repo)
             # NVFP4 packs (Maximilian228, nvidia), EXL3 (turboderp), DFlash2 (CC BY-NC-ND: never) stay out
             for refused in ("Maximilian228/", "nvidia/", "turboderp/", "DFlash"):
@@ -112,6 +117,10 @@ def test_every_file_is_pinned(generated):
         elif m["family"] in ("deepseek", "minimax"):   # Maya's DeepSeek and MiniMax manifests pin a commit and every size
             assert HEX40.fullmatch(m["revision"]) and m["mmproj"] is None, m["id"]
             assert all(type(f["size"]) is int and f["size"] > 0 for f in m["files"]), m["id"]
+        elif m["source"] == "m-strata":   # our own pins: a commit, every size and SHA-256, the MTP file's too
+            assert HEX40.fullmatch(m["revision"]) and m["mmproj"] is None, m["id"]
+            assert m["mtp"] is None or HEX40.fullmatch(m["mtp"]["revision"]), m["id"]
+            assert all(type(f["size"]) is int and f["size"] > 0 for f in every_file(m)), m["id"]
         else:
             assert m["revision"] == "main" and m["mmproj"]["revision"] == "main"
             assert all(f["size"] is None for f in every_file(m))
@@ -132,12 +141,53 @@ def test_schema_shape_and_provenance(generated):
     assert doc["generated_from"] == {"upstream": "v0.2.4.2", "maya": "v1.1.27"}
     for m in doc["models"]:
         assert set(m) == KEYS, m["id"]
-        assert m["source"] in ("strata", "maya") and m["engine"] in ("qwen", "glm53", "deepseek", "minimax")
+        assert m["source"] in ("strata", "maya", "m-strata")
+        assert m["engine"] in ("qwen", "glm53", "deepseek", "minimax", "flint", "gemma4", "raon1")
         assert m["prepare"] in ("iq_pack", "none", "maya_pack", "unsupported")
         assert isinstance(m["pack_args"], list) and all(a.startswith("--") for a in m["pack_args"])
         assert m["about"] and m["about"].isascii() and m["name"].isascii()
         for f in m["files"]:
             assert list(f) == ["path", "size", "sha256"]
+        # the MTP draft file: Gemma 4's only (its engine runs it), shaped as the image encoder is
+        assert m["mtp"] is None or (m["engine"] == "gemma4" and list(m["mtp"]) == ["path", "size", "sha256", "repo", "revision"])
+
+
+def test_our_pins_add_flint_raon1_and_gemma4_with_its_mtp(generated):
+    """Owner 2026-10-28 ("there are no download cards for ... flint, raon1, gemma4"; "gemma4 has an mtp ... make sure we
+    work that mtp in our gemma engine"): our own pin file (tools/secure/catalog_pins.json) adds the three Q8_0 GGUFs at the
+    commit, size and LFS SHA-256 Hugging Face named on 2026-10-28, each with the licence its model card names; Gemma 4's
+    MTP draft file comes with it, from the same repository and commit."""
+    doc, notes = generated
+    models = by_id(doc)
+    flint = models["flint-q8_0"]
+    assert (flint["name"], flint["source"], flint["family"], flint["engine"], flint["prepare"]) == (
+        "flint Q8_0", "m-strata", "flint", "flint", "none")
+    assert (flint["repo"], flint["revision"]) == (FLINT_REPO, FLINT_REV)
+    assert flint["files"] == [{"path": "flint-Q8_0.gguf", "size": 42301076928,
+                               "sha256": "5df42b56859c7b5142228005d7d63c327ec9e34c99c72548016d805309a0d284"}]
+    raon = models["raon-1-mini-preview-q8_0"]
+    # packed as the folder card packs it (strata-prepare download --maya: Maya's step with our raon1 port)
+    assert (raon["name"], raon["source"], raon["family"], raon["engine"], raon["prepare"]) == (
+        "raon-1-mini Q8_0", "m-strata", "raon1", "raon1", "maya_pack")
+    assert (raon["repo"], raon["revision"]) == (RAON_REPO, RAON_REV)
+    assert raon["files"] == [{"path": "raon-1-mini-preview-Q8_0.gguf", "size": 30693555936,
+                              "sha256": "15582e05c3dc028b16d14ddf1a692a1602884b9ec48055fade2078369f99f6fc"}]
+    gemma = models["gemma-4-26b-a4b-it-q8_0"]
+    assert (gemma["name"], gemma["source"], gemma["family"], gemma["engine"], gemma["prepare"]) == (
+        "Gemma 4 26B-A4B Q8_0", "m-strata", "gemma4", "gemma4", "none")
+    assert (gemma["repo"], gemma["revision"]) == (GEMMA_REPO, GEMMA_REV)
+    assert gemma["files"] == [{"path": "gemma-4-26B-A4B-it-Q8_0.gguf", "size": 26859861728,
+                               "sha256": "5f7cbd0f4564e84342fc34321a09acb54b1a3da9215124e5bf444baa6dda152c"}]
+    assert gemma["mtp"] == {"path": "MTP/mtp-gemma-4-26B-A4B-it-Q8_0.gguf", "size": 461766816,
+                            "sha256": "6326fb9f5e487aa8dcdd313a091e3c67724cb2a666ec3b7d2895b5b26d93ed1b",
+                            "repo": GEMMA_REPO, "revision": GEMMA_REV}
+    for m in (flint, raon, gemma):
+        # the licence each model card names (Hugging Face cardData.license, read 2026-10-28), stated on the card
+        assert m["about"].endswith(" Licence: apache-2.0 (its model card)."), m["about"]
+        assert (m["pack_args"], m["expert_profile"], m["mmproj"]) == ([], None, None)
+    assert flint["mtp"] is None and raon["mtp"] is None
+    assert all(m["mtp"] is None for m in doc["models"] if m["source"] != "m-strata")
+    assert not [n for n in notes if "m-strata" in n]   # nothing of ours dropped
 
 
 def test_family_rules_follow_upstream_setup(generated):
@@ -360,3 +410,62 @@ def test_a_table_changed_outside_its_literal_is_refused(tmp_path):
     up, maya = copies(tmp_path, lambda t: t + '\nMODELS["Q2_0"]["about"] = "changed at run time"\n')
     with pytest.raises(dc.CatalogError, match="MODELS"):
         dc.build(up, maya, dc.UPSTREAM_VERSION)
+
+
+# ---------------------------------------------------------------- copies of our own pin file with one fact changed
+FLINT, RAON, GEMMA = "flint-q8_0", "raon-1-mini-preview-q8_0", "gemma-4-26b-a4b-it-q8_0"
+
+
+def pins_copy(tmp_path: Path, edit) -> Path:
+    doc = json.loads(dc.PINS.read_text(encoding="utf-8"))
+    edit(doc["models"])
+    path = tmp_path / "catalog_pins.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return path
+
+
+def test_an_unpinned_pin_of_ours_is_dropped_and_reported(tmp_path):
+    def edit(models):
+        models[FLINT]["files"][0]["sha256"] = "5df42b56"     # not a 64-hex SHA-256
+        models[RAON]["revision"] = "main"                    # not a commit
+        models[GEMMA]["mtp"]["size"] = 0                     # the MTP file without its size
+    doc, notes = dc.build(dc.UPSTREAM, dc.MAYA, dc.UPSTREAM_VERSION, pins=pins_copy(tmp_path, edit))
+    assert not set(by_id(doc)) & {FLINT, RAON, GEMMA}
+    dropped = [n for n in notes if n.startswith("dropped: m-strata ")]
+    assert len(dropped) == 3, dropped
+    assert any(FLINT in n and "sha256" in n for n in dropped)
+    assert any(RAON in n and "commit" in n for n in dropped)
+    assert any(GEMMA in n and "size" in n for n in dropped)
+
+
+@pytest.mark.parametrize("target, edit, why", [
+    (FLINT, lambda m: m[FLINT].update(engine="llama"), "engine"),                       # an engine we do not pin for
+    (RAON, lambda m: m[RAON].update(prepare="none"), "prepare"),                         # raon1 is packed first
+    (FLINT, lambda m: m[FLINT].update(mtp=dict(m[GEMMA]["mtp"])), "MTP"),                # only Gemma 4's engine runs one
+    (FLINT, lambda m: m[FLINT].pop("license"), "licence"),                               # no licence read: no card
+    (FLINT, lambda m: m[FLINT].update(revison=FLINT_REV), "revison"),                    # a misspelt key is not ignored
+    (FLINT, lambda m: m[FLINT]["files"][0].update(path="flint-Q8_0.safetensors"), "gguf"),   # O4
+    (GEMMA, lambda m: m[GEMMA]["mtp"].update(path="../mtp-gemma.gguf"), "plain path"),
+    (GEMMA, lambda m: m[GEMMA]["mtp"].update(repo="not a repo"), "owner/repo"),
+    (RAON, lambda m: m[RAON].update(about="x" * 1000), "1024"),                          # longer than the server reads
+    (GEMMA, lambda m: m[GEMMA]["mtp"].update(path=m[GEMMA]["files"][0]["path"]), "model files"),  # a file of its own
+    (GEMMA, lambda m: m[GEMMA]["mtp"].update(path="MTP/mtp-g-00001-of-00002.gguf"), "shard"),
+])
+def test_a_pin_that_breaks_a_rule_is_dropped(tmp_path, target, edit, why):
+    doc, notes = dc.build(dc.UPSTREAM, dc.MAYA, dc.UPSTREAM_VERSION, pins=pins_copy(tmp_path, edit))
+    ids = set(by_id(doc))
+    assert target not in ids and ({FLINT, RAON, GEMMA} - {target}) <= ids
+    assert any(n.startswith(f"dropped: m-strata {target}: ") and why in n for n in notes), notes
+
+
+def test_an_unreadable_pin_file_is_refused(tmp_path):
+    broken = tmp_path / "catalog_pins.json"
+    broken.write_text("{", encoding="utf-8")
+    with pytest.raises(dc.CatalogError, match="catalog_pins.json"):
+        dc.build(dc.UPSTREAM, dc.MAYA, dc.UPSTREAM_VERSION, pins=broken)
+    with pytest.raises(dc.CatalogError, match=r"cannot read absent\.json"):
+        dc.build(dc.UPSTREAM, dc.MAYA, dc.UPSTREAM_VERSION, pins=tmp_path / "absent.json")
+    not_a_table = tmp_path / "list_pins.json"
+    not_a_table.write_text('{"models": []}', encoding="utf-8")
+    with pytest.raises(dc.CatalogError, match=r"list_pins\.json: no models table"):
+        dc.build(dc.UPSTREAM, dc.MAYA, dc.UPSTREAM_VERSION, pins=not_a_table)

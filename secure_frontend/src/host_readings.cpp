@@ -6,10 +6,13 @@
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -19,6 +22,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <winioctl.h>
 #endif
 
 namespace secure_frontend {
@@ -265,6 +269,104 @@ std::optional<MemoryReading> read_memory() {
   if (!total_kib || !available_kib || *total_kib == 0U || *available_kib > *total_kib) return std::nullopt;
   return MemoryReading{.used_bytes = (*total_kib - *available_kib) * 1024U, .total_bytes = *total_kib * 1024U};
 #endif
+}
+
+// psutil's Linux disk_io_counters() (_pslinux.py): a line of 14 fields (Linux 2.6+) or at least 18 (4.18+ adds the
+// discards, 5.5+ the flushes) is "major minor name reads merged sectors_read ms writes merged sectors_written ...";
+// the sectors are 512 bytes whatever the device's own sector size. Upstream sums them over the whole disks.
+std::optional<DiskDevices> parse_diskstats(const std::string_view text, const std::function<bool(std::string_view)>& whole_disk) {
+  DiskDevices devices;
+  std::size_t begin = 0;
+  while (begin < text.size()) {
+    const std::size_t newline = text.find('\n', begin);
+    const std::string_view line = text.substr(begin, newline == std::string_view::npos ? std::string_view::npos : newline - begin);
+    begin = newline == std::string_view::npos ? text.size() : newline + 1U;
+    std::vector<std::string_view> fields;
+    std::size_t at = 0;
+    while (at < line.size() && fields.size() < 32U) {
+      while (at < line.size() && (line[at] == ' ' || line[at] == '\t')) ++at;
+      const std::size_t start = at;
+      while (at < line.size() && line[at] != ' ' && line[at] != '\t') ++at;
+      if (at > start) fields.push_back(line.substr(start, at - start));
+    }
+    if (fields.size() != 14U && fields.size() < 18U) continue;
+    const auto counter = [](const std::string_view field) -> std::optional<std::uint64_t> {
+      std::uint64_t value = 0;
+      const auto [end, error] = std::from_chars(field.data(), field.data() + field.size(), value);
+      if (error != std::errc{} || end != field.data() + field.size() || value > (std::uint64_t{1} << 54U)) return std::nullopt;
+      return value;
+    };
+    const auto read = counter(fields[5]);
+    const auto written = counter(fields[9]);
+    if (!read || !written || fields[2].size() > 64U || !whole_disk(fields[2])) continue;
+    devices[std::string{fields[2]}] = DiskCounters{.read_bytes = *read * 512U, .write_bytes = *written * 512U};
+  }
+  if (devices.empty()) return std::nullopt;
+  return devices;
+}
+
+std::optional<DiskDevices> read_disk_counters() {
+#if defined(_WIN32)
+  // psutil's Windows disk_io_counters (arch/windows/disk.c): \\.\PhysicalDrive0 to 32, each opened with no access
+  // rights (enough for IOCTL_DISK_PERFORMANCE; no administrator needed); a drive that is not there or does not answer
+  // (its counters off: diskperf -N) is left out.
+  DiskDevices devices;
+  for (int drive = 0; drive <= 32; ++drive) {
+    const std::wstring name = L"\\\\.\\PhysicalDrive" + std::to_wstring(drive);
+    HANDLE device = CreateFileW(name.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (device == INVALID_HANDLE_VALUE) continue;
+    DISK_PERFORMANCE performance{};
+    DWORD returned = 0;
+    const BOOL answered =
+        DeviceIoControl(device, IOCTL_DISK_PERFORMANCE, nullptr, 0, &performance, sizeof(performance), &returned, nullptr);
+    CloseHandle(device);
+    if (!answered || returned < sizeof(performance) || performance.BytesRead.QuadPart < 0 || performance.BytesWritten.QuadPart < 0) continue;
+    devices["PhysicalDrive" + std::to_string(drive)] = DiskCounters{.read_bytes = static_cast<std::uint64_t>(performance.BytesRead.QuadPart),
+                                                                     .write_bytes = static_cast<std::uint64_t>(performance.BytesWritten.QuadPart)};
+  }
+  if (devices.empty()) return std::nullopt;
+  return devices;
+#else
+  std::ifstream file("/proc/diskstats");
+  if (!file) return std::nullopt;
+  std::string text;
+  std::string line;
+  while (std::getline(file, line) && text.size() < (1U << 20U)) text += line + '\n';
+  // psutil's is_storage_device(): a device under /sys/block is a whole disk (its partitions are under the disk's own
+  // folder there); a '/' in the kernel's name is '!' in sysfs.
+  return parse_diskstats(text, [](const std::string_view name) {
+    std::string entry{name};
+    std::replace(entry.begin(), entry.end(), '/', '!');
+    if (entry.empty() || entry == "." || entry == "..") return false;
+    std::error_code ec;
+    return std::filesystem::exists(std::filesystem::path{"/sys/block"} / entry, ec) && !ec;
+  });
+#endif
+}
+
+std::optional<DiskRates> DiskMeter::sample() { return next(read_disk_counters(), std::chrono::steady_clock::now()); }
+
+std::optional<DiskRates> DiskMeter::next(std::optional<DiskDevices> devices, const std::chrono::steady_clock::time_point now) {
+  if (!devices.has_value()) return std::nullopt;  // upstream: no counters, no reading (and the last one is kept)
+  const auto last = std::exchange(last_, std::make_pair(now, std::move(*devices)));
+  if (!last.has_value() || now <= last->first) return std::nullopt;
+  std::uint64_t read = 0;
+  std::uint64_t written = 0;
+  bool compared = false;
+  for (const auto& [name, counters] : last_->second) {
+    const auto before = last->second.find(name);
+    if (before == last->second.end() || counters.read_bytes < before->second.read_bytes ||
+        counters.write_bytes < before->second.write_bytes) {
+      continue;  // new here, or its counters started again: from the next reading on
+    }
+    read += counters.read_bytes - before->second.read_bytes;
+    written += counters.write_bytes - before->second.write_bytes;
+    compared = true;
+  }
+  if (!compared) return std::nullopt;
+  const double seconds = std::chrono::duration<double>(now - last->first).count();
+  constexpr double kMiB = 1048576.0;
+  return DiskRates{.read_mb = static_cast<double>(read) / seconds / kMiB, .write_mb = static_cast<double>(written) / seconds / kMiB};
 }
 
 GpuSampler::~GpuSampler() { stop(); }

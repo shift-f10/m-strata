@@ -12,6 +12,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
@@ -114,7 +115,15 @@ struct Options final {
   // --prefill-fail makes it exit 1 without writing OUT
   std::string prefill_log;
   bool prefill_fail{false};
+  int prefill_fail_above{0};  // --prefill-fail-above=N: exit 1 unless --chunk is at most N (the engine's VRAM refusal)
   std::optional<int> write_inherited;
+  // The Monitor (owner 2026-10-28): --ready-info=k=v,k=v prints "INFO k=v k=v" before READY (each family's own keys);
+  // --stderr-cache-lines writes upstream's conversation cache lines to stderr after READY, between junk lines that carry
+  // a user-text-looking payload; --stderr-flood=KIB writes that many KiB of junk (and one 1 MiB line) to stderr
+  // before READY, then one cache line, so a reader that does not drain stderr never sees READY.
+  std::string ready_info;
+  bool stderr_cache_lines{false};
+  long stderr_flood_kib{0};
 };
 
 #if !defined(_WIN32)
@@ -173,6 +182,9 @@ Options parse_options(const std::vector<std::string>& arguments) {
     else if (argument == "--split-ready") options.split_ready = true;
     else if (argument == "--maya-vram") options.maya_vram = true;
     else if (value_of(argument, "--ready-experts", value)) options.ready_experts = value;
+    else if (value_of(argument, "--ready-info", value)) options.ready_info = value;
+    else if (argument == "--stderr-cache-lines") options.stderr_cache_lines = true;
+    else if (value_of(argument, "--stderr-flood", value)) options.stderr_flood_kib = std::stol(value);
     else if (argument == "--hang-before-ready") options.hang_before_ready = true;
     else if (argument == "--hang-in-gen") options.hang_in_gen = true;
     else if (argument == "--abort-in-gen") options.abort_in_gen = true;
@@ -194,6 +206,7 @@ Options parse_options(const std::vector<std::string>& arguments) {
     else if (value_of(argument, "--dump-file", value)) options.dump_file = value;
     else if (value_of(argument, "--prefill-log", value)) options.prefill_log = value;
     else if (argument == "--prefill-fail") options.prefill_fail = true;
+    else if (value_of(argument, "--prefill-fail-above", value)) options.prefill_fail_above = std::stoi(value);
     else if (value_of(argument, "--write-inherited", value)) options.write_inherited = std::stoi(value);
     else if (value_of(argument, "--slow-stdin", value)) options.slow_stdin_bytes = std::max(1, std::stoi(value));
     else if (value_of(argument, "--slow-stdin-interval-ms", value)) options.slow_stdin_interval_ms = std::max(1, std::stoi(value));
@@ -670,10 +683,46 @@ void run_generation(const Options& options, const std::string& line, StdinReader
   }
 }
 
+// The user-text-looking payload of --stderr-cache-lines, built at run time from its lower-case spelling (the test
+// builds its needle the same way, so neither binary holds it as a literal).
+std::string stderr_payload() {
+  std::string text = "usersecretpayloadqz";
+  for (char& character : text) character = static_cast<char>(character - 'a' + 'A');
+  return text;
+}
+
+void write_stderr(const std::string& text) {
+  (void)std::fwrite(text.data(), 1U, text.size(), stderr);
+  (void)std::fflush(stderr);
+}
+
+// Upstream's engine's conversation cache lines (generate.cpp:9519, :9650, :12953) amid junk: a session line and a
+// near miss that carry the payload, an over-long line, then a drop.
+void write_stderr_cache_lines() {
+  const std::string payload = stderr_payload();
+  write_stderr("strata serve: session 0: prompt: " + payload + "\n");
+  write_stderr("strata serve: conversation cache: parked 12 tokens in 1.0 ms; parked=1 bytes=2 " + payload + "\n");
+  write_stderr("strata serve: conversation cache: parked 1200 tokens in 12.5 ms; parked=1 bytes=1048576 evictions=0 "
+               "snapshot_bytes=1048576 reused_kv_bytes=0\n");
+  write_stderr("strata serve: conversation cache: parked 800 tokens in 8.0 ms; parked=2 bytes=2097152 evictions=0 "
+               "snapshot_bytes=1048576 reused_kv_bytes=0\n");
+  write_stderr("strata serve: conversation cache: restored 1200 tokens (live) in 3.0 ms; parked=2 bytes=2097152\n");
+  write_stderr(std::string(5000U, 'x') + payload + "\n");
+  write_stderr("strata serve: conversation cache: dropped 1 superseded copy of this conversation; parked=1\n");
+}
+
 int serve(const Options& options) {
 #if !defined(_WIN32)
   if (options.ignore_term) (void)std::signal(SIGTERM, SIG_IGN);
 #endif
+  if (options.stderr_flood_kib > 0) {
+    const std::string line = std::string(1000U, 'j') + " " + stderr_payload() + "\n";
+    std::string block;
+    while (block.size() < 64U * 1024U) block += line;
+    for (long written = 0; written < options.stderr_flood_kib * 1024L; written += static_cast<long>(block.size())) write_stderr(block);
+    write_stderr(std::string(1U << 20U, 'y'));  // one line of 1 MiB
+    write_stderr("\nstrata serve: conversation cache: parked 7 tokens in 1.0 ms; parked=7 bytes=7\n");
+  }
   if (!options.record_file.empty()) std::ofstream(options.record_file, std::ios::trunc).flush();
   if (options.fail_first > 0 && !options.counter_file.empty()) {
     int started = 0;
@@ -701,6 +750,13 @@ int serve(const Options& options) {
       log << '\n';
     }
     if (options.prefill_fail) return 1;
+    if (options.prefill_fail_above > 0) {
+      int chunk = 0;
+      for (std::size_t j = 0; j + 1U < options.command_line.size(); ++j) {
+        if (options.command_line[j] == "--chunk") chunk = std::stoi(options.command_line[j + 1U]);
+      }
+      if (chunk == 0 || chunk > options.prefill_fail_above) return 1;
+    }
     std::ofstream out(options.command_line[i + 1U], std::ios::binary | std::ios::trunc);
     out << R"({"key": "fake", "file": "prefill-tune.txt", "chunk": 2048, "gemm": "blas", "tok_s": 950.5, "default_tok_s": 900.0, )"
            R"("tokens": 4096, "all_resident": false, "lt_available": false, "seconds": 1, "trials": []})" << '\n';
@@ -727,6 +783,11 @@ int serve(const Options& options) {
               << " expert_slots=" << (comma == std::string::npos ? std::string{} : options.ready_experts.substr(comma + 1U))
               << "\n" << std::flush;
   }
+  if (!options.ready_info.empty()) {
+    std::string info = options.ready_info;
+    std::replace(info.begin(), info.end(), ',', ' ');
+    std::cout << "INFO " << info << "\n" << std::flush;
+  }
   const std::string ready = "READY " + std::to_string(options.ready_context) + " stop\n";
   if (options.split_ready) {
     std::cout << ready.substr(0, 3) << std::flush;
@@ -735,6 +796,7 @@ int serve(const Options& options) {
   } else {
     std::cout << ready << std::flush;
   }
+  if (options.stderr_cache_lines) write_stderr_cache_lines();
   if (options.spawn_grandchild) {
     const long grandchild = spawn_grandchild(options);
 #if defined(_WIN32)

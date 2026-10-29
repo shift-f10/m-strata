@@ -52,10 +52,10 @@ void the_build_record_is_read_and_checked() {
              build->engines[1].models == "Raon-1-mini" && build->engines[1].bytes == 53477376U &&
              build->engines[0].source == "upstream Strata, engine 0.1.51",
          "each library with its models, its source and its size");
-  for (const std::string bad : {std::string{"{\"schema_version\": 2, \"engines\": []}"}, std::string{"[1, 2]"}, std::string{"not json"},
-                                std::string{"{\"schema_version\": 1, \"engines\": [{\"library\": 7}]}"},
-                                std::string{"{\"schema_version\": 1, \"commit\": \"a\\u0007b\", \"engines\": []}"},
-                                std::string(70000U, ' ') + "{}"}) {
+  for (const std::string& bad : {std::string{"{\"schema_version\": 2, \"engines\": []}"}, std::string{"[1, 2]"}, std::string{"not json"},
+                                 std::string{"{\"schema_version\": 1, \"engines\": [{\"library\": 7}]}"},
+                                 std::string{"{\"schema_version\": 1, \"commit\": \"a\\u0007b\", \"engines\": []}"},
+                                 std::string(70000U, ' ') + "{}"}) {
     secure_frontend_test::write_file(folder / "build.json", bad);
     expect(!secure_frontend::read_engine_build(folder).has_value(), "refused: " + bad.substr(0, 60));
   }
@@ -116,9 +116,11 @@ void this_pcs_gpus_are_listed() {
   std::string many;
   for (int i = 0; i < 20; ++i) many += std::to_string(i) + ", GPU, 1024\n";
   expect(secure_frontend::parse_nvidia_smi_gpu_list(many).size() == 16U, "at most 16");
-  expect(secure_frontend::list_gpus({.executable = secure_frontend_test::make_scratch_directory() / "missing-nvidia-smi"}).empty(),
+  expect(secure_frontend::list_gpus(
+             {.executable = secure_frontend_test::make_scratch_directory() / "missing-nvidia-smi", .arguments = {}, .environment = {}})
+             .empty(),
          "no nvidia-smi: no GPUs, nothing invented");
-  secure_frontend::HardwareFacts hardware{.cpu = "CPU", .gpu = "GPU 0"};
+  secure_frontend::HardwareFacts hardware{.cpu = "CPU", .ram_bytes = std::nullopt, .gpu = "GPU 0", .os = {}};
   hardware.gpus = {{.index = 0U, .name = "NVIDIA GeForce RTX 4080 SUPER", .mem_total_bytes = 16376ULL << 20U},
                    {.index = 1U, .name = "Second \"quoted\"", .mem_total_bytes = std::nullopt}};
   const std::string text = secure_frontend::render_about_json(std::nullopt, hardware);

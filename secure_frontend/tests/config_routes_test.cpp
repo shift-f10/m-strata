@@ -55,7 +55,7 @@ struct Fixture final {
     routes = std::make_unique<secure_frontend::ConfigRoutes>(std::move(settings));
   }
   secure_frontend::HttpResponse post(const secure_frontend::RouteId route, const std::string& body, const bool loopback = true) {
-    return routes->answer(route, body, secure_frontend::RequestContext{.loopback_peer = loopback});
+    return routes->answer(route, body, secure_frontend::RequestContext{.client_gone = {}, .loopback_peer = loopback});
   }
   [[nodiscard]] std::string file() const { return secure_frontend_test::read_file(data.config_file); }
 };
