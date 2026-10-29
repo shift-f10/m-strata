@@ -355,6 +355,26 @@ Trust boundaries:
   wait of `cleanup()` setting its stop flag, so a stop never hangs on it.
   `/metrics` publishes only those numbers (`conversation_cache`), behind the
   API key like the rest of the Monitor.
+- The second exception is the owner's opt-in to see why an engine fails
+  (2026-10-29: a calibration that never started on a new GPU):
+  `logging.engine_output`, false by default and in no flag or environment
+  variable, sets `EngineCommand::stderr_lines` for every family's engine
+  (a calibration's starts included). Its stderr then goes to the same pipe
+  and drain, and each line reaches the server's own log as `[engine] <line>`,
+  one whole write per line. The line is `printable_stderr_line`'s: printable
+  ASCII kept, a tab made a space, every other byte (control bytes, ESC, DEL,
+  bytes past ASCII) made `?`, so an engine line cannot drive the terminal or
+  the window app's log view; a line past 4 KiB is cut there and says so. On a
+  stop the drain still hands on what the pipe already holds (bounded, never
+  waited for), so a failing engine's last words are not lost. **This is a
+  disclosure the owner accepts while it is on**: the engine prints prompt
+  text and model paths on stderr (upstream's `session N: prompt:` line), so
+  those reach the log. The row's description, the Settings page's
+  Troubleshooting card and the server's start-up notice all say so and say
+  to turn it off and to read a log before sharing it. With the row off,
+  nothing above changes: the exception before this one is the only reader
+  (`stderr_lines_reach_the_sink_when_asked`,
+  `engine_output_reaches_the_log_only_when_asked`).
 - The child is reached only by private stdio in the current profile; clients
   never receive an engine address. Any future private loopback/IPC bridge must
   be authenticated and blocked from non-frontend peers.

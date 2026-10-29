@@ -12,7 +12,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -271,13 +273,27 @@ std::optional<std::uint64_t> parse_proc_status_resident_bytes(const std::string_
   return std::nullopt;
 }
 
+std::string printable_stderr_line(const std::string_view line, const bool cut) {
+  std::string out;
+  out.reserve(line.size() + (cut ? 24U : 0U));
+  for (const char character : line) {
+    const auto byte = static_cast<unsigned char>(character);
+    out.push_back(byte == '\t' ? ' ' : byte >= 0x20U && byte <= 0x7eU ? character : '?');
+  }
+  if (cut) out += " [cut at " + std::to_string(kStderrLineBytes) + " bytes]";
+  return out;
+}
+
 // The drain: the child's stderr is read as fast as it writes (it never blocks on a full pipe), each line looked at
-// only by parse_conversation_cache_line and then overwritten with zeros, as is every chunk read. Only the parsed
-// numbers are kept; no stderr text is stored, logged or forwarded.
+// only by parse_conversation_cache_line (read_conversation_cache) and handed to the line sink (stderr_lines, as
+// printable_stderr_line makes it), then overwritten with zeros, as is every chunk read. Without a sink no stderr text
+// is stored, logged or forwarded: only the parsed numbers are kept.
 struct EngineStdioProcess::StderrReader final {
   std::atomic<bool> stop{false};
   mutable std::mutex mutex;
   ConversationCacheState state;
+  bool read_cache{false};
+  std::function<void(std::string_view)> sink;
 #if defined(_WIN32)
   HANDLE pipe{nullptr};
 #else
@@ -296,6 +312,13 @@ struct EngineStdioProcess::StderrReader final {
     std::array<char, 4096> chunk{};
     std::size_t length = 0;
     bool overlong = false;
+    // A sink that throws (out of memory) loses that line, never the drain.
+    const auto forward = [this](const std::string_view text, const bool cut) noexcept {
+      try {
+        sink(printable_stderr_line(text, cut));
+      } catch (...) {
+      }
+    };
     const auto take = [&](const std::size_t count) {
       for (std::size_t index = 0; index < count; ++index) {
         const char character = chunk[index];
@@ -303,11 +326,15 @@ struct EngineStdioProcess::StderrReader final {
           std::size_t used = length;
           if (used > 0U && line[used - 1U] == '\r') --used;
           if (!overlong) {
-            if (const auto parsed = parse_conversation_cache_line(std::string_view{line.data(), used})) {
-              const auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-              std::lock_guard lock(mutex);
-              apply_conversation_cache_line(state, *parsed, static_cast<std::int64_t>(now));
+            const std::string_view text{line.data(), used};
+            if (read_cache) {
+              if (const auto parsed = parse_conversation_cache_line(text)) {
+                const auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                std::lock_guard lock(mutex);
+                apply_conversation_cache_line(state, *parsed, static_cast<std::int64_t>(now));
+              }
             }
+            if (sink) forward(text, false);
           }
           wipe(line.data(), length);
           length = 0;
@@ -315,7 +342,8 @@ struct EngineStdioProcess::StderrReader final {
         } else if (!overlong) {
           if (length < line.size()) {
             line[length++] = character;
-          } else {  // longer than any line we read: drop it to its end
+          } else {  // longer than any line we read: the sink gets its first bytes, the rest is dropped to its end
+            if (sink) forward(std::string_view{line.data(), line.size()}, true);
             wipe(line.data(), line.size());
             length = 0;
             overlong = true;
@@ -324,45 +352,62 @@ struct EngineStdioProcess::StderrReader final {
       }
       wipe(chunk.data(), count);
     };
-    // Only the end of the pipe (every writer gone) or the stop flag ends the drain: an error that is not the end is
-    // waited out and retried, so a running engine never finds its stderr undrained.
+    // One read into chunk: the bytes read, 0 when the pipe holds none yet (an error that is not the end counts so, and
+    // `wait` waits it out), nullopt at its end (every writer gone).
     const auto pause = [] { std::this_thread::sleep_for(std::chrono::milliseconds(20)); };
-    while (!stop.load()) {
+    const auto read_some = [&](const bool wait) -> std::optional<std::size_t> {
 #if defined(_WIN32)
       DWORD available = 0;
       if (!PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr)) {
-        if (GetLastError() == ERROR_BROKEN_PIPE) break;  // every writer is gone
-        pause();
-        continue;
+        if (GetLastError() == ERROR_BROKEN_PIPE) return std::nullopt;
+        if (wait) pause();
+        return 0U;
       }
       if (available == 0U) {
-        pause();
-        continue;
+        if (wait) pause();
+        return 0U;
       }
       DWORD read = 0;
       if (!ReadFile(pipe, chunk.data(), std::min<DWORD>(available, static_cast<DWORD>(chunk.size())), &read, nullptr)) {
-        if (GetLastError() == ERROR_BROKEN_PIPE) break;
-        pause();
-        continue;
+        if (GetLastError() == ERROR_BROKEN_PIPE) return std::nullopt;
+        if (wait) pause();
+        return 0U;
       }
-      take(static_cast<std::size_t>(read));
+      return static_cast<std::size_t>(read);
 #else
       pollfd ready{pipe, POLLIN, 0};
-      const int status = poll(&ready, 1, 100);
-      if (status < 0 && errno == EINTR) continue;
+      const int status = poll(&ready, 1, wait ? 100 : 0);
+      if (status < 0 && errno == EINTR) return 0U;
       if (status < 0) {
-        pause();
-        continue;
+        if (wait) pause();
+        return 0U;
       }
-      if (status == 0) continue;
+      if (status == 0) return 0U;
       const ssize_t count = ::read(pipe, chunk.data(), chunk.size());
-      if (count == 0) break;  // EOF: every writer is gone
+      if (count == 0) return std::nullopt;
       if (count < 0) {
-        if (errno != EINTR && errno != EAGAIN) pause();
-        continue;
+        if (errno != EINTR && errno != EAGAIN && wait) pause();
+        return 0U;
       }
-      take(static_cast<std::size_t>(count));
+      return static_cast<std::size_t>(count);
 #endif
+    };
+    // Only the end of the pipe or the stop flag ends the drain, so a running engine never finds its stderr undrained.
+    bool ended = false;
+    while (!stop.load()) {
+      const auto read = read_some(true);
+      if (!read.has_value()) {
+        ended = true;
+        break;
+      }
+      take(*read);
+    }
+    // Stopped with a sink: what the pipe already holds still reaches it (an engine that fails says why last), never
+    // waited for and bounded, as a grandchild may still write.
+    for (int round = 0; sink && !ended && round < 256; ++round) {
+      const auto read = read_some(false);
+      if (!read.has_value() || *read == 0U) break;
+      take(*read);
     }
     wipe(line.data(), line.size());
   }
@@ -382,7 +427,7 @@ void EngineStdioProcess::stop_stderr_reader() noexcept {
 }
 
 std::optional<ConversationCacheState> EngineStdioProcess::conversation_cache() const {
-  if (stderr_reader_ == nullptr) return std::nullopt;
+  if (stderr_reader_ == nullptr || !stderr_reader_->read_cache) return std::nullopt;
   std::lock_guard lock(stderr_reader_->mutex);
   return stderr_reader_->state;
 }
@@ -470,10 +515,10 @@ std::optional<ProcessError> EngineStdioProcess::start(const EngineCommand& comma
     }
   }
   if (parent_stdin == nullptr || child_stdin == nullptr || !CreatePipe(&parent_stdout, &child_stdout, &attrs, 0) || !SetHandleInformation(parent_stdout, HANDLE_FLAG_INHERIT, 0)) { if (child_stdin) CloseHandle(child_stdin); if (parent_stdin) CloseHandle(parent_stdin); if (child_stdout) CloseHandle(child_stdout); if (parent_stdout) CloseHandle(parent_stdout); return ProcessError{ProcessErrorCode::platform_failure, with_last_error("stdio pipe setup failed")}; }
-  // The engine's stderr goes to NUL; for the Qwen engine (read_conversation_cache) to a pipe that a thread drains,
-  // keeping only the conversation cache's numbers (StderrReader). Our end is not inheritable.
+  // The engine's stderr goes to NUL; for the Qwen engine (read_conversation_cache) or the server log
+  // (stderr_lines) to a pipe that a thread drains (StderrReader). Our end is not inheritable.
   HANDLE parent_stderr = nullptr;
-  if (command.read_conversation_cache) {
+  if (command.read_conversation_cache || command.stderr_lines) {
     if (!CreatePipe(&parent_stderr, &child_stderr, &attrs, 65536) || !SetHandleInformation(parent_stderr, HANDLE_FLAG_INHERIT, 0)) {
       if (parent_stderr) CloseHandle(parent_stderr);
       if (child_stderr) CloseHandle(child_stderr);
@@ -487,6 +532,8 @@ std::optional<ProcessError> EngineStdioProcess::start(const EngineCommand& comma
     // The drain runs before the child does, so it can never fill the pipe unread.
     try {
       auto reader = std::make_shared<StderrReader>();
+      reader->read_cache = command.read_conversation_cache;
+      reader->sink = command.stderr_lines;
       reader->pipe = parent_stderr;
       reader->thread = std::thread([raw = reader.get()] { raw->run(); });
       stderr_reader_ = std::move(reader);
@@ -556,12 +603,14 @@ std::optional<ProcessError> EngineStdioProcess::start(const EngineCommand& comma
   // the write end's own file description; the engine's read end is unaffected.
   const auto nonblocking = [](const int fd) { const int flags = fcntl(fd, F_GETFL); return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0; };
   if (pipe2(input, O_CLOEXEC) != 0 || pipe2(output, O_CLOEXEC) != 0 || pipe2(errors, O_CLOEXEC) != 0 || !nonblocking(input[1]) ||
-      (command.read_conversation_cache && pipe2(diagnostics, O_CLOEXEC) != 0)) { for (int* pipe_fd : {input, output, errors, diagnostics}) { close_fd(pipe_fd[0]); close_fd(pipe_fd[1]); } return ProcessError{ProcessErrorCode::platform_failure, "pipe setup failed"}; }
-  // The engine's stderr goes to /dev/null; for the Qwen engine (read_conversation_cache) to a pipe that a thread
-  // drains, keeping only the conversation cache's numbers (StderrReader). The drain runs before the child does.
+      ((command.read_conversation_cache || command.stderr_lines) && pipe2(diagnostics, O_CLOEXEC) != 0)) { for (int* pipe_fd : {input, output, errors, diagnostics}) { close_fd(pipe_fd[0]); close_fd(pipe_fd[1]); } return ProcessError{ProcessErrorCode::platform_failure, "pipe setup failed"}; }
+  // The engine's stderr goes to /dev/null; for the Qwen engine (read_conversation_cache) or the server log
+  // (stderr_lines) to a pipe that a thread drains (StderrReader). The drain runs before the child does.
   if (diagnostics[0] >= 0) {
     try {
       auto reader = std::make_shared<StderrReader>();
+      reader->read_cache = command.read_conversation_cache;
+      reader->sink = command.stderr_lines;
       reader->pipe = diagnostics[0];
       reader->thread = std::thread([raw = reader.get()] { raw->run(); });
       diagnostics[0] = -1;

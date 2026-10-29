@@ -2931,7 +2931,8 @@
              "models.control_remote", "models.control_remote_networks"],
     limits: ["limits.engine.generation_timeout_s", "limits.engine.ready_timeout_s", "limits.chat.max_prompt_tokens",
              "limits.chat.max_completion_tokens", "pull.connections"],
-    paths: ["models.downloads_root", "models.default_root"]
+    paths: ["models.downloads_root", "models.default_root"],
+    logs: ["logging.engine_output"]
   };
   var CONFIG_FOLDERS = ["models.downloads_root", "models.default_root"];
   var CONFIG_LABELS = {
@@ -2948,7 +2949,8 @@
     "limits.chat.max_completion_tokens": "Largest answer (tokens)",
     "pull.connections": "Connections per download",
     "models.downloads_root": "Downloads folder",
-    "models.default_root": "Folder Add a model opens"
+    "models.default_root": "Folder Add a model opens",
+    "logging.engine_output": "Write the engine's own output to the server log"
   };
   function configSetting(key) {
     var list = serverConfig.data && Array.isArray(serverConfig.data.settings) ? serverConfig.data.settings : [];
@@ -3032,13 +3034,13 @@
     try { response = await api("/v1/strata/config", jsonPost({})); text = await response.text(); } catch (e) { return; }
     if (!response.ok) {
       serverConfig.built = false;
-      ["key-settings", "server-settings", "limits-settings", "paths-settings"].forEach(function (id) { $(id).hidden = true; });
+      ["key-settings", "server-settings", "limits-settings", "paths-settings", "logs-settings"].forEach(function (id) { $(id).hidden = true; });
       showSettingsSubtab();
       return;
     }
     try { serverConfig.data = JSON.parse(text); } catch (e) { return; }
     serverConfig.built = true;
-    ["key-settings", "server-settings", "limits-settings", "paths-settings"].forEach(function (id) { $(id).hidden = false; });
+    ["key-settings", "server-settings", "limits-settings", "paths-settings", "logs-settings"].forEach(function (id) { $(id).hidden = false; });
     renderServerConfig();
     renderKey();
     showSettingsSubtab();

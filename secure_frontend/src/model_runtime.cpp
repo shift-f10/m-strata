@@ -16,9 +16,11 @@
 #include "secure_frontend/exit_status.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace secure_frontend {
@@ -219,6 +221,18 @@ std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& 
   // restore lines on stderr; only their numbers are kept (EngineCommand::read_conversation_cache). Every other
   // family's stderr still goes to NUL.
   plan.command.read_conversation_cache = launch.profile == EngineProfile::qwen;
+  // Owner 2026-10-29 (logging.engine_output): every engine's own stderr in this server's log, to see why an engine fails
+  // (a calibration's starts too: they launch through this plan). Each line whole in one write, so a line from another
+  // thread never lands inside it.
+  if (config.logging.engine_output) {
+    plan.command.stderr_lines = [](const std::string_view line) {
+      std::string text = "[engine] ";
+      text.append(line);
+      text.push_back('\n');
+      (void)std::fwrite(text.data(), 1U, text.size(), stderr);
+      (void)std::fflush(stderr);
+    };
+  }
   // Spec §3.12 (G2): PR_SET_NO_NEW_PRIVS on the engine unless
   // engine.allow_new_privileges (--allow-new-privileges); when it is set, an
   // engine that dies before READY gets the one-time /dev/nvidia-uvm hint.

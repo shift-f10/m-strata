@@ -251,6 +251,19 @@ std::optional<secure_frontend::SearchServiceSettings> search_settings(const Fron
 }
 #endif
 
+// Owner 2026-10-29: a server that copies its engines' own output into this log says so at every start, with what that
+// output can hold and what to do about it (docs/security/threat-model.md, the second engine-stderr exception).
+void warn_of_engine_output(const FrontendConfig& config) {
+  if (secure_frontend::debugging_build()) {
+    std::cerr << "strata: warning: this is a debugging build (make --debugging): it logs every request and the engine's own "
+                 "output unless the config turns them off. Build again without --debugging for everyday use.\n";
+  }
+  if (!config.logging.engine_output) return;
+  std::cerr << "strata: warning: logging.engine_output is true: the engine's own output goes to this log, and it can hold "
+               "what the engine prints of your prompts and the paths of your model files. Turn it off when you are done "
+               "(Settings > Troubleshooting), keep this log private, and look through it before you share it.\n";
+}
+
 int server_run_impl(const FrontendConfig& config, const bool expert) {
   // Ruling T13-c: server-grade process defaults, also when serve arrives
   // through the strata CLI (install_process_defaults is idempotent).
@@ -416,6 +429,7 @@ int server_run_impl(const FrontendConfig& config, const bool expert) {
     std::cerr << "strata: warning: listener.loopback_without_key is true: the API and the page answer without a key on "
               << authority << " (loopback only; Host and Origin are still checked)\n";
   }
+  warn_of_engine_output(config);
   std::cout << "Secure server listening on http://" << authority
             << (keyless ? " (no API key: loopback only; Ctrl-C to stop)\n" : " (authenticated; Ctrl-C to stop)\n");
   std::cout.flush();
@@ -1077,6 +1091,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
     std::cerr << "strata: warning: listener.loopback_without_key is true: the API and the page answer without a key on "
               << authority << " (loopback only; Host and Origin are still checked)\n";
   }
+  warn_of_engine_output(config);
   // D5: models.start names the card started at boot (after bind, like every spawn).
   if (config.models.start.has_value()) {
     if (const auto refused = launcher.start(*config.models.start, nullptr, false)) {

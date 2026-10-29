@@ -282,6 +282,7 @@ class EngineSupervisor final {
   void set_state(SupervisorState state);
   void set_state(SupervisorState state, std::shared_ptr<EngineInstance> current);
   void log_end(std::uint64_t generation, std::string_view kind);
+  void log_status(std::uint64_t generation, const ExitStatus& status);
 
   SupervisorConfig config_;
   ProcessFactory factory_;

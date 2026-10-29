@@ -5,6 +5,8 @@ install.ps1 - from a fresh Windows 10/11 PC to a built M-Strata in one step (run
   .\install.bat -Out D:\Apps\M-Strata -With email,search,tui      (no window: only the terminal one)
   .\install.bat -Plan                                  only say what it would install, fetch and run
   .\install.bat -Yes                                   do not ask before installing
+  .\install.bat -Debugging                             a server that logs verbosely, to find out why a model does not
+                                                       start or calibrate (the plan says what to take care of)
 
 What it does, each step only when needed:
   1. finds what the build needs: Git, Python 3.10+, Visual Studio 2022 Build Tools WITH the C++ workload, the CUDA
@@ -24,6 +26,7 @@ param(
   [string]$Out = "",
   [string]$With = "email,search,window,tui",
   [string]$GgmlDir = "",
+  [switch]$Debugging,
   [switch]$Plan,
   [switch]$Yes
 )
@@ -194,7 +197,15 @@ if ($features -contains 'window') {
   if (Test-Path (Join-Path $repo ".toolchains\webview2\$WebView2Version\build\native\include\WebView2.h")) { Say "  the WebView2 SDK ${WebView2Version}: already in $repo\.toolchains\webview2" }
   else { Say "  the WebView2 SDK $WebView2Version into $repo\.toolchains\webview2 (nuget.org, SHA-256 checked)" }
 }
-Say "  make.bat --out $Out --with $($features -join ',')"
+Say "  make.bat --out $Out --with $($features -join ',')$(if ($Debugging) { ' --debugging' })"
+if ($Debugging) {
+  Say ''
+  Say "  -Debugging: the server will log verbosely, to find out why a model does not start or calibrate. It logs"
+  Say "  one line per request (never its text) and the engine's own output, which can hold what the engine prints of"
+  Say "  your prompts and the paths of your model files. Run it on your own PC, keep the server's log private,"
+  Say "  look through a log before you share it, and build again without the debugging option for everyday use."
+  Say "  The engine's output can be turned off without a new build: Settings > Troubleshooting."
+}
 if ($Plan) { Say ""; Say 'install: -Plan given - nothing was installed or changed.'; exit 0 }
 if (-not $Yes) {
   $answer = Read-Host 'Go ahead? [y/N]'
@@ -303,7 +314,9 @@ if ($features -contains 'window') {
 
 # --- 6. the build ----------------------------------------------------------------------------------------------------
 Step "Building into $Out (the first build compiles the CUDA engine: allow an hour or more)"
-& (Join-Path $repo 'make.bat') --out $Out --ggml-dir $ggml --cuda-root $cuda --with ($features -join ',')
+$makeArgs = @()
+if ($Debugging) { $makeArgs += '--debugging' }
+& (Join-Path $repo 'make.bat') --out $Out --ggml-dir $ggml --cuda-root $cuda --with ($features -join ',') @makeArgs
 if ($LASTEXITCODE -ne 0) { Fail "make stopped (exit code $LASTEXITCODE); its message is above" }
 
 Step 'Done'

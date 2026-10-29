@@ -25,6 +25,11 @@ namespace secure_frontend {
 // The longest stderr line the conversation cache reader looks at; a longer one is dropped unread to its line end.
 inline constexpr std::size_t kStderrLineBytes = 4096U;
 
+// One engine stderr line as EngineCommand::stderr_lines receives it: printable ASCII kept, a tab made a space, every
+// other byte (control bytes, DEL, bytes past ASCII) made '?', so no line can drive a terminal; `cut`: the line ran past
+// kStderrLineBytes and these are its first bytes, which the text says.
+[[nodiscard]] std::string printable_stderr_line(std::string_view line, bool cut);
+
 // Owns a Strata --serve child and provides its line-delimited stdin/stdout
 // protocol.  It deliberately starts a supplied executable directly, with an
 // environment allowlist, and never invokes a shell.
@@ -117,8 +122,9 @@ class EngineStdioProcess final : public EngineLineTransport, public SupervisedPr
   std::uint32_t kill_exit_code_{kSupervisorKillExitCode};
   // The EngineCommand's max_read_line_bytes (kMaxReadLineBytes for an engine), captured by start().
   std::size_t max_read_line_{kMaxReadLineBytes};
-  // EngineCommand::read_conversation_cache: the thread that drains the child's stderr pipe and keeps only the
-  // conversation cache's numbers (engine_stdio_process.cpp). Stopped and joined by cleanup().
+  // EngineCommand::read_conversation_cache or stderr_lines: the thread that drains the child's stderr pipe, keeping the
+  // conversation cache's numbers and handing each line to the sink (engine_stdio_process.cpp). Stopped and joined by
+  // cleanup().
   struct StderrReader;
   std::shared_ptr<StderrReader> stderr_reader_;
 #if !defined(_WIN32)

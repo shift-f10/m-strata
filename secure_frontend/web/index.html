@@ -351,6 +351,16 @@
         <div class="model-actions"><button type="button" class="st-btn st-btn--primary st-btn--sm" data-save="paths">Save</button></div>
         <p class="msg-error" data-error="paths" role="alert" hidden></p>
       </div>
+      <div class="st-card alerts-settings" id="logs-settings" hidden>
+        <div class="models-head"><span class="card-title">Troubleshooting</span></div>
+        <p class="muted small">For finding out why a model does not start or calibrate: the engine's own output goes to the
+          server log (the console, or the window app's Server log). That output can hold what the engine prints of your
+          prompts and the paths of your model files, so turn it off when you are done, and look through a log before you
+          share it. This setting applies when the server restarts.</p>
+        <div class="config-grid" data-group="logs"></div>
+        <div class="model-actions"><button type="button" class="st-btn st-btn--primary st-btn--sm" data-save="logs">Save</button></div>
+        <p class="msg-error" data-error="logs" role="alert" hidden></p>
+      </div>
       <div class="st-card alerts-settings" id="folders-settings" hidden>
         <div class="models-head"><span class="card-title">Model folders</span></div>
         <p class="muted small">By default the server uses a model folder only when other users of this PC cannot change it,

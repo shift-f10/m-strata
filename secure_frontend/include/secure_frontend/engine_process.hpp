@@ -5,9 +5,11 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace secure_frontend {
@@ -46,6 +48,11 @@ struct EngineCommand final {
   // every line is dropped, none is kept or logged. Set for the Qwen engine only, the one that prints them. false:
   // stderr goes to NUL / /dev/null. `{false}`: designated initializers that omit it keep compiling (-Werror).
   bool read_conversation_cache{false};
+  // The engine's own output (owner 2026-10-29, logging.engine_output: to see why an engine fails on a new GPU):
+  // EngineStdioProcess reads the child's stderr through the same pipe and hands each line here, in order, as
+  // printable_stderr_line made it. Called on the drain's thread. Empty: no stderr text leaves the drain. `{}`:
+  // designated initializers that omit it keep compiling (-Werror).
+  std::function<void(std::string_view)> stderr_lines{};
 };
 
 enum class ProcessErrorCode {

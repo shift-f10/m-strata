@@ -445,3 +445,27 @@ def test_owner_only_commands():
     assert any(cmd[-1] == "/T" and "/reset" in cmd for cmd in windows[1:])
     posix = make.owner_only_commands(Path("/opt/secure-strata"), "linux", user="me")
     assert posix == [["chmod", "-R", "go-w", "/opt/secure-strata"]]
+
+
+def test_debugging_is_off_unless_asked_for_and_says_what_it_means(tmp_path, capsys):
+    """The owner (2026-10-29): "have an option in the installer/builder to have --debugging on so that it is verbose on
+    the logs and can pinpoint issues like what's crashing the calibration ... when set on, it will tell the user the
+    implications of having this on and precautions to take"."""
+    plain = options()
+    assert not plain.debugging and "-DSECURE_FRONTEND_DEBUGGING=OFF" in make.frontend_configure_args(plain, "windows")
+    asked = options("--debugging")
+    assert asked.debugging and "-DSECURE_FRONTEND_DEBUGGING=ON" in make.frontend_configure_args(asked, "linux")
+    # the About tab names it, from the folder's build record
+    assert "debugging" in make.build_record(asked, "windows", tmp_path, commit="c", built="b")["features"]
+    assert "debugging" not in make.build_record(plain, "windows", tmp_path, commit="c", built="b")["features"]
+    # what it logs, what that can hold, and what to do about it: before the build starts and in the folder's README
+    for words in ("one line per request", "the engine's own output", "your prompts", "the paths of your model files",
+                  "keep the server's log private", "before you share it", "without --debugging",
+                  "Settings > Troubleshooting"):
+        assert words in make.DEBUGGING_NOTICE, words
+    make.announce(asked)
+    assert make.DEBUGGING_NOTICE in capsys.readouterr().out
+    make.announce(plain)
+    assert "--debugging" not in capsys.readouterr().out
+    assert make.DEBUGGING_NOTICE in make.readme_text(asked, "windows")
+    assert "--debugging" not in make.readme_text(plain, "linux")

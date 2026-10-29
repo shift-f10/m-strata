@@ -22,6 +22,9 @@ option(SECURE_FRONTEND_TEST_HOOKS "Compile test-only hooks; never for shipped bi
 # name. `make --with email` turns it on; the repository's dev presets do.
 option(SECURE_FRONTEND_EMAIL_ALERTS "Build the optional email alerts (an SMTP client over TLS)" OFF)
 option(SECURE_FRONTEND_WEB_SEARCH "Build the optional web search (strata-search: an MCP server over a SearXNG instance)" OFF)
+# make --debugging (owner 2026-10-29): logging.requests and logging.engine_output on unless the config sets them, and a
+# warning at every start. Never for everyday use; the tests run without it.
+option(SECURE_FRONTEND_DEBUGGING "A server that logs verbosely, to find out why a model does not start or calibrate" OFF)
 # strata-window (spec 2026-10-28-server-window-design, Part 2): the server in a window with a tray icon. `make --with
 # window` turns it on; Windows needs the WebView2 SDK (SECURE_FRONTEND_WEBVIEW2_DIR), Linux GTK 3 and WebKitGTK 4.1.
 option(SECURE_FRONTEND_WINDOW "Build strata-window: the server in a window with a tray icon (WebView2 / WebKitGTK)" OFF)
@@ -407,6 +410,10 @@ target_link_libraries(secure_frontend_tokenizer_pack PUBLIC secure_frontend_json
 if(SECURE_FRONTEND_EMAIL_ALERTS)
     # every target that reads the config sees the build's choice (alerts.* rows refused without it)
     target_compile_definitions(secure_frontend_typed_config PUBLIC SECURE_FRONTEND_EMAIL_ALERTS=1)
+endif()
+if(SECURE_FRONTEND_DEBUGGING)
+    # ... and of a debugging build (its logging defaults)
+    target_compile_definitions(secure_frontend_typed_config PUBLIC SECURE_FRONTEND_DEBUGGING=1)
 endif()
 if(SECURE_FRONTEND_WEB_SEARCH)
     # ... and of web search (search.* rows refused without it)
@@ -1129,7 +1136,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_engine_stdio_process)
     set(_stdio_cases test_round_trip test_invalid_record write_line_fails_once_deadline_passed read_line_rejects_oversize_on_all_platforms
         read_line_waits_for_a_record_split_across_writes stderr_gives_only_the_conversation_cache_numbers
-        stderr_flood_never_blocks_the_engine resident_bytes_read_the_running_engine)
+        stderr_flood_never_blocks_the_engine stderr_lines_reach_the_sink_when_asked resident_bytes_read_the_running_engine)
     if(WIN32)
         list(APPEND _stdio_cases job_object_terminates_grandchild)
     else()
@@ -1296,7 +1303,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         dos02_resources_return_to_idle shutdown_errors_never_report_fatal
         dos01_service_healthy_after_each_attack
         ext01_upstream_control_routes_are_404_after_auth ext02_http_headers_cannot_enable_extensions
-        log_line_format_and_rate_limit err_no_token_prompt_or_path_in_any_body_or_log
+        log_line_format_and_rate_limit engine_output_reaches_the_log_only_when_asked err_no_token_prompt_or_path_in_any_body_or_log
         undecodable_output_logs_its_own_code web_ui_page_is_served_and_the_api_keeps_its_key
         keyless_loopback_server_answers_without_a_key monitor_reports_generations_without_their_text)
     if(WIN32)
@@ -1759,7 +1766,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_typed_config_tests cfg01_pull_keys_table_driven
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # SP3 SP1-addendum A1 (spec §5.1): unlabelled, so the wine smoke runs them (pre-flight T4).
-    secure_frontend_add_cases(secure_frontend_typed_config_tests cfg01_sp3_rows_type_and_range
+    secure_frontend_add_cases(secure_frontend_typed_config_tests cfg01_sp3_rows_type_and_range logging_engine_output_is_off_unless_asked
         cfg01_header_deadline_le_request_deadline cfg01_response_deadline_ge_write_stall
         cfg01_wildcard_bind_requires_host_aliases cfg01_host_alias_grammar_and_count
         web05_cors_origin_config_rejects_wildcard_null_path_duplicate_and_17_entries
@@ -1958,6 +1965,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         cards_can_be_added_while_serving page_cards_can_be_replaced_and_removed a_gguf_card_reads_its_tokenizer_from_the_gguf
         cards_say_whether_their_profile_takes_reasoning_effort cards_offer_web_search_when_the_server_has_it
         cards_offer_their_models_recommended_sampling glm_cards_offer_their_ram_headroom
+        cards_offer_their_longest_answer_at_the_servers_value
         a_card_without_sampling_starts_with_the_recommended
         a_qwen36_card_reads_its_tokenizer_from_the_gguf
         calibration_finds_the_win_and_starts_with_it a_first_start_calibrates_first
@@ -2000,7 +2008,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         page_values_resolve_within_bounds kv_resident_cross_rules options_apply_as_flags_and_keys
         mtp_off_drops_the_draft_options controlled_flags_listed description_json_shape
         remembered_options_round_trip_and_tolerate_junk context_and_kv_streaming_offer_fixed_values
-        past_trained_context_adds_yarn flint_options_follow_the_flint_engine glm_ram_headroom_is_a_card_option glm_options_write_the_glm_rows
+        past_trained_context_adds_yarn flint_options_follow_the_flint_engine glm_ram_headroom_is_a_card_option the_longest_answer_is_a_card_option glm_options_write_the_glm_rows
         deepseek_options_are_mayas web_search_is_a_checkbox_of_the_tool_profiles minimax_options_are_mayas the_vision_option_writes_the_encoder_rows gpus_choose_the_cards_a_model_runs_on
         gemma4_mtp_off_drops_the_mtp_file)
 
@@ -2010,6 +2018,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_model_cards_tests
         card_parses_and_merges_into_a_valid_config card_refusals_name_the_rule bad_card_is_refused_others_load
         main_config_may_not_set_card_keys card_options_reach_the_engine_arguments glm_ram_headroom_reaches_the_engine_environment launcher_store_config_uses_the_downloads_root
+        a_cards_config_keeps_the_servers_engine_output_logging a_cards_longest_answer_is_its_generation_timeout
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # Gemma 4 plan 1 Task 8 (spec §2.5, §6.3)

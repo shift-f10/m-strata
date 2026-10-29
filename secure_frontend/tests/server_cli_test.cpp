@@ -372,14 +372,15 @@ void auth04_no_switch_disables_auth() {
       // the open issues on 2026-10-28: listener.login_link prints a one-time link that hands the page the key from
       // this PC only (it needs a token.source and the key stays required on every route); roots.allow_untrusted_media
       // uses model folders as they are; alerts.email.enabled sends email alerts; search.enabled lets a model search
-      // through SearXNG. None of them reads, skips or replaces the key.
+      // through SearXNG. None of them reads, skips or replaces the key. Owner 2026-10-29: logging.engine_output
+      // copies the engine's own stderr into the server log; it reads, skips or replaces no key either.
       if (path == "listener.loopback_without_key") {
         expect(key.flag.empty() && key.default_string.empty(), "the keyless switch has no flag and is off by default");
         continue;
       }
       expect(path == "listener.allow_remote" || path == "listener.allow_wildcard_bind" || path == "listener.web_ui" ||
                  path == "listener.monitor" || path == "engine.allow_new_privileges" || path == "pull.allow_private_addresses" ||
-                 path == "logging.requests" || path == "engine.fit_max_tokens" || path == "reasoning.close_retry" ||
+                 path == "logging.requests" || path == "logging.engine_output" || path == "engine.fit_max_tokens" || path == "reasoning.close_retry" ||
                  path == "engine.lazy_load" || path == "engine.mtp" || path == "engine.vram_elastic" ||
                  path == "engine.split_skip_if_fits" || path == "engine.elastic" || path == "engine.uma" ||
                  path == "engine.answer_room" || path == "session.tool_call_recovery" || path == "session.env_to_user" ||
@@ -392,7 +393,7 @@ void auth04_no_switch_disables_auth() {
              "the only switches are the two bind opt-ins, the page and the Monitor, the engine's NNP opt-out, "
              "the pull address opt-in, request logging and the SP5 behaviour, lifecycle, vram/turn, answer-room, "
              "session and vision opt-ins, the model launcher's two control switches, the login link, model folders "
-             "as they are, email alerts and web search: " + path);
+             "as they are, email alerts, web search and the engine's output in the log: " + path);
     }
   }
   expect(flags.count("--allow-remote") == 1U && flags.count("--token-env") == 1U && flags.count("--check") == 1U,

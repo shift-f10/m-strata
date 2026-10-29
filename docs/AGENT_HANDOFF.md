@@ -280,6 +280,51 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z30 (Windows box; owner-directed; committed with this entry, not pushed)
+
+On his RTX 5090 PC every calibration's first engine ended before ready ("crashed" / "error_exit", z28), and answers
+stopped at 120.1 s marked `length` with a 128K context. The owner: "yes I want it, I need to be able to see what's
+wrong so we can develop and see why it does not calibrate on the 5090"; "make the default timeout configurable per
+model on the card"; "have an option in the installer/builder to have --debugging on so that it is verbose on the logs
+... it will tell the user the implications of having this on and precautions to take".
+
+- **The engine's own output in the log** (`logging.engine_output`, false; Settings, new **Troubleshooting** card):
+  - `EngineCommand::stderr_lines`: a line sink. With it, `EngineStdioProcess` pipes the child's stderr through the
+    drain the conversation cache already used (`read_conversation_cache` still alone decides whether the cache is
+    read), and hands each line on as `printable_stderr_line` makes it: printable ASCII, a tab a space, every other byte
+    `?`, a line past 4 KiB cut there with ` [cut at 4096 bytes]`. A throwing sink loses its line, never the drain. On a
+    stop the drain still reads what the pipe already holds (at most 256 reads, never waiting): a failing engine's
+    last lines are what this is for.
+  - `model_runtime.cpp` sets the sink for every family when the row is on (a calibration's starts go through the same
+    plan): `[engine] <line>` to the server's stderr in one write. The server warns at every start that the engine's
+    output can hold what it prints of prompts and the paths of model files (`warn_of_engine_output`). Threat model:
+    the second engine-stderr exception, an owner-accepted disclosure while on.
+  - `auth04_no_switch_disables_auth` lists the new switch (it reads, skips or replaces no key).
+- **An engine's end names its exit code**: after `engine generation N ended: crashed` comes `engine generation N: exit
+  code 0xC0000005` (Windows statuses from 0x10000 up in hex, small codes and POSIX signals in decimal;
+  `describe_exit_status`, `EngineSupervisor::log_status`; a line of its own, as the supervisor tests match whole lines),
+  so a crash is told from an abort or a CUDA error exit without the engine's output.
+- **The longest answer**: `limits.engine.generation_timeout_s` defaults to 1800 (was 120: at 96 tok/s about 11.5K
+  tokens, then `length`). Every card offers **Longest answer (minutes)** (`answer_minutes`, 1-1440, menu 2-1440),
+  written as the card's own `limits.engine.generation_timeout_s` (no engine flag); its default is the server's row in
+  minutes, a part of a minute counted whole (`offer_at_row`, now shared with the GLM RAM headroom).
+- **`make --debugging`** (`install.bat -Debugging`, `install.sh --debugging` pass it on): `SECURE_FRONTEND_DEBUGGING`.
+  `logging.requests` and `logging.engine_output` are on unless the config sets them (`debugging_build()`,
+  `DraftReader::boolean_or`), the server warns at every start, and `engine/build.json` lists `debugging` among the
+  features (the About tab shows it). make prints `DEBUGGING_NOTICE` (what is logged, what it can hold, the
+  precautions) before and after the build and puts it in the folder's README.txt; the installers' plan says the same
+  before anything is installed.
+- **Proof**:
+  - RED: the transport and server cases with the sink cut off (no line arrived), the notice disabled, the row, page
+    and listing missing, the option missing on every profile, the card timeout, the exit-code text, make's and the
+    installers' option missing.
+  - GREEN: the affected suites on MSVC, and on Linux gcc 13.3 and clang 18.1 (230/230 each). The make and install
+    tests 40/40; `install.ps1 -Plan -Debugging` printed the plan and the warning. The whole MSVC suite: 1392/1395 on
+    the first run (the switch list, fixed), then everything but the two release-only cases (they need a release
+    build). A debugging tree (`SECURE_FRONTEND_DEBUGGING=ON`): its typed config cases pass with both rows on by default.
+- **Not verified**: the owner's 5090 (the reason his calibration ends is what this is for), and a full `make
+  --debugging` folder build.
+
 ### Claude Code session, 2026-10-29 z29 (Windows box; owner-directed; a worker session's change, committed with this entry, not pushed)
 
 The owner: "in the window app version we need to add a log capability, the console have it but this one do not so we

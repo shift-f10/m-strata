@@ -69,11 +69,12 @@ void the_settings_are_listed_with_their_rules() {
   for (const char* key : {"listener.host", "listener.port", "listener.allow_remote", "listener.allow_wildcard_bind",
                           "listener.host_aliases", "models.control_remote", "models.control_remote_networks",
                           "limits.engine.generation_timeout_s", "limits.engine.ready_timeout_s", "limits.chat.max_prompt_tokens",
-                          "limits.chat.max_completion_tokens", "pull.connections", "models.downloads_root", "models.default_root"}) {
+                          "limits.chat.max_completion_tokens", "pull.connections", "models.downloads_root", "models.default_root",
+                          "logging.engine_output"}) {
     expect(has(listed, std::string{"{\"key\":\""} + key + "\""), std::string{"listed: "} + key);
   }
   expect(has(listed, R"({"key":"listener.port","type":"integer","value":8080,"default":)") &&
-             has(listed, R"({"key":"limits.engine.generation_timeout_s","type":"integer","value":null,"default":120,"min":1,"max":86400,)"),
+             has(listed, R"({"key":"limits.engine.generation_timeout_s","type":"integer","value":null,"default":1800,"min":1,"max":86400,)"),
          "a value the file holds, and one it leaves to the default: " + listed.body);
   expect(has(listed, R"("key":{"rotatable":true})"), "the key lives in the data folder's store: it can be rotated");
   expect(listed.header_value("Cache-Control") == std::optional<std::string_view>{"no-store"}, "never cached");

@@ -380,10 +380,11 @@ the API key, the server's own settings, and the sections below. **API key:** the
 holds it; no route returns a key), Show and Copy; "Rotate the key", typed ROTATE first and from this PC only
 (`POST /v1/strata/key/rotate`, `{"confirm":"ROTATE"}`), makes a new key in the key file as `strata key rotate` does and
 answers it once; the running server keeps the old key until it restarts. A `--token-env` start has no key file, so
-rotation is refused there. **Server and network**, **Limits and timeouts** and **Folders** list 14 config rows
-(`listener.host`, `.port`, `.allow_remote`, `.allow_wildcard_bind`, `.host_aliases`, `models.control_remote`,
+rotation is refused there. **Server and network**, **Limits and timeouts**, **Folders** and **Troubleshooting** list 15
+config rows (`listener.host`, `.port`, `.allow_remote`, `.allow_wildcard_bind`, `.host_aliases`, `models.control_remote`,
 `.control_remote_networks`, `limits.engine.generation_timeout_s`, `.ready_timeout_s`, `limits.chat.max_prompt_tokens`,
-`.max_completion_tokens`, `pull.connections`, `models.downloads_root`, `.default_root`) from `POST /v1/strata/config`
+`.max_completion_tokens`, `pull.connections`, `models.downloads_root`, `.default_root`, `logging.engine_output`) from
+`POST /v1/strata/config`
 (each with its type, value, default, bounds and the schema's description) and save them through
 `POST /v1/strata/config/settings` (`{"values":{key: value or null}}`; null or an empty text is the default). A save is
 held to the server's start-up rules on the whole file: a problem the change brings is refused by name and nothing is
@@ -589,7 +590,7 @@ Every key (generated from the schema; `readme_config_table_matches_schema` keeps
 | `limits.chat.default_max_tokens` | integer | `0` | 0-1048576 | - | max_tokens when a request omits it; 0 = auto: min(max_completion_tokens, context - prompt - 8); at most limits.chat.max_completion_tokens. |
 | `limits.chat.max_generated_bytes` | integer | `1048576` | 1-16777216 | - | Largest generated text returned. |
 | `limits.engine.ready_timeout_s` | integer | `900` | 1-86400 | - | How long the supervisor waits for the engine's READY after each start; a miss kills and restarts it (upstream STRATA_ENGINE_READY_S). |
-| `limits.engine.generation_timeout_s` | integer | `120` | 1-86400 | - | Total time for one generation before STOP. |
+| `limits.engine.generation_timeout_s` | integer | `1800` | 1-86400 | - | Total time for one generation before STOP (its answer then ends as length). A card's answer_minutes option sets it per model; this row is that option's default. |
 | `limits.engine.stop_drain_timeout_s` | integer | `5` | 1-600 | - | Time to drain to DONE after STOP before the engine is marked failed. |
 | `limits.concurrency.max_concurrent_requests` | integer | `8` | 1-256 | - | Worker threads: connections read or answered at once; 1 = serial. |
 | `limits.concurrency.max_queued_generations` | integer | `derived: min(4, max(0, workers-2))` | 0-254 | - | Chats waiting behind the running generation; 0 when max_concurrent_requests is 1, otherwise at most max_concurrent_requests - 2. |
@@ -619,7 +620,8 @@ Every key (generated from the schema; `readme_config_table_matches_schema` keeps
 | `pull.connect_timeout_s` | integer | `30` | 1-300 | - | TCP/TLS connect timeout per request. |
 | `pull.connections` | integer | `16` | 1-32 | - | Connections for a large download (parallel ranged, 32 MiB pieces; 1 = one stream). Hugging Face's CDN limits each connection, so several are much faster. |
 | `update.source` | string array | `[]` | - | - | HTTPS release-mirror URLs that 'strata update' fetches the signed release envelope from. |
-| `logging.requests` | boolean | `false` | - | - | One line per request to stderr: route, status, code, time, bytes, loopback or remote; never paths, headers, tokens or text. |
+| `logging.requests` | boolean | `false` | - | - | One line per request to stderr: route, status, code, time, bytes, loopback or remote; never paths, headers, tokens or text. In a make --debugging build it is on unless the config sets it. |
+| `logging.engine_output` | boolean | `false` | - | - | The engine's own output (its stderr) in this server's log, one '[engine] ' line each, for finding out why a model does not start or calibrate. It can hold what the engine prints of the prompts it is given and the paths of model files: turn it off when done, and look through a log before sharing it. In a make --debugging build it is on unless the config sets it. |
 | `defaults.sampling.temperature` | number | unset | 0-2 | - | Request default temperature (pin: 0..2); unset keeps the engine default. |
 | `defaults.sampling.top_p` | number | unset | >0-1 | - | Request default top_p (pin: 0 < top_p <= 1); unset keeps the engine default. |
 | `defaults.sampling.top_k` | integer | unset | 1-64 | - | Request default top_k candidates (pin: an integer 1..64); unset keeps the engine default. |

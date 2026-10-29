@@ -189,16 +189,16 @@ bool engine_accepts(const secure_frontend::EngineArgumentsProfile profile, const
 void option_tables_per_profile() {
   expect(names_of(EngineProfile::qwen) == Strings{"max_context", "kv", "kv_resident", "kv_grow", "mtp", "spec", "spec_min_p",
                                                   "expert_cache", "prefill", "thinking", "temperature", "top_p", "top_k", "min_p",
-                                                  "vision", "web_search", "gpus"},
+                                                  "vision", "answer_minutes", "web_search", "gpus"},
          "the qwen options in display order: " + joined(names_of(EngineProfile::qwen)));
   // mtp since 2026-10-28 (the owner: "gemma4 has an mtp ... make sure we work that mtp in our gemma engine")
   expect(names_of(EngineProfile::gemma4) == Strings{"max_context", "chunk", "expert_vram", "mtp", "spec", "spec_min_p", "thinking",
-                                                    "temperature", "top_p", "top_k", "min_p", "web_search", "gpus"},
+                                                    "temperature", "top_p", "top_k", "min_p", "answer_minutes", "web_search", "gpus"},
          "the gemma4 options in display order: " + joined(names_of(EngineProfile::gemma4)));
   // D10 met (owner 2026-10-27): Maya's own GLM choices - its context menu, the engine's --kv, the sampling defaults
   // the RAM headroom since 2026-10-29 (owner: "make it an option in the card setting")
   expect(names_of(EngineProfile::glm53) == Strings{"max_context", "kv", "ram_headroom", "temperature", "top_p", "top_k", "min_p",
-                                                   "web_search", "gpus"},
+                                                   "answer_minutes", "web_search", "gpus"},
          "the glm53 options in display order: " + joined(names_of(EngineProfile::glm53)));
 
   for (const auto profile : {EngineProfile::qwen, EngineProfile::gemma4, EngineProfile::glm53, EngineProfile::raon1,
@@ -700,7 +700,7 @@ void gemma4_mtp_off_drops_the_mtp_file() {
 void flint_options_follow_the_flint_engine() {
   using secure_frontend::EngineArgumentsProfile;
   expect(names_of(EngineProfile::flint) ==
-             Strings{"max_context", "chunk", "expert_vram", "thinking", "temperature", "top_p", "top_k", "min_p", "web_search", "gpus"},
+             Strings{"max_context", "chunk", "expert_vram", "thinking", "temperature", "top_p", "top_k", "min_p", "answer_minutes", "web_search", "gpus"},
          "the flint options in display order: " + joined(names_of(EngineProfile::flint)));
   for (const auto& [name, flag] : {std::pair{"max_context", "--max-context"}, std::pair{"chunk", "--chunk"},
                                    std::pair{"expert_vram", "--expert-vram"}}) {
@@ -1071,12 +1071,36 @@ void glm_ram_headroom_is_a_card_option() {
          "a card's remembered RAM headroom is kept");
 }
 
+// Owner 2026-10-29 ("make the default timeout configurable per model on the card"): every engine's card has the longest
+// answer, in minutes, written as the card's limits.engine.generation_timeout_s (no engine flag); 1 minute to the row's
+// 24 hours, a menu of 2 minutes to a day.
+void the_longest_answer_is_a_card_option() {
+  for (const auto profile : {EngineProfile::qwen, EngineProfile::gemma4, EngineProfile::glm53, EngineProfile::raon1,
+                             EngineProfile::deepseek, EngineProfile::minimax, EngineProfile::flint}) {
+    const auto* spec = secure_frontend::find_model_option(profile, "answer_minutes");
+    expect(spec != nullptr && spec->kind == ModelOptionKind::integer && spec->minimum == 1 && spec->maximum == 1440 &&
+               std::vector<std::int64_t>(spec->values.begin(), spec->values.end()) ==
+                   std::vector<std::int64_t>{2, 5, 10, 15, 30, 60, 120, 240, 1440},
+           "every engine offers the longest answer: 1-1440 minutes, a menu of 2 to 1440");
+    secure_frontend::FrontendConfigDraft draft;
+    secure_frontend::apply_option_values(profile, ModelOptionValues{{"answer_minutes", std::int64_t{45}}}, draft);
+    const auto row = draft.entries.find("limits.engine.generation_timeout_s");
+    expect(row != draft.entries.end() && std::get<std::int64_t>(row->second.value) == 2700 && !draft.entries.contains("engine.args"),
+           "answer_minutes -> limits.engine.generation_timeout_s in seconds, no engine flag");
+  }
+  expect(secure_frontend::is_model_option_name("answer_minutes"), "a fixed option name");
+  const auto back = secure_frontend::parse_remembered_options(
+      secure_frontend::render_remembered_options({{"Q", ModelOptionValues{{"answer_minutes", std::int64_t{60}}}}}));
+  expect(back.contains("Q") && back.at("Q").contains("answer_minutes") && std::get<std::int64_t>(back.at("Q").at("answer_minutes")) == 60,
+         "a card's remembered longest answer is kept");
+}
+
 // DeepSeek-V4.1 (2026-10-27, spec 2026-10-27-strata-prepare-design §7.2): Maya's own DeepSeek choices - its context menu
 // (maya.py v1.1.30 DS4_CONTEXTS: 32K to 1M), the thinking level (DS4_EFFORT; DeepSeek's effort line: low 50, medium and
 // high 75, none chat mode), the sampling rows. The context is maya-ds4's own --max-context in engine.args (the maya_ds4
 // allowlist), the thinking level reasoning.effort.
 void deepseek_options_are_mayas() {
-  expect(names_of(EngineProfile::deepseek) == Strings{"max_context", "thinking", "temperature", "top_p", "top_k", "min_p", "web_search", "gpus"},
+  expect(names_of(EngineProfile::deepseek) == Strings{"max_context", "thinking", "temperature", "top_p", "top_k", "min_p", "answer_minutes", "web_search", "gpus"},
          "the deepseek options in display order: " + joined(names_of(EngineProfile::deepseek)));
   const auto* context = secure_frontend::find_model_option(EngineProfile::deepseek, "max_context");
   expect(context != nullptr && context->kind == ModelOptionKind::integer && context->minimum == 1 && context->maximum == 1048576 &&
@@ -1187,7 +1211,7 @@ void the_vision_option_writes_the_encoder_rows() {
 }
 
 void minimax_options_are_mayas() {
-  expect(names_of(EngineProfile::minimax) == Strings{"max_context", "kv", "thinking", "temperature", "top_p", "web_search", "gpus"},
+  expect(names_of(EngineProfile::minimax) == Strings{"max_context", "kv", "thinking", "temperature", "top_p", "answer_minutes", "web_search", "gpus"},
          "the minimax options in display order: " + joined(names_of(EngineProfile::minimax)));
   const auto* context = secure_frontend::find_model_option(EngineProfile::minimax, "max_context");
   expect(context != nullptr && context->kind == ModelOptionKind::integer && context->minimum == 1 && context->maximum == 1048576 &&
@@ -1263,6 +1287,7 @@ int main(int argc, char** argv) {
       {"past_trained_context_adds_yarn", past_trained_context_adds_yarn},
       {"glm_options_write_the_glm_rows", glm_options_write_the_glm_rows},
       {"glm_ram_headroom_is_a_card_option", glm_ram_headroom_is_a_card_option},
+      {"the_longest_answer_is_a_card_option", the_longest_answer_is_a_card_option},
       {"deepseek_options_are_mayas", deepseek_options_are_mayas},
       {"minimax_options_are_mayas", minimax_options_are_mayas},
       {"the_vision_option_writes_the_encoder_rows", the_vision_option_writes_the_encoder_rows},

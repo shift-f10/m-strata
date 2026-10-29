@@ -611,7 +611,7 @@ void web_ui_has_server_settings() {
   const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
   for (const char* id : {"id=\"key-settings\"", "id=\"key-value\"", "id=\"key-show\"", "id=\"key-copy\"", "id=\"key-rotate-confirm\"",
                          "id=\"key-rotate\"", "id=\"key-new\"", "id=\"server-settings\"", "id=\"limits-settings\"",
-                         "id=\"paths-settings\"", "id=\"settings-restart-note\""}) {
+                         "id=\"paths-settings\"", "id=\"logs-settings\"", "id=\"settings-restart-note\""}) {
     expect(html.find(id) != std::string::npos, std::string{"the Settings tab has "} + id);
   }
   expect(js.find("api(\"/v1/strata/config\", jsonPost({}))") != std::string::npos &&
@@ -623,8 +623,8 @@ void web_ui_has_server_settings() {
   expect(js.find("if ($(\"key-rotate-confirm\").value.trim() !== \"ROTATE\")") != std::string::npos,
          "rotation is typed ROTATE first");
   expect(js.find("\"listener.port\"") != std::string::npos && js.find("\"limits.engine.generation_timeout_s\"") != std::string::npos &&
-             js.find("\"models.downloads_root\"") != std::string::npos,
-         "the three groups name their settings");
+             js.find("\"models.downloads_root\"") != std::string::npos && js.find("logs: [\"logging.engine_output\"]") != std::string::npos,
+         "the four groups name their settings");
   // the two folders are chosen with the page's folder picker (spec Part 1, Folders), or typed
   expect(js.find("var CONFIG_FOLDERS = [\"models.downloads_root\", \"models.default_root\"];") != std::string::npos &&
              js.find("var picked = await pickFolder(label, ") != std::string::npos &&

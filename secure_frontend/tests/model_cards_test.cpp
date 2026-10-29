@@ -323,6 +323,46 @@ void glm_ram_headroom_reaches_the_engine_environment() {
   expect(headroom({{"glm.ram_headroom_gb", "24"}}, {{"ram_headroom", std::int64_t{8}}}) == "8", "the card's choice wins over the server's row");
 }
 
+// Owner 2026-10-29: the server's logging.engine_output reaches every card's engine (a calibration's starts included),
+// since that is where an engine fails on a new GPU.
+void a_cards_config_keeps_the_servers_engine_output_logging() {
+  ConfigFixture f;
+  const auto parsed = secure_frontend::parse_model_card(card_text("Qwen3.8-Flash", "qwen", card_config_object(f)), f.dir);
+  const auto* card = std::get_if<ModelCard>(&parsed);
+  expect(card != nullptr, "a qwen card parses: " + (card ? std::string{} : issues_text(std::get<ConfigErrors>(parsed))));
+  if (card == nullptr) return;
+  for (const bool on : {false, true}) {
+    const auto result = secure_frontend::card_config(main_draft(f, on ? std::map<std::string, std::string>{{"logging.engine_output", "true"}}
+                                                                      : std::map<std::string, std::string>{}),
+                                                     *card, {});
+    const auto* validated = std::get_if<secure_frontend::ValidatedConfig>(&result);
+    expect(validated != nullptr && validated->get().logging.engine_output == on,
+           std::string{"the card's config has the server's row: "} + (on ? "on" : "off") +
+               (validated ? std::string{} : ": " + issues_text(std::get<ConfigErrors>(result))));
+  }
+}
+
+// Owner 2026-10-29 ("make the default timeout configurable per model on the card"): a card's longest answer is that
+// card's generation timeout; without a choice the server's own row holds, and that row's default is 30 minutes.
+void a_cards_longest_answer_is_its_generation_timeout() {
+  ConfigFixture f;
+  const auto parsed = secure_frontend::parse_model_card(card_text("Qwen3.8-Flash", "qwen", card_config_object(f)), f.dir);
+  const auto* card = std::get_if<ModelCard>(&parsed);
+  expect(card != nullptr, "a qwen card parses: " + (card ? std::string{} : issues_text(std::get<ConfigErrors>(parsed))));
+  if (card == nullptr) return;
+  const auto timeout = [&f, card](const std::map<std::string, std::string>& main_rows, const secure_frontend::ModelOptionValues& values) {
+    const auto result = secure_frontend::card_config(main_draft(f, main_rows), *card, values);
+    const auto* validated = std::get_if<secure_frontend::ValidatedConfig>(&result);
+    expect(validated != nullptr, "main + card validate: " + (validated ? std::string{} : issues_text(std::get<ConfigErrors>(result))));
+    return validated == nullptr ? std::int64_t{-1}
+                                : std::chrono::duration_cast<std::chrono::seconds>(validated->get().limits.engine.generation_timeout).count();
+  };
+  expect(timeout({}, {}) == 1800, "no choice, no row: half an hour: " + std::to_string(timeout({}, {})));
+  expect(timeout({{"limits.engine.generation_timeout_s", "600"}}, {}) == 600, "no choice: the server's own row");
+  expect(timeout({{"limits.engine.generation_timeout_s", "600"}}, {{"answer_minutes", std::int64_t{60}}}) == 3600,
+         "the card's choice wins over the server's row");
+}
+
 // Model downloads (plan 2026-10-23-model-downloads Task 3): strata's own verbs (pull, hf-info,
 // list) read a models.cards config with models.downloads_root as their store (roots.models), the
 // server's settings from the main config and the first usable card; without the root they refuse.
@@ -359,6 +399,8 @@ int main(int argc, char** argv) {
       {"main_config_may_not_set_card_keys", main_config_may_not_set_card_keys},
       {"card_options_reach_the_engine_arguments", card_options_reach_the_engine_arguments},
       {"glm_ram_headroom_reaches_the_engine_environment", glm_ram_headroom_reaches_the_engine_environment},
+      {"a_cards_config_keeps_the_servers_engine_output_logging", a_cards_config_keeps_the_servers_engine_output_logging},
+      {"a_cards_longest_answer_is_its_generation_timeout", a_cards_longest_answer_is_its_generation_timeout},
       {"launcher_store_config_uses_the_downloads_root", launcher_store_config_uses_the_downloads_root},
   }, failures);
 }
