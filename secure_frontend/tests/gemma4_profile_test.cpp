@@ -314,12 +314,28 @@ void plan_encodes_markers_as_single_ids_and_text_as_spm() {
     const auto retyped = mutated(literal, other_type, false);
     const auto normal = mutated(literal, 1, false);
     for (const auto* broken : {&twice, &retyped, &normal}) {
+      // <eos> typed NORMAL is a later GGUF's, not a broken one (below)
+      if (broken == &normal && std::string_view{literal} == "<eos>") continue;
       expect(!secure_frontend::find_gemma4_markers(*broken).has_value(), std::string{"no markers: "} + literal);
       const auto result = secure_frontend::make_gemma4_chat_generation_plan(request, *broken, 4096U, 16U, {}, false);
       const auto* failure = std::get_if<secure_frontend::ChatGenerationPlanError>(&result);
       expect(failure != nullptr && failure->code == secure_frontend::ChatGenerationPlanErrorCode::tokenization_failed,
              std::string{"the plan fails closed without unambiguous markers: "} + literal);
     }
+  }
+  // Owner 2026-10-28: unsloth's later Gemma 4 GGUFs (gemma-4-26B-A4B-it-Q8_0 at c099eb48, his download) type <eos>
+  // NORMAL and name <turn|> the end of a turn (eos_token_id 106), so every chat on that card was refused (his
+  // calibration's "a calibration reply failed (invalid_request)"). <eos>, once and NORMAL, is still the marker; the
+  // other six keep their types.
+  {
+    auto later = pack;
+    later.token_types[token_id(later, "<eos>")] = 1;
+    const auto found = secure_frontend::find_gemma4_markers(later);
+    const auto result = secure_frontend::make_gemma4_chat_generation_plan(request, later, 4096U, 16U, {}, false);
+    const auto* plan = std::get_if<secure_frontend::ChatGenerationPlan>(&result);
+    expect(found.has_value() && found->eos == token_id(later, "<eos>") && plan != nullptr &&
+               plan->stop_tokens == std::vector<std::size_t>{token_id(later, "<turn|>"), token_id(later, "<eos>")},
+           "a later GGUF's NORMAL <eos> is still the marker, and a stop id");
   }
   auto byte_mode = pack;
   byte_mode.mode = secure_frontend::TokenizerMode::byte_bpe;
