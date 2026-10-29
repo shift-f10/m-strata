@@ -178,6 +178,58 @@ void a_model_folder_with_its_pack_is_made_private() {
 #endif
 }
 
+// The owner, pointing his Qwen3.8 card at its MTP draft layer (2026-10-29): "when I select the mtp I get the error that
+// the folder was not made private" - upstream's draft layer holds no .gguf file. Its runtime folder (rt: dense.bin,
+// experts.bin, draft_vocab.bin and dense.txt) and the folder holding it as upstream's setup and the server's downloads lay
+// it out (rt/ beside the fetched tensors/, with upstream's notes and its intermediate mtp-q2_0.gguf) are made private;
+// a folder whose rt lacks the layer, or with any other folder beside it, is still refused.
+void an_mtp_draft_layer_folder_is_made_private() {
+  const auto root = secure_frontend_test::make_scratch_directory();
+  const auto widen = [](const std::filesystem::path& folder) {
+#if defined(_WIN32)
+    expect(secure_frontend_test::grant_everyone_write(folder), "the test widens the folder");
+#else
+    ::chmod(folder.c_str(), 0777);
+#endif
+  };
+  const auto layer = [](const std::filesystem::path& rt) {
+    secure_frontend_test::make_private_directory(rt);
+    for (const char* file : {"dense.bin", "experts.bin", "draft_vocab.bin", "dense.txt"}) secure_frontend_test::write_file(rt / file, "x");
+  };
+  const auto rt = root / "rt-only" / "rt";
+  secure_frontend_test::make_private_directory(root / "rt-only");
+  layer(rt);
+  widen(rt);
+  const auto made_rt = secure_frontend::make_model_folder_private(rt);
+  expect(!made_rt.has_value(), "the runtime folder is made private: " + (made_rt ? made_rt->message : std::string{}));
+  expect(std::holds_alternative<secure_frontend::CanonicalRoot>(secure_frontend::open_root(rt)), "and trusted afterwards");
+
+  const auto mtp = root / "mtp";
+  secure_frontend_test::make_private_directory(mtp);
+  layer(mtp / "rt");
+  secure_frontend_test::make_private_directory(mtp / "tensors");
+  secure_frontend_test::write_file(mtp / "tensors" / "mtp.fc.weight.bin", "x");
+  for (const char* file : {"mtp-manifest.json", "mtp-inventory.json", "mtp-q2_0.gguf"}) secure_frontend_test::write_file(mtp / file, "x");
+  widen(mtp);
+  const auto made_mtp = secure_frontend::make_model_folder_private(mtp);
+  expect(!made_mtp.has_value(), "the folder holding it is made private: " + (made_mtp ? made_mtp->message : std::string{}));
+  expect(std::holds_alternative<secure_frontend::CanonicalRoot>(secure_frontend::open_root(mtp)) &&
+             std::holds_alternative<secure_frontend::CanonicalRoot>(secure_frontend::open_root(mtp / "rt")),
+         "both trusted afterwards");
+
+  const auto partial = root / "partial";
+  secure_frontend_test::make_private_directory(partial);
+  secure_frontend_test::make_private_directory(partial / "rt");
+  secure_frontend_test::write_file(partial / "rt" / "dense.bin", "x");
+  expect(secure_frontend::make_model_folder_private(partial).has_value(), "an rt without the layer is still refused");
+  expect(secure_frontend::make_model_folder_private(partial / "rt").has_value(), "and so is that rt alone");
+  const auto extra = root / "extra";
+  secure_frontend_test::make_private_directory(extra);
+  layer(extra / "rt");
+  secure_frontend_test::make_private_directory(extra / "photos");
+  expect(secure_frontend::make_model_folder_private(extra).has_value(), "another folder beside the layer is still refused");
+}
+
 // §4.3: a download's destination on a drive whose root others may write (the owner's F:) - a new folder there is
 // owner-only from the start (others cannot rename or delete it), and only a new or already-private one is answered.
 void a_private_folder_is_made_in_a_shared_one() {
@@ -224,6 +276,7 @@ int main(int argc, char** argv) {
       {"a_folder_lists_its_folders_and_gguf_files", a_folder_lists_its_folders_and_gguf_files},
       {"a_model_folder_is_made_private", a_model_folder_is_made_private},
       {"a_model_folder_with_its_pack_is_made_private", a_model_folder_with_its_pack_is_made_private},
+      {"an_mtp_draft_layer_folder_is_made_private", an_mtp_draft_layer_folder_is_made_private},
       {"a_private_folder_is_made_in_a_shared_one", a_private_folder_is_made_in_a_shared_one},
   }, failures);
 }

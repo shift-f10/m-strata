@@ -748,7 +748,7 @@ secure_frontend_add_library(secure_frontend_model_cards SOURCES src/model_cards.
 # the danger zone's one-time codes and delete.
 secure_frontend_add_library(secure_frontend_card_builder SOURCES src/card_builder.cpp
     LINKS secure_frontend_model_cards secure_frontend_tokenizer_pack secure_frontend_secrets secure_frontend_json
-          secure_frontend_paths)
+          secure_frontend_paths secure_frontend_local_folders)
 
 # GUI-first start-up (spec 2026-10-27 §4.2, §4.3, §6): the local drives and folders the page may pick, and a folder
 # tree made owner-only (the install folder, a model folder).
@@ -2176,7 +2176,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_local_folders)
     secure_frontend_add_cases(secure_frontend_local_folders_tests
         volumes_are_the_local_drives a_folder_lists_its_folders_and_gguf_files a_model_folder_is_made_private
-        a_model_folder_with_its_pack_is_made_private a_private_folder_is_made_in_a_shared_one
+        a_model_folder_with_its_pack_is_made_private an_mtp_draft_layer_folder_is_made_private a_private_folder_is_made_in_a_shared_one
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # GUI-first start-up (spec 2026-10-27 §4.2): a GGUF's header (bounded), and the tokenizer read from it.

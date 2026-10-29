@@ -4,6 +4,7 @@
 #include "secure_frontend/json.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <system_error>
 
@@ -308,7 +309,17 @@ std::optional<FolderError> check_model_tool_tree(const std::filesystem::path& fo
   return std::nullopt;
 }
 
+// the MTP draft layer's runtime files as upstream's setup leaves them in mtp/rt (tools/mtp_rt.py, refresh_draft_vocab)
+constexpr std::array<std::string_view, 3> kMtpRuntimeFiles{"dense.bin", "experts.bin", "draft_vocab.bin"};
+
 }  // namespace
+
+bool holds_mtp_runtime(const std::filesystem::path& rt) {
+  std::error_code ec;
+  return std::all_of(kMtpRuntimeFiles.begin(), kMtpRuntimeFiles.end(), [&rt, &ec](const std::string_view file) {
+    return std::filesystem::is_regular_file(rt / file, ec) && !std::filesystem::is_symlink(rt / file, ec);
+  });
+}
 
 std::optional<FolderError> make_model_folder_private(const std::filesystem::path& folder) {
   if (!folder.is_absolute()) return FolderError{"the folder must be a full path"};
@@ -319,6 +330,10 @@ std::optional<FolderError> make_model_folder_private(const std::filesystem::path
   std::error_code ec;
   if (!std::filesystem::is_directory(std::filesystem::symlink_status(path, ec)) || ec) return FolderError{"there is no such folder"};
   if (is_link(path)) return FolderError{"the folder is a link; pick the folder it points to"};
+  // an MTP draft layer (owner 2026-10-29: "when I select the mtp I get the error that the folder was not made private"):
+  // its runtime folder, or the folder holding it as rt/ beside the fetched tensors/ - no .gguf file needed
+  const bool draft_layer = holds_mtp_runtime(path);
+  const bool draft_home = holds_mtp_runtime(path / "rt");
   std::size_t entries = 0;
   std::size_t tree_entries = 0;
   std::size_t models = 0;
@@ -329,7 +344,8 @@ std::optional<FolderError> make_model_folder_private(const std::filesystem::path
     if (entry_ec || is_link(it->path())) return FolderError{"the folder holds a link; only a folder of model files can be made private"};
     const auto name = utf8_name(it->path().filename());
     if (std::filesystem::is_directory(status)) {
-      if (!name || !model_tool_folder(*name)) {
+      const bool layer_folder = draft_home && name && (*name == "rt" || *name == "tensors");
+      if (!name || !(model_tool_folder(*name) || layer_folder)) {
         return FolderError{"the folder holds other folders; only a folder of model files (and their packs) can be made private"};
       }
       if (auto failure = check_model_tool_tree(it->path(), tree_entries)) return failure;
@@ -338,7 +354,7 @@ std::optional<FolderError> make_model_folder_private(const std::filesystem::path
     if (std::filesystem::is_regular_file(status) && name && gguf_name(*name)) ++models;
   }
   if (ec) return FolderError{"the folder could not be read"};
-  if (models == 0U) return FolderError{"the folder holds no .gguf file"};
+  if (models == 0U && !draft_layer && !draft_home) return FolderError{"the folder holds no .gguf file and no MTP draft layer"};
 #if !defined(_WIN32)
   struct stat info {};
   if (::lstat(path.c_str(), &info) != 0 || info.st_uid != ::geteuid()) return FolderError{"the folder belongs to another user"};

@@ -2,6 +2,7 @@
 
 #include "secure_frontend/canonical_path.hpp"
 #include "secure_frontend/json.hpp"
+#include "secure_frontend/local_folders.hpp"
 #include "secure_frontend/secret_bytes.hpp"
 #include "secure_frontend/token_generator.hpp"
 
@@ -27,8 +28,6 @@ constexpr std::int64_t kDefaultContext = 65536;
 // kCustomProfiles qwen36), the model's own context the most (its dropdown runs past 256K with YaRN; never offered here).
 constexpr std::int64_t kQwen36DefaultContext = 32768;
 constexpr std::string_view kCodeAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-// the MTP draft layer's runtime files as upstream's setup leaves them in mtp/rt (tools/mtp_rt.py, refresh_draft_vocab)
-constexpr std::array<std::string_view, 3> kMtpRuntimeFiles{"dense.bin", "experts.bin", "draft_vocab.bin"};
 
 std::string decimal(const double value) {
   char buffer[32];
@@ -86,14 +85,6 @@ std::string card_name_from(const std::string_view stem) {
   return name;
 }
 
-
-// The three runtime files of upstream's MTP draft layer in `rt`, each a regular file and not a link.
-bool holds_mtp_runtime(const std::filesystem::path& rt) {
-  std::error_code ec;
-  return std::all_of(kMtpRuntimeFiles.begin(), kMtpRuntimeFiles.end(), [&rt, &ec](const std::string_view file) {
-    return std::filesystem::is_regular_file(rt / file, ec) && !std::filesystem::is_symlink(rt / file, ec);
-  });
-}
 
 const JsonValue* object_member(const JsonValue& object, const std::string_view key) {
   const auto* members = object.if_object();

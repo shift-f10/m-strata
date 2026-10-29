@@ -280,6 +280,27 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z28 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner, pointing a Qwen3.8 card at its MTP draft layer: "when I select the mtp I get the error that the folder was
+not made private". On his RTX 5090 PC the server also logged "the MTP draft layer in ...\mtp\rt is not private (other
+users of this PC can change it): the card runs without it".
+
+- **The cause**: the page offers to make a folder others may change private (`folders/private`), and
+  `make_model_folder_private` took only a folder of model files - at least one `.gguf`, no folder but a model's packs.
+  Upstream's draft layer has no `.gguf` in `rt` (dense.bin, experts.bin, draft_vocab.bin, dense.txt), and the folder
+  holding it has `rt/` and `tensors/`: both were refused ("the folder holds no .gguf file", "the folder holds other
+  folders"), which the page showed as "The folder was not made private".
+- **The fix**: an MTP draft layer is a model folder too: its runtime folder, or the folder holding it as `rt/` beside
+  only `tensors/` (upstream's setup and the server's downloads), each tree with no link and the usual entry caps.
+  `holds_mtp_runtime` moved from `card_builder.cpp` to `local_folders` (one rule for both; card_builder now links
+  local_folders).
+- **Proof**: RED first (`an_mtp_draft_layer_folder_is_made_private`: the owner's two messages). The folder, card builder
+  and card route suites 43/43 with MSVC, Linux gcc and clang. Not run: the page's Choose... on the owner's folder.
+- **Found, not changed**: on the 5090 PC the first calibration trial's engine ended before ready ("crashed" for one card,
+  "error_exit" for another). The server never keeps the engine's stderr (engine_stdio_process.cpp, by design), so its
+  reason is not known; CUDA 13.0 needs NVIDIA driver 580 or newer, and install.ps1 checks only that a driver exists.
+
 ### Claude Code session, 2026-10-29 z27 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner's install.bat on an RTX 5090, after z26: ptxas "Instruction 'mma with block scale' not supported on .target
