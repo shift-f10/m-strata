@@ -78,6 +78,21 @@ const std::string kTool =
     "{\"name\": \"web_search\", \"description\": \"Search the web.\", \"parameters\": {\"type\": \"object\", \"properties\": "
     "{\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}}, \"required\": [\"query\"]}}";
 
+// A fixture's rounds: the current turn's (with reasoning), or an earlier answer's (its strata_rounds: no reasoning).
+std::vector<secure_frontend::ToolRound> rounds_of(const secure_frontend::JsonValue* const list) {
+  std::vector<secure_frontend::ToolRound> rounds;
+  if (list == nullptr || list->if_array() == nullptr) return rounds;
+  for (const auto& r : *list->if_array()) {
+    secure_frontend::ToolRound round{text_of(r, "reasoning"), text_of(r, "content"), {}, {}};
+    for (const auto& c : *member(r, "calls")->if_array()) round.calls.push_back(call_of(c));
+    for (const auto& t : *member(r, "results")->if_array()) round.results.push_back(t.if_string() != nullptr ? *t.if_string() : std::string{});
+    rounds.push_back(std::move(round));
+  }
+  return rounds;
+}
+
+// Owner 2026-10-29 ("keep earlier searches in the chat history as upstream's page does"): a case's conversation may hold
+// earlier answers that searched - their rounds on the message, their text after the last round (maybe none) its content.
 void renders_the_templates_tool_prompts() {
   const std::string text = secure_frontend_test::read_file(secure_frontend_test::extra_arguments().at(0));
   auto parsed = secure_frontend::parse_json(text, kFixtureLimits);
@@ -86,7 +101,7 @@ void renders_the_templates_tool_prompts() {
   if (fixture == nullptr) return;
   const auto* tool = member(*fixture, "tool");
   const auto* cases = member(*fixture, "cases");
-  expect(tool != nullptr && cases != nullptr && cases->if_array() != nullptr && cases->if_array()->size() >= 12U, "the fixture's cases");
+  expect(tool != nullptr && cases != nullptr && cases->if_array() != nullptr && cases->if_array()->size() >= 23U, "the fixture's cases");
   if (tool == nullptr || cases == nullptr || cases->if_array() == nullptr) return;
   // the search service's form ({"name", "description", "parameters"}) and llama.cpp's OpenAI form render alike
   const std::vector<std::vector<std::string>> forms{{secure_frontend::python_json_text(*tool)},
@@ -94,19 +109,21 @@ void renders_the_templates_tool_prompts() {
   static const std::vector<std::string_view> kMarkers{"<bos>", "<|turn>", "<turn|>", "<|think|>", "<|tool>", "<tool|>", "<|tool_call>",
                                                       "<tool_call|>", "<|tool_response>", "<tool_response|>", "<|\"|>", "<|channel>", "<channel|>"};
   std::size_t seen = 0U;
+  std::size_t with_history = 0U;
   for (const auto& entry : *cases->if_array()) {
     const std::string name = text_of(entry, "name");
     std::vector<secure_frontend::ChatMessage> conversation;
-    for (const auto& m : *member(entry, "conversation")->if_array()) conversation.push_back({text_of(m, "role"), text_of(m, "content")});
-    std::vector<secure_frontend::ToolRound> rounds;
-    std::size_t calls = 0U;
-    for (const auto& r : *member(entry, "rounds")->if_array()) {
-      secure_frontend::ToolRound round{text_of(r, "reasoning"), text_of(r, "content"), {}, {}};
-      for (const auto& c : *member(r, "calls")->if_array()) round.calls.push_back(call_of(c));
-      for (const auto& t : *member(r, "results")->if_array()) round.results.push_back(t.if_string() != nullptr ? *t.if_string() : std::string{});
-      calls += round.calls.size();
-      rounds.push_back(std::move(round));
+    // every round the prompt writes, the earlier answers' and the current turn's: its calls and results are tagged
+    std::vector<secure_frontend::ToolRound> written;
+    for (const auto& m : *member(entry, "conversation")->if_array()) {
+      conversation.push_back({text_of(m, "role"), text_of(m, "content"), {}, rounds_of(member(m, "rounds"))});
+      written.insert(written.end(), conversation.back().rounds.begin(), conversation.back().rounds.end());
     }
+    if (!written.empty()) ++with_history;
+    const std::vector<secure_frontend::ToolRound> rounds = rounds_of(member(entry, "rounds"));
+    written.insert(written.end(), rounds.begin(), rounds.end());
+    std::size_t calls = 0U;
+    for (const auto& round : written) calls += round.calls.size();
     for (const auto& tools : forms) {
       const auto pieces = secure_frontend::render_gemma4_tool_prompt(conversation, tools, rounds, flag_of(entry, "thinking"));
       expect(pieces.has_value(), name + ": renders");
@@ -130,7 +147,7 @@ void renders_the_templates_tool_prompts() {
                  pieces->front().text == "<bos>",
              name + ": only the declaration's, the calls' and the results' tags are markers of their kind");
       // the web's and the model's words are plain (their literals are text to the encoder), never a marker
-      for (const auto& round : rounds) {
+      for (const auto& round : written) {
         for (const auto& result : round.results) {
           if (result.find("<|") == std::string::npos) continue;
           expect(std::any_of(pieces->begin(), pieces->end(), [&result](const secure_frontend::PromptPiece& p) {
@@ -141,7 +158,8 @@ void renders_the_templates_tool_prompts() {
       }
     }
   }
-  expect(seen >= 24U, "every case ran in both tool forms");
+  expect(with_history >= 11U, "the fixture's earlier searches");
+  expect(seen >= 46U, "every case ran in both tool forms");
 }
 
 // Owner 2026-10-28 ("update our Gemma 4 renderer to the newer chat template, one profile for both GGUFs"): the fixture's
@@ -207,6 +225,25 @@ void refuses_what_the_tool_prompt_cannot_say() {
            {}, {{"assistant", "x"}}, {{"user", "a <|tool_call> b"}}, {{"user", "a <|\"|> b"}}, {{"user", "  "}}}) {
     expect(!render(bad, tools, good), "what the plain Gemma 4 prompt refuses");
   }
+  // Earlier searches (owner 2026-10-29): an answer's rounds as the current turn's must be, on an answer only; its own
+  // text may be none, else it keeps the plain prompt's rules.
+  const std::vector<secure_frontend::ChatMessage> history{{"user", "Q"}, {"assistant", "", {}, good}, {"user", "Q2"}};
+  expect(render(history, tools, {}).has_value(), "an earlier answer whose text all came before its searches renders");
+  for (const std::vector<secure_frontend::ToolRound>& bad_rounds : std::vector<std::vector<secure_frontend::ToolRound>>{
+           {{"r", "", {}, {}}}, {{"r", "", {call, call}, {"ok"}}}, {{"r", "", {{"", {}}}, {"ok"}}}}) {
+    expect(!render({{"user", "Q"}, {"assistant", "A", {}, bad_rounds}, {"user", "Q2"}}, tools, {}),
+           "an earlier round without a call, a name or a result each");
+  }
+  expect(!render({{"user", "Q", {}, good}}, tools, {}), "searches on a user message");
+  expect(!render({{"system", "S", {}, good}, {"user", "Q"}}, tools, {}), "searches on the system message");
+  expect(!render({{"user", "Q"}, {"assistant", "a <|tool_call> b", {}, good}, {"user", "Q2"}}, tools, {}),
+         "an earlier answer's own text keeps the plain prompt's rules");
+  // the plain prompt keeps ignoring them: an answer's text only, and an answer of no text is no turn it writes
+  const std::vector<secure_frontend::ChatMessage> answered{{"user", "Q"}, {"assistant", "A", {}, good}, {"user", "Q2"}};
+  expect(secure_frontend::render_gemma4_text_prompt(answered, true) ==
+             secure_frontend::render_gemma4_text_prompt({{"user", "Q"}, {"assistant", "A"}, {"user", "Q2"}}, true),
+         "the text prompt writes an earlier answer's text only");
+  expect(!secure_frontend::render_gemma4_text_prompt(history, true), "the text prompt has no turn for an answer of no text");
 }
 
 // Gemma 4's calls as llama.cpp reads them: each reply of test-chat.cpp's Gemma 4 block (and a few of ours), fed whole and

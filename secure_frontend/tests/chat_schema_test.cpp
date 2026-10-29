@@ -41,6 +41,82 @@ void parses_minimal_text_request() {
 // verbatim; with it, text/image_url parts parse into ChatMessage.parts, the image keeps its
 // data URL, and the caps fire BEFORE any decode: max_n on the count (vision.max_n) and the
 // base64 LENGTH bound on each URL (32 MiB decoded = the pin's IMAGE_URL_MAX, :2474).
+// Owner 2026-10-29: a follow-up to a long answer (a ~59,000-token HTML page) was refused "The request body is too large"
+// - the first plan's 48 KiB body and 64 KiB message - where upstream (serve/server.py: 256 MiB, no message caps) takes
+// it. The default limits take a conversation of 300 messages with an earlier answer of 200,000 characters, and a
+// prompt or an answer the context window holds.
+void default_limits_take_a_long_conversation() {
+  std::string body = R"({"model":"m","messages":[)";
+  for (int i = 0; i < 300; ++i) {
+    body += std::string{i == 0 ? "" : ","} + R"({"role":")" + (i % 2 == 0 ? "user" : "assistant") + R"(","content":")" +
+            (i == 1 ? std::string(200000U, 'x') : std::string{"turn"}) + R"("})";
+  }
+  body += R"(,{"role":"user","content":"and now?"}],"max_tokens":60000})";
+  const auto request = secure_frontend::parse_chat_completion_request(body);
+  expect(request.has_value() && request->messages.size() == 301U && request->messages[1].content.size() == 200000U &&
+             request->max_tokens == 60000U,
+         "a long conversation is taken by the default limits (body " + std::to_string(body.size()) + " bytes)");
+  const secure_frontend::ChatSchemaLimits defaults;
+  expect(defaults.max_body_bytes >= 256U * 1024U * 1024U - 16384U && defaults.max_completion_tokens >= 1048576U,
+         "as upstream: a 256 MiB request, tokens bounded by the context window");
+}
+
+// Owner 2026-10-29 ("keep earlier searches in the chat history as upstream's page does"): an earlier answer that
+// searched comes back with its rounds - per round the text it wrote before the calls, the calls and one result each
+// (upstream's page sends them as assistant tool_calls and `tool` messages; ours, which takes no tool messages from
+// clients, as this field of the assistant message). Its own text is the answer's text after the last round and may be
+// empty then. Anything else is refused: rounds on another role, an empty list, calls and results that do not pair, a
+// call without a name or with arguments that are not an object, an unknown key, a result that is not text.
+void earlier_searches_ride_on_an_assistant_message() {
+  const std::string head = R"({"model":"m","messages":[{"role":"user","content":"Who won?"},)";
+  const std::string tail = R"(,{"role":"user","content":"Who scored?"}]})";
+  const std::string round =
+      R"({"content":"Let me look.","calls":[{"name":"web_search","arguments":{"query":"final","max_results":3}}],"results":["1. Final report"]})";
+  const auto parsed = secure_frontend::parse_chat_completion_request(
+      head + R"({"role":"assistant","content":"Spain won.","strata_rounds":[)" + round + "," +
+      R"({"content":"","calls":[{"name":"web_search","arguments":{"query":"a"}},{"name":"web_search","arguments":{"query":"b"}}],"results":["ra",""]}]})" +
+      tail);
+  expect(parsed.has_value() && parsed->messages.size() == 3U, "the conversation parses with its earlier searches");
+  if (parsed.has_value() && parsed->messages.size() == 3U) {
+    const auto& answer = parsed->messages[1];
+    expect(answer.content == "Spain won." && answer.rounds.size() == 2U, "the answer's text and its two rounds");
+    if (answer.rounds.size() == 2U) {
+      const auto& first = answer.rounds[0];
+      expect(first.content == "Let me look." && first.reasoning.empty() && first.calls.size() == 1U && first.results.size() == 1U &&
+                 first.calls[0].name == "web_search" && first.calls[0].arguments.size() == 2U &&
+                 first.calls[0].arguments[0].name == "query" && first.calls[0].arguments[0].value.if_string() != nullptr &&
+                 *first.calls[0].arguments[0].value.if_string() == "final" && first.calls[0].arguments[1].value.if_integer() != nullptr &&
+                 *first.calls[0].arguments[1].value.if_integer() == 3 && first.results[0] == "1. Final report",
+             "a round: its text, its call with its arguments in order, its result");
+      expect(answer.rounds[1].calls.size() == 2U && answer.rounds[1].results == std::vector<std::string>{"ra", ""},
+             "two calls in a round, each with its result (an empty one too)");
+    }
+    expect(parsed->messages[0].rounds.empty() && parsed->messages[2].rounds.empty(), "other messages carry none");
+  }
+  const auto all_before = secure_frontend::parse_chat_completion_request(
+      head + R"({"role":"assistant","content":"","strata_rounds":[)" + round + "]}" + tail);
+  expect(all_before.has_value() && all_before->messages[1].content.empty() && all_before->messages[1].rounds.size() == 1U,
+         "an answer whose text all came before its searches: empty text with its rounds");
+  const auto refused = [&head, &tail](const std::string& message, const std::string& why) {
+    expect(!secure_frontend::parse_chat_completion_request(head + message + tail).has_value(), why + " is refused");
+  };
+  refused(R"({"role":"assistant","content":""})", "an empty answer without rounds");
+  refused(R"({"role":"assistant","content":"x","strata_rounds":[]})", "an empty list of rounds");
+  refused(R"({"role":"user","content":"x","strata_rounds":[)" + round + "]}", "rounds on a user message");
+  refused(R"({"role":"assistant","content":"x","strata_rounds":[{"content":"","calls":[],"results":[]}]})", "a round without calls");
+  refused(R"({"role":"assistant","content":"x","strata_rounds":[{"content":"","calls":[{"name":"web_search","arguments":{}}],"results":[]}]})",
+          "calls and results that do not pair");
+  refused(R"({"role":"assistant","content":"x","strata_rounds":[{"content":"","calls":[{"arguments":{}}],"results":["r"]}]})",
+          "a call without a name");
+  refused(R"({"role":"assistant","content":"x","strata_rounds":[{"content":"","calls":[{"name":"web_search","arguments":"q"}],"results":["r"]}]})",
+          "arguments that are not an object");
+  refused(R"({"role":"assistant","content":"x","strata_rounds":[{"content":"","calls":[{"name":"web_search","arguments":{}}],"results":[1]}]})",
+          "a result that is not text");
+  refused(R"({"role":"assistant","content":"x","strata_rounds":[{"content":"","reasoning":"r","calls":[{"name":"web_search","arguments":{}}],"results":["r"]}]})",
+          "an unknown key in a round");
+  refused(R"({"role":"assistant","content":"x","strata_rounds":{"content":""}})", "rounds that are not a list");
+}
+
 void image_url_parts_accepted_only_for_vision_models() {
   const std::string body =
       R"({"model":"m","messages":[{"role":"user","content":[)"
@@ -481,6 +557,8 @@ int main(int argc, char** argv) {
       {"reasoning_effort_per_request", reasoning_effort_per_request},
       {"strata_search_per_request", strata_search_per_request},
       {"parses_minimal_text_request", parses_minimal_text_request},
+      {"default_limits_take_a_long_conversation", default_limits_take_a_long_conversation},
+      {"earlier_searches_ride_on_an_assistant_message", earlier_searches_ride_on_an_assistant_message},
       {"image_url_parts_accepted_only_for_vision_models", image_url_parts_accepted_only_for_vision_models},
       {"image_part_caps_and_shape_are_checked_before_decode", image_part_caps_and_shape_are_checked_before_decode},
       {"rejects_unsupported_and_unsafe_features", rejects_unsupported_and_unsafe_features},

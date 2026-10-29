@@ -103,18 +103,44 @@ bool valid_utf8(const std::string_view value) {
   return true;
 }
 
-// The text a turn carries: bounded, valid UTF-8, no C0 control but \t \n \r, no Gemma literal,
-// and something left after trim. Returns the trimmed view, empty when refused.
-std::string_view safe_text(const ChatMessage& message) {
-  const std::string_view content = message.content;
-  if (!message.parts.empty() || content.empty() || content.size() > kMaximumMessageBytes || !valid_utf8(content)) return {};
+// Text a turn may carry: bounded, valid UTF-8, no C0 control but \t \n \r, no Gemma literal.
+bool safe_content(const std::string_view content) {
+  if (content.size() > kMaximumMessageBytes || !valid_utf8(content)) return false;
   for (const unsigned char byte : content) {
-    if (byte < 0x20U && byte != '\n' && byte != '\r' && byte != '\t') return {};
+    if (byte < 0x20U && byte != '\n' && byte != '\r' && byte != '\t') return false;
   }
   for (const auto literal : kControlLiterals) {
-    if (content.find(literal) != std::string_view::npos) return {};
+    if (content.find(literal) != std::string_view::npos) return false;
   }
-  return gemma4_trim(content);
+  return true;
+}
+
+// The text a turn carries: safe_content, and something left after trim. Returns the trimmed view, empty when refused.
+std::string_view safe_text(const ChatMessage& message) {
+  if (!message.parts.empty() || message.content.empty() || !safe_content(message.content)) return {};
+  return gemma4_trim(message.content);
+}
+
+// A round the template can write: a call or more, each named, and one result each.
+bool writable(const ToolRound& round) {
+  return !round.calls.empty() && round.results.size() == round.calls.size() &&
+         std::none_of(round.calls.begin(), round.calls.end(), [](const ToolCall& call) { return call.name.empty(); });
+}
+
+// The text a conversation turn writes, nullopt when refused: safe_text's, never empty - but where the rounds are written
+// (the tool prompt, owner 2026-10-29: "keep earlier searches in the chat history as upstream's page does") an earlier
+// answer that searched may have none of its own (all of it came before its searches), and only an answer has rounds.
+std::optional<std::string_view> turn_text(const ChatMessage& message, const bool rounds_written) {
+  if (rounds_written && !message.rounds.empty()) {
+    if (message.role != "assistant" || !message.parts.empty() || !safe_content(message.content) ||
+        !std::all_of(message.rounds.begin(), message.rounds.end(), writable)) {
+      return std::nullopt;
+    }
+    return gemma4_trim(message.content);
+  }
+  const std::string_view text = safe_text(message);
+  if (text.empty()) return std::nullopt;
+  return text;
 }
 
 bool append_bounded(std::string* const prompt, const std::string_view text) {
@@ -126,6 +152,41 @@ bool append_bounded(std::string* const prompt, const std::string_view text) {
 bool append_turn(std::string* const prompt, const std::string_view role, const std::string_view prefix, const std::string_view text) {
   return append_bounded(prompt, kTurnOpen) && append_bounded(prompt, role) && append_bounded(prompt, "\n") &&
          append_bounded(prompt, prefix) && append_bounded(prompt, text) && append_bounded(prompt, kTurnClose);
+}
+
+// render_gemma4_text_prompt; with `rounds_written` the tool prompt's check of the same conversation (turn_text).
+std::optional<std::string> text_prompt(const std::vector<ChatMessage>& messages, const bool thinking, const bool rounds_written) {
+  if (messages.empty() || messages.size() > kMaximumMessages) return std::nullopt;
+  std::string prompt;
+  prompt.reserve(256U);
+  if (!append_bounded(&prompt, kBos)) return std::nullopt;
+
+  std::size_t index = 0U;
+  const bool has_system = messages.front().role == "system";
+  if (has_system || thinking) {
+    std::string_view system_text;
+    if (has_system) {
+      const auto text = turn_text(messages.front(), rounds_written);
+      if (!text) return std::nullopt;
+      system_text = *text;
+      index = 1U;
+    }
+    if (!append_turn(&prompt, "system", thinking ? kThinkLine : std::string_view{}, system_text)) return std::nullopt;
+  }
+  if (index == messages.size()) return std::nullopt;
+
+  bool expect_user = true;
+  for (; index < messages.size(); ++index) {
+    const ChatMessage& message = messages[index];
+    if (message.role != (expect_user ? "user" : "assistant")) return std::nullopt;
+    const auto text = turn_text(message, rounds_written);
+    if (!text || !append_turn(&prompt, expect_user ? "user" : "model", {}, *text)) return std::nullopt;
+    expect_user = !expect_user;
+  }
+  // A generation prompt follows a user turn only.
+  if (expect_user || !append_bounded(&prompt, kTurnOpen) || !append_bounded(&prompt, "model\n")) return std::nullopt;
+  if (!thinking && !append_bounded(&prompt, kClosedChannel)) return std::nullopt;
+  return prompt;
 }
 
 // ---- web search (owner 2026-10-28): the template's tool macros over JSON values ----
@@ -505,49 +566,17 @@ std::string_view gemma4_trim(std::string_view text) {
 const std::array<std::string_view, 24U>& gemma4_control_literals() { return kControlLiterals; }
 
 std::optional<std::string> render_gemma4_text_prompt(const std::vector<ChatMessage>& messages, const bool thinking) {
-  if (messages.empty() || messages.size() > kMaximumMessages) return std::nullopt;
-  std::string prompt;
-  prompt.reserve(256U);
-  if (!append_bounded(&prompt, kBos)) return std::nullopt;
-
-  std::size_t index = 0U;
-  const bool has_system = messages.front().role == "system";
-  if (has_system || thinking) {
-    std::string_view system_text;
-    if (has_system) {
-      system_text = safe_text(messages.front());
-      if (system_text.empty()) return std::nullopt;
-      index = 1U;
-    }
-    if (!append_turn(&prompt, "system", thinking ? kThinkLine : std::string_view{}, system_text)) return std::nullopt;
-  }
-  if (index == messages.size()) return std::nullopt;
-
-  bool expect_user = true;
-  for (; index < messages.size(); ++index) {
-    const ChatMessage& message = messages[index];
-    if (message.role != (expect_user ? "user" : "assistant")) return std::nullopt;
-    const std::string_view text = safe_text(message);
-    if (text.empty() || !append_turn(&prompt, expect_user ? "user" : "model", {}, text)) return std::nullopt;
-    expect_user = !expect_user;
-  }
-  // A generation prompt follows a user turn only.
-  if (expect_user || !append_bounded(&prompt, kTurnOpen) || !append_bounded(&prompt, "model\n")) return std::nullopt;
-  if (!thinking && !append_bounded(&prompt, kClosedChannel)) return std::nullopt;
-  return prompt;
+  // an earlier answer's searches are not this prompt's: its text only (turn_text)
+  return text_prompt(messages, thinking, false);
 }
 
 std::optional<std::vector<PromptPiece>> render_gemma4_tool_prompt(const std::vector<ChatMessage>& messages,
                                                                   const std::span<const std::string> tools,
                                                                   const std::span<const ToolRound> rounds, const bool thinking) {
-  // The conversation obeys every rule of the plain prompt (roles, order, literals, sizes).
-  if (tools.empty() || !render_gemma4_text_prompt(messages, thinking)) return std::nullopt;
-  for (const auto& round : rounds) {
-    if (round.calls.empty() || round.results.size() != round.calls.size()) return std::nullopt;
-    for (const auto& call : round.calls) {
-      if (call.name.empty()) return std::nullopt;
-    }
-  }
+  // The conversation obeys every rule of the plain prompt (roles, order, literals, sizes), but an earlier answer that
+  // searched: its rounds as the current turn's must be, and its own text may be none (turn_text).
+  if (tools.empty() || !text_prompt(messages, thinking, true)) return std::nullopt;
+  if (!std::all_of(rounds.begin(), rounds.end(), writable)) return std::nullopt;
   std::vector<JsonValue> declared;
   for (const auto& tool : tools) {
     auto parsed = parse_json(tool, kToolLimits);
@@ -578,9 +607,25 @@ std::optional<std::vector<PromptPiece>> render_gemma4_tool_prompt(const std::vec
   out.marker("<turn|>");
   out.text("\n");
   for (; index < messages.size(); ++index) {
+    const ChatMessage& message = messages[index];
     out.marker(kTurnOpen);
-    out.text(messages[index].role == "assistant" ? "model\n" : "user\n");
-    out.text(safe_text(messages[index]));
+    out.text(message.role == "assistant" ? "model\n" : "user\n");
+    // An earlier answer that searched, as the newer template writes the messages upstream's page sends for it (serve/
+    // web/app.js assistantMessages: per round an assistant message of the text before its calls with the calls, one
+    // `tool` message per result, then the rest of the answer when there is any; serve/frontend.py openai_to_messages
+    // drops the ids): one model turn they all continue (continue_same_model_turn, continues_into_next), each round its
+    // calls, their results, then its text (strip_thinking), and the answer's own text last; a user turn follows, so the
+    // turn closes. Its reasoning is not written: the thinking gate drops it before the last user message. Every result
+    // is named after the round's last call, as the template's tool_call_id lookup names it (no id on either side, so
+    // every call matches and the last one wins).
+    for (const auto& round : message.rounds) {
+      for (const auto& call : round.calls) {
+        if (!tool_call(out, call)) return std::nullopt;
+      }
+      for (const auto& result : round.results) tool_response(out, round.calls.back().name, result);
+      out.plain(strip_thinking(gemma4_trim(round.content)));
+    }
+    out.text(safe_text(message));
     out.marker("<turn|>");
     out.text("\n");
   }

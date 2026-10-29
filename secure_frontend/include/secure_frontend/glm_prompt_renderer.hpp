@@ -42,6 +42,10 @@ namespace secure_frontend {
 // Python strips them. The pieces as render_qwen_tool_prompt's (the template's special tokens markers, its text and the
 // client's text, the model's words and the results plain). nullopt where render_glm53_text_prompt fails, and for no
 // tools or a round with no call or a result count unlike its calls.
+// An earlier answer that searched (ChatMessage::rounds, owner 2026-10-29: "keep earlier searches in the chat history as
+// upstream's page does") is written as the template writes the messages upstream's page sends for it: per round
+// its text before the calls and the calls, the results; then its own text, which it may lack (the text prompt
+// refuses that; a chat without the tool gets answers_as_text). Its rounds obey the rules of this turn's.
 [[nodiscard]] std::optional<std::vector<PromptPiece>> render_glm53_tool_prompt(const std::vector<ChatMessage>& messages,
                                                                               std::span<const std::string> tools,
                                                                               std::span<const ToolRound> rounds);
@@ -82,6 +86,10 @@ namespace secure_frontend {
 // generation tail of render_raon1_text_prompt. Every body is stripped as Jinja's trim strips (Python's whitespace);
 // the pieces as render_qwen_tool_prompt's. nullopt where render_raon1_text_prompt fails, and for no tools or a round
 // with no call or a result count unlike its calls.
+// An earlier answer that searched (ChatMessage::rounds, owner 2026-10-29: "keep earlier searches in the chat history as
+// upstream's page does") is written as the template writes the messages upstream's page sends for it: per round
+// its text before the calls and the calls, the results; then its own text, which it may lack (the text prompt
+// refuses that; a chat without the tool gets answers_as_text). Its rounds obey the rules of this turn's.
 [[nodiscard]] std::optional<std::vector<PromptPiece>> render_raon1_tool_prompt(const std::vector<ChatMessage>& messages,
                                                                               std::span<const std::string> tools,
                                                                               std::span<const ToolRound> rounds, bool thinking);

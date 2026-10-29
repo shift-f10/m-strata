@@ -1,3 +1,4 @@
+#include "secure_frontend/config_defaults.hpp"
 #include "secure_frontend/api_errors.hpp"
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/request_router.hpp"
@@ -108,12 +109,13 @@ void dos01_body_over_limit_is_413_before_reading() {
   if (!server) return;
   auto c = raw_http::Connection::open("127.0.0.1", server->port());
   const std::string head = "POST /v1/chat/completions HTTP/1.1\r\nHost: " + authority(*server) + "\r\n" + raw_http::bearer(token()) +
-                           "\r\nContent-Type: application/json\r\nContent-Length: 49153\r\n\r\n";
+                           "\r\nContent-Type: application/json\r\nContent-Length: " +
+                           std::to_string(secure_frontend::config_defaults::kChatMaxBodyBytes + 1) + "\r\n\r\n";
   const auto started = std::chrono::steady_clock::now();
   expect(c && c->send(head), "header only");
   const auto r = raw_http::parse_response(c ? c->read_until_close(5s) : "");
   expect(r && r->status == 413 && r->body == secure_frontend::render_error_body(ApiError::request_too_large),
-         "49153 > max_body_bytes: 413 after auth, body never read");
+         "one byte over max_body_bytes (the default, upstream's scale since 2026-10-29): 413 after auth, body never read");
   expect(std::chrono::steady_clock::now() - started < 1s, "answered at once");
 }
 
@@ -122,7 +124,8 @@ void dos01_content_length_over_request_limit_is_413_before_auth() {
   if (!server) return;
   auto c = raw_http::Connection::open("127.0.0.1", server->port());
   const auto started = std::chrono::steady_clock::now();
-  expect(c && c->send("POST /v1/chat/completions HTTP/1.1\r\nHost: " + authority(*server) + "\r\nContent-Length: 70000\r\n\r\n"),
+  expect(c && c->send("POST /v1/chat/completions HTTP/1.1\r\nHost: " + authority(*server) + "\r\nContent-Length: " +
+                      std::to_string(secure_frontend::config_defaults::kMaxRequestBytes + 1) + "\r\n\r\n"),
          "no token, no body");
   const auto r = raw_http::parse_response(c ? c->read_until_close(5s) : "");
   expect(r && r->status == 413, "413 (a global limit), not 401");
@@ -344,7 +347,9 @@ void web04_default_emits_no_cors_header_anywhere() {
       "GET /health HTTP/1.0\r\nHost: " + a + "\r\n\r\n",
       "GET /" + std::string(5000, 'a') + " HTTP/1.1\r\nHost: " + a + "\r\n\r\n",
       raw_http::request("GET", "/health", a, {"X-Fill: " + std::string(17000, 'f')}),
-      raw_http::request("POST", "/v1/chat/completions", a, {}, std::string(70000, ' '))};
+      // over the request limit (256 MiB since 2026-10-29): only its header is sent, the 413 comes before auth
+      "POST /v1/chat/completions HTTP/1.1\r\nHost: " + a + "\r\nContent-Length: " +
+          std::to_string(secure_frontend::config_defaults::kMaxRequestBytes + 1) + "\r\n\r\n"};
   std::set<int> statuses;
   for (const auto& request : requests) {
     const auto r = raw(*server, request);

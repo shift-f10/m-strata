@@ -12,6 +12,7 @@
 #include "secure_frontend/generation_run.hpp"
 #include "secure_frontend/host_readings.hpp"
 
+#include <utility>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -108,6 +109,8 @@ class ServeMonitor final : public GenerationMeter {
     std::optional<std::chrono::steady_clock::time_point> first_token{};
     std::optional<std::chrono::steady_clock::time_point> last_token{};
     std::optional<DoneFigures> figures{};
+    // the live rate's samples (upstream's self.rate: (time, generated) per token, the newest kRateSamples)
+    std::deque<std::pair<std::chrono::steady_clock::time_point, std::size_t>> rate{};
   };
   struct Finished final {
     std::int64_t time{0};

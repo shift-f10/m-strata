@@ -346,6 +346,11 @@ void the_search_service_offers_web_search_and_runs_it() {
                                          R"("parameters": {"type": "object", "properties": {"query": {"type": "string")") != std::string::npos,
            "as the template's tojson writes it, the date after the description: " + offer->template_json);
   }
+  // owner 2026-10-28: the note a search turn's system message carries - the date, and to search for anything recent
+  expect(service.system_note() ==
+             "Today's date is 2026-10-27. What you know may be out of date: for anything recent, or anything that may have "
+             "changed, search the web with web_search before you answer.",
+         "the system turn's note: " + service.system_note());
   const secure_frontend::ToolCall call{"web_search", {{"query", secure_frontend::JsonValue::make_string("rust 1.90")},
                                                       {"max_results", secure_frontend::JsonValue::make_integer(2)}}};
   const auto found = service.run(call, [] { return false; });

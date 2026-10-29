@@ -66,6 +66,10 @@ struct MinimaxThinking final {
 // tools are JSON texts, each a function ({"name", "description", "parameters"}) or OpenAI's form carrying one. The
 // model's words, the calls and the results are plain. nullopt: what the text prompt refuses, no tools, a tool that is
 // not an object with a name, a round without calls or with a result missing, or an unnamed call.
+// An earlier answer that searched (ChatMessage::rounds, owner 2026-10-29: "keep earlier searches in the chat history as
+// upstream's page does") is written as the template writes the messages upstream's page sends for it: per round
+// its text before the calls and the calls, the results; then its own text, which it may lack (the text prompt
+// refuses that; a chat without the tool gets answers_as_text). Its rounds obey the rules of this turn's.
 [[nodiscard]] std::optional<std::vector<PromptPiece>> render_minimax_tool_prompt(const std::vector<ChatMessage>& messages,
                                                                                 std::span<const std::string> tools,
                                                                                 std::span<const ToolRound> rounds,

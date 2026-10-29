@@ -83,6 +83,31 @@ struct Clocked final {
   }
 };
 
+// Owner 2026-10-29: "in the monitor section, the speed portion does not seem to update in realtime". It was the mean since
+// the first token, which barely moves in a long answer; upstream's live rate (serve/server.py _rate_of, RATE_WINDOW_S
+// 2.0, RATE_MIN_SPAN_S 0.25, at most 32 samples) is the tokens over the last two seconds' samples, and the mean so far
+// (generated over the time since the first token, at least 0.25 s) before there is such a span or after a stall.
+void the_live_speed_is_the_last_two_seconds() {
+  Clocked c;
+  c.monitor.generation_started(12, 4096, 8192);
+  c.now += 100ms;
+  c.monitor.on_token(1);
+  for (std::size_t n = 2; n <= 11; ++n) {  // one token a second for ten seconds
+    c.now += 1s;
+    c.monitor.on_token(n);
+  }
+  for (std::size_t n = 12; n <= 31; ++n) {  // then twenty in one second
+    c.now += 50ms;
+    c.monitor.on_token(n);
+  }
+  auto json = c.json("generating");
+  expect(close_to(number(at(at(&json, "live"), "tok_s")), 10.5),
+         "the last two seconds: 21 tokens in 2 s, not the mean since the first token (30 in 11 s)");
+  c.now += 5s;  // no token for five seconds
+  json = c.json("generating");
+  expect(close_to(number(at(at(&json, "live"), "tok_s")), 31.0 / 16.1), "after a stall: the mean since the first token");
+}
+
 // --- nvidia-smi ---------------------------------------------------------------------------
 void parses_nvidia_smi_lines() {
   const auto real = secure_frontend::parse_nvidia_smi_line("NVIDIA GeForce RTX 4080 SUPER, 0, 1036, 16376, 34, 8.66, 320.00, 1, 4, 16");
@@ -749,6 +774,7 @@ void conversation_cache_reaches_the_json() {
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"parses_nvidia_smi_lines", parses_nvidia_smi_lines},
+      {"the_live_speed_is_the_last_two_seconds", the_live_speed_is_the_last_two_seconds},
       {"engine_readings_reach_the_engine_block", engine_readings_reach_the_engine_block},
       {"engine_change_drops_the_old_engines_readings", engine_change_drops_the_old_engines_readings},
       {"nvidia_smi_command_is_fixed", nvidia_smi_command_is_fixed},

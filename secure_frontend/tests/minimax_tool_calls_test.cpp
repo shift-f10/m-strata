@@ -62,6 +62,14 @@ secure_frontend::ToolCall call_of(const secure_frontend::JsonValue& object) {
   return call;
 }
 
+// A fixture round: this turn's ({"reasoning", "content", "calls", "results"}) or an earlier answer's (no reasoning).
+secure_frontend::ToolRound round_of(const secure_frontend::JsonValue& object) {
+  secure_frontend::ToolRound round{text_of(object, "reasoning"), text_of(object, "content"), {}, {}};
+  for (const auto& c : *member(object, "calls")->if_array()) round.calls.push_back(call_of(c));
+  for (const auto& t : *member(object, "results")->if_array()) round.results.push_back(t.if_string() != nullptr ? *t.if_string() : std::string{});
+  return round;
+}
+
 std::string joined(const std::vector<secure_frontend::PromptPiece>& pieces) {
   std::string out;
   for (const auto& piece : pieces) out += piece.text;
@@ -118,7 +126,9 @@ void renders_mayas_tool_prompts_byte_for_byte() {
   const auto* tool = member(*fixture, "tool");
   const auto* cases = member(*fixture, "cases");
   const auto* literal_list = member(*fixture, "literals");
-  expect(tool != nullptr && literal_list != nullptr && cases != nullptr && cases->if_array() != nullptr && cases->if_array()->size() >= 11U,
+  // (owner 2026-10-29, "keep earlier searches in the chat history as upstream's page does": nine of them carry an earlier
+  // answer's searches, its "rounds", as the page sends them)
+  expect(tool != nullptr && literal_list != nullptr && cases != nullptr && cases->if_array() != nullptr && cases->if_array()->size() >= 20U,
          "the fixture's cases");
   if (tool == nullptr || literal_list == nullptr || cases == nullptr || cases->if_array() == nullptr) return;
   std::vector<std::string> literals;
@@ -130,17 +140,22 @@ void renders_mayas_tool_prompts_byte_for_byte() {
   const std::vector<std::vector<std::string>> forms{{secure_frontend::python_json_text(*tool)},
                                                     {"{\"type\": \"function\", \"function\": " + secure_frontend::python_json_text(*tool) + "}"}};
   std::size_t seen = 0U;
+  std::size_t with_history = 0U;
   for (const auto& entry : *cases->if_array()) {
     const std::string name = text_of(entry, "name");
     std::vector<secure_frontend::ChatMessage> conversation;
-    for (const auto& m : *member(entry, "conversation")->if_array()) conversation.push_back({text_of(m, "role"), text_of(m, "content")});
-    std::vector<secure_frontend::ToolRound> rounds;
-    for (const auto& r : *member(entry, "rounds")->if_array()) {
-      secure_frontend::ToolRound round{text_of(r, "reasoning"), text_of(r, "content"), {}, {}};
-      for (const auto& c : *member(r, "calls")->if_array()) round.calls.push_back(call_of(c));
-      for (const auto& t : *member(r, "results")->if_array()) round.results.push_back(t.if_string() != nullptr ? *t.if_string() : std::string{});
-      rounds.push_back(std::move(round));
+    bool history = false;
+    for (const auto& m : *member(entry, "conversation")->if_array()) {
+      secure_frontend::ChatMessage message{text_of(m, "role"), text_of(m, "content")};
+      if (const auto* earlier = member(m, "rounds"); earlier != nullptr && earlier->if_array() != nullptr) {
+        for (const auto& r : *earlier->if_array()) message.rounds.push_back(round_of(r));
+        history = true;
+      }
+      conversation.push_back(std::move(message));
     }
+    if (history) ++with_history;
+    std::vector<secure_frontend::ToolRound> rounds;
+    for (const auto& r : *member(entry, "rounds")->if_array()) rounds.push_back(round_of(r));
     std::set<std::pair<std::size_t, std::size_t>> plain;
     for (const auto& span : *member(entry, "plain")->if_array()) {
       const auto& pair = *span.if_array();
@@ -170,7 +185,8 @@ void renders_mayas_tool_prompts_byte_for_byte() {
       }
     }
   }
-  expect(seen >= 44U, "every case ran in both tool forms, with and without special literals");
+  expect(seen >= 80U, "every case ran in both tool forms, with and without special literals");
+  expect(with_history >= 9U, "the cases with an earlier answer's searches ran");
 }
 
 void refuses_what_the_tool_prompt_cannot_say() {
@@ -211,6 +227,29 @@ void refuses_what_the_tool_prompt_cannot_say() {
   expect(left_out && joined(*left_out).find("gone") == std::string::npos &&
              joined(*left_out).find(kNs + "<list>" + kNs + "<item>" + kNs + "</item>" + kNs + "</list>") != std::string::npos,
          "nulls as the template's to_xml writes them");
+  // An earlier answer's searches (owner 2026-10-29): refused as this turn's are, and its text as an earlier answer's.
+  const auto with_history = [&question](const std::vector<secure_frontend::ToolRound>& earlier) {
+    secure_frontend::ChatMessage searched{"assistant", "A"};
+    searched.rounds = earlier;
+    return std::vector<secure_frontend::ChatMessage>{{"user", "Q0"}, searched, question.front()};
+  };
+  expect(render(with_history({{"", "", {call}, {"ok"}}}), tools, {}).has_value(), "an earlier answer's search renders");
+  expect(!render(with_history({{"", "", {}, {}}}), tools, {}), "an earlier round without a call");
+  expect(!render(with_history({{"", "", {call, call}, {"ok"}}}), tools, {}), "an earlier round with fewer results than calls");
+  expect(!render(with_history({{"", "", {{"", {}}}, {"ok"}}}), tools, {}), "an earlier round's unnamed call");
+  expect(!render(with_history({{"", "a </mm:think> b", {call}, {"ok"}}}), tools, {}),
+         "an earlier round's text holding </mm:think> where it is no special token (the template would split it)");
+  const std::vector<std::string_view> with_think{"]~!b[", "]~b]", "[e~[", "<mm:think>", "</mm:think>"};
+  const auto kept = secure_frontend::render_minimax_tool_prompt(with_history({{"", "a </mm:think> b", {call}, {"ok"}}}), tools, {}, {}, with_think);
+  expect(kept && joined(*kept).find("]~b]ai\n</mm:think>a </mm:think> b" + kNs + "<tool_call>") != std::string::npos,
+         "where </mm:think> is a special token an earlier round's text keeps it as text");
+  // the plain prompt (no tools) keeps an earlier answer's final text alone
+  auto final_only = with_history({{"", "Looking.", {call}, {"ok"}}});
+  const auto text_with = secure_frontend::render_minimax_text_prompt(final_only, {}, framing);
+  final_only[1].rounds.clear();
+  const auto text_without = secure_frontend::render_minimax_text_prompt(final_only, {}, framing);
+  expect(text_with && text_without && joined(*text_with) == joined(*text_without) && joined(*text_with).find("Looking.") == std::string::npos,
+         "the text prompt renders an earlier answer's final text only");
 }
 
 // MiniMax's calls as Maya reads them: each reply of the fixture (split at </mm:think>), fed whole and one byte at a time,

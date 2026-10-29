@@ -746,6 +746,21 @@ void web_ui_chat_can_turn_search_off() {
   expect(js.find("if (s.search === false && searchOffered()) { body.strata_search = false; }") != std::string::npos,
          "switched off, the chat asks for no search");
   expect(js.find("search: true") != std::string::npos, "on by default");
+  // Owner 2026-10-29 ("keep earlier searches in the chat history as upstream's page does"): the page keeps each call
+  // (its round, name and arguments, where the answer's text was then) and the result the model read; an answer that
+  // searched goes back with its rounds - per round the text before its calls, the calls and their results, then its
+  // own text after the last round (upstream's assistantMessages) - as strata_rounds, which only this server reads.
+  expect(js.find("run.calls.push({ round: search.round, name: String(search.name || \"\"), arguments: callArguments(search), at: run.answer.length,") !=
+                 std::string::npos &&
+             js.find("if (search.skipped === true) { pending.skipped = true; } else { pending.result = String(search.text || \"\"); }") !=
+                 std::string::npos,
+         "each call is kept with where the answer's text was, then its result (a skipped one never ran)");
+  expect(js.find("function roundsOf(calls, text) {") != std::string::npos &&
+             js.find("rounds.push({ content: text.slice(pos, at).trim(), calls: group.map(function (c) { return { name: c.name, arguments: c.arguments }; }),") !=
+                 std::string::npos,
+         "the calls that ran are grouped into rounds, each with the text before it");
+  expect(js.find("return { role: m.role, content: m.content.slice(m.roundsEnd || 0).trim(), strata_rounds: m.rounds };") != std::string::npos,
+         "an answer that searched goes back with its rounds and the text after them");
 }
 
 // Owner 2026-10-27 (folders "other users can access", used as they are): the Settings sub-tab's Model folders section -

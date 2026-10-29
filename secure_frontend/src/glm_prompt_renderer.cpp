@@ -79,9 +79,31 @@ bool raon_safe_content(const std::string_view content) {
 // The jinja renders each message as content|trim, which strips Python's whitespace (Unicode spaces too) at both ends.
 std::string_view raon_trim(const std::string_view value) { return python_strip(value); }
 
-}  // namespace
+// Rounds the tool prompts can say: each with a call at least, every call named, one result per call.
+bool sayable(const std::span<const ToolRound> rounds) {
+  for (const auto& round : rounds) {
+    if (round.calls.empty() || round.results.size() != round.calls.size()) return false;
+    for (const auto& call : round.calls) {
+      if (call.name.empty()) return false;
+    }
+  }
+  return true;
+}
 
-std::optional<std::string> render_glm53_text_prompt(const std::vector<ChatMessage>& messages) {
+// An earlier answer's searches (owner 2026-10-29, "keep earlier searches in the chat history as upstream's page
+// does"), as the tool prompts take them: on an answer only, sayable as this turn's rounds are. Such an answer needs no
+// text of its own (all of it came before its searches); the text it has obeys the plain prompt's rules.
+bool history_ok(const ChatMessage& message) {
+  return message.rounds.empty() || (message.role == "assistant" && sayable(message.rounds));
+}
+
+bool searches_only(const bool history_rounds, const ChatMessage& message) {
+  return history_rounds && !message.rounds.empty() && message.content.empty();
+}
+
+// render_glm53_text_prompt; `history_rounds` is the tool prompt's check of the conversation, in which an earlier
+// answer may carry its searches (history_ok).
+std::optional<std::string> glm53_text_prompt(const std::vector<ChatMessage>& messages, const bool history_rounds) {
   if (messages.empty() || messages.size() > kMaximumMessages) return std::nullopt;
   std::string output;
   output.reserve(256U);
@@ -89,8 +111,8 @@ std::optional<std::string> render_glm53_text_prompt(const std::vector<ChatMessag
 
   std::size_t index = 0U;
   if (messages.front().role == "system") {
-    if (!safe_content(messages.front().content) || !append_bounded(&output, "<|system|>") ||
-        !append_bounded(&output, messages.front().content)) return std::nullopt;
+    if ((history_rounds && !history_ok(messages.front())) || !safe_content(messages.front().content) ||
+        !append_bounded(&output, "<|system|>") || !append_bounded(&output, messages.front().content)) return std::nullopt;
     index = 1U;
   }
   if (index == messages.size()) return std::nullopt;
@@ -98,7 +120,8 @@ std::optional<std::string> render_glm53_text_prompt(const std::vector<ChatMessag
   bool expect_user = true;
   for (; index < messages.size(); ++index) {
     const ChatMessage& message = messages[index];
-    if (message.role != (expect_user ? "user" : "assistant") || !safe_content(message.content) ||
+    if (message.role != (expect_user ? "user" : "assistant") || (history_rounds && !history_ok(message)) ||
+        (!searches_only(history_rounds, message) && !safe_content(message.content)) ||
         !append_bounded(&output, expect_user ? "<|user|>" : "<|assistant|>") ||
         !append_bounded(&output, message.content)) return std::nullopt;
     expect_user = !expect_user;
@@ -107,18 +130,61 @@ std::optional<std::string> render_glm53_text_prompt(const std::vector<ChatMessag
   return output;
 }
 
+// render_raon1_text_prompt; `history_rounds` as glm53_text_prompt's.
+std::optional<std::string> raon1_text_prompt(const std::vector<ChatMessage>& messages, const bool thinking, const bool history_rounds) {
+  if (messages.empty() || messages.size() > kMaximumMessages) return std::nullopt;
+  std::string output;
+  output.reserve(256U);
+
+  std::size_t index = 0U;
+  if (messages.front().role == "system") {
+    if ((history_rounds && !history_ok(messages.front())) || !raon_safe_content(messages.front().content) ||
+        !append_bounded(&output, "<|im_start|>system\n") || !append_bounded(&output, raon_trim(messages.front().content)) ||
+        !append_bounded(&output, "<|im_end|>\n")) {
+      return std::nullopt;
+    }
+    index = 1U;
+  }
+  if (index == messages.size()) return std::nullopt;
+
+  bool expect_user = true;
+  for (; index < messages.size(); ++index) {
+    const ChatMessage& message = messages[index];
+    const std::string_view role = expect_user ? "user" : "assistant";
+    // An earlier assistant turn is the template's render_assistant_body: the schema carries no
+    // reasoning_content, so its think block is the empty one before the content.
+    if (message.role != role || (history_rounds && !history_ok(message)) ||
+        (!searches_only(history_rounds, message) && !raon_safe_content(message.content)) ||
+        !append_bounded(&output, "<|im_start|>") || !append_bounded(&output, role) || !append_bounded(&output, "\n") ||
+        (!expect_user && !append_bounded(&output, "<think></think>\n\n")) ||
+        !append_bounded(&output, raon_trim(message.content)) || !append_bounded(&output, "<|im_end|>\n")) {
+      return std::nullopt;
+    }
+    expect_user = !expect_user;
+  }
+  // A generation prompt is valid only after a user turn. raon-1-mini's add_generation_prompt tail:
+  // an open think block when thinking (the reply begins as reasoning), the empty block otherwise
+  // (enable_thinking=false, a direct answer).
+  if (expect_user || !append_bounded(&output, "<|im_start|>assistant\n") ||
+      !append_bounded(&output, thinking ? "<think>\n" : "<think></think>\n\n")) {
+    return std::nullopt;
+  }
+  return output;
+}
+
+}  // namespace
+
+std::optional<std::string> render_glm53_text_prompt(const std::vector<ChatMessage>& messages) {
+  return glm53_text_prompt(messages, false);
+}
+
 std::optional<std::vector<PromptPiece>> render_raon1_tool_prompt(const std::vector<ChatMessage>& messages,
                                                                  const std::span<const std::string> tools,
                                                                  const std::span<const ToolRound> rounds, const bool thinking) {
-  if (tools.empty()) return std::nullopt;
-  // The conversation obeys every rule of the plain prompt (roles, order, markers, sizes).
-  if (!render_raon1_text_prompt(messages, thinking)) return std::nullopt;
-  for (const auto& round : rounds) {
-    if (round.calls.empty() || round.results.size() != round.calls.size()) return std::nullopt;
-    for (const auto& call : round.calls) {
-      if (call.name.empty()) return std::nullopt;
-    }
-  }
+  if (tools.empty() || !sayable(rounds)) return std::nullopt;
+  // The conversation obeys every rule of the plain prompt (roles, order, markers, sizes); an earlier answer's
+  // searches those of this turn's rounds (history_ok).
+  if (!raon1_text_prompt(messages, thinking, true)) return std::nullopt;
   static constexpr std::array<std::string_view, 2U> kInstructionTags{"<tool_call>", "</tool_call>"};
   // render_assistant_body's think block: the reasoning, else the empty block
   const auto think_block = [](PromptBuilder& out, const std::string_view reasoning) {
@@ -151,15 +217,11 @@ std::optional<std::vector<PromptPiece>> render_raon1_tool_prompt(const std::vect
   }
   out.marker("<|im_end|>");
   out.text("\n");
-  for (bool user = true; index < messages.size(); ++index, user = !user) {
-    out.marker("<|im_start|>");
-    out.text(user ? "user\n" : "assistant\n");
-    if (!user) think_block(out, {});  // an earlier answer: the schema carries no reasoning_content
-    out.text(raon_trim(messages[index].content));
-    out.marker("<|im_end|>");
-    out.text("\n");
-  }
-  for (const auto& round : rounds) {
+  // A round: the assistant turn of its text and calls, then the user turn of its results. This turn's rounds as
+  // run_with_mcp appends them; an earlier answer's as upstream's page sends them (serve/web/app.js assistantMessages:
+  // per round the text before the calls and the calls, one tool message per result), whose reasoning is empty - the
+  // template's empty think block - and whose text and results the template trims as it trims these.
+  const auto write_round = [&out, &think_block](const ToolRound& round) {
     out.marker("<|im_start|>");
     out.text("assistant\n");
     think_block(out, python_strip(round.reasoning));
@@ -197,7 +259,19 @@ std::optional<std::vector<PromptPiece>> render_raon1_tool_prompt(const std::vect
     }
     out.marker("<|im_end|>");
     out.text("\n");
+  };
+  for (bool user = true; index < messages.size(); ++index, user = !user) {
+    const ChatMessage& message = messages[index];
+    for (const auto& round : message.rounds) write_round(round);
+    if (searches_only(true, message)) continue;  // the page sends no turn for an answer's empty rest
+    out.marker("<|im_start|>");
+    out.text(user ? "user\n" : "assistant\n");
+    if (!user) think_block(out, {});  // an earlier answer: the schema carries no reasoning_content
+    out.text(raon_trim(message.content));
+    out.marker("<|im_end|>");
+    out.text("\n");
   }
+  for (const auto& round : rounds) write_round(round);
   out.marker("<|im_start|>");
   out.text("assistant\n");
   out.marker("<think>");
@@ -212,42 +286,7 @@ std::optional<std::vector<PromptPiece>> render_raon1_tool_prompt(const std::vect
 }
 
 std::optional<std::string> render_raon1_text_prompt(const std::vector<ChatMessage>& messages, const bool thinking) {
-  if (messages.empty() || messages.size() > kMaximumMessages) return std::nullopt;
-  std::string output;
-  output.reserve(256U);
-
-  std::size_t index = 0U;
-  if (messages.front().role == "system") {
-    if (!raon_safe_content(messages.front().content) || !append_bounded(&output, "<|im_start|>system\n") ||
-        !append_bounded(&output, raon_trim(messages.front().content)) || !append_bounded(&output, "<|im_end|>\n")) {
-      return std::nullopt;
-    }
-    index = 1U;
-  }
-  if (index == messages.size()) return std::nullopt;
-
-  bool expect_user = true;
-  for (; index < messages.size(); ++index) {
-    const ChatMessage& message = messages[index];
-    const std::string_view role = expect_user ? "user" : "assistant";
-    // An earlier assistant turn is the template's render_assistant_body: the schema carries no
-    // reasoning_content, so its think block is the empty one before the content.
-    if (message.role != role || !raon_safe_content(message.content) || !append_bounded(&output, "<|im_start|>") ||
-        !append_bounded(&output, role) || !append_bounded(&output, "\n") ||
-        (!expect_user && !append_bounded(&output, "<think></think>\n\n")) ||
-        !append_bounded(&output, raon_trim(message.content)) || !append_bounded(&output, "<|im_end|>\n")) {
-      return std::nullopt;
-    }
-    expect_user = !expect_user;
-  }
-  // A generation prompt is valid only after a user turn. raon-1-mini's add_generation_prompt tail:
-  // an open think block when thinking (the reply begins as reasoning), the empty block otherwise
-  // (enable_thinking=false, a direct answer).
-  if (expect_user || !append_bounded(&output, "<|im_start|>assistant\n") ||
-      !append_bounded(&output, thinking ? "<think>\n" : "<think></think>\n\n")) {
-    return std::nullopt;
-  }
-  return output;
+  return raon1_text_prompt(messages, thinking, false);
 }
 
 namespace {
@@ -268,15 +307,10 @@ constexpr std::array<std::string_view, 8U> kGlmToolTags{"<tool_call>", "</tool_c
 std::optional<std::vector<PromptPiece>> render_glm53_tool_prompt(const std::vector<ChatMessage>& messages,
                                                                  const std::span<const std::string> tools,
                                                                  const std::span<const ToolRound> rounds) {
-  if (tools.empty()) return std::nullopt;
-  // The conversation obeys every rule of the fixed profile (roles, order, markers, sizes).
-  if (!render_glm53_text_prompt(messages)) return std::nullopt;
-  for (const auto& round : rounds) {
-    if (round.calls.empty() || round.results.size() != round.calls.size()) return std::nullopt;
-    for (const auto& call : round.calls) {
-      if (call.name.empty()) return std::nullopt;
-    }
-  }
+  if (tools.empty() || !sayable(rounds)) return std::nullopt;
+  // The conversation obeys every rule of the fixed profile (roles, order, markers, sizes); an earlier answer's
+  // searches those of this turn's rounds (history_ok).
+  if (!glm53_text_prompt(messages, true)) return std::nullopt;
   PromptBuilder out;
   out.marker("[gMASK]");
   out.marker("<sop>");
@@ -293,11 +327,12 @@ std::optional<std::vector<PromptPiece>> render_glm53_tool_prompt(const std::vect
     out.text(messages.front().content);
     index = 1U;
   }
-  for (bool user = true; index < messages.size(); ++index, user = !user) {
-    out.marker(user ? "<|user|>" : "<|assistant|>");
-    out.text(messages[index].content);
-  }
-  for (const auto& round : rounds) {
+  // A round: its assistant turn - reasoning, text and calls - then one <|observation|> of its results. This turn's
+  // rounds as run_with_mcp appends them; an earlier answer's as upstream's page sends them (serve/web/app.js
+  // assistantMessages: per round the text before the calls and the calls, one tool message per result), whose
+  // reasoning is empty: Maya's template writes <think></think> for an assistant turn without reasoning_content, strips
+  // its text, and writes the results as they are, as for these.
+  const auto write_round = [&out](const ToolRound& round) {
     out.marker("<|assistant|>");
     out.marker("<think>");
     out.plain(python_strip(round.reasoning));
@@ -322,7 +357,17 @@ std::optional<std::vector<PromptPiece>> render_glm53_tool_prompt(const std::vect
       out.plain(result);
       out.marker("</tool_response>");
     }
+  };
+  for (bool user = true; index < messages.size(); ++index, user = !user) {
+    const ChatMessage& message = messages[index];
+    for (const auto& round : message.rounds) write_round(round);
+    // The rest of an earlier answer's text is the fixed profile's earlier answer, <|assistant|>{text} - where Maya's
+    // template writes <|assistant|><think></think>{text} - and the page sends no turn for an empty rest.
+    if (searches_only(true, message)) continue;
+    out.marker(user ? "<|user|>" : "<|assistant|>");
+    out.text(message.content);
   }
+  for (const auto& round : rounds) write_round(round);
   out.marker("<|assistant|>");
   out.marker("<think>");
   if (out.bytes() > kMaximumPromptBytes) return std::nullopt;

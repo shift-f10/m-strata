@@ -98,6 +98,85 @@ bool valid_model(std::string_view value) {
 // Message text is text: a link or "data:" in it is never fetched or acted on (SP3 §6.2 lets
 // such content be "rejected or treated as text"; rejecting it made any answer with a link
 // break the next turn, session log step 15). The model field keeps the scheme guard.
+bool valid_content(std::string_view value, std::size_t max_message_bytes);
+
+// Owner 2026-10-29 ("keep earlier searches in the chat history as upstream's page does"): an assistant message's
+// strata_rounds - at most kMaxHistoryRounds rounds, each its text before the calls (may be empty), 1 to kMaxRoundCalls
+// calls (a name of printable text, arguments an object) and one result text each (may be empty). Closed vocabulary.
+constexpr std::size_t kMaxHistoryRounds = 64U;
+constexpr std::size_t kMaxRoundCalls = 16U;
+constexpr std::size_t kMaxCallNameBytes = 64U;
+
+bool text_or_empty(const JsonValue& value, const std::size_t max_bytes, std::string& out) {
+  const auto* text = value.if_string();
+  if (text == nullptr || (!text->empty() && !valid_content(*text, max_bytes))) return false;
+  out = *text;
+  return true;
+}
+
+bool parse_call(const JsonValue& value, ToolCall& call) {
+  const auto* fields = value.if_object();
+  if (fields == nullptr) return false;
+  bool name_seen = false;
+  bool arguments_seen = false;
+  for (const auto& field : *fields) {
+    if (field.key == "name") {
+      const auto* name = field.value.if_string();
+      if (name == nullptr || !valid_content(*name, kMaxCallNameBytes) || name->find_first_of("\n\r\t") != std::string::npos) return false;
+      call.name = *name;
+      name_seen = true;
+    } else if (field.key == "arguments") {
+      const auto* arguments = field.value.if_object();
+      if (arguments == nullptr) return false;
+      for (const auto& argument : *arguments) call.arguments.push_back(ToolArgument{argument.key, argument.value});
+      arguments_seen = true;
+    } else {
+      return false;
+    }
+  }
+  return name_seen && arguments_seen;
+}
+
+bool parse_rounds(const JsonValue& value, const std::size_t max_bytes, std::vector<ToolRound>& out) {
+  const auto* items = value.if_array();
+  if (items == nullptr || items->empty() || items->size() > kMaxHistoryRounds) return false;
+  for (const auto& item : *items) {
+    const auto* fields = item.if_object();
+    if (fields == nullptr) return false;
+    ToolRound round;
+    bool calls_seen = false;
+    bool results_seen = false;
+    for (const auto& field : *fields) {
+      if (field.key == "content") {
+        if (!text_or_empty(field.value, max_bytes, round.content)) return false;
+      } else if (field.key == "calls") {
+        const auto* calls = field.value.if_array();
+        if (calls == nullptr || calls->empty() || calls->size() > kMaxRoundCalls) return false;
+        for (const auto& c : *calls) {
+          ToolCall call;
+          if (!parse_call(c, call)) return false;
+          round.calls.push_back(std::move(call));
+        }
+        calls_seen = true;
+      } else if (field.key == "results") {
+        const auto* results = field.value.if_array();
+        if (results == nullptr) return false;
+        for (const auto& r : *results) {
+          std::string text;
+          if (!text_or_empty(r, max_bytes, text)) return false;
+          round.results.push_back(std::move(text));
+        }
+        results_seen = true;
+      } else {
+        return false;
+      }
+    }
+    if (!calls_seen || !results_seen || round.results.size() != round.calls.size()) return false;
+    out.push_back(std::move(round));
+  }
+  return true;
+}
+
 bool valid_content(std::string_view value, const std::size_t max_message_bytes) {
   if (value.empty() || value.size() > max_message_bytes || !valid_utf8(value)) return false;
   for (const unsigned char byte : value) {
@@ -257,12 +336,18 @@ ChatRequestResult parse_chat_request(const std::string_view json, const ChatSche
             content_seen = true;
             continue;
           }
+          if (field.key == "strata_rounds") {
+            if (!message.rounds.empty() || !parse_rounds(field.value, limits.max_message_bytes, message.rounds)) {
+              return refuse(ApiError::invalid_request);
+            }
+            continue;
+          }
           const auto* text = field.value.if_string();
           if (text == nullptr) return refuse(ApiError::invalid_request);
           if (field.key == "role" && (*text == "system" || *text == "user" || *text == "assistant")) {
             message.role = *text;
             role_seen = true;
-          } else if (field.key == "content" && valid_content(*text, limits.max_message_bytes)) {
+          } else if (field.key == "content" && (text->empty() || valid_content(*text, limits.max_message_bytes))) {
             message.content = *text;
             content_seen = true;
           } else {
@@ -270,6 +355,9 @@ ChatRequestResult parse_chat_request(const std::string_view json, const ChatSche
           }
         }
         if (!role_seen || !content_seen) return refuse(ApiError::invalid_request);
+        // text, except for an earlier answer whose text all came before its searches; searches on answers only
+        if (message.content.empty() && message.parts.empty() && message.rounds.empty()) return refuse(ApiError::invalid_request);
+        if (!message.rounds.empty() && (message.role != "assistant" || !message.parts.empty())) return refuse(ApiError::invalid_request);
         request.messages.push_back(std::move(message));
       }
       messages_seen = true;

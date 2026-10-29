@@ -77,8 +77,8 @@ the SP2 merge).
   connection gets a header deadline (`limits.http.header_deadline_ms`, 10 s)
   before authentication completes and a total request deadline
   (`limits.http.request_deadline_ms`, 30 s) with a body cap
-  (`limits.http.max_request_bytes`, 64 KiB); chat bodies are capped at 49152
-  bytes. Unauthenticated clients can hold a worker only in the header phase
+  (`limits.http.max_request_bytes`, 256 MiB as upstream's since 2026-10-29); a chat
+  body may take all of it but the header. Unauthenticated clients can hold a worker only in the header phase
   (oldest-P1 eviction); bodies are read only after the bearer token checks.
   Over-admission (per-remote cap `max_connections_per_remote_address`, derived
   min(4, workers), or min(6, workers) with `listener.web_ui`; loopback exempt) and an
@@ -199,8 +199,16 @@ Maya reads them, the effort line as in a plain chat; MiniMax-M3.1 its template's
 `web_search(query, max_results?)`, described to the model as: "Search the web through a SearXNG instance and get the top
 results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or
 anything after your training data, or when the user asks you to look something up. Then answer from the results and
-cite the URLs you used.", followed by today's date on this PC. The model decides when to call it. A chat with an image
-is served without it, and so is a model whose card's **Web search** option
+cite the URLs you used.", followed by today's date on this PC. The chat's system message (a new one, or after the
+chat's own) says it too: "Today's date is <date>. What you know may be out of date: for anything recent, or anything that
+may have changed, search the web with web_search before you answer." (owner 2026-10-29: a model trusted its training
+over the date it had only in the tool's description). The model decides when to call it. An answer that searched comes
+back with the chat's next turns together with its searches, as upstream's page sends them: on an assistant message,
+`"strata_rounds": [{"content": "<its text before the calls>", "calls": [{"name": "web_search", "arguments": {...}}],
+"results": ["<what the search returned>"]}]`, its `content` then the text after the last round (empty allowed); each
+family's prompt writes them as its template writes earlier tool calls and results. A chat served without the tool (search
+turned off, a picture in it) gets such an answer as the text the page showed: its rounds' text, then its own.
+A chat with an image is served without it, and so is a model whose card's **Web search** option
 (`web_search`, on by default, listed while the server's search is on) was off when it started.
 
 **Getting the model to search.**
@@ -559,7 +567,7 @@ Every key (generated from the schema; `readme_config_table_matches_schema` keeps
 | `listener.login_link` | boolean | `false` | - | - | Print a one-time login link at every start (GUI-first start-up): opened from this PC (loopback only, within 10 minutes, once), it hands the page the API key. Needs listener.web_ui and a token.source. |
 | `listener.monitor` | boolean | `false` | - | - | Serve GET /metrics (with the key) for the page's Monitor tab: the engine's state, the last 100 requests' token counts and timings (never their text), and this machine's CPU, RAM and GPU readings (the GPU through the system's nvidia-smi, a separate process). |
 | `limits.http.request_deadline_ms` | integer | `30000` | 1-3600000 | - | Total time to read one request, header and body. |
-| `limits.http.max_request_bytes` | integer | `65536` | 4096-268435456 | - | Largest request (header and body) the listener and parser accept. |
+| `limits.http.max_request_bytes` | integer | `268435456` | 4096-268435456 | - | Largest request (header and body) the listener and parser accept. |
 | `limits.http.max_header_bytes` | integer | `16384` | 1024-65536 | - | Largest header block; at most limits.http.max_request_bytes. |
 | `limits.http.max_headers` | integer | `64` | 8-256 | - | Most header fields. |
 | `limits.http.max_request_line_bytes` | integer | `4096` | 256-16384 | - | Longest request line; at most limits.http.max_header_bytes. |
@@ -567,11 +575,11 @@ Every key (generated from the schema; `readme_config_table_matches_schema` keeps
 | `limits.http.write_stall_ms` | integer | `10000` | 100-300000 | - | Longest send without progress before the client is treated as gone. |
 | `limits.http.response_write_deadline_ms` | integer | `60000` | 1000-3600000 | - | Time to send a whole complete response, or a stream's tail after DONE; at least limits.http.write_stall_ms. |
 | `limits.http.stream_keepalive_ms` | integer | `15000` | 1000-300000 | - | SSE comment interval while no content flows (streaming). |
-| `limits.chat.max_body_bytes` | integer | `49152` | 1-268435456 | - | Largest chat request body; at most max_request_bytes minus max_header_bytes. |
-| `limits.chat.max_messages` | integer | `128` | 1-65536 | - | Most messages in one chat request. |
-| `limits.chat.max_message_bytes` | integer | `65536` | 1-268435456 | - | Largest single message content. |
-| `limits.chat.max_prompt_tokens` | integer | `32768` | 1-1048576 | - | Largest tokenized prompt sent to the engine. |
-| `limits.chat.max_completion_tokens` | integer | `4096` | 1-1048576 | - | Largest max_tokens a request may ask for. |
+| `limits.chat.max_body_bytes` | integer | `268419072` | 1-268435456 | - | Largest chat request body; at most max_request_bytes minus max_header_bytes. |
+| `limits.chat.max_messages` | integer | `65536` | 1-65536 | - | Most messages in one chat request. |
+| `limits.chat.max_message_bytes` | integer | `268419072` | 1-268435456 | - | Largest single message content. |
+| `limits.chat.max_prompt_tokens` | integer | `1048576` | 1-1048576 | - | Largest tokenized prompt sent to the engine. |
+| `limits.chat.max_completion_tokens` | integer | `1048576` | 1-1048576 | - | Largest max_tokens a request may ask for. |
 | `limits.chat.default_max_tokens` | integer | `0` | 0-1048576 | - | max_tokens when a request omits it; 0 = auto: min(max_completion_tokens, context - prompt - 8); at most limits.chat.max_completion_tokens. |
 | `limits.chat.max_generated_bytes` | integer | `1048576` | 1-16777216 | - | Largest generated text returned. |
 | `limits.engine.ready_timeout_s` | integer | `900` | 1-86400 | - | How long the supervisor waits for the engine's READY after each start; a miss kills and restarts it (upstream STRATA_ENGINE_READY_S). |
@@ -2186,8 +2194,8 @@ download pause and resume functionality". Spec
 
 ### Long contexts and model names (owner requests, session log step 13)
 
-The defaults keep a request small (48 KiB body, 32K-token prompt). For long contexts, raise
-them in the config file, up to upstream's scale:
+Since 2026-10-29 the defaults are upstream's scale (owner: a follow-up to a long answer was refused at the old
+48 KiB body): the values below are the defaults, and lower ones can be set in the config file:
 
 - `limits.chat.max_prompt_tokens` and `limits.chat.max_completion_tokens` take up to
   1,048,576. `limits.http.max_request_bytes`, `limits.chat.max_body_bytes` and
@@ -2277,8 +2285,8 @@ never installed.
 
 Default limits (all config keys; see the table below): 8 workers, 4 queued
 generations (queue timeout 300 s), 4 connections per remote address (loopback
-exempt), 10 s header / 30 s request deadlines, 64 KiB request cap (49152-byte
-chat body), 10 s write stall / 60 s response-write deadline, `logging.requests`
+exempt), 10 s header / 30 s request deadlines, a 256 MiB request cap (upstream's; the
+chat body all of it but the header), 10 s write stall / 60 s response-write deadline, `logging.requests`
 off (when on: one fixed-field stderr line per request under a token bucket —
 never tokens, prompts, paths or payload text; a reply cut by a token the
 frontend refuses to output answers the generic `500 internal_error` and logs

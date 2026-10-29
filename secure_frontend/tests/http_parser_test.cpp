@@ -504,10 +504,17 @@ void dos01_json_depth_5_is_400() {
   // parts form nests request -> messages -> message -> content -> part -> image_url.
   // The DOS property stands, one level deeper: depth 5 now reaches the SCHEMA, which
   // answers its own fixed 400; depth 7 is still invalid_json at the reader.
+  // The ceiling is 16 since 2026-10-29 (an earlier answer's searches nest deeper): 16 levels reach the schema, 17 do
+  // not reach it.
+  const auto nested = [](const int levels) {
+    std::string value = "1";
+    for (int i = 0; i < levels; ++i) value = "{\"k\":" + value + "}";
+    return R"("logit_bias":)" + value;
+  };
   expect(fails_with(parse(body_with(R"("logit_bias":{"a":{"b":{"c":{"d":1}}}})")), ApiError::unsupported_parameter, "logit_bias"),
-         "depth 5 (new ceiling 6) reaches the schema: unsupported_parameter logit_bias");
-  expect(fails_with(parse(body_with(R"("logit_bias":{"a":{"b":{"c":{"d":{"e":{"f":1}}}}}})")), ApiError::invalid_json),
-         "depth 7 is invalid_json");
+         "depth 5 reaches the schema: unsupported_parameter logit_bias");
+  expect(fails_with(parse(body_with(nested(15))), ApiError::unsupported_parameter, "logit_bias"), "depth 16 (the ceiling) reaches the schema");
+  expect(fails_with(parse(body_with(nested(16))), ApiError::invalid_json), "depth 17 is invalid_json");
   expect(fails_with(parse(body_with(R"("logit_bias":{"a":{"b":1}})")), ApiError::unsupported_parameter, "logit_bias"),
          "depth 4 parses and reaches the schema");
   expect(fails_with(parse("{\"model\":"), ApiError::invalid_json), "truncated JSON is invalid_json");
@@ -515,13 +522,19 @@ void dos01_json_depth_5_is_400() {
 }
 
 void dos01_json_limits() {
+  // the bounds themselves, at limits set to 128 messages and 64 KiB a message (the defaults are upstream's scale since
+  // 2026-10-29: default_limits_take_a_long_conversation)
+  secure_frontend::ChatSchemaLimits bounded;
+  bounded.max_messages = 128U;
+  bounded.max_message_bytes = 65536U;
+  const auto parse_small = [&bounded](const std::string& json) { return secure_frontend::parse_chat_request(json, bounded); };
   std::string many = "[";
   for (int i = 0; i < 129; ++i) many += std::string{i ? "," : ""} + R"({"role":"user","content":"x"})";
-  expect(fails_with(parse(body_with("", many + "]")), ApiError::invalid_request) ||
-         fails_with(parse(body_with("", many + "]")), ApiError::invalid_json), "129 messages are refused");
+  expect(fails_with(parse_small(body_with("", many + "]")), ApiError::invalid_request) ||
+         fails_with(parse_small(body_with("", many + "]")), ApiError::invalid_json), "129 messages are refused");
   expect(fails_with(parse(body_with("", "[]")), ApiError::invalid_request), "no messages");
-  expect(fails_with(parse(body_with("", R"([{"role":"user","content":")" + std::string(65537, 'a') + "\"}]")), ApiError::invalid_request) ||
-         fails_with(parse(body_with("", R"([{"role":"user","content":")" + std::string(65537, 'a') + "\"}]")), ApiError::invalid_json),
+  expect(fails_with(parse_small(body_with("", R"([{"role":"user","content":")" + std::string(65537, 'a') + "\"}]")), ApiError::invalid_request) ||
+         fails_with(parse_small(body_with("", R"([{"role":"user","content":")" + std::string(65537, 'a') + "\"}]")), ApiError::invalid_json),
          "a message over 64 KiB is refused");
   expect(fails_with(parse(body_with(R"("max_tokens":0)")), ApiError::invalid_request), "max_tokens 0");
   expect(fails_with(parse(body_with(R"("max_tokens":-1)")), ApiError::invalid_request), "max_tokens -1");

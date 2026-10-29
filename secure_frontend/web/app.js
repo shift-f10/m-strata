@@ -574,10 +574,17 @@
   function pictureNote(m) {
     return (m.images || []).map(function (p) { return "[picture: " + p.name + "]"; }).join(" ");
   }
+  // Owner 2026-10-29 ("keep earlier searches in the chat history as upstream's page does"): an answer that searched
+  // goes back with its rounds - per round the text before its calls, the calls and the results the model read - and its
+  // own text after the last round (upstream's assistantMessages), so a later question builds on what it found. The
+  // server takes them as strata_rounds (it takes no tool messages from clients).
   function requestMessages(turns) {
     var last = -1;
     turns.forEach(function (m, i) { if (m.role === "user") { last = i; } });
     return turns.map(function (m, i) {
+      if (m.role === "assistant" && Array.isArray(m.rounds) && m.rounds.length) {
+        return { role: m.role, content: m.content.slice(m.roundsEnd || 0).trim(), strata_rounds: m.rounds };
+      }
       var pictures = Array.isArray(m.images) ? m.images : [];
       if (!pictures.length) { return { role: m.role, content: m.content }; }
       if (i !== last) { return { role: m.role, content: (pictureNote(m) + (m.content ? "\n\n" + m.content : "")) }; }
@@ -596,6 +603,28 @@
       kept.content = pictureNote(m) + (m.content ? "\n\n" + m.content : "");
       return kept;
     });
+  }
+  // A call's arguments as the server sent them (an object), else none.
+  function callArguments(search) {
+    return search.arguments && typeof search.arguments === "object" && !Array.isArray(search.arguments) ? search.arguments : {};
+  }
+  // The calls that ran, as rounds in order: each the answer's text since the round before (trimmed), its calls and their
+  // results; `end` is where the answer's own text after the last round starts. Null when none ran.
+  function roundsOf(calls, text) {
+    var ran = calls.filter(function (c) { return c.result !== null && !c.skipped; });
+    if (!ran.length) { return null; }
+    var rounds = [];
+    var pos = 0;
+    var numbers = [];
+    ran.forEach(function (c) { if (numbers.indexOf(c.round) < 0) { numbers.push(c.round); } });
+    numbers.forEach(function (n) {
+      var group = ran.filter(function (c) { return c.round === n; });
+      var at = Math.min(Math.max(pos, group[0].at || 0), text.length);
+      rounds.push({ content: text.slice(pos, at).trim(), calls: group.map(function (c) { return { name: c.name, arguments: c.arguments }; }),
+                    results: group.map(function (c) { return c.result; }) });
+      pos = at;
+    });
+    return { rounds: rounds, end: pos };
   }
   function requestBody() {
     var s = state.settings;
@@ -633,10 +662,21 @@
         if (search.event === "call") {
           setPill("generating", "Searching");
           run.searches.push(search.arguments && typeof search.arguments.query === "string" ? search.arguments.query : "");
+          // kept for the history: the call, and where the answer's text was when it came
+          run.calls.push({ round: search.round, name: String(search.name || ""), arguments: callArguments(search), at: run.answer.length,
+                           result: null, skipped: false });
         }
         fillSearches(parts, run.searches, run.limit);
-      } else if (search && search.event === "result" && search.ok === false && search.skipped !== true) {
-        run.searchFailed = String(search.text || "the search failed");
+      } else if (search && search.event === "result") {
+        if (search.ok === false && search.skipped !== true) { run.searchFailed = String(search.text || "the search failed"); }
+        // the result the model read, on the round's first call still waiting for one (a skipped call never ran)
+        var pending = null;
+        for (var c = 0; c < run.calls.length && !pending; c += 1) {
+          if (run.calls[c].round === search.round && run.calls[c].result === null && !run.calls[c].skipped) { pending = run.calls[c]; }
+        }
+        if (pending) {
+          if (search.skipped === true) { pending.skipped = true; } else { pending.result = String(search.text || ""); }
+        }
       }
       var choice = event.choices && event.choices[0];
       if (!choice) { continue; }
@@ -682,7 +722,7 @@
     $("chat").appendChild(parts.node);
     scrollToEnd();
     var run = { answer: "", reasoning: "", finish: "", usage: null, error: "", firstToken: 0, dirty: false, searches: [], searchFailed: "",
-                limit: 0 };
+                limit: 0, calls: [] };
     state.controller = new AbortController();
     var started = performance.now();
     busy(true);
@@ -748,6 +788,8 @@
     reply.content = run.answer;
     reply.reasoning = run.reasoning;
     if (run.searches.length) { reply.searches = run.searches; }
+    var kept = roundsOf(run.calls, run.answer);
+    if (kept) { reply.rounds = kept.rounds; reply.roundsEnd = kept.end; }
     if (run.limit) { reply.searchLimit = run.limit; }
     reply.stats = stats.join(" - ");
     reply.error = run.error;

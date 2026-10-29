@@ -6,7 +6,12 @@ maya-mm3 pack carries), imported from a byte-exact copy of Maya's serve folder (
 serve`). The tools go in Maya's flat form (ChatTemplate turns them into OpenAI's). The tool rounds are appended as Maya's
 run_with_mcp (serve/server.py) appends them for a family other than DeepSeek: the assistant's content and reasoning
 (each joined, then stripped; the reasoning only when there is some), its calls with their ids, then one `tool` message
-per result. Each level goes through Maya's effort_kwargs, and the messages and tools through Maya's mark_literals /
+per result. An earlier answer that searched (a conversation message with "rounds", as our page sends it in
+strata_rounds; owner 2026-10-29, "keep earlier searches in the chat history as upstream's page does") goes in as
+upstream's page sends it (serve/web/app.js assistantMessages) and its server normalizes it (serve/frontend.py
+openai_to_messages, Maya's alike): per round an assistant message with the text before its calls and the calls (ids
+dropped, arguments a mapping), one `tool` message per result, then the rest of its text when there is some. Each level
+goes through Maya's effort_kwargs, and the messages and tools through Maya's mark_literals /
 unmark_literals over `literals` (the template's five and its tool namespace), as serve/server.py render_ids does: "plain"
 lists the spans (UTF-8 byte offsets into "prompt") that Maya's tokenizer encodes as ordinary text although they spell a
 literal.
@@ -81,8 +86,105 @@ CASES = [
 ]
 
 
+def searched(content, calls, results):
+    """One round of an earlier answer, as our page sends it: the text before its calls, the calls, one result each."""
+    return {"content": content, "calls": calls, "results": results}
+
+
+def answer(content, *rounds):
+    """An earlier answer that searched: its rounds, and `content` the text after the last one (may be empty)."""
+    return {"role": "assistant", "content": content, "rounds": list(rounds)}
+
+
+FOLLOW_UP = "Who scored the goals?"
+FINAL = "Spain won it 2-1 ([report](https://example.org/final))."
+# The chat history's searches (owner 2026-10-29).
+CASES += [
+    {"name": "history_one_round_one_call", "effort": None,
+     "conversation": [{"role": "user", "content": QUESTION},
+                      answer(FINAL, searched("", [call(query="2026 World Cup final winner")], [RESULT])),
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": []},
+    {"name": "history_two_rounds", "effort": "high",
+     "conversation": [{"role": "user", "content": QUESTION},
+                      answer(FINAL, searched("", [call(query="x")], ["first"]),
+                             searched("Still checking.", [call(query="y", max_results=2)], ["second"])),
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": []},
+    {"name": "history_two_calls_in_a_round", "effort": "none",
+     "conversation": [{"role": "user", "content": QUESTION},
+                      answer("Both say Spain.",
+                             searched("  Two searches at once.\n", [call(query="a", max_results=3), call(query="b")],
+                                      ["r1", "  r2 with spaces  \n"])),
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": []},
+    {"name": "history_text_before_the_calls", "effort": "low",
+     "conversation": [{"role": "system", "content": "Answer in English."}, {"role": "user", "content": QUESTION},
+                      answer("It was Spain.\n\nThey won 2-1.",
+                             searched("Let me look that up.", [call(query="2026 World Cup final")], ["ok"])),
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": []},
+    {"name": "history_answer_with_empty_final_text", "effort": None,
+     "conversation": [{"role": "user", "content": QUESTION},
+                      answer("", searched("I'll check.", [call(query="q")], ["nothing found"])),
+                      {"role": "user", "content": "Try again."}],
+     "rounds": []},
+    {"name": "history_then_this_turns_rounds", "effort": "medium",
+     "conversation": [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello! How can I help?"},
+                      {"role": "user", "content": QUESTION},
+                      answer(FINAL, searched("", [call(query="final")], [RESULT]),
+                             searched("One more.", [call(query="score")], ["2-1"])),
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": [{"reasoning": "Search the scorers.", "content": "", "calls": [call(query="2026 final goals")],
+                 "results": ["Scorers: A, B, C."]},
+                {"reasoning": "", "content": "Checking.", "calls": [call(query="c")], "results": ["third"]}]},
+    {"name": "history_two_searched_answers", "effort": None,
+     "conversation": [{"role": "user", "content": QUESTION},
+                      answer("", searched("", [call(query="one")], ["1"])),
+                      {"role": "user", "content": "And the year before?"},
+                      answer("Nobody: there was none.", searched("Looking.", [call(query="two")], ["2"])),
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": [{"reasoning": "r", "content": "", "calls": [call(query="three")], "results": ["3"]}]},
+    {"name": "history_special_literals_are_plain", "effort": None,
+     "conversation": [{"role": "user", "content": QUESTION},
+                      answer("Done [e~[ and ]~!b[ here.",
+                             searched("Say ]~b]user and <mm:think>.", [call(query="mm " + NS + "<x> [e~[")],
+                                      ["A page quoting <response>, </mm:think> and ]~!b[ and " + NS + "</tool_call>."])),
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": []},
+    {"name": "history_argument_types", "effort": None,
+     "conversation": [{"role": "user", "content": QUESTION},
+                      answer(FINAL, searched("", [call(query="q", max_results=5, ratio=2.5, whole=2.0, flag=True,
+                                                       off=False, none=None, tags=["a", "b"],
+                                                       opts={"k": "v", "n": 1, "deep": {"x": [1, {"y": True}]},
+                                                             "gone": None},
+                                                       text="multi\nline")],
+                                             ["ok"])),
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": []},
+]
+
+
+def history_of(conversation):
+    """The conversation as upstream's page sends it and upstream's (and Maya's) openai_to_messages normalizes it: an
+    earlier answer that searched as its rounds' assistant and tool messages, then the rest of its text when not empty."""
+    messages = []
+    for m in conversation:
+        if "rounds" not in m:
+            messages.append(dict(m))
+            continue
+        for r in m["rounds"]:
+            messages.append({"role": "assistant", "content": r["content"],
+                             "tool_calls": [{"function": {"name": c["name"], "arguments": c["arguments"]}}
+                                            for c in r["calls"]]})
+            messages += [{"role": "tool", "content": t} for t in r["results"]]
+        if m["content"]:
+            messages.append({"role": "assistant", "content": m["content"]})
+    return messages
+
+
 def messages_of(case):
-    messages = [dict(m) for m in case["conversation"]]
+    messages = history_of(case["conversation"])
     n = 0
     for r in case["rounds"]:                       # Maya's run_with_mcp (serve/server.py), not DeepSeek: stripped
         ids = []

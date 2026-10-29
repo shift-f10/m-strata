@@ -12,7 +12,10 @@ inline constexpr std::int64_t kSchemaVersion = 1;
 inline constexpr std::int64_t kListenerPort = 8080;
 inline constexpr std::int64_t kListenerBacklog = 16;
 inline constexpr std::int64_t kRequestDeadlineMs = 30'000;
-inline constexpr std::int64_t kMaxRequestBytes = 65'536;
+// Owner 2026-10-29 ("review the upstream strata as it does not have this sort of issue"): upstream reads a request of
+// up to 256 MiB (serve/server.py body_limit, "a million-token conversation with room to spare"); the 64 KiB of the
+// first plan refused a follow-up to a long answer (request_too_large). The body is read only after the key is checked.
+inline constexpr std::int64_t kMaxRequestBytes = 268'435'456;
 inline constexpr std::int64_t kMaxHeaderBytes = 16'384;
 inline constexpr std::int64_t kMaxHeaders = 64;
 inline constexpr std::int64_t kMaxRequestLineBytes = 4'096;
@@ -22,11 +25,13 @@ inline constexpr std::int64_t kWriteStallMs = 10'000;
 inline constexpr std::int64_t kResponseWriteDeadlineMs = 60'000;
 inline constexpr std::int64_t kStreamKeepaliveMs = 15'000;
 inline constexpr std::int64_t kMaxListEntries = 16;
-inline constexpr std::int64_t kChatMaxBodyBytes = kMaxRequestBytes - kMaxHeaderBytes;  // 49152, see the plan's Global Constraints
-inline constexpr std::int64_t kChatMaxMessages = 128;
-inline constexpr std::int64_t kChatMaxMessageBytes = 65'536;
-inline constexpr std::int64_t kChatMaxPromptTokens = 32'768;
-inline constexpr std::int64_t kChatMaxCompletionTokens = 4'096;
+inline constexpr std::int64_t kChatMaxBodyBytes = kMaxRequestBytes - kMaxHeaderBytes;  // all of a request but its header
+// as upstream: no message-count or message-size wall below the body's, and tokens bounded by the engine's context
+// window (resolve_max_tokens against its READY context) - a card made from a GGUF names none of its own
+inline constexpr std::int64_t kChatMaxMessages = 65'536;
+inline constexpr std::int64_t kChatMaxMessageBytes = kChatMaxBodyBytes;
+inline constexpr std::int64_t kChatMaxPromptTokens = 1'048'576;
+inline constexpr std::int64_t kChatMaxCompletionTokens = 1'048'576;
 inline constexpr std::int64_t kChatDefaultMaxTokens = 0;  // 0 = auto (SP3 B1)
 inline constexpr std::int64_t kChatMaxGeneratedBytes = 1'048'576;
 inline constexpr std::int64_t kEngineReadyTimeoutS = 900;   // upstream STRATA_ENGINE_READY_S

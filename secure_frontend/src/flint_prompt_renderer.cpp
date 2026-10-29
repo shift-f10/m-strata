@@ -77,14 +77,38 @@ bool append_bounded(std::string& output, const std::string_view text) {
   return true;
 }
 
-}  // namespace
+// Rounds the tool prompt can say: each with a call at least, every call named, one result per call.
+bool sayable(const std::span<const ToolRound> rounds) {
+  for (const auto& round : rounds) {
+    if (round.calls.empty() || round.results.size() != round.calls.size()) return false;
+    for (const auto& call : round.calls) {
+      if (call.name.empty()) return false;
+    }
+  }
+  return true;
+}
 
-std::optional<std::string> render_flint_text_prompt(const std::vector<ChatMessage>& messages, const bool thinking) {
+// An earlier answer's searches (owner 2026-10-29, "keep earlier searches in the chat history as upstream's page
+// does"), as the tool prompt takes them: on an answer only, sayable as this turn's rounds are. Such an answer needs no
+// text of its own (all of it came before its searches); the text it has obeys the plain prompt's rules.
+bool history_ok(const ChatMessage& message) {
+  return message.rounds.empty() || (message.role == "assistant" && sayable(message.rounds));
+}
+
+bool searches_only(const bool history_rounds, const ChatMessage& message) {
+  return history_rounds && !message.rounds.empty() && message.content.empty();
+}
+
+// render_flint_text_prompt; `history_rounds` is the tool prompt's check of the conversation, in which an earlier
+// answer may carry its searches (history_ok).
+std::optional<std::string> flint_text_prompt(const std::vector<ChatMessage>& messages, const bool thinking, const bool history_rounds) {
   if (messages.empty() || messages.size() > kMaximumMessages || messages.back().role != "user") return std::nullopt;
   std::string output;
   output.reserve(256U);
   for (const ChatMessage& message : messages) {
-    if (!message.parts.empty() || !acceptable(message.content)) return std::nullopt;
+    if ((history_rounds && !history_ok(message)) || !message.parts.empty()) return std::nullopt;
+    if (searches_only(history_rounds, message)) continue;
+    if (!acceptable(message.content)) return std::nullopt;
     if (message.role == "system" || message.role == "user") {
       const std::string text = flint_text(message.content);
       if (holds_marker(text) || !append_bounded(output, message.role == "system" ? "<|system|>" : "<|user|>") ||
@@ -104,18 +128,19 @@ std::optional<std::string> render_flint_text_prompt(const std::vector<ChatMessag
   return output;
 }
 
+}  // namespace
+
+std::optional<std::string> render_flint_text_prompt(const std::vector<ChatMessage>& messages, const bool thinking) {
+  return flint_text_prompt(messages, thinking, false);
+}
+
 std::optional<std::vector<PromptPiece>> render_flint_tool_prompt(const std::vector<ChatMessage>& messages,
                                                                  const std::span<const std::string> tools,
                                                                  const std::span<const ToolRound> rounds, const bool thinking) {
-  if (tools.empty()) return std::nullopt;
-  // The conversation obeys every rule of the plain prompt (roles, markers, escapes, sizes).
-  if (!render_flint_text_prompt(messages, thinking)) return std::nullopt;
-  for (const auto& round : rounds) {
-    if (round.calls.empty() || round.results.size() != round.calls.size()) return std::nullopt;
-    for (const auto& call : round.calls) {
-      if (call.name.empty()) return std::nullopt;
-    }
-  }
+  if (tools.empty() || !sayable(rounds)) return std::nullopt;
+  // The conversation obeys every rule of the plain prompt (roles, markers, escapes, sizes); an earlier answer's
+  // searches those of this turn's rounds (history_ok).
+  if (!flint_text_prompt(messages, thinking, true)) return std::nullopt;
   static constexpr std::array<std::string_view, 6U> kCallTags{"<tool_call>", "</tool_call>", "<arg_key>", "</arg_key>", "<arg_value>",
                                                               "</arg_value>"};
   // flint's vocabulary holds <tools> and </tools> as special tokens (USER_DEFINED, matched wherever the template writes
@@ -133,29 +158,18 @@ std::optional<std::vector<PromptPiece>> render_flint_tool_prompt(const std::vect
     out.text("\n\nFor each function call, output the function name and arguments within the following XML format:\n");
     out.templated("<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value>...</tool_call>\n", kCallTags);
   };
-  bool pending = true;
-  for (const ChatMessage& message : messages) {
-    if (pending && message.role != "system") {
-      preamble();
-      pending = false;
-    }
-    if (message.role == "system" || message.role == "user") {
-      out.marker(message.role == "system" ? "<|system|>" : "<|user|>");
-      out.text(flint_text(message.content));
-    } else {
-      out.marker("<|assistant|>");
-      out.text(message.content);
-    }
-  }
-  if (pending) preamble();
-  for (const auto& round : rounds) {
+  // A round: <|assistant|>, its reasoning, text and calls, then each result after its own <|observation|>. This turn's
+  // rounds as run_with_mcp appends them, reasoning and text stripped; an earlier answer's as upstream's page sends them
+  // (serve/web/app.js assistantMessages: per round the text before the calls and the calls, one tool message per
+  // result), without reasoning, and the template writes their text as it is.
+  const auto write_round = [&out](const ToolRound& round, const bool earlier) {
     out.marker("<|assistant|>");
     if (const std::string_view reasoning = python_strip(round.reasoning); !reasoning.empty()) {
       out.marker("<think>");
       out.plain(reasoning);
       out.marker("</think>");
     }
-    out.plain(python_strip(round.content));
+    out.plain(earlier ? std::string_view{round.content} : python_strip(round.content));
     for (const auto& call : round.calls) {
       out.marker("<tool_call>");
       out.plain(call.name);
@@ -175,7 +189,25 @@ std::optional<std::vector<PromptPiece>> render_flint_tool_prompt(const std::vect
       out.plain(flint_text(result));
       out.marker("</tool_response>");
     }
+  };
+  bool pending = true;
+  for (const ChatMessage& message : messages) {
+    if (pending && message.role != "system") {
+      preamble();
+      pending = false;
+    }
+    for (const auto& round : message.rounds) write_round(round, true);
+    if (searches_only(true, message)) continue;  // the page sends no turn for an answer's empty rest
+    if (message.role == "system" || message.role == "user") {
+      out.marker(message.role == "system" ? "<|system|>" : "<|user|>");
+      out.text(flint_text(message.content));
+    } else {
+      out.marker("<|assistant|>");
+      out.text(message.content);
+    }
   }
+  if (pending) preamble();
+  for (const auto& round : rounds) write_round(round, false);
   out.marker("<|assistant|>");
   if (!thinking) {
     out.marker("<think>");

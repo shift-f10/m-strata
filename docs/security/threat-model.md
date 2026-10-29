@@ -55,11 +55,15 @@ Trust boundaries:
   refused next to a `token.source`, and announced by a `strata: warning:` line
   on stderr and in the ready line. Host, Origin and Content-Type checks still
   apply (residual risk below).
-- Rate/size/concurrency limits are configured with safe finite defaults. The defaults
-  stayed small when the schema maxima were raised to upstream's scale for long contexts
-  (2026-10-21: 256 MiB request/body/message, 1,048,576 prompt and output tokens, 65,536
-  messages). An operator who raises them accepts that each worker may hold one request
-  that large in memory (bounded by `limits.concurrency.max_concurrent_requests`).
+- Rate/size/concurrency limits are configured with finite defaults. Since 2026-10-29 (owner: "review the
+  upstream strata as it does not have this sort of issue" - a follow-up to a long answer was refused
+  `request_too_large` at the first plan's 48 KiB body) the chat request limits default to upstream's scale:
+  a 256 MiB request (`limits.http.max_request_bytes`; upstream's `body_limit`), the body and a message up to
+  all of it but the header, 65,536 messages, and 1,048,576 prompt and output tokens - the engine's context
+  window is the bound that remains (resolve_max_tokens against its READY context), as upstream's. The body is
+  read only after the bearer token checks (connection_handler P3), so only a client holding the key can make a
+  worker hold a request that large in memory; at most `limits.concurrency.max_concurrent_requests` of them
+  (8 by default, so 2 GiB at worst). An operator who lowers the limits gets the old refusals back.
   One remote address may hold at most `limits.concurrency.max_connections_per_remote_address`
   workers: derived min(4, workers), and min(6, workers) with `listener.web_ui` (owner,
   2026-10-23: a browser fetches the page's files over up to six connections, and a phone lost
@@ -771,6 +775,14 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
   draft layer (`mtp/rt`) only when it passes the model folders' rule (private, unless model
   folders are used as they are); a draft layer other users of the PC could change is left
   out and the log says so.
+- **Earlier searches in the history (2026-10-29).** An assistant message may carry `strata_rounds` (the page sends
+  an answer's searches back with the conversation, as upstream's page sends its tool calls and results): a closed
+  vocabulary (per round its text, 1-16 calls of a name and an arguments object, one result text each; at most 64
+  rounds; JSON nesting at most 16), on assistant messages only. Client `tool` messages and `tools` stay refused. A
+  client can put any text there, as it can in any message of its own conversation; the server renders it as each
+  family's template renders history calls and results, the results and the model's words as plain spans (their
+  literals are text, never a token), and offers and runs no tool because of it. A search turn's system message also
+  says today's date and to search for anything recent (the search service's fixed note).
 - **Fewer searches, never more (2026-10-28).** A card's Web search checkbox (`web_search`,
   on by default, shown only while the server's search is on) starts its model without the
   tool, and a request's `"strata_search": false` serves that chat without it. Neither can

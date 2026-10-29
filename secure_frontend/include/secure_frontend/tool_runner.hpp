@@ -40,6 +40,9 @@ class ToolRunner {
   // A chat it was offered to is served without it: the model's prompt cannot carry the tool (its vocabulary lacks a tag
   // that prompt needs); `why` is the plan's fixed reason (owner 2026-10-28: flint's fallback was silent).
   virtual void served_without(const std::string_view why) { (void)why; }
+  // What a chat's system message says while the tool is offered (owner 2026-10-28: today's date, and that the model's
+  // knowledge may be out of date so it should search for anything recent); empty: nothing.
+  [[nodiscard]] virtual std::string system_note() const { return {}; }
 };
 
 }  // namespace secure_frontend

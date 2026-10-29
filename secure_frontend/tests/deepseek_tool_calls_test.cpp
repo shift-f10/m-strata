@@ -1,7 +1,8 @@
 // Web search for DeepSeek-V4.1 (owner 2026-10-28: "deepseek does not seem to have mcp search access"): the tool prompt as
 // Project Maya v1.1.30 renders it - DeepSeek's own encoder (serve/ds41_encoding.py) under Maya's ChatTemplate, with
 // Maya's literal marking (render_deepseek_tool_prompt against tests/fixtures/deepseek_tool_prompts.json,
-// tools/generate_deepseek_tool_prompt_fixture.py) - the DSML calls as Maya reads them (its DsmlRewriter into GLM's form,
+// tools/generate_deepseek_tool_prompt_fixture.py; earlier answers' searches in the history too, owner 2026-10-29) - the
+// DSML calls as Maya reads them (its DsmlRewriter into GLM's form,
 // tests/fixtures/deepseek_tool_calls.json, tools/generate_deepseek_tool_call_fixture.py), the plan with ｜DSML｜ output as
 // its text, and the route's first search plan.
 #include "secure_frontend/chat_generation_plan.hpp"
@@ -62,6 +63,15 @@ secure_frontend::ToolCall call_of(const secure_frontend::JsonValue& object) {
   return call;
 }
 
+// A round of the fixture: the current turn's (with its reasoning) or an earlier answer's (the page's strata_rounds:
+// no reasoning).
+secure_frontend::ToolRound round_of(const secure_frontend::JsonValue& r) {
+  secure_frontend::ToolRound round{text_of(r, "reasoning"), text_of(r, "content"), {}, {}};
+  for (const auto& c : *member(r, "calls")->if_array()) round.calls.push_back(call_of(c));
+  for (const auto& t : *member(r, "results")->if_array()) round.results.push_back(t.if_string() != nullptr ? *t.if_string() : std::string{});
+  return round;
+}
+
 std::string joined(const std::vector<secure_frontend::PromptPiece>& pieces) {
   std::string out;
   for (const auto& piece : pieces) out += piece.text;
@@ -115,7 +125,8 @@ void renders_mayas_tool_prompts_byte_for_byte() {
   const auto* tool = member(*fixture, "tool");
   const auto* cases = member(*fixture, "cases");
   const auto* literal_list = member(*fixture, "literals");
-  expect(tool != nullptr && literal_list != nullptr && cases != nullptr && cases->if_array() != nullptr && cases->if_array()->size() >= 11U,
+  // 11 of the current turn's rounds, 11 with earlier searches in the history (owner 2026-10-29)
+  expect(tool != nullptr && literal_list != nullptr && cases != nullptr && cases->if_array() != nullptr && cases->if_array()->size() >= 22U,
          "the fixture's cases");
   if (tool == nullptr || literal_list == nullptr || cases == nullptr || cases->if_array() == nullptr) return;
   std::vector<std::string> literals;
@@ -124,17 +135,23 @@ void renders_mayas_tool_prompts_byte_for_byte() {
   const std::vector<std::vector<std::string>> forms{{secure_frontend::python_json_text(*tool)},
                                                     {"{\"type\": \"function\", \"function\": " + secure_frontend::python_json_text(*tool) + "}"}};
   std::size_t seen = 0U;
+  std::size_t with_history = 0U;
   for (const auto& entry : *cases->if_array()) {
     const std::string name = text_of(entry, "name");
     std::vector<secure_frontend::ChatMessage> conversation;
-    for (const auto& m : *member(entry, "conversation")->if_array()) conversation.push_back({text_of(m, "role"), text_of(m, "content")});
-    std::vector<secure_frontend::ToolRound> rounds;
-    for (const auto& r : *member(entry, "rounds")->if_array()) {
-      secure_frontend::ToolRound round{text_of(r, "reasoning"), text_of(r, "content"), {}, {}};
-      for (const auto& c : *member(r, "calls")->if_array()) round.calls.push_back(call_of(c));
-      for (const auto& t : *member(r, "results")->if_array()) round.results.push_back(t.if_string() != nullptr ? *t.if_string() : std::string{});
-      rounds.push_back(std::move(round));
+    bool history = false;
+    for (const auto& m : *member(entry, "conversation")->if_array()) {
+      secure_frontend::ChatMessage message{text_of(m, "role"), text_of(m, "content")};
+      // an earlier answer's searches (ChatMessage::rounds, the page's strata_rounds)
+      if (const auto* earlier = member(m, "rounds"); earlier != nullptr && earlier->if_array() != nullptr) {
+        for (const auto& r : *earlier->if_array()) message.rounds.push_back(round_of(r));
+        history = history || !message.rounds.empty();
+      }
+      conversation.push_back(std::move(message));
     }
+    if (history) ++with_history;
+    std::vector<secure_frontend::ToolRound> rounds;
+    for (const auto& r : *member(entry, "rounds")->if_array()) rounds.push_back(round_of(r));
     std::set<std::pair<std::size_t, std::size_t>> plain;
     for (const auto& span : *member(entry, "plain")->if_array()) {
       const auto& pair = *span.if_array();
@@ -161,7 +178,8 @@ void renders_mayas_tool_prompts_byte_for_byte() {
       }
     }
   }
-  expect(seen >= 22U, "every case ran in both tool forms");
+  expect(seen >= 44U, "every case ran in both tool forms");
+  expect(with_history >= 11U, "the cases with earlier searches in the history ran");
 }
 
 void refuses_what_the_tool_prompt_cannot_say() {
@@ -189,6 +207,31 @@ void refuses_what_the_tool_prompt_cannot_say() {
            {{"user", ""}}, {{"user", "a"}, {"system", "late"}, {"user", "b"}}, {{"user", "a"}, {"user", "b"}}}) {
     expect(!render(bad, tools, good), "what the plain DeepSeek prompt refuses");
   }
+  // An earlier answer's searches (ChatMessage::rounds): an answer with them may have no text after them; their rounds
+  // keep the current turn's rules; only an answer has them. The plain prompt keeps only the answer's text.
+  const auto answered = [&question](std::string text, std::vector<secure_frontend::ToolRound> earlier) {
+    std::vector<secure_frontend::ChatMessage> m = question;
+    m.push_back({"assistant", std::move(text)});
+    m.back().rounds = std::move(earlier);
+    m.push_back({"user", "Q2"});
+    return m;
+  };
+  const std::vector<secure_frontend::ToolRound> searched{{"", "", {call}, {"ok"}}};
+  expect(render(answered("A", searched), tools, good).has_value() && render(answered("", searched), tools, good).has_value(),
+         "an earlier answer with searches renders, with or without text after them");
+  expect(!render(answered("", {}), tools, good), "an earlier answer without text or searches");
+  expect(!render(answered("A", {{"", "", {}, {}}}), tools, good), "an earlier round without a call");
+  expect(!render(answered("A", {{"", "", {call, call}, {"ok"}}}), tools, good), "an earlier round with a result missing");
+  expect(!render(answered("A", {{"", "", {{"", {}}}, {"ok"}}}), tools, good), "an earlier call without a name");
+  {
+    auto on_user = answered("A", {});
+    on_user.back().rounds = searched;
+    expect(!render(on_user, tools, good), "searches on a user message");
+  }
+  expect(secure_frontend::render_deepseek_text_prompt(answered("A", searched), 75) ==
+             secure_frontend::render_deepseek_text_prompt(answered("A", {}), 75) &&
+             !secure_frontend::render_deepseek_text_prompt(answered("", searched), 75),
+         "the plain prompt keeps the answer's text only, as before");
 }
 
 // DeepSeek's calls as Maya reads them: each reply of the fixture (split at </think>), fed whole and one byte at a time,

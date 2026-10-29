@@ -2,6 +2,7 @@
 
 #include "secure_frontend/json.hpp"
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
@@ -108,6 +109,11 @@ void append_key(std::string* out, const std::string_view key, const bool first =
   out->push_back(':');
 }
 
+// upstream's RATE_WINDOW_S, RATE_MIN_SPAN_S and its rate deque's maxlen
+constexpr double kRateWindowMs = 2000.0;
+constexpr double kRateMinSpanMs = 250.0;
+constexpr std::size_t kRateSamples = 32U;
+
 }  // namespace
 
 // Each family names its tiers in its own words (the engine sources, read for this):
@@ -187,6 +193,8 @@ void ServeMonitor::on_token(const std::size_t generated) {
   if (!live_->first_token.has_value()) live_->first_token = now;
   live_->last_token = now;
   live_->generated = generated;
+  live_->rate.emplace_back(now, generated);
+  if (live_->rate.size() > kRateSamples) live_->rate.pop_front();
 }
 
 void ServeMonitor::on_done(const DoneFigures& figures) {
@@ -260,11 +268,26 @@ void ServeMonitor::end_locked(const std::string_view finish) {
   while (requests_.size() > kept_) requests_.pop_back();
 }
 
+// Owner 2026-10-29 (the Monitor's speed "does not seem to update in realtime": it was the mean since the first token):
+// upstream's live rate (serve/server.py _rate_of) - the tokens over the samples of the last kRateWindowMs, once they
+// span kRateMinSpanMs; before that, or after a stall, the mean since the first token (over at least kRateMinSpanMs).
 std::optional<double> ServeMonitor::live_tok_s_locked() const {
-  if (!live_.has_value() || !live_->first_token.has_value() || !live_->last_token.has_value() || live_->generated < 2U) return std::nullopt;
-  const double between = milliseconds_between(*live_->first_token, *live_->last_token);
-  if (between <= 0.0) return std::nullopt;
-  return static_cast<double>(live_->generated - 1U) / (between / 1000.0);
+  if (!live_.has_value() || !live_->first_token.has_value() || live_->generated < 2U) return std::nullopt;
+  const auto now = steady_();
+  const auto& rate = live_->rate;
+  if (!rate.empty()) {
+    const auto& newest = rate.back();
+    const auto oldest = std::find_if(rate.begin(), rate.end(), [&now](const auto& sample) {
+      return milliseconds_between(sample.first, now) <= kRateWindowMs;
+    });
+    if (oldest != rate.end()) {
+      const double span = milliseconds_between(oldest->first, newest.first);
+      if (span >= kRateMinSpanMs) {
+        return std::max(0.0, (static_cast<double>(newest.second) - static_cast<double>(oldest->second)) / (span / 1000.0));
+      }
+    }
+  }
+  return static_cast<double>(live_->generated) / (std::max(kRateMinSpanMs, milliseconds_between(*live_->first_token, now)) / 1000.0);
 }
 
 void ServeMonitor::add_host_sample(const HostSample& sample) {
