@@ -293,7 +293,9 @@ its card offers the step."
   is no longer counted as on this PC in the list (`have` null), so the page shows "Its files are on this PC, but its
   card was not made: Set up makes it (nothing is downloaded again)" with a **Set up** button (a start; `lacksRoom` asks no
   room of an installed one), and strata-tui says the same and Enter starts it. The page's fallback for a server without
-  `have` no longer overrides a `have` the server sent. A download-only entry installed stays Downloaded.
+  `have` no longer overrides a `have` the server sent. A download-only entry installed stays Downloaded, and so does an
+  installed one whose file a card added from that folder runs (his DeepSeek-V4.1: it read Locally provided for a moment
+  after the first swap; caught on his server and fixed in the same entry, RED shown).
 - **Proof**: RED shown (`an_installed_download_without_its_card_offers_its_step`, the page's and the TUI's checks), then
   94/94 on MSVC and 94/94 on Linux gcc over the download manager, TUI and router suites.
 

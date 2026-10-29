@@ -853,7 +853,9 @@ std::string DownloadManager::list_json() {
     // misread, its card never made): the page offers Set up, strata-tui Enter - a start that finds it installed (nothing is
     // downloaded again) and makes the card. A download-only entry installed is.
     const bool on_pc = card.state == State::ready || (card.state == State::installed && !runnable);
-    const auto [have, have_card] = have_of(e, on_pc, held);
+    const auto [matched, have_card] = have_of(e, on_pc, held);
+    // installed here and its file run by a card (one added from that folder): its files came from this download
+    const std::string_view have = card.state == State::installed && matched == "local" ? std::string_view{"downloaded"} : matched;
     out += i != 0U ? "," : "";
     out += "{\"id\":" + json_text(e.id) + ",\"name\":" + json_text(e.name) + ",\"source\":" + json_text(e.source) + ",\"family\":" +
            json_text(e.family) + ",\"about\":" + json_text(e.about) + ",\"repo\":" + json_text(e.repo) + ",\"size_bytes\":" +

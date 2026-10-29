@@ -485,6 +485,26 @@ void an_installed_download_without_its_card_offers_its_step() {
   g.start(1U << 30U);
   const std::string only = entry_of(g.manager->list_json());
   expect(has(only, "\"state\":\"installed\"") && has(only, "\"have\":\"downloaded\""), "a download-only entry installed is Downloaded: " + only);
+  Fixture h;   // installed, and a card added from that folder runs its file (his DeepSeek): Downloaded, with that card
+  h.with_gguf_engine = true;
+  const auto store = h.dir / "installed";
+  secure_frontend_test::make_private_directory(store);
+  secure_frontend_test::write_file(store / "gemma-small-Q8_0.gguf", std::string(1000U, 'x'));   // the catalog's pinned size
+  secure_frontend::GgufMetadata gemma;
+  gemma.version = 3U;
+  gemma.values["general.architecture"] = std::string{"gemma4"};
+  const auto made = secure_frontend::card_for_gguf(gemma, {.folder = store, .file = "gemma-small-Q8_0.gguf", .engine = h.dir / "multiengine.exe",
+                                                           .source = "folder"});
+  if (const auto* text = std::get_if<secure_frontend::CardText>(&made)) {
+    auto parsed = secure_frontend::parse_model_card(text->json, h.dir);
+    if (auto* held = std::get_if<secure_frontend::ModelCard>(&parsed)) h.held.push_back(std::move(*held));
+  }
+  expect(h.held.size() == 1U, "the folder's card");
+  h.spawner.installed = store;
+  h.start(1U << 30U);
+  const std::string run = entry_of(h.manager->list_json());
+  expect(has(run, "\"state\":\"installed\"") && has(run, ",\"have\":\"downloaded\",\"have_card\":\"gemma-small-Q8_0\"}"),
+         "installed, its file run by a card from that folder: Downloaded, that card named: " + run);
 }
 
 void pasted_links() {
