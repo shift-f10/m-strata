@@ -292,6 +292,40 @@ void the_route_plans_raon1_and_flint_searches() {
   expect(fplan != nullptr && fplan->literal_tokens.size() == 8U && !fplan->prompt_token_ids.empty() &&
              fplan->prompt_token_ids.front() == id_of(flint, "<|system|>"),
          "a flint turn plans in flint's form");
+  // A follow-up turn, the earlier exchange as the page sends it (plain text; owner 2026-10-28: "it searched the first
+  // time but the following messages it did not search again"): planned with the tool as the first turn is, never
+  // served without it.
+  {
+    secure_frontend::ChatCompletionRequest later = request;
+    later.messages = {{"user", "Who won the 2026 World Cup final?"}, {"assistant", "Spain won it 2-1 ([report](https://example.org/final))."},
+                       {"user", "Who scored the goals?"}};
+    const secure_frontend::SearchTurn first_turn{request, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::raon1, {}};
+    const secure_frontend::SearchTurn next_turn{later, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::raon1, {}};
+    const auto first = secure_frontend::search_first_plan(config, first_turn, raon);
+    const auto next = secure_frontend::search_first_plan(config, next_turn, raon);
+    const auto* a = std::get_if<secure_frontend::ChatGenerationPlan>(&first);
+    const auto* b = std::get_if<secure_frontend::ChatGenerationPlan>(&next);
+    expect(a != nullptr && b != nullptr && b->literal_tokens == a->literal_tokens &&
+               b->prompt_token_ids.size() > a->prompt_token_ids.size(),
+           "a follow-up raon1 turn plans with the tool too");
+  }
+  // A follow-up turn, the earlier exchange as the page sends it (plain text; owner 2026-10-28: "it searched the first
+  // time but the following messages it did not search again"): planned with the tool as the first turn is, never
+  // served without it.
+  {
+    secure_frontend::ChatCompletionRequest later = request;
+    later.messages = {{"user", "Who won the 2026 World Cup final?"}, {"assistant", "Spain won it 2-1 ([report](https://example.org/final))."},
+                       {"user", "Who scored the goals?"}};
+    const secure_frontend::SearchTurn first_turn{request, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::flint, {}};
+    const secure_frontend::SearchTurn next_turn{later, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::flint, {}};
+    const auto first = secure_frontend::search_first_plan(config, first_turn, flint);
+    const auto next = secure_frontend::search_first_plan(config, next_turn, flint);
+    const auto* a = std::get_if<secure_frontend::ChatGenerationPlan>(&first);
+    const auto* b = std::get_if<secure_frontend::ChatGenerationPlan>(&next);
+    expect(a != nullptr && b != nullptr && b->literal_tokens == a->literal_tokens &&
+               b->prompt_token_ids.size() > a->prompt_token_ids.size(),
+           "a follow-up flint turn plans with the tool too");
+  }
 }
 
 // Owner 2026-10-28 ("Flint did not either"): the route's first search plan over each model's REAL vocabulary - the

@@ -55,7 +55,10 @@ enum class CardState { stopped, starting, running, failed, calibrating };
 [[nodiscard]] std::string_view card_state_name(CardState state) noexcept;
 
 // GUI-first start-up (spec 2026-10-27 §4.1): the answer to a change of the cards the server wrote.
-enum class CardChange { done, not_found, not_page_card, busy, running, shutting_down };
+// stopping: the running card's model stops first, then the card is removed (remove_card with RunningCard::stop_first).
+enum class CardChange { done, not_found, not_page_card, busy, running, shutting_down, stopping };
+// What remove_card does with the card that runs: refuse (a delete: its engine holds the files), or stop it first.
+enum class RunningCard { refuse, stop_first };
 
 struct LauncherSettings final {
   FrontendConfigDraft main;                         // the main config (main_config_card_issues is empty)
@@ -123,8 +126,10 @@ class ModelLauncher final {
   // folder). Refused while a start or stop runs (a start reads its card outside the lock); a running model keeps
   // running and the new card applies at its next start.
   [[nodiscard]] CardChange replace_card(ModelCard card);
-  // §4.5: a card the server wrote, removed with its remembered options; refused while it runs or a start or stop runs.
-  [[nodiscard]] CardChange remove_card(std::string_view name);
+  // §4.5: a card the server wrote, removed with its remembered options and its calibration; refused while a start or
+  // stop runs. The card that runs is refused, or with RunningCard::stop_first (owner 2026-10-28, "remove an active model
+  // card but not delete files") its model is stopped as stop() stops it and the card removed after: `stopping`.
+  [[nodiscard]] CardChange remove_card(std::string_view name, RunningCard running = RunningCard::refuse);
   // A copy of the card as held, whether the page may change it, and its state.
   struct HeldCard final {
     ModelCard card;
@@ -168,14 +173,19 @@ class ModelLauncher final {
     std::string_view error{};  // a fixed reason; empty unless failed
   };
   void write_remembered();
+  // A card out of the list (mutex_ held), then its remembered options and calibration files (mutex_ not held).
+  void erase_card(std::size_t index);
+  void forget_card(const std::string& name);
   struct Job final {
-    enum class Kind { start, stop, calibrate } kind{Kind::start};
+    // remove: stop (the card runs), then remove the card `name`
+    enum class Kind { start, stop, calibrate, remove } kind{Kind::start};
     std::size_t card{0};
     ModelOptionValues values{};
     std::shared_ptr<const FrontendConfig> config{};
     bool then_start{false};                   // calibrate: start the card with the result afterwards
     std::optional<bool> auto_recalibrate{};   // calibrate: kept with the result
     bool prefill_first{false};                // start: MiniMax's prefill calibration runs first (run_prefill_calibration)
+    std::string name{};                       // remove: the card
   };
   void run_jobs();
   void run_start(const Job& job);
@@ -214,6 +224,7 @@ class ModelLauncher final {
   std::vector<CardStatus> status_;
   std::vector<bool> page_card_;               // beside settings_.cards: the server wrote it
   std::shared_ptr<ModelRuntime> running_;     // the started (or starting) model's runtime
+  std::shared_ptr<ModelRuntime> measuring_;   // a calibration step's runtime (the shutdown hurries its stop)
   std::optional<std::size_t> running_card_;   // which card it is
   std::optional<std::size_t> starting_card_;  // the card an accepted start is bringing up
   bool busy_{false};                          // a start or stop is accepted and not finished

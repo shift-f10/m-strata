@@ -385,7 +385,8 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
       case RouteId::strata_card_add:
       case RouteId::strata_card_folder:
       case RouteId::strata_card_delete_begin:
-      case RouteId::strata_card_delete: {
+      case RouteId::strata_card_delete:
+      case RouteId::strata_card_remove: {
         RouteResult result = config_.cards.handle(decision.route, body, context);
         if (auto* complete = std::get_if<HttpResponse>(&result)) {
           response = std::move(*complete);

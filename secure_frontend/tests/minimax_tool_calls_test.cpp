@@ -394,6 +394,23 @@ void the_route_plans_minimax_searches() {
                plan->starts_in_reasoning == !thinking.off,
            std::string{"a MiniMax turn plans in MiniMax's form with the turn's thinking, "} + (thinking.off ? "off" : "high"));
   }
+  // A follow-up turn, the earlier exchange as the page sends it (plain text; owner 2026-10-28: "it searched the first
+  // time but the following messages it did not search again"): planned with the tool as the first turn is, never
+  // served without it.
+  {
+    secure_frontend::ChatCompletionRequest later = request;
+    later.messages = {{"user", "Who won the 2026 World Cup final?"}, {"assistant", "Spain won it 2-1 ([report](https://example.org/final))."},
+                       {"user", "Who scored the goals?"}};
+    const secure_frontend::SearchTurn first_turn{request, {{"web_search", {"query"}}, kTool}, true, {}, ToolFormat::minimax, secure_frontend::MinimaxThinking{.effort = "high"}};
+    const secure_frontend::SearchTurn next_turn{later, {{"web_search", {"query"}}, kTool}, true, {}, ToolFormat::minimax, secure_frontend::MinimaxThinking{.effort = "high"}};
+    const auto first = secure_frontend::search_first_plan(config, first_turn, pack);
+    const auto next = secure_frontend::search_first_plan(config, next_turn, pack);
+    const auto* a = std::get_if<secure_frontend::ChatGenerationPlan>(&first);
+    const auto* b = std::get_if<secure_frontend::ChatGenerationPlan>(&next);
+    expect(a != nullptr && b != nullptr && b->literal_tokens == a->literal_tokens &&
+               b->prompt_token_ids.size() > a->prompt_token_ids.size(),
+           "a follow-up MiniMax turn plans with the tool too");
+  }
 }
 
 // The route's first search plan over the REAL vocabulary (SECURE_FRONTEND_MINIMAX_PACK, a maya-mm3 pack's tokenizer/

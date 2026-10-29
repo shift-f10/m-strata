@@ -18,6 +18,8 @@
 //   POST /v1/strata/cards/delete        {"name","code","key","permanent": true}
 //                                                           -> {"name","files","bytes","folder_removed"}
 //                                                              (+ "download_removed" for a downloaded model)
+//   POST /v1/strata/cards/remove        {"name"}            -> {"name","stopping"}   (the card goes, its model files stay;
+//                                                              a running card's model stops first: "stopping": true)
 //
 // A model folder the page names must be private (others may not change it; the page offers to make it so), unless the
 // main config sets roots.allow_untrusted_media: then it is used as it is, and a pack built beside its files is left as
@@ -81,6 +83,7 @@ class CardRoutes final {
   HttpResponse repoint(std::string_view body);
   HttpResponse delete_begin(std::string_view body);
   HttpResponse delete_confirm(std::string_view body);
+  HttpResponse remove(std::string_view body);
   void log(std::string_view line) const;
 
   ModelLauncher& launcher_;

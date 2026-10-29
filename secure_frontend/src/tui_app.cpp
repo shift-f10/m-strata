@@ -214,17 +214,24 @@ const JsonValue* data_list(const std::optional<JsonValue>& document) {
   return list != nullptr && list->if_array() != nullptr ? list : nullptr;
 }
 
-// What this PC already has of a download entry, from the list's "have" (owner 2026-10-28, as the page shows it):
-// "Downloaded" or "Locally provided"; empty when it has neither, or while it is queued, under way or paused (its state
-// says how that goes).
-std::string on_this_pc(const JsonValue& entry) {
+// A download entry queued, under way or paused: its state says how that goes.
+bool under_way(const JsonValue& entry) {
   const std::string state = text(member(&entry, "state"));
-  if (state == "queued" || state == "downloading" || state == "verifying" || state == "preparing" || state == "paused") return {};
+  return state == "queued" || state == "downloading" || state == "verifying" || state == "preparing" || state == "paused";
+}
+
+// What this PC already has of a download entry, from the list's "have" (owner 2026-10-28, as the page shows it):
+// "Downloaded" or "Locally provided"; empty when it has neither, or while it is under way.
+std::string on_this_pc(const JsonValue& entry) {
+  if (under_way(entry)) return {};
   const std::string have = text(member(&entry, "have"));
   if (have == "downloaded") return "Downloaded";
   if (have == "local") return "Locally provided";
   return {};
 }
+
+// A card has a file of the entry's name and another size (another revision): said, and the download still offered.
+bool other_version(const JsonValue& entry) { return !under_way(entry) && text(member(&entry, "have")) == "other"; }
 
 // " (its card: <name>)", or nothing when the list names no card.
 std::string its_card(const JsonValue& entry) {
@@ -475,7 +482,7 @@ Outcome App::key(const Key& key) {
 Outcome App::prompt_key(const Key& key) {
   Outcome out;
   if (key.kind == Key::Kind::wheel_up || key.kind == Key::Kind::wheel_down) return out;  // (no answer: the question stays)
-  if (prompt_ == Prompt::quit || prompt_ == Prompt::start) {
+  if (prompt_ == Prompt::quit || prompt_ == Prompt::start || prompt_ == Prompt::remove) {
     const bool yes = key.kind == Key::Kind::character && (key.text == "y" || key.text == "Y");
     if (prompt_ == Prompt::quit) out.quit = yes;
     else if (yes && confirm_) out.requests.push_back(std::move(*confirm_));
@@ -701,6 +708,23 @@ Outcome App::models_key(const Key& key) {
         }
       }
       return out;
+    case Key::Kind::del:
+      // owner 2026-10-28 ("remove an active model card but not delete files"): the card off the list, its model files
+      // kept, asked first; the running card's model is stopped first. A card from the server's config stays.
+      if (card != nullptr) {
+        const auto* page = member(card, "page_card");
+        if (page == nullptr || page->if_boolean() == nullptr || !*page->if_boolean()) {
+          say(name + "'s card is in the server's config: remove it there", true);
+        } else {
+          const std::string state = text(member(card, "state"));
+          question_ = state == "running" || state == "starting" ? "Stop " + name + " and remove its card? Its model files stay."
+                                                                : "Remove the card " + name + "? Its model files stay on this PC.";
+          confirm_ = Request{"remove " + name, "POST", "/v1/strata/cards/remove", "{\"name\":" + json_string(name) + "}"};
+          prompt_ = Prompt::remove;
+          option_ = -1;
+        }
+      }
+      return out;
     case Key::Kind::character: break;
     default: return out;
   }
@@ -870,7 +894,7 @@ void App::draw_keys(Screen& screen) const {
   switch (view_) {
     case View::models:
       if (option_ >= 0) keys.insert(keys.end(), {{"Up/Down", "Option"}, {"Left/Right", "Change"}, {"Enter", "Start"}, {"Esc", "Cards"}});
-      else keys.insert(keys.end(), {{"Enter", "Start"}, {"s", "Stop"}, {"o", "Options"}, {"c", "Calibrate"}, {"x", "Cancel"}, {"a", "Auto"}});
+      else keys.insert(keys.end(), {{"Enter", "Start"}, {"s", "Stop"}, {"o", "Options"}, {"c", "Calibrate"}, {"x", "Cancel"}, {"a", "Auto"}, {"Del", "Remove"}});
       break;
     case View::downloads: keys.insert(keys.end(), {{"Enter", "Download"}, {"p", "Pause"}, {"x", "Cancel"}}); break;
     case View::settings: keys.insert(keys.end(), {{"Enter", "Edit"}, {"w", "Save"}, {"u", "Undo"}, {"k", "Key"}, {"R", "Rotate"}}); break;
@@ -897,10 +921,11 @@ void App::draw_prompt(Screen& screen) const {
   const char* const title = prompt_ == Prompt::quit     ? "Quit"
                             : prompt_ == Prompt::rotate ? "Rotate the API key"
                             : prompt_ == Prompt::start  ? "Start"
+                            : prompt_ == Prompt::remove ? "Remove card"
                                                         : "Edit";
   screen.box(box, title, Style{kAccent, kPanel}, Style{kAccent, kPanel, true});
   const Rect inner = box.inner();
-  if (prompt_ == Prompt::quit || prompt_ == Prompt::start) {
+  if (prompt_ == Prompt::quit || prompt_ == Prompt::start || prompt_ == Prompt::remove) {
     const std::string question = prompt_ == Prompt::quit ? std::string{"Quit, and stop the server and its model?"} : question_;
     screen.field(inner.x + 1, inner.y + 1, inner.width - 2, question + "  y / n", Style{kText, kPanel});
     return;
@@ -1402,9 +1427,13 @@ void App::draw_downloads(Screen& screen, const Rect area) const {
     screen.field(r.x + 1, y, name_width, text(member(&entry, "name")), base);
     const double size = number(member(&entry, "size_bytes")).value_or(0.0);
     screen.field(r.x + 2 + name_width, y, 9, size > 0.0 ? gib(size) + " GB" : "-", selected ? base : kDim);
-    // what this PC already has of it ("Downloaded", "Locally provided"), else its download state
-    const std::string here = on_this_pc(entry);
-    const Style here_style = here == "Downloaded" ? Style{kGreen, kDefault, true} : Style{kCyan, kDefault, true};
+    // what this PC already has of it ("Downloaded", "Locally provided", "Other version"), else its download state
+    std::string here = on_this_pc(entry);
+    Style here_style = here == "Downloaded" ? Style{kGreen, kDefault, true} : Style{kCyan, kDefault, true};
+    if (here.empty() && other_version(entry)) {
+      here = "Other version";
+      here_style = Style{kYellow, kDefault, true};
+    }
     screen.field(r.x + 12 + name_width, y, 16, here.empty() ? state : here, selected ? base : here.empty() ? state_style(state) : here_style);
     // its bar once it has bytes (a download not started has none)
     const double total = number(member(&entry, "total")).value_or(0.0);
@@ -1417,10 +1446,15 @@ void App::draw_downloads(Screen& screen, const Rect area) const {
   if (!entries.empty()) {
     const auto& selected = entries[std::min(download_, entries.size() - 1U)];
     const auto* error = member(&selected, "error");
-    // a model already here says so (an earlier attempt's failure no longer matters), else its error or its note
+    // a model already here says so (an earlier attempt's failure no longer matters), else its error, another version of
+    // its file here, or its note
     const bool here = !on_this_pc(selected).empty();
     const bool failed = !here && error != nullptr && error->if_string() != nullptr;
-    const std::string note = here ? "Already on this PC" + its_card(selected) : failed ? *error->if_string() : text(member(&selected, "note"));
+    const std::string note = here     ? "Already on this PC" + its_card(selected)
+                             : failed ? *error->if_string()
+                             : other_version(selected)
+                                 ? "Another version of this file is on this PC" + its_card(selected) + "; a download brings the catalog's"
+                                 : text(member(&selected, "note"));
     screen.field(r.x + 1, r.y + r.height - 1, r.width - 2, note, failed ? Style{kRed, kDefault} : kDim);
   }
 }

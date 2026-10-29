@@ -710,6 +710,13 @@ asks quoted there.
   options and its calibration. The folder is removed only when left empty. A downloaded model's
   store entry then goes through the store's own `strata rm <id>:download` child (its lock, its
   index, the version folder inside the store), never a path from the page.
+- **Remove card** (`POST /v1/strata/cards/remove`, owner 2026-10-28) deletes no model file: only
+  the card file the server wrote in `<roots.state>/cards` (found by the card's name, as the
+  delete finds it), the card's remembered options and its calibration files. It answers the
+  same clients as the other card routes, keyed, and only for a page card (never a
+  `models.cards` one). It asks for no code or key: nothing it removes is permanent (the model
+  is added again from its folder). A running card's model is stopped through the launcher's own
+  stop first.
 - **Calibration** starts the card's own engine with candidate values of a fixed per-profile
   list (2026-10-28, every profile): the flags `--cpu-lane`, `--pcie-frac`, `--cpu-threads`,
   `--spec-min-p`, `--pool-workers`, `--adapt-every`, `--adapt-swaps` and `--adapt-decay`, and the

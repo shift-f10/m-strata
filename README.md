@@ -66,8 +66,9 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 - **Add a model** from files already on this PC (a folder and its `.gguf`); the pack is built when the family needs one.
   A Qwen model whose folder holds its picture encoder (one `mmproj*.gguf`) gets a card that reads pictures, with a
   **Pictures** option (GPU, CPU or off).
-  Each card shows its folder (move the files and point the card there); the **danger zone** deletes a model's files,
-  card and calibration after three confirmations.
+  Each card shows its folder (move the files and point the card there); **Remove card** takes a card off the list and
+  keeps its model files (a running model is stopped first); the **danger zone** deletes a model's files, card and
+  calibration after three confirmations.
 
 **Download manager**
 
@@ -79,7 +80,9 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   with **Change...**, and warns when the largest download waiting there does not fit.
 - **What you already have:** a catalog model that is on this PC says so instead of offering a download - **Downloaded**
   (it came from this download) or **Locally provided** (the same model file added from a folder, matched by its first
-  file's name and, where the catalog pins it, its size), with its card's name.
+  file's name and, where the catalog pins it, its size), with its card's name. A file of that name with another size (a
+  different revision of it) shows **Other version on this PC** and its card, and keeps its Download (the catalog's
+  version).
 - The catalog is grouped by model family, each group a section that opens on a click and sums up what it holds; a
   group with a download under way, paused or failed opens by itself.
 - **16 connections at once** for a large file (`pull.connections`, 1-32), a progress line with speed and time left,
@@ -465,7 +468,8 @@ On the page, open **Models**:
   into a drive or folder you choose; the free space is checked first. A large file comes over 16 connections at once
   (`pull.connections`, 1-32; 1 is one stream). A Qwen entry's **Vision files** box also fetches its picture encoder.
   When it is verified, it is packed if needed and appears as a card. The list says what is already on this PC:
-  **Downloaded**, or **Locally provided** for the same model added from a folder (no Download button for either). Each
+  **Downloaded**, or **Locally provided** for the same model added from a folder (no Download button for either), or
+  **Other version on this PC** for a same-named file of another size (its Download fetches the catalog's). Each
   model family is a section you open (one with a download under way opens by itself; the page remembers the ones you
   opened for the tab), under the **Download to** panel: the drive and folder, the drive's space, **Change...**.
 - **Start a model** starts and stops a card, with its options (context length, cache format, thinking, sampling).
@@ -617,9 +621,9 @@ opens on the Monitor:
 | --- | --- |
 | `1`-`6`, Tab, Shift-Tab, F1-F6 | Monitor, Models, Downloads, Settings, Log, About |
 | Up, Down, PageUp, PageDown | Move in a list; the mouse wheel scrolls the Log |
-| Models: Enter, `s`, `c`, `x`, `a` | Start the card, stop the model, calibrate, cancel the calibration, recalibrate when settings change |
+| Models: Enter, `s`, `c`, `x`, `a`, Del | Start the card, stop the model, calibrate, cancel the calibration, recalibrate when settings change, remove the card (asked first; its model files stay, a running model is stopped first) |
 | Models: `o`, then Up/Down, Left/Right, Esc | The card's options: pick one, change it (a switch flips, a choice or number steps), back to the cards; `r` undoes the changes |
-| Downloads: Enter, `p`, `x` | Download (or resume), pause, cancel the selected one (a model already on this PC shows Downloaded or Locally provided, and its card, and is not downloaded again) |
+| Downloads: Enter, `p`, `x` | Download (or resume), pause, cancel the selected one (a model already on this PC shows Downloaded or Locally provided, and its card, and is not downloaded again; Other version: another revision of its file is here, and Enter downloads the catalog's) |
 | Settings: Enter, `w`, `u`, `k`, `R` | Edit the setting (a switch flips; empty means its default), save the changes, undo them, show the API key, rotate it (type `ROTATE`) |
 | `q` or Ctrl-C | Quit: it asks, then stops the model and the server in order and gives the terminal back |
 

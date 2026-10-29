@@ -222,7 +222,8 @@ CardChange ModelLauncher::replace_card(ModelCard card) {
   return CardChange::done;
 }
 
-CardChange ModelLauncher::remove_card(const std::string_view name) {
+CardChange ModelLauncher::remove_card(const std::string_view name, const RunningCard running) {
+  bool queued = false;
   {
     std::lock_guard lock(mutex_);
     if (shutting_down_) return CardChange::shutting_down;
@@ -230,26 +231,52 @@ CardChange ModelLauncher::remove_card(const std::string_view name) {
     if (!found.has_value()) return CardChange::not_found;
     if (!page_card_[*found]) return CardChange::not_page_card;
     if (busy_ || pending_.has_value()) return CardChange::busy;
-    if (running_card_ == found) return CardChange::running;
-    // No start holds a card (none runs), so the list may shift; the running card's index follows it.
-    const auto at = static_cast<std::ptrdiff_t>(*found);
-    settings_.cards.erase(settings_.cards.begin() + at);
-    status_.erase(status_.begin() + at);
-    page_card_.erase(page_card_.begin() + at);
-    if (running_card_.has_value() && *running_card_ > *found) --*running_card_;
-    remembered_.erase(std::string{name});
-    // its calibration goes with it (spec 2026-10-27 §4.5): a later card of that name starts uncalibrated
-    auto_recalibrate_.erase(std::string{name});
-    calibration_errors_.erase(std::string{name});
+    if (running_card_ == found) {
+      if (running == RunningCard::refuse) return CardChange::running;
+      // owner 2026-10-28: its model is stopped as stop() stops it; the worker removes the card after
+      busy_ = true;
+      switching_ = true;
+      Job job;
+      job.kind = Job::Kind::remove;
+      job.card = *found;
+      job.name = std::string{name};
+      pending_ = std::move(job);
+      queued = true;
+    } else {
+      erase_card(*found);
+    }
   }
+  if (queued) {
+    log("[strata] models: stop, then remove the card " + std::string{name});
+    changed_.notify_all();
+    return CardChange::stopping;
+  }
+  forget_card(std::string{name});
+  return CardChange::done;
+}
+
+// No start holds a card (none runs, or a remove stopped it), so the list may shift; the running card's index follows it.
+void ModelLauncher::erase_card(const std::size_t index) {
+  const std::string name = settings_.cards[index].name;
+  const auto at = static_cast<std::ptrdiff_t>(index);
+  settings_.cards.erase(settings_.cards.begin() + at);
+  status_.erase(status_.begin() + at);
+  page_card_.erase(page_card_.begin() + at);
+  if (running_card_.has_value() && *running_card_ > index) --*running_card_;
+  remembered_.erase(name);
+  // its calibration goes with it (spec 2026-10-27 §4.5): a later card of that name starts uncalibrated
+  auto_recalibrate_.erase(name);
+  calibration_errors_.erase(name);
+}
+
+void ModelLauncher::forget_card(const std::string& name) {
   write_remembered();
   if (settings_.calibration_dir.has_value()) {
     std::error_code ec;
     std::filesystem::remove(*settings_.calibration_dir / path_from_utf8(calibration_file_name(name)), ec);
     std::filesystem::remove(*settings_.calibration_dir / path_from_utf8(prefill_file_name(name)), ec);
   }
-  log("[strata] models: removed " + std::string{name});
-  return CardChange::done;
+  log("[strata] models: removed " + name);
 }
 
 std::optional<ModelLauncher::HeldCard> ModelLauncher::card(const std::string_view name) const {
@@ -770,14 +797,23 @@ std::optional<double> ModelLauncher::measure(const ModelCard& card, const ModelO
   EngineLaunchPlan plan = std::move(model.plan);
   ServeMonitor meter;
   auto runtime = std::make_shared<ModelRuntime>(std::move(model), settings_.factory(std::move(plan)), settings_.gate, &meter);
+  {
+    std::lock_guard lock(mutex_);
+    measuring_ = runtime;
+    if (shutting_down_) runtime->supervisor().hurry();
+  }
+  // the next step must not start beside this one's engine: its stop waits for it to end
   const auto finish = [this, &runtime] {
-    runtime->supervisor().shutdown(settings_.stop_bound);
-    if (runtime->supervisor().engine_left_unreaped()) {
-      std::lock_guard lock(mutex_);
-      unreaped_ = true;
-    }
+    runtime->supervisor().stop_engine();
+    std::lock_guard lock(mutex_);
+    measuring_.reset();
+    if (runtime->supervisor().engine_left_unreaped()) unreaped_ = true;
   };
-  if (!runtime->supervisor().start()) return std::nullopt;
+  if (!runtime->supervisor().start()) {
+    std::lock_guard lock(mutex_);
+    measuring_.reset();
+    return std::nullopt;
+  }
   bool ready = false;
   while (!stop_asked()) {
     const auto snapshot = runtime->supervisor().snapshot();
@@ -962,6 +998,14 @@ void ModelLauncher::run_jobs() {
     } else {
       std::unique_lock lock(mutex_);
       retire_running(lock);
+      if (job.kind == Job::Kind::remove) {
+        // the card goes once its model has stopped (owner 2026-10-28: its files stay)
+        const auto found = find_card(job.name);
+        const bool erased = found.has_value() && page_card_[*found];
+        if (erased) erase_card(*found);
+        lock.unlock();
+        if (erased) forget_card(job.name);
+      }
     }
     std::lock_guard lock(mutex_);
     busy_ = false;
@@ -994,7 +1038,8 @@ void ModelLauncher::retire_running(std::unique_lock<std::mutex>& lock) {
     (void)wait_idle(settings_.cut_wait);
   }
   old->stop_vision();  // the encoder role first: spawned last, stopped first
-  old->supervisor().shutdown(settings_.stop_bound);
+  // waits for an engine still ending (a big model frees its memory slowly), so the next one does not start beside it
+  old->supervisor().stop_engine();
   const bool unreaped = old->supervisor().engine_left_unreaped();
   lock.lock();
   if (unreaped) unreaped_ = true;
@@ -1066,6 +1111,7 @@ void ModelLauncher::run_start(const Job& job) {
     std::lock_guard lock(mutex_);
     running_ = runtime;
     running_card_ = job.card;
+    if (shutting_down_) runtime->supervisor().hurry();
   }
   // READY, or the first end before it (D4: no retry loop for a start that cannot load).
   bool ready = false;
@@ -1083,7 +1129,7 @@ void ModelLauncher::run_start(const Job& job) {
     (void)runtime->supervisor().wait_for_change(SupervisorState::starting, std::chrono::milliseconds(200));
   }
   if (!ready) {
-    runtime->supervisor().shutdown(settings_.stop_bound);
+    runtime->supervisor().stop_engine();
     std::lock_guard lock(mutex_);
     if (runtime->supervisor().engine_left_unreaped()) unreaped_ = true;
     running_.reset();
@@ -1099,7 +1145,7 @@ void ModelLauncher::run_start(const Job& job) {
   }
   if (!runtime->start_vision()) {
     runtime->stop_vision();
-    runtime->supervisor().shutdown(settings_.stop_bound);
+    runtime->supervisor().stop_engine();
     {
       std::lock_guard lock(mutex_);
       if (runtime->supervisor().engine_left_unreaped()) unreaped_ = true;
@@ -1309,7 +1355,9 @@ void ModelLauncher::begin_shutdown() noexcept {
     if (running_ != nullptr) {
       running_->raise_stop();
       running_->gate().shutdown();
+      running_->supervisor().hurry();  // a stop under way keeps the server's bound
     }
+    if (measuring_ != nullptr) measuring_->supervisor().hurry();
   }
   changed_.notify_all();
 }

@@ -33,6 +33,7 @@ enum class RouteId {
   strata_search, strata_search_settings, strata_search_test,
   strata_config, strata_config_settings, strata_key_rotate,
   strata_folders, strata_folder_private, strata_folder_new, strata_card_add, strata_card_folder, strata_card_delete_begin, strata_card_delete,
+  strata_card_remove,
   strata_folder_sharing,
   strata_about,
 };
@@ -81,9 +82,10 @@ inline constexpr std::array<RouteEntry, 5> kModelDownloadRoutes{{
 }};
 // GUI-first start-up (spec 2026-10-27 §4): the page's cards and folders - this PC's drives and folders, a model folder
 // made private, a new private folder (a download's destination), a card from a GGUF file, a card's folder changed, and the danger zone's delete (a code, then the
-// delete). Served only with models.control, keyed like kRouteTable; each a POST of a small JSON body. Owner 2026-10-27:
+// delete), and a card removed with its files kept (owner 2026-10-28). Served only with models.control, keyed like
+// kRouteTable; each a POST of a small JSON body. Owner 2026-10-27:
 // the Model folders setting (model folders used as they are, other users' access included).
-inline constexpr std::array<RouteEntry, 8> kModelCardRoutes{{
+inline constexpr std::array<RouteEntry, 9> kModelCardRoutes{{
     {"POST", "/v1/strata/folders", false, RouteId::strata_folders},
     {"POST", "/v1/strata/folders/private", false, RouteId::strata_folder_private},
     {"POST", "/v1/strata/folders/new", false, RouteId::strata_folder_new},
@@ -92,6 +94,7 @@ inline constexpr std::array<RouteEntry, 8> kModelCardRoutes{{
     {"POST", "/v1/strata/cards/folder", false, RouteId::strata_card_folder},
     {"POST", "/v1/strata/cards/delete/begin", false, RouteId::strata_card_delete_begin},
     {"POST", "/v1/strata/cards/delete", false, RouteId::strata_card_delete},
+    {"POST", "/v1/strata/cards/remove", false, RouteId::strata_card_remove},
 }};
 // GUI-first start-up (spec 2026-10-27 §5a): the page's email alert settings - read, save, the password, a test email.
 // Served only in a build with SECURE_FRONTEND_EMAIL_ALERTS and with models.control; keyed; POST, small JSON bodies.

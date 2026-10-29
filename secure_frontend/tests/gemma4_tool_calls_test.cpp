@@ -358,6 +358,23 @@ void the_route_plans_gemma4_searches() {
   expect(plan != nullptr && plan->literal_tokens.size() == 3U && plan->server_stop_tokens.size() == 1U &&
              plan->prompt_token_ids.front() == id_of(pack, "<bos>"),
          "a Gemma 4 turn plans in Gemma 4's form");
+  // A follow-up turn, the earlier exchange as the page sends it (plain text; owner 2026-10-28: "it searched the first
+  // time but the following messages it did not search again"): planned with the tool as the first turn is, never
+  // served without it.
+  {
+    secure_frontend::ChatCompletionRequest later = request;
+    later.messages = {{"user", "Who won the 2026 World Cup final?"}, {"assistant", "Spain won it 2-1 ([report](https://example.org/final))."},
+                       {"user", "Who scored the goals?"}};
+    const secure_frontend::SearchTurn first_turn{request, {{"web_search", {"query"}}, kTool}, true, {}, secure_frontend::ToolFormat::gemma4, {}};
+    const secure_frontend::SearchTurn next_turn{later, {{"web_search", {"query"}}, kTool}, true, {}, secure_frontend::ToolFormat::gemma4, {}};
+    const auto first = secure_frontend::search_first_plan(config, first_turn, pack);
+    const auto next = secure_frontend::search_first_plan(config, next_turn, pack);
+    const auto* a = std::get_if<secure_frontend::ChatGenerationPlan>(&first);
+    const auto* b = std::get_if<secure_frontend::ChatGenerationPlan>(&next);
+    expect(a != nullptr && b != nullptr && b->literal_tokens == a->literal_tokens &&
+               b->prompt_token_ids.size() > a->prompt_token_ids.size(),
+           "a follow-up Gemma 4 turn plans with the tool too");
+  }
 }
 
 // The route's first search plan over the REAL vocabulary (SECURE_FRONTEND_GEMMA4_PACK, the pack's tokenizer/ directory,

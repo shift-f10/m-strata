@@ -266,7 +266,7 @@ const std::string kMetricsUnloaded =
 
 const std::string kModels =
     R"({"object":"list","running":"Qwen3.8","state":"running","error":null,"data":[)"
-    R"({"name":"Qwen3.8","profile":"qwen","state":"running","error":null,"folder":"D:/models/q","options":[)"
+    R"({"name":"Qwen3.8","profile":"qwen","state":"running","error":null,"page_card":true,"folder":"D:/models/q","options":[)"
     R"({"name":"thinking","kind":"choice","label":"Thinking","help":"","default":"high","choices":["none","low","high"],"value":"high"},)"
     R"({"name":"web_search","kind":"boolean","label":"Web search","help":"","default":true,"value":true},)"
     R"({"name":"max_context","kind":"integer","label":"Context length","help":"","default":131072,"min":4096,"max":262144,"value":131072}],)"
@@ -641,6 +641,19 @@ void the_views_switch_and_keys_become_requests() {
   app.answer({"calibrate MiniMax", "POST", "/v1/strata/models/calibrate", {}}, 409,
              R"({"error":{"message":"another start or stop is in progress","type":"invalid_request_error","param":null,"code":"switch_in_progress"}})");
   expect(app.status() == "calibrate MiniMax: another start or stop is in progress", "the refusal's words: " + app.status());
+  // Del takes the selected card off the list, its model files kept (owner 2026-10-28, "remove an active model card but
+  // not delete files"), asked first; the running card's model is stopped first; a card from the server's config stays
+  out = app.key(plain(t::Key::Kind::del));
+  expect(out.requests.empty() && app.status() == "MiniMax's card is in the server's config: remove it there",
+         "the operator's card is not removed here: " + app.status());
+  (void)app.key(plain(t::Key::Kind::up));
+  out = app.key(plain(t::Key::Kind::del));
+  expect(out.requests.empty() && asked("Stop Qwen3.8 and remove its card? Its model files stay."), "Del asks first");
+  expect(app.key(character("n")).requests.empty() && !asked("remove its card"), "n keeps the card");
+  (void)app.key(plain(t::Key::Kind::del));
+  out = app.key(character("y"));
+  expect(out.requests.size() == 1U && out.requests[0].path == "/v1/strata/cards/remove" && out.requests[0].body == R"({"name":"Qwen3.8"})",
+         "y removes the card: " + (out.requests.empty() ? std::string{} : out.requests[0].path + " " + out.requests[0].body));
   // the Log scrolls up to its first page and no further
   for (int i = 0; i < 100; ++i) app.log_line("line " + std::to_string(i));
   (void)app.key(character("5"));
@@ -754,7 +767,8 @@ void downloads_say_what_is_on_this_pc() {
              R"({"disk":{"root":"D:","total_bytes":1000,"free_bytes":500},"active":null,"data":[)"
              R"({"id":"a","name":"Mine","state":"failed","size_bytes":100,"bytes":0,"total":100,"error":"an earlier try failed","note":"after the download","have":"local","have_card":"my-card"},)"
              R"({"id":"b","name":"Fetched","state":"ready","size_bytes":100,"bytes":100,"total":100,"error":null,"note":"after the download","have":"downloaded","have_card":"b-card"},)"
-             R"({"id":"c","name":"Fresh","state":"available","size_bytes":100,"bytes":0,"total":100,"error":null,"note":"after the download","have":null,"have_card":null}]})");
+             R"({"id":"c","name":"Fresh","state":"available","size_bytes":100,"bytes":0,"total":100,"error":null,"note":"after the download","have":null,"have_card":null},)"
+             R"({"id":"d","name":"Older","state":"available","size_bytes":100,"bytes":0,"total":100,"error":null,"note":"after the download","have":"other","have_card":"d-card"}]})");
   t::Screen list(120, 30);
   app.draw(list, 0);
   const auto row_of = [&list](const std::string& name) {
@@ -779,6 +793,14 @@ void downloads_say_what_is_on_this_pc() {
   out = app.key(plain(t::Key::Kind::enter));
   expect(out.requests.size() == 1U && out.requests[0].path == "/v1/strata/downloads/start" && out.requests[0].body == R"({"id":"c"})",
          "the others download as before");
+  // another file of that name on this PC (another revision): said, with its card, and still downloadable
+  (void)app.key(plain(t::Key::Kind::down));
+  app.draw(list, 0);
+  expect(row_of("Older").find("Other version") != std::string::npos &&
+             all_text(list).find("Another version of this file is on this PC (its card: d-card)") != std::string::npos,
+         "an other version is said, with its card: " + row_of("Older"));
+  out = app.key(plain(t::Key::Kind::enter));
+  expect(out.requests.size() == 1U && out.requests[0].body == R"({"id":"d"})", "and Enter downloads the catalog's version");
 }
 
 void settings_are_edited_then_saved() {

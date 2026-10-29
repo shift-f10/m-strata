@@ -213,6 +213,9 @@ is added to the card it disappears in the download section."
     is hashed). A card's model file is its model folder's `<engine.model_id>.gguf`; a card on a Maya pack (GLM-5.3,
     raon-1-mini, DeepSeek-V4.1, MiniMax-M3.1) names the pack and Maya's model name, so its model is the shard the pack
     was built from, beside the pack (`native_experts.txt`'s, else the first `sources.json` lists; `card_model_file`);
+  - `"other"` (2026-10-28): no card has the entry's file, but one has a file of that name and another size (another
+    revision of it); `have_card` names that card. The badge reads **Other version on this PC**, the entry says so with
+    the card's name, and its Download stays: it fetches the catalog's version;
   - `null` otherwise.
   The page's badge reads **Downloaded** or **Locally provided**, the entry says "Already on this PC; its card: <name>",
   and it has no Download button (a download under way or paused keeps its own state and controls). A download counts
@@ -256,6 +259,14 @@ touched. For a downloaded model (source `download:<id>`) the download store then
 <id>:download` in that download's store (the index row and the rest of the version folder), so the Download list
 offers it again; the answer's `download_removed` says whether that worked (the page warns when not). A card named by
 `models.cards` (an operator file) can't be deleted from the page.
+
+**Remove card** (owner, 2026-10-28: "also add an ability to remove an active model card but not delete files"): a card
+the page made, running or not, is taken off the list and **no model file is touched**. Asked once on the page (nothing
+permanent goes, so no code or key); `POST /v1/strata/cards/remove {"name"}` answers `{"name","stopping"}`. The card,
+its card file in `<roots.state>/cards`, its remembered options and its calibration go; a downloaded model's store keeps
+it (the Download list says Downloaded again). The running card's model is stopped first as Stop stops it (a queued
+`remove` job in the launcher; `"stopping": true`), and the card is removed once it has. Refused while another start,
+stop or calibration runs, and for a `models.cards` card. strata-tui: Del on the Models view, asked first.
 
 ## 5. Calibrate and recalibrate
 

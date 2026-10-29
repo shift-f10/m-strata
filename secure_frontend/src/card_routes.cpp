@@ -133,6 +133,7 @@ HttpResponse CardRoutes::answer(const RouteId route, const std::string_view body
     case RouteId::strata_card_folder: return repoint(body);
     case RouteId::strata_card_delete_begin: return delete_begin(body);
     case RouteId::strata_card_delete: return delete_confirm(body);
+    case RouteId::strata_card_remove: return remove(body);
     default: return make_error_response(ApiError::not_found);
   }
 }
@@ -575,7 +576,8 @@ HttpResponse CardRoutes::delete_confirm(const std::string_view body) {
     case CardChange::not_page_card: return make_error_response(ApiError::card_read_only);
     case CardChange::shutting_down: return make_error_response(ApiError::server_shutting_down);
     case CardChange::busy:
-    case CardChange::running: return make_error_response(ApiError::card_in_use);
+    case CardChange::running:
+    case CardChange::stopping: return make_error_response(ApiError::card_in_use);
   }
   const auto deleted = delete_gguf_model_files(std::get<CanonicalRoot>(trusted).path(), model_id);
   if (const auto* error = std::get_if<CardError>(&deleted)) {
@@ -601,6 +603,37 @@ HttpResponse CardRoutes::delete_confirm(const std::string_view body) {
   return json_answer(200, "{\"name\":" + json_string(*name) + ",\"files\":" + std::to_string(done.files) +
                               ",\"bytes\":" + std::to_string(done.bytes) +
                               ",\"folder_removed\":" + (done.folder_removed ? "true" : "false") + download + "}\n");
+}
+
+// Owner 2026-10-28 ("an ability to remove an active model card but not delete files"): a card the page made goes off
+// the list - its card file, remembered options and calibration with it - and its model files stay where they are (a
+// download's store keeps it too); the running card's model is stopped first. Nothing permanent, so no code or key.
+HttpResponse CardRoutes::remove(const std::string_view body) {
+  const auto read = read_body(body, {"name"});
+  const auto* name = read ? read->get("name") : nullptr;
+  if (name == nullptr) return make_error_response(ApiError::invalid_request);
+  const std::scoped_lock lock(files_);
+  const auto held = launcher_.card(*name);
+  if (!held) return make_error_response(ApiError::model_not_found);
+  if (!held->page_card) return make_error_response(ApiError::card_read_only);
+  const auto file = card_file(settings_.cards_dir, *name);
+  const auto changed = launcher_.remove_card(*name, RunningCard::stop_first);
+  switch (changed) {
+    case CardChange::done:
+    case CardChange::stopping: break;
+    case CardChange::not_found: return make_error_response(ApiError::model_not_found);
+    case CardChange::not_page_card: return make_error_response(ApiError::card_read_only);
+    case CardChange::shutting_down: return make_error_response(ApiError::server_shutting_down);
+    case CardChange::busy:
+    case CardChange::running: return make_error_response(ApiError::card_in_use);
+  }
+  if (file) {
+    std::error_code ec;
+    std::filesystem::remove(*file, ec);
+  }
+  const bool stopping = changed == CardChange::stopping;
+  log("[strata] models: card " + *name + (stopping ? " is removed once its model has stopped" : " removed") + "; its model files stay");
+  return json_answer(200, "{\"name\":" + json_string(*name) + ",\"stopping\":" + (stopping ? "true" : "false") + "}\n");
 }
 
 }  // namespace secure_frontend

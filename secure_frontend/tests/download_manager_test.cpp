@@ -408,6 +408,45 @@ void a_resume_counts_its_rate_from_the_kept_bytes() {
   expect(!f.manager->cancel("qwen-small").has_value() && f.manager->wait_idle(std::chrono::seconds(10)), "a cancel ends it");
 }
 
+// Owner 2026-10-28 ("did not even say why it failed"): his Gemma 4 download failed with "the download failed (ok)" - the
+// downloader said RESULT ok and both files were in the store, published, but it ended with another exit code. The store
+// has the last word: every file there at its pinned size, the download is done; not, the failure names the exit code.
+// Every reason the downloader gives is said in words, and so is an end without one.
+void a_pull_that_said_ok_is_checked_in_the_store() {
+  const auto run = [](const Script& script, const std::optional<std::size_t> stored_bytes) {
+    Fixture f;
+    f.spawner.pulls.push_back(script);
+    const auto installed = f.dir / "installed";
+    if (stored_bytes) {
+      secure_frontend_test::make_private_directory(installed);
+      secure_frontend_test::make_private_directory(installed / "Q36");
+      secure_frontend_test::write_file(installed / "Q36" / "m.gguf", std::string(*stored_bytes, 'x'));
+    }
+    f.start(1U << 30U);
+    if (stored_bytes) {
+      std::lock_guard lock(f.spawner.mutex);
+      f.spawner.installed = installed;
+    }
+    expect(!f.manager->start("qwen36-small").has_value() && f.manager->wait_idle(std::chrono::seconds(10)), "it runs");
+    const std::string listed = f.manager->list_json();
+    const auto at = listed.find("{\"id\":\"qwen36-small\"");
+    return at == std::string::npos ? std::string{} : listed.substr(at, listed.find("{\"id\":", at + 1U) - at);
+  };
+  const std::vector<std::string> pulled{"MANIFEST qwen36-small:download " + std::string(64, 'c'), "FILE Q36/m.gguf 500",
+                                        "BYTES Q36/m.gguf 500 500", "FINISHED Q36/m.gguf ok", "RESULT ok"};
+  const auto kept = run(Script{pulled, 1}, 500U);
+  expect(!has(kept, "\"state\":\"failed\"") && (has(kept, "\"state\":\"installed\"") || has(kept, "\"state\":\"ready\"")),
+         "said ok, ended with 1, every file in the store: the download is done: " + kept);
+  const auto short_file = run(Script{pulled, 1}, 499U);
+  expect(has(short_file, "\"state\":\"failed\"") && has(short_file, "exit code 1") && !has(short_file, "(ok)"),
+         "a file short in the store: failed, and the exit code is said: " + short_file);
+  const auto stalled = run(Script{{"FILE Q36/m.gguf 500", "RESULT stalled"}, 3}, std::nullopt);
+  expect(has(stalled, "\"state\":\"failed\"") && has(stalled, "stalled") && has(stalled, "Download again"),
+         "a reason is said in words: " + stalled);
+  const auto no_result = run(Script{{"FILE Q36/m.gguf 500"}, 9}, std::nullopt);
+  expect(has(no_result, "\"state\":\"failed\"") && has(no_result, "exit code 9"), "an end without a result names its exit code: " + no_result);
+}
+
 void pasted_links() {
   Fixture f;
   f.spawner.hf.push_back(Script{{"{\"repo\":\"someone/Model-GGUF\",\"commit\":\"" + std::string{kCommit} +
@@ -1499,7 +1538,8 @@ void the_list_says_what_is_already_on_this_pc() {
   secure_frontend_test::write_file(local / "glm" / "pack" / "native_experts.txt", "# ... absolute offsets in g-00001-of-00002.gguf, or ...)\n");
   card_of(secure_frontend::card_for_pack({.family = PackedFamily::glm53, .name = "my-glm", .engine = engine, .source = "folder",
                                           .pack = local / "glm" / "pack"}).json);
-  // DeepSeek-V4.1: the same name, another size - another quant, not this entry's
+  // DeepSeek-V4.1: the same name, another size - not this entry's file (another revision: the owner's raon-1-mini Q8_0 is
+  // 64 bytes larger than KRAFTON's current one), so "other": that card named, the download still offered
   sized(local / "ds" / "d-00001-of-00002.gguf", 999U);
   secure_frontend_test::make_private_directory(local / "ds" / "maya-ds4");
   secure_frontend_test::write_file(local / "ds" / "maya-ds4" / "sources.json", "{\"files\": [{\"name\": \"d-00001-of-00002.gguf\", \"size\": 999}]}");
@@ -1547,7 +1587,7 @@ void the_list_says_what_is_already_on_this_pc() {
   says("gemma-small", "\"local\"", "\"gemma-small-Q8_0\"");
   says("raon-small", "\"local\"", "\"my-raon\"");
   says("glm-maya", "\"local\"", "\"my-glm\"");
-  says("ds-maya", "null", "null");
+  says("ds-maya", "\"other\"", "\"my-ds\"");
   says("mm-maya", "\"local\"", "\"my-mm\"");
   says("qwen-small", "\"downloaded\"", "\"Qwen-small\"");
   says("qwen36-small", "\"downloaded\"", "null");
@@ -1571,6 +1611,7 @@ int main(int argc, char** argv) {
       {"catalog_cards_and_the_disk_check", catalog_cards_and_the_disk_check},
       {"pull_runs_strata_and_tracks_progress", pull_runs_strata_and_tracks_progress},
       {"failures_and_cancel", failures_and_cancel},
+      {"a_pull_that_said_ok_is_checked_in_the_store", a_pull_that_said_ok_is_checked_in_the_store},
       {"maya_main_is_resolved_and_checked", maya_main_is_resolved_and_checked},
       {"pasted_links", pasted_links},
       {"a_resume_counts_its_rate_from_the_kept_bytes", a_resume_counts_its_rate_from_the_kept_bytes},
