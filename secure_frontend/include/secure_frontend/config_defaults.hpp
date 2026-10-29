@@ -40,7 +40,8 @@ inline constexpr std::int64_t kEngineReadyTimeoutS = 900;   // upstream STRATA_E
 inline constexpr std::int64_t kVisionReadyTimeoutS = 300;
 // The pin's VISION_ENCODE_S default for one ENC round trip (serve/server.py:328).
 inline constexpr std::int64_t kVisionEncodeTimeoutS = 300;
-inline constexpr std::int64_t kEngineGenerationTimeoutS = 120;
+// Owner 2026-10-29: half an hour (was 120 s, which cut a thinking model's answers at about 11K tokens).
+inline constexpr std::int64_t kEngineGenerationTimeoutS = 1800;
 inline constexpr std::int64_t kEngineStopDrainTimeoutS = 5;
 inline constexpr std::int64_t kMaxConcurrentRequests = 8;  // SP3 B11
 inline constexpr std::int64_t kQueueTimeoutMs = 300'000;

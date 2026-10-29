@@ -107,6 +107,15 @@ void proc04_exit_status_is_classified() {
   expect(secure_frontend::describe_exit({ExitKind::killed_by_supervisor, KillReason::fatal_line}) == "killed_by_supervisor(fatal_line)",
          "describe a supervisor kill");
   expect(secure_frontend::describe_exit({ExitKind::abort, KillReason::none}) == "abort", "describe an abort");
+  // Owner 2026-10-29 (to pinpoint what crashes a calibration): the raw end beside the kind - a Windows status in hex as
+  // NTSTATUS codes are read, a small exit code and a POSIX signal in decimal.
+  expect(secure_frontend::describe_exit_status({false, 0xC0000005U}, ExitPlatform::windows) == "exit code 0xC0000005",
+         "an access violation's status in hex");
+  expect(secure_frontend::describe_exit_status({false, 0xC0000409U}, ExitPlatform::windows) == "exit code 0xC0000409",
+         "a fast-fail abort in hex");
+  expect(secure_frontend::describe_exit_status({false, 1U}, ExitPlatform::windows) == "exit code 1", "exit 1 in decimal");
+  expect(secure_frontend::describe_exit_status({false, 3U}, ExitPlatform::posix) == "exit code 3", "a POSIX exit code");
+  expect(secure_frontend::describe_exit_status({true, 11U}, ExitPlatform::posix) == "signal 11", "a POSIX signal");
 
   // Real children: the raw status is captured by try_reap() and classified natively.
   struct Live {

@@ -16,8 +16,10 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #if defined(_WIN32)
@@ -291,6 +293,54 @@ void stderr_flood_never_blocks_the_engine(const std::filesystem::path& fake) {
   expect(std::chrono::steady_clock::now() - started < std::chrono::seconds(5), "the stop does not wait on the pipe");
 }
 
+// Owner 2026-10-29 (logging.engine_output, to see why an engine fails on a new GPU): with a line sink every stderr line
+// reaches it in order - printable ASCII, a line past kStderrLineBytes cut there and saying so - and the conversation
+// cache is still read only where read_conversation_cache asks for it.
+void stderr_lines_reach_the_sink_when_asked(const std::filesystem::path& fake) {
+  expect(secure_frontend::printable_stderr_line("a\x1b[31mb\tc\x7f\xc3\xa9", false) == "a?[31mb c???",
+         "control bytes, DEL and bytes past ASCII become ?, a tab a space");
+  expect(secure_frontend::printable_stderr_line("abc", true) == "abc [cut at 4096 bytes]", "a cut line says so");
+  const Needle needle;
+  const std::string payload{needle.bytes.begin(), needle.bytes.end()};
+  for (const bool cache : {false, true}) {
+    std::mutex mutex;
+    std::vector<std::string> lines;
+    const auto count = [&] {
+      std::lock_guard lock(mutex);
+      return lines.size();
+    };
+    {
+      secure_frontend::EngineStdioProcess transport;
+      expect(!transport.start({.executable = fake, .arguments = {"--fake-engine", "--stderr-cache-lines"}, .environment = {},
+                               .read_conversation_cache = cache,
+                               .stderr_lines = [&](const std::string_view line) {
+                                 std::lock_guard lock(mutex);
+                                 lines.emplace_back(line);
+                               }})
+                  .has_value(),
+             "fake engine must start");
+      wait_ready(transport, std::chrono::seconds(10));
+      const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+      while (count() < 8U && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      const auto read = transport.conversation_cache();
+      expect(cache ? read.has_value() && read->parks == 2U && read->restores == 1U : !read.has_value(),
+             "the conversation cache is read only where asked");
+      expect(transport.terminate(std::chrono::milliseconds(500)), "child cleanup must succeed");
+    }  // the reader is joined here
+    // the fake's start-up line, then --stderr-cache-lines' seven
+    expect(lines.size() == 8U, "every line, once: " + std::to_string(lines.size()));
+    if (lines.size() != 8U) continue;
+    expect(lines[0] == "diagnostic: private engine startup", "the start-up line: " + lines[0]);
+    expect(lines[1] == "strata serve: session 0: prompt: " + payload, "a line as the engine wrote it: " + lines[1]);
+    expect(lines[3].rfind("strata serve: conversation cache: parked 1200 tokens", 0) == 0 &&
+               lines[5].rfind("strata serve: conversation cache: restored 1200 tokens", 0) == 0,
+           "in the order written");
+    expect(lines[6] == std::string(secure_frontend::kStderrLineBytes, 'x') + " [cut at 4096 bytes]", "the over-long line, cut at the bound");
+    expect(lines[7] == "strata serve: conversation cache: dropped 1 superseded copy of this conversation; parked=1",
+           "the last line: " + lines[7]);
+  }
+}
+
 // The running engine's memory (Windows working set, Linux VmRSS), and none once it ended.
 void resident_bytes_read_the_running_engine(const std::filesystem::path& fake) {
   expect(secure_frontend::parse_proc_status_resident_bytes("Name:\tstrata\nVmPeak:\t  9000 kB\nVmRSS:\t   123456 kB\nThreads:\t4\n") ==
@@ -323,6 +373,7 @@ int main(int argc, char* argv[]) {
       {"read_line_waits_for_a_record_split_across_writes", [] { read_line_waits_for_a_record_split_across_writes(fake); }},
       {"stderr_gives_only_the_conversation_cache_numbers", [] { stderr_gives_only_the_conversation_cache_numbers(fake); }},
       {"stderr_flood_never_blocks_the_engine", [] { stderr_flood_never_blocks_the_engine(fake); }},
+      {"stderr_lines_reach_the_sink_when_asked", [] { stderr_lines_reach_the_sink_when_asked(fake); }},
       {"resident_bytes_read_the_running_engine", [] { resident_bytes_read_the_running_engine(fake); }},
 #if defined(_WIN32)
       {"job_object_terminates_grandchild", [] { job_object_terminates_grandchild(fake); }},

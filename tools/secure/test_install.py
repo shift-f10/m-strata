@@ -110,3 +110,14 @@ def test_batch_and_powershell_line_endings():
     attributes = text(".gitattributes")
     assert "*.bat text eol=crlf" in attributes and "*.ps1 text eol=crlf" in attributes and "*.sh text eol=lf" in attributes
     assert (ROOT / "install.ps1").read_bytes().startswith(b"\xef\xbb\xbf"), "a BOM: Windows PowerShell 5.1 reads UTF-8 by it"
+
+
+def test_debugging_is_passed_to_make_and_explained_first():
+    """The owner (2026-10-29): --debugging from the installer too, telling the user what it means before the build."""
+    ps, sh = text("install.ps1"), text("install.sh")
+    assert "[switch]$Debugging" in ps and "if ($Debugging) { $makeArgs += '--debugging' }" in ps
+    assert "--debugging) debugging=1; shift ;;" in sh and '[ "$debugging" = 1 ] && make_flags="--debugging"' in sh
+    assert '--with "$with" $make_flags' in sh
+    for script in (ps, sh):
+        for words in ("your prompts", "keep the server's log private", "before you share it", "without the debugging option"):
+            assert words in script, words

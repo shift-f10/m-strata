@@ -185,6 +185,7 @@ struct Limits final {
 // SP3 §8: logging.requests (one stderr line per request when true).
 struct LoggingConfig final {
   bool requests;
+  bool engine_output;
 };
 struct Roots final {
   CanonicalRoot models;
@@ -407,6 +408,15 @@ struct SearchConfig final {
 // The search.* rows of a draft alone, by validate()'s own rules (the page's settings, before they are written).
 [[nodiscard]] std::variant<SearchConfig, ConfigErrors> search_from_draft(const FrontendConfigDraft& draft);
 // Whether this build has web search (SECURE_FRONTEND_WEB_SEARCH).
+// Whether this is a debugging build (make --debugging, SECURE_FRONTEND_DEBUGGING; owner 2026-10-29).
+[[nodiscard]] constexpr bool debugging_build() noexcept {
+#if defined(SECURE_FRONTEND_DEBUGGING)
+  return true;
+#else
+  return false;
+#endif
+}
+
 [[nodiscard]] constexpr bool web_search_built() noexcept {
 #if defined(SECURE_FRONTEND_WEB_SEARCH)
   return true;

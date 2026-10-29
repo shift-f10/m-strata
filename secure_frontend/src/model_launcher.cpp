@@ -180,19 +180,19 @@ void offer_sampling(ModelCard& card) {
   }
 }
 
-// Owner 2026-10-29 ("make it an option in the card setting"): a GLM-engine card (glm53, raon1) whose file does not list
-// it offers the RAM its engine leaves free, at the server's glm.ram_headroom_gb (a card's file holds no glm.* row), else
-// the row's default (16), in the profile's order. Started without a choice, it runs as before.
-void offer_ram_headroom(ModelCard& card, const FrontendConfigDraft& main) {
-  const auto* spec = find_model_option(card.profile, "ram_headroom");
+// An option a card's file does not list, offered in the profile's order at the server's own integer row (the main
+// config's - a card's file holds no server row - else the schema's default) as `from_row` reads it. Started without a
+// choice, the card runs on that row as before.
+void offer_at_row(ModelCard& card, const FrontendConfigDraft& main, const std::string_view option, const std::string_view row_path,
+                  std::int64_t (*const from_row)(std::int64_t)) {
+  const auto* spec = find_model_option(card.profile, option);
   if (spec == nullptr) return;
   if (std::any_of(card.options.begin(), card.options.end(), [spec](const ModelOptionLimits& limit) { return limit.spec == spec; })) return;
-  constexpr std::string_view kRow = "glm.ram_headroom_gb";
   const auto schema = config_schema();
-  const auto key = std::find_if(schema.begin(), schema.end(), [kRow](const ConfigKey& row) { return row.path == kRow; });
-  std::int64_t value = key == schema.end() ? spec->minimum : key->default_integer;
-  if (const auto row = main.entries.find(kRow); row != main.entries.end()) {
-    if (const auto* integer = std::get_if<std::int64_t>(&row->second.value)) value = *integer;
+  const auto key = std::find_if(schema.begin(), schema.end(), [row_path](const ConfigKey& row) { return row.path == row_path; });
+  std::int64_t value = key == schema.end() ? spec->minimum : from_row(key->default_integer);
+  if (const auto row = main.entries.find(row_path); row != main.entries.end()) {
+    if (const auto* integer = std::get_if<std::int64_t>(&row->second.value)) value = from_row(*integer);
   }
   ModelOptionLimits limit;
   limit.spec = spec;
@@ -207,11 +207,15 @@ void offer_ram_headroom(ModelCard& card, const FrontendConfigDraft& main) {
   card.options.insert(later, std::move(limit));
 }
 
-// The options a card offers beyond its file's: its engine's RAM headroom, its model's recommended sampling, Web search
-// with the server's, then its GPUs.
+// The options a card offers beyond its file's: its engine's RAM headroom (owner 2026-10-29: a GLM-engine card's, at the
+// server's glm.ram_headroom_gb), its model's recommended sampling, its longest answer (owner 2026-10-29: every card's,
+// at the server's limits.engine.generation_timeout_s in minutes, a part of a minute counted whole), Web search with the
+// server's, then its GPUs.
 void offer_options(ModelCard& card, const FrontendConfigDraft& main, const ToolRunner* tools) {
-  offer_ram_headroom(card, main);
+  offer_at_row(card, main, "ram_headroom", "glm.ram_headroom_gb", [](const std::int64_t gigabytes) { return gigabytes; });
   offer_sampling(card);
+  offer_at_row(card, main, "answer_minutes", "limits.engine.generation_timeout_s",
+               [](const std::int64_t seconds) { return (seconds + 59) / 60; });
   offer_web_search(card, tools);
   offer_gpus(card);
 }

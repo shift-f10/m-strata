@@ -53,5 +53,8 @@ inline constexpr std::uint32_t kVisionKillExitCode = 0x20000002U;
 [[nodiscard]] std::string_view kill_reason_literal(KillReason reason) noexcept;
 // "abort", or "killed_by_supervisor(fatal_line)".
 [[nodiscard]] std::string describe_exit(const ExitClassification& classification);
+// The raw end as the log shows it beside the kind (owner 2026-10-29): "exit code 0xC0000005" (a Windows status from
+// 0x10000 up in hex, as NTSTATUS codes are read), "exit code 1", "signal 11".
+[[nodiscard]] std::string describe_exit_status(const ExitStatus& status, ExitPlatform platform = kNativeExitPlatform);
 
 }  // namespace secure_frontend

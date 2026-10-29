@@ -583,6 +583,7 @@ EngineSupervisor::GenerationEnd EngineSupervisor::end_generation(const std::shar
   const KillReason sent = ended_on_its_own ? KillReason::none : (reason == KillReason::none ? KillReason::protocol_failed : reason);
   const ExitClassification classified = classify_exit(*status, sent);
   log_end(instance->number, describe_exit(classified));
+  log_status(instance->number, *status);
   // Keyed on the classification, not on `sent`: an engine that died before
   // READY may not be reapable yet at the first check, so a kill was "sent" to
   // a dead child; its status still says it ended on its own (final review M1).
@@ -698,9 +699,11 @@ void EngineSupervisor::shutdown_generation(const std::shared_ptr<EngineInstance>
   process.release_resources(std::chrono::milliseconds(0));
   // We asked this generation to end (§3.6 "exit sent by us"), so an exit 0 on
   // our EOF or SIGTERM is killed_by_supervisor(shutdown), not clean_exit.
-  ExitClassification ended = classify_exit(*process.try_reap(), KillReason::shutdown);
+  const ExitStatus status = *process.try_reap();
+  ExitClassification ended = classify_exit(status, KillReason::shutdown);
   if (ended.kind == ExitKind::clean_exit) ended = {ExitKind::killed_by_supervisor, KillReason::shutdown};
   log_end(instance->number, describe_exit(ended));
+  log_status(instance->number, status);
 }
 
 // SP5 M1 Task 6 (parity row idle_unload_s; pin :4100-4109 + :6252): the same orderly stop
@@ -823,6 +826,11 @@ void EngineSupervisor::set_state(const SupervisorState state, std::shared_ptr<En
 
 void EngineSupervisor::log_end(const std::uint64_t generation, const std::string_view kind) {
   log_("engine generation " + std::to_string(generation) + " ended: " + std::string(kind));
+}
+
+// Owner 2026-10-29 (to pinpoint what crashes a calibration): the raw end, on its own line after the kind.
+void EngineSupervisor::log_status(const std::uint64_t generation, const ExitStatus& status) {
+  log_("engine generation " + std::to_string(generation) + ": " + describe_exit_status(status));
 }
 
 }  // namespace secure_frontend

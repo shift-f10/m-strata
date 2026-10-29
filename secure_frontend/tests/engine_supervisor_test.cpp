@@ -289,6 +289,7 @@ void proc04_recovers_after_transient_crash() {
   expect(supervisor.start(), "the supervisor starts");
   expect(test_support::wait_generation_ready(supervisor, 2U, 10s), "a one-off failure is recovered by generation 2");
   expect(log.contains("engine generation 1 ended: error_exit"), "generation 1's exit 1 is logged as error_exit");
+  expect(log.contains("engine generation 1: exit code 1"), "and its exit code on the next line (owner 2026-10-29)");
   supervisor.shutdown(5s);
 }
 

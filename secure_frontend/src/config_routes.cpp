@@ -23,13 +23,14 @@ namespace {
 constexpr JsonLimits kBodyLimits{.max_bytes = kModelControlBodyLimit, .max_depth = 4U, .max_container_entries = 64U,
                                  .max_string_bytes = 2048U};
 
-// The rows the Settings tab manages (spec 2026-10-28 Part 1): the listener and LAN access, limits and timeouts, folders.
+// The rows the Settings tab manages (spec 2026-10-28 Part 1): the listener and LAN access, limits and timeouts, folders;
+// the engine's output in the log (owner 2026-10-29).
 // The key itself is not a row (its store is rotated, never written through here).
-constexpr std::array<std::string_view, 14> kManaged{
+constexpr std::array<std::string_view, 15> kManaged{
     "listener.host", "listener.port", "listener.allow_remote", "listener.allow_wildcard_bind", "listener.host_aliases",
     "models.control_remote", "models.control_remote_networks", "limits.engine.generation_timeout_s",
     "limits.engine.ready_timeout_s", "limits.chat.max_prompt_tokens", "limits.chat.max_completion_tokens", "pull.connections",
-    "models.downloads_root", "models.default_root"};
+    "models.downloads_root", "models.default_root", "logging.engine_output"};
 
 std::string json_text(const std::string_view text) {
   std::string out;

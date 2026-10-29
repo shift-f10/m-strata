@@ -280,6 +280,7 @@ To see first what it would do, without changing anything, run `.\install.bat -Pl
 | `-GgmlDir D:\llama.cpp` | Use this llama.cpp checkout (at the pinned commit) instead of fetching one. |
 | `-Plan` | Only list what it would install, fetch and build; nothing changes. |
 | `-Yes` | Do not ask before installing. |
+| `-Debugging` | Build a server that logs verbosely, to find out why a model does not start or calibrate (`make --debugging`, below). The plan says what that logs and what to take care of before anything is installed. |
 
 Running it again is safe: it skips what is there and builds into a new folder.
 
@@ -396,6 +397,7 @@ python3 -m venv .venv-dev && .venv-dev/bin/python -m pip install cmake ninja
 | `--jobs N` | Parallel compile jobs (default: the CPU count). |
 | `--build-dir DIR` | Where the builds are kept (default `out/make-build`). |
 | `--plan` | Print the commands only. |
+| `--debugging` | A debugging build, to find out why a model does not start or calibrate: the server logs one line per request (never its text) and the engine's own output (`logging.requests`, `logging.engine_output`) unless the config turns them off, warns of it at every start, and the About tab lists `debugging` among the features. The engine's output can hold what the engine prints of your prompts and the paths of your model files: run it on your own PC, keep the server's log private, look through a log before you share it, and build again without `--debugging` for everyday use. make prints this before and after the build and puts it in the folder's README.txt; `install.sh --debugging` and `install.bat -Debugging` pass it on. Any build can turn the engine's output on alone: Settings > Troubleshooting. |
 
 The first build compiles the CUDA engine and takes a while; later builds are incremental (`out/make-build`). The out
 folder holds only what runs:
@@ -533,7 +535,7 @@ is left as it was. An empty box puts the setting back to its default.
 | `roots.allow_untrusted_media` | Use model folders as they are (the Model folders switch). |
 | `search.enabled`, `search.url`, `search.results`, `search.max_rounds`, `search.timeout_s` | Web search. |
 | `alerts.*` | Email alerts (set from the page). |
-| `limits.engine.generation_timeout_s` | How long one generation may run before it is stopped: 120 s by default, up to 86400. A slow model writing a long answer needs more (1800 is half an hour). |
+| `limits.engine.generation_timeout_s` | How long one generation may run before it is stopped: 1800 s (half an hour) by default, up to 86400. Each model card's **Longest answer (minutes)** sets it for that model; this row is the card's default. |
 | `limits.chat.max_prompt_tokens`, `limits.chat.max_completion_tokens` | The largest prompt and answer a request may ask for (the card's context still bounds them). |
 | `pull.connections` | Connections per large download (16 by default, 1-32). |
 
@@ -733,7 +735,7 @@ for a real install, which makes its own key at the first start.
 | "Other users of this PC can change files in this folder" | Make the folder private when the page asks, or turn on Settings > Model folders. |
 | A GLM download shows its size as "read from Hugging Face at the start" | Project Maya's catalog pins each file's SHA-256 but not its size; the server reads the size when the download starts. |
 | A web-search answer is empty | It ran out of tokens while reasoning (`finish_reason` `length`): raise `max_tokens`. If every search found nothing, the search box says why; see "Web search through SearXNG" for more engines. |
-| An answer stops after about two minutes, marked "Max tokens" (`length`), with room left in the context | It reached `limits.engine.generation_timeout_s` (120 s by default). Raise it in `data/config.json` (for example `"limits": {"engine": {"generation_timeout_s": 1800}}`) and restart the server. |
+| An answer stops early, marked "Max tokens" (`length`), with room left in the context | It reached the longest answer the server allows (`limits.engine.generation_timeout_s`, half an hour by default; servers built before 2026-10-29 stopped at 120 s). Raise **Longest answer (minutes)** on the model's card, or **Longest answer (seconds)** in Settings → Limits and timeouts for every model, and restart the model or the server. |
 | The engine takes long to stop with a big model | Freeing tens of GB of pinned RAM takes time; the server waits, then reports it. |
 
 ## Current progress and open items

@@ -6,6 +6,8 @@
 #   ./install.sh --out /opt/m-strata --with email,search,tui
 #   ./install.sh --plan                             only say what it would install, fetch and run
 #   ./install.sh --yes                              do not ask before installing
+#   ./install.sh --debugging                        a server that logs verbosely, to find out why a model does not
+#                                                   start or calibrate (the plan says what to take care of)
 #
 # What it does, each step only when needed:
 #   1. finds what the build needs: git, Python 3.10+ with venv, GCC 13+ (build-essential), pkg-config, the CUDA
@@ -32,6 +34,7 @@ out=""
 with=""
 ggml=""
 plan=0
+debugging=0
 yes=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -39,8 +42,9 @@ while [ $# -gt 0 ]; do
     --with) with=$2; shift 2 ;;
     --ggml-dir) ggml=$2; shift 2 ;;
     --plan) plan=1; shift ;;
+    --debugging) debugging=1; shift ;;
     --yes) yes=1; shift ;;
-    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
     *) echo "install: unknown option $1 (see ./install.sh --help)" >&2; exit 2 ;;
   esac
 done
@@ -110,7 +114,17 @@ if [ -z "$cuda" ]; then say "  NVIDIA's cuda-keyring for $repo_os, then sudo apt
 if [ "$in_repo" = 0 ]; then say "  clone $REPO_URL (with its submodules) into $repo"; fi
 say "  CMake and Ninja into $repo/.venv-dev (pip, from PyPI)"
 if [ "$ggml_given" = 1 ]; then say "  llama.cpp: $ggml, as it is"; else say "  llama.cpp at $LLAMA_PIN in $ggml"; fi
-say "  make.sh --out $out --with $with"
+make_flags=""
+[ "$debugging" = 1 ] && make_flags="--debugging"
+say "  make.sh --out $out --with $with${make_flags:+ $make_flags}"
+if [ "$debugging" = 1 ]; then
+  say ''
+  say "  --debugging: the server will log verbosely, to find out why a model does not start or calibrate. It logs"
+  say "  one line per request (never its text) and the engine's own output, which can hold what the engine prints of"
+  say "  your prompts and the paths of your model files. Run it on your own PC, keep the server's log private,"
+  say "  look through a log before you share it, and build again without the debugging option for everyday use."
+  say "  The engine's output can be turned off without a new build: Settings > Troubleshooting."
+fi
 if [ "${no_display:-0}" = 1 ]; then say "  (no display here: the TUI only; --with email,search,window,tui adds the window)"; fi
 if [ "$plan" = 1 ]; then say ''; say 'install: --plan given - nothing was installed or changed.'; exit 0; fi
 if [ "$yes" = 0 ]; then
@@ -181,7 +195,7 @@ say "  $ggml"
 
 # --- 6. the build ----------------------------------------------------------------------------------------------------
 step "Building into $out (the first build compiles the CUDA engine: allow an hour or more)"
-"$repo/make.sh" --out "$out" --ggml-dir "$ggml" --cuda-root "$cuda" --with "$with" || fail 'make stopped; its message is above'
+"$repo/make.sh" --out "$out" --ggml-dir "$ggml" --cuda-root "$cuda" --with "$with" $make_flags || fail 'make stopped; its message is above'
 
 step 'Done'
 say "  M-Strata is in $out. Start it with:"

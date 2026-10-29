@@ -1234,6 +1234,32 @@ void ext02_http_headers_cannot_enable_extensions() {
   expect(server->active_processes() == before, "no process started");
 }
 
+// Owner 2026-10-29 (logging.engine_output, to see why an engine fails on a new GPU): the engine's own stderr lines reach
+// the server log as "[engine] <line>" - what the engine prints of a prompt too, which is why the row is off unless
+// asked for; without it no engine line is in the log.
+void engine_output_reaches_the_log_only_when_asked() {
+  const std::string last = "[engine] strata serve: conversation cache: dropped 1 superseded copy of this conversation; parked=1";
+  {
+    auto server = start_server({{"logging.engine_output", "true"}}, {"--stderr-cache-lines"});
+    if (!server) return;
+    for (int i = 0; i < 200 && server->stderr_text().find(last) == std::string::npos; ++i) std::this_thread::sleep_for(50ms);
+    const std::string log = server->stderr_text();
+    const auto at = log.find(last);
+    const bool line_end = at != std::string::npos && at + last.size() < log.size() &&
+                          (log[at + last.size()] == '\n' || log[at + last.size()] == '\r');  // Windows' text-mode stderr: \r\n
+    expect(log.find("\n[engine] strata serve: session 0: prompt: ") != std::string::npos && line_end,
+           "the engine's lines, one per log line: " + log);
+    expect(log.find("strata: warning: logging.engine_output is true: the engine's own output goes to this log") != std::string::npos,
+           "the start says so, with what it can hold");
+  }
+  auto server = start_server({}, {"--stderr-cache-lines"});
+  if (!server) return;
+  std::this_thread::sleep_for(1s);
+  const std::string log = server->stderr_text();
+  expect(log.find("[engine]") == std::string::npos && log.find("logging.engine_output") == std::string::npos,
+         "off: no engine line and no notice in the log");
+}
+
 // SP3 Task 21 (spec §8): fixed-field request lines under a token bucket, the
 // startup summary, and nothing secret anywhere (PRIV-02 frontend part).
 void log_line_format_and_rate_limit() {
@@ -2200,6 +2226,7 @@ int main(int argc, char** argv) {
       {"ext01_upstream_control_routes_are_404_after_auth", ext01_upstream_control_routes_are_404_after_auth},
       {"ext02_http_headers_cannot_enable_extensions", ext02_http_headers_cannot_enable_extensions},
       {"log_line_format_and_rate_limit", log_line_format_and_rate_limit},
+      {"engine_output_reaches_the_log_only_when_asked", engine_output_reaches_the_log_only_when_asked},
       {"undecodable_output_logs_its_own_code", undecodable_output_logs_its_own_code},
       {"web_ui_page_is_served_and_the_api_keeps_its_key", web_ui_page_is_served_and_the_api_keeps_its_key},
       {"monitor_reports_generations_without_their_text", monitor_reports_generations_without_their_text},

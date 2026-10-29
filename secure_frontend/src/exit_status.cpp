@@ -71,4 +71,15 @@ std::string describe_exit(const ExitClassification& classification) {
   return text;
 }
 
+std::string describe_exit_status(const ExitStatus& status, const ExitPlatform platform) {
+  if (status.signaled) return "signal " + std::to_string(status.value);
+  if (platform == ExitPlatform::windows && status.value >= 0x10000U) {
+    static constexpr char kDigits[] = "0123456789ABCDEF";
+    std::string text = "exit code 0x";
+    for (int shift = 28; shift >= 0; shift -= 4) text += kDigits[(status.value >> static_cast<unsigned>(shift)) & 0xFU];
+    return text;
+  }
+  return "exit code " + std::to_string(status.value);
+}
+
 }  // namespace secure_frontend

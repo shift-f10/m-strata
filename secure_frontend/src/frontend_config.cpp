@@ -36,7 +36,7 @@ std::string decimal_text(const double value) {
   return ec == std::errc{} ? std::string{buffer, end} : std::string{"?"};
 }
 
-constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 + 1 + 2 + 1 + 1 + 2 + 4 + 5 + 1 + 1 /* roots.allow_untrusted_media */ + 1 /* glm.kv */ + 3 /* listener.login_link, models.default_engine, models.default_root */ + 8 /* alerts.email.* */ + 1 /* models.control_remote_networks */ + 5 /* search.* */ + 2 /* vision.mmproj, vision.gpu */ + 2 /* glm.pcie_share, glm.cpu_lane */> kSchema{{
+constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 + 1 + 2 + 1 + 1 + 2 + 4 + 5 + 1 + 1 /* roots.allow_untrusted_media */ + 1 /* glm.kv */ + 3 /* listener.login_link, models.default_engine, models.default_root */ + 8 /* alerts.email.* */ + 1 /* models.control_remote_networks */ + 5 /* search.* */ + 2 /* vision.mmproj, vision.gpu */ + 2 /* glm.pcie_share, glm.cpu_lane */ + 1 /* logging.engine_output */> kSchema{{
     {"schema_version", T::integer, false, 1, 1, d::kSchemaVersion, false, "", "",
      "Config format version; must be 1. Required in a config file."},
     {"listener.host", T::string, false, 0, 0, 0, false, "127.0.0.1", "--host",
@@ -93,7 +93,7 @@ constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 
     {"limits.engine.ready_timeout_s", T::integer, false, 1, 86'400, d::kEngineReadyTimeoutS, false, "", "",
      "How long the supervisor waits for the engine's READY after each start; a miss kills and restarts it (upstream STRATA_ENGINE_READY_S)."},
     {"limits.engine.generation_timeout_s", T::integer, false, 1, 86'400, d::kEngineGenerationTimeoutS, false, "", "",
-     "Total time for one generation before STOP."},
+     "Total time for one generation before STOP (its answer then ends as length). A card's answer_minutes option sets it per model; this row is that option's default."},
     {"limits.engine.stop_drain_timeout_s", T::integer, false, 1, 600, d::kEngineStopDrainTimeoutS, false, "", "",
      "Time to drain to DONE after STOP before the engine is marked failed."},
     {"limits.concurrency.max_concurrent_requests", T::integer, false, 1, 256, d::kMaxConcurrentRequests, false, "", "",
@@ -153,7 +153,10 @@ constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 
     {"update.source", T::string_array, false, 0, 0, 0, false, "", "",
      "HTTPS release-mirror URLs that 'strata update' fetches the signed release envelope from."},
     {"logging.requests", T::boolean, false, 0, 0, 0, false, "", "",
-     "One line per request to stderr: route, status, code, time, bytes, loopback or remote; never paths, headers, tokens or text."},
+     "One line per request to stderr: route, status, code, time, bytes, loopback or remote; never paths, headers, tokens or text. In a make --debugging build it is on unless the config sets it."},
+    // Owner 2026-10-29: to see why an engine fails on a new GPU (a calibration that never starts).
+    {"logging.engine_output", T::boolean, false, 0, 0, 0, false, "", "",
+     "The engine's own output (its stderr) in this server's log, one '[engine] ' line each, for finding out why a model does not start or calibrate. It can hold what the engine prints of the prompts it is given and the paths of model files: turn it off when done, and look through a log before sharing it. In a make --debugging build it is on unless the config sets it."},
     // SP5 M1 Task 4 (parity row `sampling`): bounds copied from the pin —
     // clean_shared_defaults (serve/server.py:7331-7367) and the wire conditions
     // (serve/server.py:1360-1394). Unset rows are never sent. The 2.0 caps,
@@ -463,6 +466,11 @@ class DraftReader final {
       return key.default_integer;
     }
     return *value;
+  }
+  // A boolean whose unset default is `unset` rather than the schema's (a build-time default: make --debugging).
+  bool boolean_or(const std::string_view path, const bool unset) {
+    const ConfigKey& key = *find_config_key(path);
+    return lookup(key) == nullptr ? unset : boolean(path);
   }
   bool boolean(const std::string_view path) {
     const ConfigKey& key = *find_config_key(path);
@@ -1045,7 +1053,9 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
   const auto write_stall_ms = read.integer("limits.http.write_stall_ms");
   const auto response_deadline_ms = read.integer("limits.http.response_write_deadline_ms");
   const auto keepalive_ms = read.integer("limits.http.stream_keepalive_ms");
-  const bool log_requests = read.boolean("logging.requests");
+  // make --debugging (owner 2026-10-29): a debugging build logs both unless the config turns them off
+  const bool log_requests = read.boolean_or("logging.requests", debugging_build());
+  const bool log_engine_output = read.boolean_or("logging.engine_output", debugging_build());
   // SP5 M1 Task 4: defaults.sampling.* (unset rows stay unset).
   SamplingDefaults sampling_defaults{
       read.decimal("defaults.sampling.temperature"), read.decimal("defaults.sampling.top_p"),
@@ -1656,7 +1666,7 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
                          PullSettings{std::move(downloader), std::move(proxy), allow_private,
                                       static_cast<std::uint64_t>(max_total), std::chrono::seconds(max_duration),
                                       std::chrono::seconds(stall), std::chrono::seconds(connect), static_cast<std::uint32_t>(connections)},
-                         LoggingConfig{log_requests}, std::move(sampling_defaults), reasoning, std::move(session),
+                         LoggingConfig{log_requests, log_engine_output}, std::move(sampling_defaults), reasoning, std::move(session),
                          replicas, vision, std::move(glm), UpdateSettings{std::move(update_source)},
                          std::move(models_config), std::move(alerts_config), std::move(search_config)));
   return ValidatedConfig{std::move(config_ptr)};
@@ -1746,6 +1756,7 @@ std::string describe(const FrontendConfig& c) {
   line("pull.connect_timeout_s", std::to_string(c.pull.connect_timeout.count()));
   line("pull.connections", std::to_string(c.pull.connections));
   line("logging.requests", c.logging.requests ? "true" : "false");
+  line("logging.engine_output", c.logging.engine_output ? "true" : "false");
   // SP5 M1 Task 4: the defaults.sampling.* rows; an unset row stays unset and
   // is never sent (the engine keeps its own default).
   const auto decimal_or_unset = [](const std::optional<double>& value) {

@@ -55,6 +55,7 @@ class Options:
     jobs: int
     cmake: str
     plan: bool
+    debugging: bool = False
 
 
 def host_platform() -> str:
@@ -152,6 +153,9 @@ def parse_args(argv: list[str], platform: str | None = None) -> Options:
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--cmake", default=os.environ.get("CMAKE", ""), help="the cmake executable (default: on PATH)")
     ap.add_argument("--plan", action="store_true", help="print the commands and stop")
+    ap.add_argument("--debugging", action="store_true",
+                    help="a server that logs verbosely, to find out why a model does not start or calibrate "
+                         "(it says what that logs and what to take care of)")
     args = ap.parse_args(argv)
     without = tuple(sorted({w.strip() for w in args.without.split(",") if w.strip()}))
     unknown = [w for w in without if w not in LEAVE_OUT]
@@ -172,7 +176,7 @@ def parse_args(argv: list[str], platform: str | None = None) -> Options:
                    cuda_runtime=not args.no_cuda_runtime,
                    build_dir=build_dir,
                    engine_build_dir=(args.engine_build_dir or build_dir / "engine").absolute(), jobs=max(1, args.jobs),
-                   cmake=args.cmake, plan=args.plan)
+                   cmake=args.cmake, plan=args.plan, debugging=args.debugging)
 
 
 def _on_off(flag: bool) -> str:
@@ -217,7 +221,8 @@ def frontend_configure_args(opts: Options, platform: str) -> list[str]:
             "-DSECURE_FRONTEND_EMAIL_ALERTS=" + _on_off("email" in opts.with_features),
             "-DSECURE_FRONTEND_WEB_SEARCH=" + _on_off("search" in opts.with_features),
             "-DSECURE_FRONTEND_WINDOW=" + _on_off("window" in opts.with_features),
-            "-DSECURE_FRONTEND_TUI=" + _on_off("tui" in opts.with_features)]
+            "-DSECURE_FRONTEND_TUI=" + _on_off("tui" in opts.with_features),
+            "-DSECURE_FRONTEND_DEBUGGING=" + _on_off(opts.debugging)]
 
 
 def frontend_build_targets(opts: Options) -> list[str]:
@@ -317,7 +322,8 @@ def build_record(opts: Options, platform: str, stage: Path, commit: str | None =
                         "bytes": path.stat().st_size if path.is_file() else 0})
     return {"schema_version": 1, "built": built, "commit": commit,
             "ggml": (_tree_text("engine/third_party/ggml/VERSION.txt").split() or ["?"])[0][:12],
-            "cuda_arch": opts.cuda_arch, "features": list(opts.with_features), "engines": engines}
+            "cuda_arch": opts.cuda_arch, "features": list(opts.with_features) + (["debugging"] if opts.debugging else []),
+            "engines": engines}
 
 
 def _cuda_runtime_patterns(platform: str) -> list[str]:
@@ -418,6 +424,25 @@ Contents:   strata-unified-server and strata, the frontend{search}{window_conten
 License:    AGPL-3.0-only (LICENSE). NOTICE.md holds the copyright, the MIT notice of the Strata code this builds on{minimax}.
 {nvidia}"""
 
+# make --debugging (owner 2026-10-29: "when set on, it will tell the user the implications of having this on and
+# precautions to take"): printed before the build starts and after it, and kept in the folder's README.txt.
+DEBUGGING_NOTICE = """Debugging:  this is a debugging build (make --debugging): the server logs verbosely, to find
+            out why a model does not start or calibrate. It logs one line per request (route, status, time; never
+            its text) and the engine's own output, which can hold what the engine prints of your prompts and
+            the paths of your model files. Take care: run it on your own PC, keep the server's log private (its
+            console, the window app's Server log, logs/), look through a log before you share it and take out
+            prompts, paths and names, and build again without --debugging for everyday use. The engine's
+            output can be turned off without a new build: Settings > Troubleshooting (logging.engine_output;
+            logging.requests for the request lines)."""
+
+
+def announce(opts: Options) -> None:
+    """What make says before it builds: the GPU targets, and what a debugging build means."""
+    print(f"make: GPU targets {opts.cuda_arch}", flush=True)
+    if opts.debugging:
+        print(DEBUGGING_NOTICE, flush=True)
+
+
 NVIDIA_TEXT = """NVIDIA:     engine/{cublas}* are NVIDIA cuBLAS libraries, redistributed unmodified under the NVIDIA CUDA Toolkit
             End User License Agreement (Attachment A lists them as redistributable); they remain NVIDIA's.
 """
@@ -454,7 +479,8 @@ def readme_text(opts: Options, platform: str) -> str:
     vision = "" if "vision" in opts.without else ",\n            strata-vision (a Qwen model's picture encoder)"
     return README_TEXT.format(server=server, shell=shell, strata=".\\strata.exe" if windows else "./strata", cuda=cuda,
                               search=search, settings=settings, templates=templates, minimax=minimax, nvidia=nvidia,
-                              vision=vision, window=window, window_contents=window_contents)
+                              vision=vision, window=window, window_contents=window_contents) + \
+           ("\n" + DEBUGGING_NOTICE + "\n" if opts.debugging else "")
 
 
 def owner_only_commands(path: Path, platform: str, user: str) -> list[list[str]]:
@@ -570,7 +596,7 @@ def main(argv: list[str] | None = None) -> int:
     ninja = shutil.which("ninja", path=env.get("PATH")) or str(Path(cmake).parent / ("ninja.exe" if os.name == "nt" else "ninja"))
     stage = opts.build_dir / ("stage-" + time.strftime("%Y%m%d-%H%M%S"))
     jobs = ["-j", str(opts.jobs)]
-    print(f"make: GPU targets {opts.cuda_arch}", flush=True)
+    announce(opts)
 
     run([cmake, *engine_configure_args(opts, platform), *make_program_args(opts.engine_build_dir, ninja)], env,
         opts.plan)
@@ -621,6 +647,8 @@ def main(argv: list[str] | None = None) -> int:
         run(command, env, False)
     total = sum(p.stat().st_size for p in opts.out.rglob("*") if p.is_file())
     print(f"make: {opts.out} ({total / 2**20:.0f} MiB): run strata-unified-server there")
+    if opts.debugging:
+        print(DEBUGGING_NOTICE)
     return 0
 
 
