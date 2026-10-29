@@ -885,6 +885,18 @@ int main(int argc, char* argv[]) {
       }
       return 0;
     }
+    // Owner 2026-10-29 (the Monitor's GPU note): an answer that is no reading - NVML's failure, a non-ASCII byte pair
+    // and a line past the note's bound - every 50 ms; --fake-nvidia-smi-unreadable=N times then exit (no N: until killed).
+    if (argument == "--fake-nvidia-smi-unreadable" || argument.rfind("--fake-nvidia-smi-unreadable=", 0) == 0) {
+      const long answers = argument.size() > 29U ? std::stol(std::string{argument.substr(29U)}) : -1L;
+      for (long printed = 0; answers < 0 || printed < answers; ++printed) {
+        std::cout << "Failed to initialize NVML: Driver/library version mismatch\nNVML library version: 999.\xc2\xb5\n\n"
+                     "NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver. Make sure that the latest "
+                     "NVIDIA driver is installed and running.\n" << std::flush;
+        sleep_ms(50);
+      }
+      return 0;
+    }
   }
   // The detached stdin reader can be blocked inside std::getline when serve
   // returns: exit() runs the stdio cleanup, which locks every FILE —

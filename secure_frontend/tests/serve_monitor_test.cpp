@@ -6,6 +6,7 @@
 #include "secure_frontend/serve_monitor.hpp"
 #include "support/test_support.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -124,10 +125,24 @@ void parses_nvidia_smi_lines() {
   const auto partial = secure_frontend::parse_nvidia_smi_line("Tesla T4, [N/A], 0, 15360, 40, [Not Supported], 70.00, 3, 3, 16");
   expect(partial.has_value() && !partial->util_percent && !partial->power_w && partial->power_limit_w == std::optional<double>{70.0},
          "[N/A] and [Not Supported] leave just that reading empty");
+  // Owner 2026-10-29: an RTX 5090 showed no GPU reading at all. Any bracketed placeholder nvidia-smi prints for a field
+  // it cannot read leaves just that reading empty, as [N/A] does; the line's other readings still show.
+  const auto placeholders = secure_frontend::parse_nvidia_smi_line(
+      "NVIDIA GeForce RTX 5090, 3, 2048, 32607, 41, [Unknown Error], [Insufficient Permissions], [GPU requires reset], 5, "
+      "[Requested functionality has been deprecated]");
+  expect(placeholders.has_value() && placeholders->util_percent == std::optional<double>{3.0} &&
+             placeholders->mem_used_bytes == std::optional<std::uint64_t>{2048ULL * 1048576ULL} &&
+             placeholders->temp_c == std::optional<double>{41.0} && !placeholders->power_w && !placeholders->power_limit_w &&
+             !placeholders->pcie_gen && placeholders->pcie_gen_max == std::optional<unsigned>{5U} && !placeholders->pcie_width,
+         "any bracketed placeholder leaves just that reading empty");
   for (const std::string& bad : {std::string{},std::string{"GPU, 1"}, std::string{"GPU, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10"},
                                 std::string{"GPU, abc, 1, 2, 3, 4, 5, 6, 7, 8"}, std::string{"GPU, -1, 1, 2, 3, 4, 5, 6, 7, 8"},
                                 std::string{"GP\x01U, 1, 1, 2, 3, 4, 5, 6, 7, 8"}, std::string(97U, 'G') + ", 1, 1, 2, 3, 4, 5, 6, 7, 8",
-                                std::string{", 1, 1, 2, 3, 4, 5, 6, 7, 8"}, std::string{"GPU, 1e9, 1, 2, 3, 4, 5, 6, 7, 8"}}) {
+                                std::string{", 1, 1, 2, 3, 4, 5, 6, 7, 8"}, std::string{"GPU, 1e9, 1, 2, 3, 4, 5, 6, 7, 8"},
+                                std::string{"GPU, [Unknown Error, 1, 2, 3, 4, 5, 6, 7, 8"}, std::string{"GPU, [], 1, 2, 3, 4, 5, 6, 7, 8"},
+                                std::string{"GPU, [N/A]1, 1, 2, 3, 4, 5, 6, 7, 8"}, std::string{"GPU, [[N/A]], 1, 2, 3, 4, 5, 6, 7, 8"},
+                                std::string{"GPU, [Unknown\x01" "Error], 1, 2, 3, 4, 5, 6, 7, 8"},
+                                "GPU, [" + std::string(63U, 'x') + "], 1, 2, 3, 4, 5, 6, 7, 8"}) {
     expect(!secure_frontend::parse_nvidia_smi_line(bad).has_value(), "the whole line is refused: [" + bad + "]");
   }
 }
@@ -381,6 +396,34 @@ void gpu_sampler_reads_a_fake_tool() {
                    .arguments = {}, .environment = {}, .insert_serve = false});
     expect(wait_for([&] { return missing.note() != "starting"; }) && !missing.latest().has_value() && !missing.note().empty(),
            "a missing tool: no reading, a note: " + missing.note());
+  }
+  // Owner 2026-10-29 (an RTX 5090 showed no GPU reading and no reason): what nvidia-smi answered instead of a reading was
+  // dropped unread, and the note said only "nvidia-smi stopped" or "is not answering". The note quotes it: printable
+  // ASCII only (anything else '?'), bounded.
+  const auto quotes_the_answer = [](const std::string& note) {
+    expect(note.find("Failed to initialize NVML: Driver/library version mismatch") != std::string::npos &&
+               note.find("NVML library version: 999.??") != std::string::npos,
+           "the note quotes what nvidia-smi answered, a non-ASCII byte as '?': " + note);
+    expect(std::all_of(note.begin(), note.end(), [](const unsigned char c) { return c >= 0x20U && c <= 0x7eU; }) &&
+               note.size() <= 160U && note.find("installed and running") == std::string::npos,
+           "printable ASCII, cut at its bound: " + note);
+  };
+  {
+    secure_frontend::GpuSampler exited;
+    exited.start({.executable = STRATA_FAKE_ENGINE_PATH, .arguments = {"--fake-nvidia-smi-unreadable=1"}, .environment = {},
+                  .insert_serve = false});
+    expect(wait_for([&] { return exited.note() != "starting"; }) && !exited.latest().has_value(),
+           "a tool that answers no reading and exits: no reading: " + exited.note());
+    quotes_the_answer(exited.note());
+  }
+  {
+    secure_frontend::GpuSampler unreadable;
+    unreadable.start({.executable = STRATA_FAKE_ENGINE_PATH, .arguments = {"--fake-nvidia-smi-unreadable"}, .environment = {},
+                      .insert_serve = false});
+    for (int i = 0; i < 200 && unreadable.note().find("NVML") == std::string::npos; ++i) std::this_thread::sleep_for(50ms);
+    expect(!unreadable.latest().has_value(), "lines that are not readings leave no reading");
+    quotes_the_answer(unreadable.note());
+    unreadable.stop();
   }
 }
 
