@@ -280,6 +280,27 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z19 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner's console: calibrating his new gemma-4-26B-A4B-it-Q8_0 card, "a calibration reply failed (invalid_request)",
+then "the engine did not start for the calibration" (the engine had started).
+
+- **Cause**: unsloth's current Gemma 4 GGUF (their Q8_0 at c099eb48) types `<eos>` NORMAL (type 1, not CONTROL) and names
+  `<turn|>` the eos token (`eos_token_id` 106; his older UD-Q8_K_XL: 1, `<eos>` CONTROL). `find_gemma4_markers`
+  required a CONTROL `<eos>`, so every chat on that card was refused (tokenization_failed -> invalid_request), not
+  only its calibration. Its other markers are typed as before. Read from both GGUFs' headers (metadata only).
+- **Fix**: `<eos>`, still exactly once, may be CONTROL or NORMAL, as the marker and as a stop id; `<turn|>` stays CONTROL
+  (`unique_token_of_type` takes a second type). User text holding `<eos>` is refused as before (kControlLiterals).
+  RED shown (`plan_encodes_markers_as_single_ids_and_text_as_spm`, `gemma4_turn_close_ends_the_reply_as_stop`; the old
+  rule's NORMAL-<eos> case is now this file's, the other mistypes still fail closed), then 99/99 MSVC and 100/100
+  Linux gcc over the Gemma 4, chat-execution and tokenizer suites. On his real file (a scratch server on 18090, the
+  fake engine): the old build's first-start calibration failed exactly as his did.
+- **Not changed - the newer template**: the same file carries a newer chat template (18,922 chars; the UD file's,
+  12,045, is the one llama.cpp calls outdated). Rendered by the fixture generator: plain chats with thinking off are
+  identical; thinking on adds a newline after `<|think|>`; tool rounds keep the model's reasoning in a thought channel
+  and stay in one model turn. Our renderer follows the old one (the committed fixture reproduces byte for byte). One
+  Gemma 4 profile serves both files; following the newer template is a separate change for the owner to decide.
+
 ### Claude Code session, 2026-10-28 z18 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner: "Make the Gemma 4 card now through the download route, then fix the page so an installed download without

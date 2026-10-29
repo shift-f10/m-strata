@@ -1869,12 +1869,15 @@ namespace {
 constexpr int kTokenTypeControl = 3;
 constexpr int kTokenTypeUserDefined = 4;
 
-// Gemma 4 plan 1 Task 8: the id of `literal` when it occurs exactly once, typed `type`.
-std::optional<std::size_t> unique_token_of_type(const TokenizerPack& pack, const std::string_view literal, const int type) {
+// Gemma 4 plan 1 Task 8: the id of `literal` when it occurs exactly once, typed `type` (or `also`, when given).
+std::optional<std::size_t> unique_token_of_type(const TokenizerPack& pack, const std::string_view literal, const int type,
+                                                const std::optional<int> also = std::nullopt) {
   std::optional<std::size_t> found;
   for (std::size_t id = 0U; id < pack.tokens_by_id.size(); ++id) {
     if (pack.tokens_by_id[id] != literal) continue;
-    if (found.has_value() || id >= pack.token_types.size() || pack.token_types[id] != type) return std::nullopt;
+    if (found.has_value() || id >= pack.token_types.size() || (pack.token_types[id] != type && pack.token_types[id] != also)) {
+      return std::nullopt;
+    }
     found = id;
   }
   return found;
@@ -1885,7 +1888,9 @@ std::optional<std::size_t> unique_token_of_type(const TokenizerPack& pack, const
 std::optional<Gemma4Markers> find_gemma4_markers(const TokenizerPack& pack) {
   if (pack.mode != TokenizerMode::spm_bpe || pack.tokens_by_id.size() != pack.token_types.size()) return std::nullopt;
   const auto bos = unique_token_of_type(pack, "<bos>", kTokenTypeControl);
-  const auto eos = unique_token_of_type(pack, "<eos>", kTokenTypeControl);
+  // unsloth's later Gemma 4 GGUFs (gemma-4-26B-A4B-it-Q8_0 at c099eb48; owner 2026-10-28) type <eos> NORMAL and name
+  // <turn|> the end of a turn (eos_token_id 106): <eos>, still exactly once, is the marker either way
+  const auto eos = unique_token_of_type(pack, "<eos>", kTokenTypeControl, kTokenTypeNormal);
   const auto turn_open = unique_token_of_type(pack, "<|turn>", kTokenTypeControl);
   const auto turn_close = unique_token_of_type(pack, "<turn|>", kTokenTypeControl);
   const auto think = unique_token_of_type(pack, "<|think|>", kTokenTypeControl);
@@ -1898,9 +1903,8 @@ std::optional<Gemma4Markers> find_gemma4_markers(const TokenizerPack& pack) {
 std::vector<std::size_t> find_gemma4_end_of_turn_tokens(const TokenizerPack& pack) {
   std::vector<std::size_t> found;
   if (pack.mode != TokenizerMode::spm_bpe) return found;
-  for (const std::string_view literal : {"<turn|>", "<eos>"}) {
-    if (const auto id = unique_token_of_type(pack, literal, kTokenTypeControl)) found.push_back(*id);
-  }
+  if (const auto id = unique_token_of_type(pack, "<turn|>", kTokenTypeControl)) found.push_back(*id);
+  if (const auto id = unique_token_of_type(pack, "<eos>", kTokenTypeControl, kTokenTypeNormal)) found.push_back(*id);   // as the markers
   return found;
 }
 

@@ -1379,6 +1379,15 @@ void gemma4_turn_close_ends_the_reply_as_stop() {
       expect(found.size() == 1U, "an ambiguous or mistyped end-of-turn literal is not a stop id: " + std::string{literal});
     }
   }
+  // a later GGUF's <eos>, typed NORMAL (unsloth's Q8_0 at c099eb48, owner 2026-10-28), still ends the turn; <turn|> must
+  // stay CONTROL
+  auto later = g.pack;
+  later.token_types[test_support::token_id(later, "<eos>")] = 1;
+  expect(secure_frontend::find_gemma4_end_of_turn_tokens(later) == std::vector<std::size_t>{g.turn_close, g.eos},
+         "a NORMAL <eos> is still a stop id");
+  auto normal_close = g.pack;
+  normal_close.token_types[test_support::token_id(normal_close, "<turn|>")] = 1;
+  expect(secure_frontend::find_gemma4_end_of_turn_tokens(normal_close).size() == 1U, "a NORMAL <turn|> is not");
   auto byte_mode = g.pack;
   byte_mode.mode = secure_frontend::TokenizerMode::byte_bpe;
   expect(secure_frontend::find_gemma4_end_of_turn_tokens(byte_mode).empty(), "a byte_bpe pack has no Gemma end-of-turn ids");
