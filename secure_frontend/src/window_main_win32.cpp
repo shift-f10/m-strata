@@ -2,24 +2,28 @@
 // "instead of a console application, we should make it into a window application ... minimized into the tray that
 // has the start and stop models menu ... right click it to select exit or select a model to start and stop"). It runs
 // strata-unified-server beside it as its child with no console, signs in with the server's one-time link, shows the
-// page in a WebView2 view, and lives in the tray: closing the window hides it; the tray's menu opens it, starts and
-// stops the models, restarts the server and exits (the server stops in order first). window_shell.hpp holds the
-// portable half; this file is the window, the tray and WebView2.
+// page in a WebView2 view, and lives in the tray: closing the window hides it; the tray's menu opens it, shows the
+// server's log, starts and stops the models, restarts the server and exits (the server stops in order first).
+// window_shell.hpp holds the portable half; this file is the window, the Log, the tray and WebView2.
 
 #include "secure_frontend/first_start.hpp"
 #include "secure_frontend/window_shell.hpp"
 #include "secure_frontend/win32_prelude.hpp"
 
+#include <commdlg.h>
 #include <objbase.h>
 #include <shellapi.h>
 
 #include <WebView2.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <deque>
+#include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -40,12 +44,23 @@ constexpr UINT kServerExit = WM_APP + 3;   // wParam: the exit code
 constexpr UINT kServerStopped = WM_APP + 4;  // the stopper thread is done (Restart or Exit goes on)
 constexpr UINT kShowYourself = WM_APP + 5;   // a second strata-window asks this one to show itself
 constexpr UINT kNotice = WM_APP + 6;         // lParam: a std::wstring* for a tray notification
+constexpr UINT kShowLog = WM_APP + 7;        // the page's Ctrl+Shift+L: the Log
 constexpr UINT_PTR kSignInTimer = 1;         // the listening line came: the page's own address unless a link follows
+constexpr UINT_PTR kLogTimer = 2;            // new lines for the Log's text (a burst of lines is drawn once)
 constexpr UINT kMenuOpen = 1;
 constexpr UINT kMenuRestart = 2;
 constexpr UINT kMenuExit = 3;
+constexpr UINT kMenuLog = 4;
 constexpr UINT kMenuModelBase = 100;
+constexpr UINT kSystemMenuLog = 0x0110;  // the title bar's menu (a WM_SYSCOMMAND id: below 0xF000, its low 4 bits clear)
+constexpr int kLogCopy = 101;            // the Log's buttons
+constexpr int kLogSave = 102;
+constexpr int kLogFolder = 103;
+constexpr wchar_t kLogClass[] = L"MStrataLog";
+constexpr wchar_t kLogTitle[] = L"M-Strata - server log";
 constexpr std::uintmax_t kLogBytes = 4U * 1024U * 1024U;
+constexpr std::size_t kLogViewLines = 2000;  // the Log's lines in memory (as many as strata-tui's Log keeps)
+constexpr std::size_t kLogViewBytes = 1024U * 1024U;
 constexpr std::size_t kRecentLines = 40;
 
 std::wstring wide(const std::string_view text) {
@@ -172,7 +187,15 @@ struct App final {
   w::ServerSetup setup;
   w::ServerChild server;
   std::optional<w::RotatingLog> log;
-  std::deque<std::string> recent;  // the server's last lines (but the sign-in link), for the page shown when it ends
+  // the server's lines (but the sign-in link) and the window's own notes: the Log, and the page shown when it ends
+  w::LogLines lines{kLogViewLines, kLogViewBytes};
+  HWND log_window{nullptr};  // the Log: the lines, Copy all, Save as..., Open the logs folder
+  HWND log_text{nullptr};
+  HWND log_note{nullptr};
+  HFONT log_font{nullptr};
+  HFONT log_ui_font{nullptr};
+  std::uint64_t log_shown_first{0};  // the lines its text shows, [first, end)
+  std::uint64_t log_shown_end{0};
   std::string origin;              // the page's origin, once the server listens
   std::optional<std::string> pending;  // where the view goes once it exists
   std::optional<w::ServerKey> key;
@@ -218,14 +241,216 @@ void navigate(const std::string& url) {
   (void)app.view->Navigate(wide(url).c_str());
 }
 
+// --------------------------------------------------------------------------- the Log
+// The server's lines in a window of their own (the owner: "in the window app version we need to add a log capability,
+// the console have it but this one do not so we can troubleshoot"): the newest last, following the newest unless
+// scrolled up; Copy all, Save as..., Open the logs folder. The tray's Server log, the title bar's menu and
+// Ctrl+Shift+L open it; closing it hides it (the lines stay).
+
+int log_scaled(const int pixels) { return MulDiv(pixels, static_cast<int>(GetDpiForWindow(app.log_window)), 96); }
+
+void log_say(const std::wstring& text) {
+  if (app.log_note != nullptr) SetWindowTextW(app.log_note, text.c_str());
+}
+
+void make_log_fonts() {
+  const int dpi = static_cast<int>(GetDpiForWindow(app.log_window));
+  for (HFONT* font : {&app.log_font, &app.log_ui_font}) {
+    if (*font != nullptr) DeleteObject(*font);
+  }
+  app.log_font = CreateFontW(-MulDiv(10, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN, L"Consolas");
+  app.log_ui_font = CreateFontW(-MulDiv(9, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                                CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+  for (HWND child : {GetDlgItem(app.log_window, kLogCopy), GetDlgItem(app.log_window, kLogSave), GetDlgItem(app.log_window, kLogFolder),
+                     app.log_note}) {
+    SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(app.log_ui_font), TRUE);
+  }
+  SendMessageW(app.log_text, WM_SETFONT, reinterpret_cast<WPARAM>(app.log_font), TRUE);
+}
+
+void layout_log() {
+  if (app.log_text == nullptr) return;  // (sizes sent while it is made)
+  RECT box{};
+  GetClientRect(app.log_window, &box);
+  const int gap = log_scaled(8);
+  const int height = log_scaled(28);
+  int x = gap;
+  for (const auto& [id, width] : {std::pair{kLogCopy, 96}, std::pair{kLogSave, 96}, std::pair{kLogFolder, 150}}) {
+    MoveWindow(GetDlgItem(app.log_window, id), x, gap, log_scaled(width), height, TRUE);
+    x += log_scaled(width) + gap;
+  }
+  MoveWindow(app.log_note, x, gap + log_scaled(6), std::max(0, static_cast<int>(box.right) - x - gap), height - log_scaled(6), TRUE);
+  const int top = gap * 2 + height;
+  MoveWindow(app.log_text, 0, top, box.right, std::max(0, static_cast<int>(box.bottom) - top), TRUE);
+}
+
+// The Log's text catches up with the lines kept: the new ones added at its end (the user's selection stays), or all of
+// them again once lines it showed were dropped. It follows the newest line unless the user scrolled up.
+void update_log_text() {
+  if (app.log_text == nullptr || !IsWindowVisible(app.log_window)) return;
+  const auto from = app.lines.newer_than(app.log_shown_first, app.log_shown_end);
+  if (from && *from == app.lines.lines().size()) return;
+  SCROLLINFO bar{};
+  bar.cbSize = sizeof bar;
+  bar.fMask = SIF_ALL;
+  const bool follow = GetScrollInfo(app.log_text, SB_VERT, &bar) == FALSE || bar.nPos + static_cast<int>(bar.nPage) >= bar.nMax;
+  const auto top = SendMessageW(app.log_text, EM_GETFIRSTVISIBLELINE, 0, 0);
+  DWORD start = 0;
+  DWORD end = 0;
+  SendMessageW(app.log_text, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
+  SendMessageW(app.log_text, WM_SETREDRAW, FALSE, 0);
+  if (!from) {
+    SetWindowTextW(app.log_text, wide(app.lines.text("\r\n")).c_str());
+  } else {
+    std::string added;
+    for (std::size_t i = *from; i < app.lines.lines().size(); ++i) added += app.lines.lines()[i] + "\r\n";
+    const int length = GetWindowTextLengthW(app.log_text);
+    SendMessageW(app.log_text, EM_SETSEL, static_cast<WPARAM>(length), static_cast<LPARAM>(length));
+    SendMessageW(app.log_text, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(wide(added).c_str()));
+    SendMessageW(app.log_text, EM_SETSEL, start, static_cast<LPARAM>(end));
+  }
+  app.log_shown_first = app.lines.first();
+  app.log_shown_end = app.lines.end();
+  if (follow) {
+    SendMessageW(app.log_text, WM_VSCROLL, SB_BOTTOM, 0);
+  } else {
+    SendMessageW(app.log_text, EM_LINESCROLL, 0, top - SendMessageW(app.log_text, EM_GETFIRSTVISIBLELINE, 0, 0));
+  }
+  SendMessageW(app.log_text, WM_SETREDRAW, TRUE, 0);
+  RedrawWindow(app.log_text, nullptr, nullptr, RDW_ERASE | RDW_FRAME | RDW_INVALIDATE);
+}
+
+// A line for the log file and the Log: the server's (never the sign-in link: on_server_line keeps it out) or the
+// window's own note ("[strata-window] ...", which places the server's starts and ends among its lines).
+void record(const std::string& line) {
+  if (!app.log && app.setup.data) {
+    std::error_code error;
+    if (std::filesystem::is_directory(app.setup.data->logs, error)) app.log.emplace(app.setup.data->logs / "server.log", kLogBytes);
+  }
+  if (app.log) app.log->write(line);
+  app.lines.add(line);
+  if (app.log_text != nullptr && IsWindowVisible(app.log_window)) SetTimer(app.log_window, kLogTimer, 100, nullptr);
+}
+
+void copy_log() {
+  const std::wstring text = wide(app.lines.text("\r\n"));
+  bool copied = false;
+  if (OpenClipboard(app.log_window)) {
+    (void)EmptyClipboard();
+    const SIZE_T bytes = (text.size() + 1U) * sizeof(wchar_t);
+    if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes); memory != nullptr) {
+      if (void* target = GlobalLock(memory); target != nullptr) {
+        std::memcpy(target, text.c_str(), bytes);
+        (void)GlobalUnlock(memory);
+        copied = SetClipboardData(CF_UNICODETEXT, memory) != nullptr;  // the clipboard owns it now
+      }
+      if (!copied) (void)GlobalFree(memory);
+    }
+    (void)CloseClipboard();
+  }
+  log_say(copied ? L"Copied " + std::to_wstring(app.lines.lines().size()) + L" lines: paste them where you send them."
+                 : L"The lines could not be copied.");
+}
+
+void save_log() {
+  const std::time_t now = std::time(nullptr);
+  std::tm local{};
+  (void)localtime_s(&local, &now);
+  wchar_t file[4096] = {};
+  (void)wcsncpy_s(file, wide(w::saved_log_name(local)).c_str(), _TRUNCATE);
+  OPENFILENAMEW dialog{};
+  dialog.lStructSize = sizeof dialog;
+  dialog.hwndOwner = app.log_window;
+  dialog.lpstrFilter = L"Text files (*.txt)\0*.txt\0All files\0*.*\0";
+  dialog.lpstrFile = file;
+  dialog.nMaxFile = static_cast<DWORD>(std::size(file));
+  dialog.lpstrDefExt = L"txt";
+  dialog.Flags = OFN_EXPLORER | OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+  if (!GetSaveFileNameW(&dialog)) return;  // cancelled
+  const std::filesystem::path chosen{std::wstring{file}};
+  const auto failed = app.lines.save(chosen);
+  log_say(failed ? wide(*failed) + L"."
+                 : L"Saved " + std::to_wstring(app.lines.lines().size()) + L" lines to " + chosen.filename().wstring() + L".");
+}
+
+LRESULT CALLBACK log_procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+  switch (message) {
+    case WM_SIZE: layout_log(); return 0;
+    case WM_TIMER:
+      if (wparam == kLogTimer) {
+        KillTimer(window, kLogTimer);
+        update_log_text();
+      }
+      return 0;
+    case WM_COMMAND:
+      if (LOWORD(wparam) == kLogCopy) copy_log();
+      else if (LOWORD(wparam) == kLogSave) save_log();
+      else if (LOWORD(wparam) == kLogFolder && app.setup.data) {
+        (void)ShellExecuteW(nullptr, L"open", app.setup.data->logs.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+      }
+      return 0;
+    case WM_DPICHANGED: {
+      const auto* suggested = reinterpret_cast<const RECT*>(lparam);
+      SetWindowPos(window, nullptr, suggested->left, suggested->top, suggested->right - suggested->left,
+                   suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
+      make_log_fonts();
+      layout_log();
+      return 0;
+    }
+    case WM_CTLCOLORSTATIC:
+      if (reinterpret_cast<HWND>(lparam) == app.log_text) {  // read-only text on the window colour, not the dialog grey
+        SetTextColor(reinterpret_cast<HDC>(wparam), GetSysColor(COLOR_WINDOWTEXT));
+        SetBkColor(reinterpret_cast<HDC>(wparam), GetSysColor(COLOR_WINDOW));
+        return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+      }
+      return DefWindowProcW(window, message, wparam, lparam);
+    case WM_CLOSE: ShowWindow(window, SW_HIDE); return 0;  // the lines stay: Server log shows them again
+    default: return DefWindowProcW(window, message, wparam, lparam);
+  }
+}
+
+void show_log() {
+  if (app.log_window == nullptr) {
+    const int dpi = static_cast<int>(GetDpiForWindow(app.window));
+    app.log_window = CreateWindowExW(0, kLogClass, kLogTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, MulDiv(1000, dpi, 96),
+                                     MulDiv(680, dpi, 96), nullptr, nullptr, app.instance, nullptr);
+    if (app.log_window == nullptr) return;
+    for (const auto& [id, text] : {std::pair{kLogCopy, L"Copy all"}, std::pair{kLogSave, L"Save as..."},
+                                   std::pair{kLogFolder, L"Open the logs folder"}}) {
+      HWND button = CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 0, 0, 0, 0, app.log_window,
+                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), app.instance, nullptr);
+      if (id == kLogFolder) EnableWindow(button, app.setup.data ? TRUE : FALSE);  // (no data folder with --config)
+    }
+    app.log_note = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_ENDELLIPSIS, 0, 0, 0, 0, app.log_window,
+                                   nullptr, app.instance, nullptr);
+    app.log_text = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                   WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_NOHIDESEL, 0, 0, 0,
+                                   0, app.log_window, nullptr, app.instance, nullptr);
+    SendMessageW(app.log_text, EM_SETLIMITTEXT, 0, 0);  // no 32K limit on the lines added
+    log_say(std::wstring{L"The server's newest lines, as its console prints them."} +
+            (app.setup.data ? L" Every line is in the data folder's logs\\server.log." : L""));
+    make_log_fonts();
+    layout_log();
+  }
+  ShowWindow(app.log_window, IsIconic(app.log_window) ? SW_RESTORE : SW_SHOW);
+  SetForegroundWindow(app.log_window);
+  update_log_text();
+}
+
+// Ctrl+Shift+L: the Log.
+bool log_keys(const UINT key) {
+  return key == 'L' && GetAsyncKeyState(VK_CONTROL) < 0 && GetAsyncKeyState(VK_SHIFT) < 0 && GetAsyncKeyState(VK_MENU) >= 0;
+}
+
 // The page this window shows when the server ended: what it said last (the sign-in link is never kept).
 void show_server_ended(const int code) {
   std::wstring page = L"<!doctype html><meta charset=utf-8><title>M-Strata</title><body style=\"font:14px Segoe UI,sans-serif;"
                       L"background:#121417;color:#e8e8e8;margin:24px\"><h2>The M-Strata server stopped</h2><p>It ended with code " +
-                      std::to_wstring(code) + L". Its last lines are below; the whole log is in the data folder's logs\\server.log. "
-                      L"Right-click the tray icon and choose Restart the server.</p><pre style=\"white-space:pre-wrap;"
-                      L"background:#1d2024;padding:12px;border-radius:8px\">";
-  for (const auto& line : app.recent) page += html_escaped(line) + L"\n";
+                      std::to_wstring(code) + L". Its last lines are below; every line is in the tray menu's Server log and in "
+                      L"the data folder's logs\\server.log. Right-click the tray icon and choose Restart the server.</p><pre "
+                      L"style=\"white-space:pre-wrap;background:#1d2024;padding:12px;border-radius:8px\">";
+  for (const auto& line : app.lines.last(kRecentLines)) page += html_escaped(line) + L"\n";
   page += L"</pre>";
   if (app.view != nullptr) {
     app.own_page = true;
@@ -279,6 +504,8 @@ using EnvironmentDone = Handler<ICoreWebView2CreateCoreWebView2EnvironmentComple
 using ControllerDone = Handler<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler, HRESULT, ICoreWebView2Controller*>;
 using NavigationStarting = Handler<ICoreWebView2NavigationStartingEventHandler, ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs*>;
 using NewWindow = Handler<ICoreWebView2NewWindowRequestedEventHandler, ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs*>;
+using AcceleratorKey =
+    Handler<ICoreWebView2AcceleratorKeyPressedEventHandler, ICoreWebView2Controller*, ICoreWebView2AcceleratorKeyPressedEventArgs*>;
 
 void view_ready(ICoreWebView2Controller* controller) {
   app.controller = controller;
@@ -303,6 +530,18 @@ void view_ready(ICoreWebView2Controller* controller) {
   });
   (void)app.view->add_NewWindowRequested(opening, &token);
   opening->Release();
+  auto* keys = new AcceleratorKey([](ICoreWebView2Controller*, ICoreWebView2AcceleratorKeyPressedEventArgs* args) {
+    COREWEBVIEW2_KEY_EVENT_KIND kind{};
+    UINT key = 0;
+    if (SUCCEEDED(args->get_KeyEventKind(&kind)) && kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN && SUCCEEDED(args->get_VirtualKey(&key)) &&
+        log_keys(key)) {
+      (void)args->put_Handled(TRUE);
+      PostMessageW(app.window, kShowLog, 0, 0);  // (not from inside the view's event)
+    }
+    return S_OK;
+  });
+  (void)app.controller->add_AcceleratorKeyPressed(keys, &token);
+  keys->Release();
   resize_view();
   if (app.pending) {
     const std::string url = *app.pending;
@@ -352,13 +591,14 @@ void create_view() {
 void start_server() {
   app.origin.clear();
   app.key.reset();
-  app.recent.clear();
+  record("[strata-window] starting the server");
   HWND window = app.window;
   const auto failed = app.server.start(
       app.setup.server, app.setup.arguments, app.setup.environment,  // the window's first environment, every start
       [window](std::string line) { PostMessageW(window, kServerLine, 0, reinterpret_cast<LPARAM>(new std::string(std::move(line)))); },
       [window](const int code) { PostMessageW(window, kServerExit, static_cast<WPARAM>(code), 0); });
   if (failed) {
+    record("[strata-window] " + *failed);
     show_status(wide(*failed));
     return;
   }
@@ -372,15 +612,9 @@ void on_server_line(std::string line) {
       navigate(w::page_address(link, app.origin, app.first_page));
       app.first_page = false;
     }
-    return;  // the one-time link goes to the view only: never to the log, the recent lines or the screen
+    return;  // the one-time link goes to the view only: never to the log file, the Log or the screen
   }
-  if (!app.log && app.setup.data) {
-    std::error_code error;
-    if (std::filesystem::is_directory(app.setup.data->logs, error)) app.log.emplace(app.setup.data->logs / "server.log", kLogBytes);
-  }
-  if (app.log) app.log->write(line);
-  app.recent.push_back(line);
-  if (app.recent.size() > kRecentLines) app.recent.pop_front();
+  record(line);
   if (const auto origin = w::listening_origin(line)) {
     app.origin = *origin;
     app.key = w::server_key(app.setup);
@@ -396,6 +630,7 @@ void stop_server_then(const bool restart) {
   if (app.stopping) return;
   app.stopping = true;
   app.restarting = restart;
+  record(restart ? "[strata-window] restarting the server" : "[strata-window] stopping the server (Exit)");
   show_status(restart ? L"Restarting the M-Strata server..." : L"Stopping the M-Strata server...");
   HWND window = app.window;
   std::thread([window] {
@@ -419,6 +654,7 @@ void model_request(std::string path, std::string body, std::wstring done) {
 void show_tray_menu() {
   HMENU menu = CreatePopupMenu();
   (void)AppendMenuW(menu, MF_STRING, kMenuOpen, L"Open M-Strata");
+  (void)AppendMenuW(menu, MF_STRING, kMenuLog, L"Server log");
   (void)AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   app.menu_models.clear();
   std::optional<w::TrayModels> models;
@@ -455,10 +691,12 @@ void show_tray_menu() {
   const UINT chosen = static_cast<UINT>(TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, at.x, at.y, 0, app.window, nullptr));
   DestroyMenu(menu);
   if (chosen == kMenuOpen) show_window();
+  else if (chosen == kMenuLog) show_log();
   else if (chosen == kMenuRestart) stop_server_then(true);
   else if (chosen == kMenuExit) {
     app.exiting = true;
     ShowWindow(app.window, SW_HIDE);
+    if (app.log_window != nullptr) ShowWindow(app.log_window, SW_HIDE);
     stop_server_then(false);
   } else if (chosen >= kMenuModelBase && chosen - kMenuModelBase < app.menu_models.size() && models) {
     const auto& name = app.menu_models[chosen - kMenuModelBase];
@@ -541,6 +779,7 @@ LRESULT CALLBACK window_procedure(HWND window, UINT message, WPARAM wparam, LPAR
       return 0;
     }
     case kServerExit:
+      record("[strata-window] the server ended (exit code " + std::to_string(static_cast<int>(wparam)) + ")");
       if (!app.stopping) {
         show_server_ended(static_cast<int>(wparam));
         notify(L"The M-Strata server stopped. Right-click the tray icon to restart it.");
@@ -556,6 +795,13 @@ LRESULT CALLBACK window_procedure(HWND window, UINT message, WPARAM wparam, LPAR
       }
       return 0;
     case kShowYourself: show_window(); return 0;
+    case kShowLog: show_log(); return 0;
+    case WM_SYSCOMMAND:
+      if ((wparam & 0xFFF0U) == kSystemMenuLog) {
+        show_log();
+        return 0;
+      }
+      return DefWindowProcW(window, message, wparam, lparam);
     case kNotice: {
       std::unique_ptr<std::wstring> text{reinterpret_cast<std::wstring*>(lparam)};
       notify(*text);
@@ -568,6 +814,13 @@ LRESULT CALLBACK window_procedure(HWND window, UINT message, WPARAM wparam, LPAR
       return 0;
     case WM_DESTROY:
       (void)Shell_NotifyIconW(NIM_DELETE, &app.tray);
+      if (app.log_window != nullptr) DestroyWindow(app.log_window);
+      app.log_window = nullptr;
+      app.log_text = nullptr;
+      app.log_note = nullptr;
+      for (HFONT font : {app.log_font, app.log_ui_font}) {
+        if (font != nullptr) DeleteObject(font);
+      }
       if (app.controller != nullptr) {
         (void)app.controller->Close();
         app.controller->Release();
@@ -630,16 +883,37 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
   window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
   window_class.lpszClassName = kWindowClass;
   if (RegisterClassExW(&window_class) == 0) return 1;
+  WNDCLASSEXW log_class = window_class;
+  log_class.lpfnWndProc = log_procedure;
+  log_class.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
+  log_class.lpszClassName = kLogClass;
+  if (RegisterClassExW(&log_class) == 0) return 1;
   app.taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
   app.window = CreateWindowExW(0, kWindowClass, kTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 860, nullptr, nullptr,
                                instance, nullptr);
   if (app.window == nullptr) return 1;
+  if (HMENU system = GetSystemMenu(app.window, FALSE); system != nullptr) {  // the title bar's menu: the Log
+    (void)AppendMenuW(system, MF_SEPARATOR, 0, nullptr);
+    (void)AppendMenuW(system, MF_STRING, kSystemMenuLog, L"Server log\tCtrl+Shift+L");
+  }
   add_tray_icon();
   ShowWindow(app.window, show);
   UpdateWindow(app.window);
   start_server();
   MSG message{};
   while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+    if (message.message == WM_KEYDOWN) {
+      // Ctrl+Shift+L in this process's windows (the page's own keys come through the view's AcceleratorKeyPressed)
+      if (log_keys(static_cast<UINT>(message.wParam))) {
+        show_log();
+        continue;
+      }
+      // Ctrl+A in the Log's text selects all of it
+      if (message.hwnd == app.log_text && message.wParam == 'A' && GetKeyState(VK_CONTROL) < 0) {
+        SendMessageW(app.log_text, EM_SETSEL, 0, -1);
+        continue;
+      }
+    }
     TranslateMessage(&message);
     DispatchMessageW(&message);
   }

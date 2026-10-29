@@ -56,9 +56,15 @@ refused here, by name), `POST /v1/strata/key/rotate`. Nothing about a key is eve
 - **Window.** The page in WebView2 (Windows) / WebKitGTK (Linux). Navigation stays on the server's own origin; a link
   elsewhere opens in the default browser. The web view's data lives in `data/state/window` (owner-only). Closing the
   window hides it to the tray.
-- **Tray.** A tray icon; left click opens the window; right click shows: Open M-Strata, one entry per model card
-  (Start, or Stop for the running one), Restart the server, Exit. The model entries use the server's own routes with the
-  API key read from the data folder's token store, as `strata key show` reads it (never logged, never shown).
+- **Tray.** A tray icon; left click opens the window; right click shows: Open M-Strata, Server log, one entry per model
+  card (Start, or Stop for the running one), Restart the server, Exit. The model entries use the server's own routes with
+  the API key read from the data folder's token store, as `strata key show` reads it (never logged, never shown).
+- **Log (2026-10-29; the owner: "in the window app version we need to add a log capability, the console have it but
+  this one do not so we can troubleshoot").** Server log (the tray, Ctrl+Shift+L, and on Windows the title bar's menu)
+  opens a window with the server's console lines, newest last. The sign-in link is never among them. It also shows the
+  window's own notes when the server starts, restarts or ends. It keeps 2000 lines or 1 MiB in memory (`LogLines`) and
+  follows new lines unless scrolled up. Copy all, Save as... and Open the logs folder are its buttons. Every line is also
+  in `data/logs/server.log`.
 - **Exit.** Stops the server (its Ctrl-Break / SIGTERM path: the running model stops cleanly), then quits. Restart does
   the same and starts it again (the way settings apply).
 - **Console mode stays.** `strata-unified-server` is unchanged: development, tests and headless Linux run it as before.

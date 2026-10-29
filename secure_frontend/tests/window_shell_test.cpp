@@ -12,6 +12,8 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <ctime>
+#include <deque>
 #include <exception>
 #include <filesystem>
 #include <iostream>
@@ -176,6 +178,90 @@ void the_log_rotates_at_its_bound() {
   } catch (const std::exception&) {
     expect(false, "it rotates under any folder name (no exception)");
   }
+}
+
+// The window's Log (the owner: "in the window app version we need to add a log capability, the console have it but
+// this one do not so we can troubleshoot"): the server's newest lines in memory, bounded by lines and by bytes; a full
+// log drops its oldest tenth at once, so a view shows every line again only now and then.
+void the_log_view_keeps_the_newest_lines_in_its_bound() {
+  w::LogLines log(20, 1024U * 1024U);
+  for (int i = 1; i <= 20; ++i) log.add("line-" + std::to_string(i));
+  expect(log.lines().size() == 20U && log.lines().front() == "line-1" && log.lines().back() == "line-20" && log.first() == 0U &&
+             log.end() == 20U,
+         "twenty lines, the newest last");
+  log.add("line-21");
+  expect(log.lines().size() == 18U && log.lines().front() == "line-4" && log.lines().back() == "line-21" && log.first() == 3U &&
+             log.end() == 21U,
+         "one line over: the oldest tenth dropped at once");
+  expect(log.last(2) == std::vector<std::string>{"line-20", "line-21"} && log.last(100).size() == 18U &&
+             log.last(100).front() == "line-4",
+         "the last lines, the newest last (the page shown when the server ends)");
+  w::LogLines bytes(1000, 100);
+  for (int i = 0; i < 10; ++i) bytes.add("0123456789");
+  expect(bytes.lines().size() == 10U && bytes.bytes() == 100U, "a hundred bytes kept");
+  bytes.add("abcdefghij");
+  expect(bytes.lines().size() == 9U && bytes.bytes() == 90U && bytes.lines().back() == "abcdefghij", "over its bytes: the oldest tenth dropped");
+  w::LogLines cut(10, 100);
+  cut.add(std::string(250, 'x'));
+  expect(cut.lines().size() == 1U && cut.lines().back() == std::string(100, 'x'), "a line longer than the bound is cut to it");
+  cut.add("y");
+  expect(cut.lines().size() == 1U && cut.lines().back() == "y" && cut.bytes() == 1U, "the newest line always stays");
+  w::LogLines character(10, 5);
+  character.add("abcd\xC3\xA9");
+  expect(character.lines().size() == 1U && character.lines().back() == "abcd", "never cut inside a character");
+}
+
+// A view (a Windows edit control, a GTK text view) shows valid UTF-8 without control characters, and never the
+// sign-in link; it adds only the lines it lacks, or shows them all again once lines it shows were dropped.
+void the_log_view_holds_text_a_view_can_show() {
+  w::LogLines log(100, 64U * 1024U);
+  constexpr char kControls[] = "a\0b\x1b[1mc\rd\x7f" "e\tf";
+  log.add(std::string_view{kControls, sizeof kControls - 1U});
+  log.add("bad \xFF" " byte");
+  log.add("cut \xE2\x82");
+  log.add("caf\xC3\xA9 \xE2\x82\xAC");
+  log.add(kSignIn);
+  log.add("anything with http://127.0.0.1:8080/#login=" + std::string{kCode} + " in it");
+  expect(log.lines() == std::deque<std::string>{"a b [1mc d e\tf", "bad \xEF\xBF\xBD byte", "cut \xEF\xBF\xBD", "caf\xC3\xA9 \xE2\x82\xAC"},
+         "control characters spaces (a tab stays), a broken sequence U+FFFD, no sign-in link");
+  w::LogLines two(100, 1024);
+  expect(two.text().empty(), "an empty log's text");
+  two.add("one");
+  two.add("two");
+  expect(two.text() == "one\ntwo\n" && two.text("\r\n") == "one\r\ntwo\r\n", "Copy's text: every line ends");
+  w::LogLines view(20, 1024);
+  expect(view.newer_than(0, 0) == std::optional<std::size_t>{0U}, "an empty log, an empty view");
+  for (int i = 1; i <= 5; ++i) view.add("line-" + std::to_string(i));
+  expect(view.newer_than(0, 3) == std::optional<std::size_t>{3U}, "a view of three lines adds the two after them");
+  expect(view.newer_than(0, 5) == std::optional<std::size_t>{5U}, "a view of every line adds none");
+  for (int i = 6; i <= 21; ++i) view.add("line-" + std::to_string(i));
+  expect(!view.newer_than(0, 5).has_value(), "lines it shows were dropped: every line again");
+  expect(view.newer_than(view.first(), view.end()) == std::optional<std::size_t>{view.lines().size()}, "up to date");
+  expect(!view.newer_than(view.first(), view.end() + 1U).has_value(), "a view of lines never kept: every line again");
+}
+
+// Save writes what Copy copies, owner-only as server.log; a failure is a message without the path.
+void the_log_view_saves_what_it_shows() {
+  const auto root = secure_frontend_test::make_scratch_directory();
+  w::LogLines log(100, 64U * 1024U);
+  log.add("[strata] models: Qwen3.8: a calibration reply failed (timed out)");
+  log.add("engine generation 2 ended: exit");
+  const auto file = root / "saved.txt";
+  expect(!log.save(file).has_value() && secure_frontend_test::read_file(file) == log.text() && !log.text().empty(), "the lines, as Copy has them");
+#if !defined(_WIN32)
+  struct stat info {};
+  expect(::stat(file.c_str(), &info) == 0 && (info.st_mode & 0777) == 0600, "owner-only");
+#endif
+  const auto failed = log.save(root / "no-such-folder" / "saved.txt");
+  expect(failed.has_value() && failed->find("no-such-folder") == std::string::npos, "a message without the path");
+  std::tm when{};
+  when.tm_year = 2026 - 1900;
+  when.tm_mon = 9;
+  when.tm_mday = 29;
+  when.tm_hour = 14;
+  when.tm_min = 3;
+  when.tm_sec = 12;
+  expect(w::saved_log_name(when) == "m-strata-log-2026-10-29-140312.txt", "Save's name: the time it was saved");
 }
 
 // The window starts the server beside it with its own arguments; the data folder is the one that start uses.
@@ -394,6 +480,9 @@ int main(int argc, char** argv) {
       {"the_tray_lists_the_launchers_cards", the_tray_lists_the_launchers_cards},
       {"requests_carry_the_key_only_in_its_header", requests_carry_the_key_only_in_its_header},
       {"the_log_rotates_at_its_bound", the_log_rotates_at_its_bound},
+      {"the_log_view_keeps_the_newest_lines_in_its_bound", the_log_view_keeps_the_newest_lines_in_its_bound},
+      {"the_log_view_holds_text_a_view_can_show", the_log_view_holds_text_a_view_can_show},
+      {"the_log_view_saves_what_it_shows", the_log_view_saves_what_it_shows},
       {"the_window_starts_the_server_beside_it", the_window_starts_the_server_beside_it},
       {"the_servers_key_is_read_as_key_show_reads_it", the_servers_key_is_read_as_key_show_reads_it},
       {"the_server_child_stops_in_order", the_server_child_stops_in_order},
