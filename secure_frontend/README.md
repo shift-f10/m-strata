@@ -309,7 +309,10 @@ Until 2026-10-28 the server was named `strata-secure-server`; an older out folde
   file, but one has a file of that name and another size: another revision, as the owner's raon-1-mini Q8_0 is 64
   bytes larger than KRAFTON's current one) or `null` - and `have_card`, that card's name. The page's badge says
   **Downloaded** or **Locally provided** with "its card: <name>" and offers no Download; strata-tui shows the same and
-  Enter downloads none of them. **Other version on this PC** names that card and keeps the Download. A card added from a folder whose file only
+  Enter downloads none of them. **Other version on this PC** names that card and keeps the Download. A download
+  installed in its store whose step makes a card (or a pack) but that has no card from it is not on this PC (`have`
+  null): the page offers **Set up** and strata-tui Enter, a start that finds it installed (nothing is downloaded again)
+  and makes the card; a download-only entry installed stays Downloaded. A card added from a folder whose file only
   shares a download's card file name (another case on Windows) no longer marks that download done.
 - **The Download list** (owner 2026-10-28): a **Download to** panel heads it - the drive, the folder in a chip that
   shortens in its middle, a gauge of the drive's space (used, free, total), **Change...** (the folder picker), the

@@ -216,7 +216,9 @@ is added to the card it disappears in the download section."
   - `"other"` (2026-10-28): no card has the entry's file, but one has a file of that name and another size (another
     revision of it); `have_card` names that card. The badge reads **Other version on this PC**, the entry says so with
     the card's name, and its Download stays: it fetches the catalog's version;
-  - `null` otherwise.
+  - `null` otherwise - also for a download installed in its store whose step makes a card (or a pack) but that has no
+    card from it (2026-10-28: the owner's Gemma 4, its card never made after the downloader's word was misread): the
+    page offers **Set up** and strata-tui Enter, a start that finds it installed and makes the card.
   The page's badge reads **Downloaded** or **Locally provided**, the entry says "Already on this PC; its card: <name>",
   and it has no Download button (a download under way or paused keeps its own state and controls). A download counts
   as set up (ready) only when `<cards>/<id>.json` is its own card (its source that download's, or none); a card added

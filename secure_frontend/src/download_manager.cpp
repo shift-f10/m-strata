@@ -824,6 +824,7 @@ std::string DownloadManager::list_json() {
                             native_prepare_ready(e);
     const bool gguf_ready = gguf_family(e);
     const bool glm_ready = maya_prepare_ready(e);
+    const bool runnable = qwen_ready || gguf_ready || glm_ready;   // a card is made (or a pack built) after the download
     std::string note;
     if (glm_ready && e.engine == "deepseek") note = "after the download the DeepSeek pack is built (about a minute) and a card appears in Models";
     else if (glm_ready && e.engine == "minimax") {
@@ -847,8 +848,12 @@ std::string DownloadManager::list_json() {
     else note = "after the download the pack is built (a few minutes) and a card appears in Models";
     // Maya pins no sizes (read from Hugging Face at the start): until then the card's size is not known, not 0
     const bool size_known = std::all_of(e.files.begin(), e.files.end(), [](const CatalogFile& f) { return f.size.has_value(); });
-    // owner 2026-10-28: what this PC already has of it - the page's and strata-tui's "Downloaded" / "Locally provided"
-    const auto [have, have_card] = have_of(e, card.state == State::ready || card.state == State::installed, held);
+    // owner 2026-10-28: what this PC already has of it - the page's and strata-tui's "Downloaded" / "Locally provided".
+    // An installed download whose step makes a card and that has none from it is not (his Gemma 4: the downloader's word
+    // misread, its card never made): the page offers Set up, strata-tui Enter - a start that finds it installed (nothing is
+    // downloaded again) and makes the card. A download-only entry installed is.
+    const bool on_pc = card.state == State::ready || (card.state == State::installed && !runnable);
+    const auto [have, have_card] = have_of(e, on_pc, held);
     out += i != 0U ? "," : "";
     out += "{\"id\":" + json_text(e.id) + ",\"name\":" + json_text(e.name) + ",\"source\":" + json_text(e.source) + ",\"family\":" +
            json_text(e.family) + ",\"about\":" + json_text(e.about) + ",\"repo\":" + json_text(e.repo) + ",\"size_bytes\":" +
@@ -856,7 +861,7 @@ std::string DownloadManager::list_json() {
            std::to_string(e.files.size() + (e.mtp ? 1U : 0U)) + ",\"state\":" + json_text(state_name(card.state)) +
            ",\"bytes\":" + std::to_string(card.bytes) + ",\"total\":" + std::to_string(card.total) + ",\"error\":" +
            (card.error.empty() ? std::string{"null"} : json_text(card.error)) + ",\"needed_bytes\":" + std::to_string(needed) +
-           ",\"fits\":" + (fits ? "true" : "false") + ",\"runnable\":" + (qwen_ready || gguf_ready || glm_ready ? "true" : "false") +
+           ",\"fits\":" + (fits ? "true" : "false") + ",\"runnable\":" + (runnable ? "true" : "false") +
            ",\"note\":" + json_text(note) + ",\"folder\":" + json_text(path_to_utf8(store_of(card))) +
            ",\"file\":" + json_text(model_file_stem(e)) +
            ",\"vision_bytes\":" + std::to_string(vision_offered(e) ? e.mmproj->size.value_or(0) : 0U) +

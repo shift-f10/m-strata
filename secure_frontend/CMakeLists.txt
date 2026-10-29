@@ -1964,7 +1964,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_download_manager_tests tests/download_manager_test.cpp
         secure_frontend_downloads secure_frontend_model_store)
     secure_frontend_add_cases(secure_frontend_download_manager_tests
-        catalog_cards_and_the_disk_check pull_runs_strata_and_tracks_progress failures_and_cancel a_pull_that_said_ok_is_checked_in_the_store maya_main_is_resolved_and_checked
+        catalog_cards_and_the_disk_check pull_runs_strata_and_tracks_progress failures_and_cancel a_pull_that_said_ok_is_checked_in_the_store an_installed_download_without_its_card_offers_its_step
+        maya_main_is_resolved_and_checked
         pasted_links pause_resume_and_cancel_discards download_routes_answer_the_contract the_vision_files_come_with_the_download_when_asked
         maya_sizes_meet_the_free_space_and_resume_keeps_the_commit a_resume_counts_its_rate_from_the_kept_bytes
         qwen36_is_runnable_with_a_tokenizer_note a_pasted_gguf_is_matched_to_a_profile
