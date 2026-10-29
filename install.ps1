@@ -191,7 +191,7 @@ if (-not $inRepo) { Say "  clone $RepoUrl (with its submodules) into $repo" }
 Say "  CMake and Ninja into $repo\.venv-dev (pip, from PyPI)"
 if ($GgmlDir) { Say "  llama.cpp: $ggml, as it is" } else { Say "  llama.cpp at $LlamaPin in $ggml" }
 if ($features -contains 'window') {
-  if (Test-Path (Join-Path $repo ".toolchains\webview2\$WebView2Version\build\native\include\WebView2.h")) { Say "  the WebView2 SDK $WebView2Version: already in $repo\.toolchains\webview2" }
+  if (Test-Path (Join-Path $repo ".toolchains\webview2\$WebView2Version\build\native\include\WebView2.h")) { Say "  the WebView2 SDK ${WebView2Version}: already in $repo\.toolchains\webview2" }
   else { Say "  the WebView2 SDK $WebView2Version into $repo\.toolchains\webview2 (nuget.org, SHA-256 checked)" }
 }
 Say "  make.bat --out $Out --with $($features -join ',')"

@@ -34,19 +34,24 @@ constexpr std::string_view kCalibrationFailed = "the engine did not start for th
 constexpr std::string_view kCalibrationNotSaved = "the calibration could not be saved (see the server log)";
 
 // GUI-first start-up (spec 2026-10-27 §5.1): the workload each candidate is measured on, upstream's shape - a warm-up,
-// then three fixed prompts through the card's own template, thinking off, greedy, 128 new tokens each.
+// then three fixed prompts through the card's own template, thinking off (where it can be), greedy, 128 new tokens each.
 constexpr std::array<std::string_view, 4> kCalibrationPrompts{
     "Say hello.",
     "Explain how a refrigerator keeps food cold, step by step.",
     "Write a short story about a lighthouse keeper who finds a message in a bottle.",
     "List ten practical tips for learning a new programming language, one sentence each."};
 
-std::string calibration_body(const std::string_view model, const std::string_view prompt, const unsigned max_tokens) {
+// Thinking off where the profile takes reasoning_effort per request; GLM-5.3 takes none (its prompt always opens its
+// think block) and refuses it as unsupported_parameter (owner 2026-10-29: every GLM-5.3 calibration failed so).
+std::string calibration_body(const EngineProfile profile, const std::string_view model, const std::string_view prompt,
+                             const unsigned max_tokens) {
   std::string body = "{\"model\":";
   append_json_string(&body, model);
   body += ",\"messages\":[{\"role\":\"user\",\"content\":";
   append_json_string(&body, prompt);
-  body += "}],\"max_tokens\":" + std::to_string(max_tokens) + ",\"temperature\":0,\"reasoning_effort\":\"none\",\"stream\":false}";
+  body += "}],\"max_tokens\":" + std::to_string(max_tokens) + ",\"temperature\":0,";
+  if (per_request_reasoning_effort_for(profile)) body += "\"reasoning_effort\":\"none\",";
+  body += "\"stream\":false}";
   return body;
 }
 
@@ -896,7 +901,7 @@ std::optional<double> ModelLauncher::measure(const ModelCard& card, const ModelO
   std::vector<double> speeds;
   for (std::size_t i = 0; i < kCalibrationPrompts.size() && !stop_asked(); ++i) {
     const RequestContext context{.client_gone = {}, .shutting_down = runtime->stop_flag(), .loopback_peer = true};
-    const auto result = runtime->chat().handle(calibration_body(model_id, kCalibrationPrompts[i], i == 0U ? 16U : max_tokens), context);
+    const auto result = runtime->chat().handle(calibration_body(card.profile, model_id, kCalibrationPrompts[i], i == 0U ? 16U : max_tokens), context);
     const auto* response = std::get_if<HttpResponse>(&result);
     if (response == nullptr || response->status != 200) {
       log("[strata] models: " + card.name + ": a calibration reply failed (" +

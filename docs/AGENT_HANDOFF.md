@@ -280,6 +280,24 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z25 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner, testing the z24 build and a fresh clone: "several errors".
+
+- **install.bat stopped at once** on a fresh clone: `install.ps1` line 194 wrote `"$WebView2Version:"`, which
+  PowerShell parses as a drive-qualified variable, so the script never ran. Now `${WebView2Version}:`.
+  `tools/secure/test_install.py` only matched text; `test_the_scripts_parse` now has PowerShell's parser read
+  `install.ps1` (Windows PowerShell 5.1, which install.bat runs, else pwsh) and `sh -n` read `install.sh`, each where
+  installed. The parser finds nothing else in the repository's own scripts. `install.ps1 -Plan` here runs to its plan
+  and stops; the steps after "Go ahead?" were not run.
+- **Every GLM-5.3 calibration failed** ("a calibration reply failed (unsupported_parameter)"): each calibration reply
+  sent `reasoning_effort: none`, which only profiles taking it per request accept, and GLM-5.3 takes none (its prompt
+  always opens its think block). The replies now send it only where `per_request_reasoning_effort_for` is true. No test
+  ran a GLM-5.3 card on the fake engine; `a_glm_card_calibrates` does (a glm53 pack, GLM's markers, Maya's dialect).
+- **Proof**: RED first (the parse test on line 194; the calibration test with the owner's two log lines). The launcher
+  suite 29/29 with MSVC; the launcher, options and cards suites 57/57 with Linux gcc and clang; the install tests 9/9
+  on both. Not run: a GLM-5.3 calibration on the GPU.
+
 ### Claude Code session, 2026-10-29 z24 (Windows box; owner-directed; committed with this entry, not pushed)
 
 An A/B of our engine and upstream Maya v1.1.30 on the same packs and prompts (decode tok/s, a light code prompt and a
