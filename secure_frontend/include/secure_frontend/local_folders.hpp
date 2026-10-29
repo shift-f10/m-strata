@@ -55,11 +55,16 @@ inline constexpr std::size_t kMaxFolderEntries = 1000;
 // followed). False when a step fails.
 [[nodiscard]] bool make_tree_owner_only(const std::filesystem::path& root);
 
+// Upstream's MTP draft layer in `rt`: its three runtime files (dense.bin, experts.bin, draft_vocab.bin, as its setup
+// leaves them in mtp/rt), each a regular file and not a link.
+[[nodiscard]] bool holds_mtp_runtime(const std::filesystem::path& rt);
+
 // The page's "Make this folder private" for a model folder: only a folder of model files - a local folder that is not
 // a drive's root and holds at least one .gguf file, no link and at most 256 entries, and no sub-folder but the ones a
 // model's tools put beside it (pack, pack-<name>, maya-ds4, maya-ds4-<name>; Hugging Face's .cache), each with no link
 // anywhere in it and at most 4096 entries in all - and then checked as the server checks a model folder (open_root).
-// nullopt: done.
+// An MTP draft layer is one too, with no .gguf file: its runtime folder (holds_mtp_runtime) or the folder holding it as
+// rt/, beside which only tensors/ (the fetched tensors) may be. nullopt: done.
 [[nodiscard]] std::optional<FolderError> make_model_folder_private(const std::filesystem::path& folder);
 
 // A new folder `name` in `parent` (an existing local folder, which others may write - a drive's root), owner-only from
