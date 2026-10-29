@@ -264,6 +264,10 @@ main { flex: 1; min-height: 0; display: flex; }
 .model-folder__row { display: flex; align-items: center; gap: var(--st-s-3); min-width: 0; }
 .model-folder__row code { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .model-folder__row .st-btn { flex: none; }
+.model-remove { display: flex; flex-direction: column; gap: var(--st-s-2); }
+.model-remove__row { display: flex; align-items: center; gap: var(--st-s-3); min-width: 0; }
+.model-remove__row p { flex: 1; min-width: 0; margin: 0; }
+.model-remove__row .st-btn { flex: none; }
 .local-models { display: flex; flex-direction: column; gap: var(--st-s-3); }
 .local-models p { margin: 0; }
 .folder-picker, .delete-dialog { width: min(640px, calc(100vw - 32px)); padding: var(--st-s-6); border: none; }
@@ -400,6 +404,8 @@ main { flex: 1; min-height: 0; display: flex; }
   .alerts-grid { grid-template-columns: 1fr; }
   /* A folder path on its own line, smaller, its button below (it wrapped into a narrow column beside the button). */
   .model-folder__row { flex-direction: column; align-items: stretch; gap: var(--st-s-2); }
+  .model-remove__row { flex-direction: column; align-items: stretch; gap: var(--st-s-2); }
+  .model-remove__row .st-btn { align-self: flex-start; }
   .model-folder__row code { font-size: var(--st-fs-sm); }
   .model-folder__row .st-btn { align-self: flex-start; }
   /* The Download to panel: its buttons on a row of their own under the title; a group header pads less. */

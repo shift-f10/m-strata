@@ -347,6 +347,40 @@ void the_route_plans_a_search_in_the_turns_form() {
   expect(qwen != nullptr && qwen->literal_tokens.size() == 4U && !qwen->prompt_token_ids.empty() &&
              qwen->prompt_token_ids.front() == id_of(pack, "<|im_start|>"),
          "a Qwen turn plans in Qwen's form: its four tags, <|im_start|> first");
+  // A follow-up turn, the earlier exchange as the page sends it (plain text; owner 2026-10-28: "it searched the first
+  // time but the following messages it did not search again"): planned with the tool as the first turn is, never
+  // served without it.
+  {
+    secure_frontend::ChatCompletionRequest later = request;
+    later.messages = {{"user", "Who won the 2026 World Cup final?"}, {"assistant", "Spain won it 2-1 ([report](https://example.org/final))."},
+                       {"user", "Who scored the goals?"}};
+    const secure_frontend::SearchTurn first_turn{request, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::glm, {}};
+    const secure_frontend::SearchTurn next_turn{later, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::glm, {}};
+    const auto first = secure_frontend::search_first_plan(config, first_turn, pack);
+    const auto next = secure_frontend::search_first_plan(config, next_turn, pack);
+    const auto* a = std::get_if<secure_frontend::ChatGenerationPlan>(&first);
+    const auto* b = std::get_if<secure_frontend::ChatGenerationPlan>(&next);
+    expect(a != nullptr && b != nullptr && b->literal_tokens == a->literal_tokens &&
+               b->prompt_token_ids.size() > a->prompt_token_ids.size(),
+           "a follow-up GLM-5.3 turn plans with the tool too");
+  }
+  // A follow-up turn, the earlier exchange as the page sends it (plain text; owner 2026-10-28: "it searched the first
+  // time but the following messages it did not search again"): planned with the tool as the first turn is, never
+  // served without it.
+  {
+    secure_frontend::ChatCompletionRequest later = request;
+    later.messages = {{"user", "Who won the 2026 World Cup final?"}, {"assistant", "Spain won it 2-1 ([report](https://example.org/final))."},
+                       {"user", "Who scored the goals?"}};
+    const secure_frontend::SearchTurn first_turn{request, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::qwen, {}};
+    const secure_frontend::SearchTurn next_turn{later, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::qwen, {}};
+    const auto first = secure_frontend::search_first_plan(config, first_turn, pack);
+    const auto next = secure_frontend::search_first_plan(config, next_turn, pack);
+    const auto* a = std::get_if<secure_frontend::ChatGenerationPlan>(&first);
+    const auto* b = std::get_if<secure_frontend::ChatGenerationPlan>(&next);
+    expect(a != nullptr && b != nullptr && b->literal_tokens == a->literal_tokens &&
+               b->prompt_token_ids.size() > a->prompt_token_ids.size(),
+           "a follow-up Qwen turn plans with the tool too");
+  }
 }
 
 }  // namespace

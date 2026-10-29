@@ -946,6 +946,108 @@ void supervisor_unreaped_at_shutdown_reports_engine_left() {
   expect(log.contains(secure_frontend::kEngineLeftUnreapedLine), "the fixed-literal engine-left line is logged");
 }
 
+// A fake engine that ends only once the test frees it: EOF and the kill land, but its exit status is not reapable
+// until then, like a big model freeing tens of GB of memory (generation 1 only).
+test_support::FakeFactory slow_to_end_engine() {
+  return test_support::FakeFactory([](test_support::FakeChild& child, const std::uint64_t generation) {
+    if (generation == 1U) child.reapable = false;
+    child.push_line("READY 4096 stop");
+  });
+}
+
+secure_frontend::SupervisorConfig quick_stop_waits() {
+  secure_frontend::SupervisorConfig config;
+  config.shutdown_stdin_wait = 50ms;
+  config.shutdown_term_wait = 50ms;
+  config.monitor_poll = 20ms;  // fake children have no pidfd
+  config.policy.reap_timeout = 10s;
+  return config;
+}
+
+// Frees `child` after `after`, on its own thread.
+std::thread free_after(const std::shared_ptr<test_support::FakeChild>& child, const std::chrono::milliseconds after) {
+  return std::thread([child, after] {
+    std::this_thread::sleep_for(after);
+    if (!child) return;
+    std::lock_guard lock(child->mutex);
+    child->reapable = true;
+  });
+}
+
+// Owner 2026-10-28 ("fix the issues": the "unreaped engine" after a model stop). A big model took 10-25 s to end after a
+// stop, past the 5 s server bound (RF5) the stop used, so it was left unreaped and the next model could start beside
+// it. stop_engine() - a model stop while the server goes on - waits for a killed engine still ending, up to
+// reap_timeout more, as a crashed one is waited for (spec V10).
+void a_model_stop_waits_for_an_engine_still_ending() {
+  auto fakes = slow_to_end_engine();
+  test_support::LogCapture log;
+  secure_frontend::EngineSupervisor supervisor(quick_stop_waits(), fakes.factory(), std::make_shared<test_support::ManualClock>(), log.sink());
+  expect(supervisor.start(), "the supervisor starts");
+  expect(test_support::wait_generation_ready(supervisor, 1U, 5s), "generation 1 ready");
+  std::thread freed = free_after(fakes.child(1U), 600ms);  // well past the stop's EOF, TERM and kill waits (150 ms)
+  supervisor.stop_engine();
+  freed.join();
+  expect(supervisor.snapshot().state == SupervisorState::stopped, "stopped");
+  expect(log.contains("engine generation 1 ended: killed_by_supervisor(shutdown)") && !log.contains("engine generation 1 ended: unreaped"),
+         "the engine is waited for and reaped, not left");
+  expect(!supervisor.engine_left_unreaped() && !log.contains(secure_frontend::kEngineLeftUnreapedLine), "no engine is left");
+}
+
+// The server's own shutdown during such a stop (Ctrl-C while a model stops) keeps its bound: hurry() ends the wait at
+// once, and the engine still ending is left as shutdown() leaves one (reported, so main exits 1).
+void hurry_cuts_a_model_stops_wait() {
+  test_support::FakeFactory fakes([](test_support::FakeChild& child, std::uint64_t) {
+    child.reapable = false;  // never ends
+    child.push_line("READY 4096 stop");
+  });
+  auto config = quick_stop_waits();
+  config.policy.reap_timeout = 30s;
+  test_support::LogCapture log;
+  secure_frontend::EngineSupervisor supervisor(config, fakes.factory(), std::make_shared<test_support::ManualClock>(), log.sink());
+  expect(supervisor.start(), "the supervisor starts");
+  expect(test_support::wait_generation_ready(supervisor, 1U, 5s), "generation 1 ready");
+  std::atomic<bool> stopped{false};
+  std::thread stopping([&supervisor, &stopped] {
+    supervisor.stop_engine();
+    stopped.store(true);
+  });
+  std::this_thread::sleep_for(500ms);
+  expect(!stopped.load(), "the stop still waits for the engine");
+  const auto hurried = std::chrono::steady_clock::now();
+  supervisor.hurry();
+  stopping.join();
+  expect(std::chrono::steady_clock::now() - hurried < 2s, "hurry() ends the wait at once");
+  expect(supervisor.snapshot().state == SupervisorState::stopped && log.contains("engine generation 1 ended: unreaped") &&
+             supervisor.engine_left_unreaped(),
+         "the engine still ending is left unreaped and reported");
+}
+
+// The idle unload is the same teardown (SP5 M1 Task 6): a big model still ending after it is waited for too, so the
+// supervisor parks unloaded instead of opening its circuit, and the next request starts the engine again.
+void an_idle_unload_waits_for_an_engine_still_ending() {
+  auto fakes = slow_to_end_engine();
+  auto clock = std::make_shared<test_support::ManualClock>();
+  auto config = quick_stop_waits();
+  config.idle_unload = std::chrono::seconds(60);
+  test_support::LogCapture log;
+  secure_frontend::EngineSupervisor supervisor(config, fakes.factory(), clock, log.sink());
+  expect(supervisor.start(), "the supervisor starts");
+  expect(test_support::wait_generation_ready(supervisor, 1U, 5s), "generation 1 ready");
+  {
+    const auto lease = supervisor.acquire();
+    expect(lease.has_value(), "a lease serves a request");
+  }  // the release arms the idle window
+  std::thread freed = free_after(fakes.child(1U), 600ms);
+  clock->advance(61s);
+  freed.join();
+  expect(supervisor.wait_for_state(SupervisorState::unloaded, 5s), "the engine is waited for: unloaded, not a failure");
+  expect(log.contains("engine generation 1 ended: unloaded") && !log.contains("engine generation 1 ended: unreaped"),
+         "logged as unloaded, not unreaped");
+  supervisor.wake_for_request();
+  expect(test_support::wait_generation_ready(supervisor, 2U, 5s), "a request starts it again");
+  supervisor.shutdown(5s);
+}
+
 #if !defined(_WIN32)
 // The sweep reaped `pid` (not merely killed it): it is no longer our child,
 // not even as a zombie. Hygiene: this process is the subreaper, so a
@@ -2287,6 +2389,9 @@ int main(int argc, char* argv[]) {
                                                 {"proc04_unreaped_child_opens_circuit", proc04_unreaped_child_opens_circuit},
                                                 {"proc06_nnp_hint_when_exit_status_lags", proc06_nnp_hint_when_exit_status_lags},
                                                 {"supervisor_unreaped_at_shutdown_reports_engine_left", supervisor_unreaped_at_shutdown_reports_engine_left},
+                                                {"a_model_stop_waits_for_an_engine_still_ending", a_model_stop_waits_for_an_engine_still_ending},
+                                                {"hurry_cuts_a_model_stops_wait", hurry_cuts_a_model_stops_wait},
+                                                {"an_idle_unload_waits_for_an_engine_still_ending", an_idle_unload_waits_for_an_engine_still_ending},
                                                 {"supervisor_exception_opens_circuit", supervisor_exception_opens_circuit},
                                                 {"supervisor_shutdown_sends_eof_first_then_kills", supervisor_shutdown_sends_eof_first_then_kills},
                                                 {"supervisor_lease_outliving_shutdown_is_safe", supervisor_lease_outliving_shutdown_is_safe},

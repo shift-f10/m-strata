@@ -1232,6 +1232,9 @@
     $("model-folder-path").textContent = pageCard && typeof card.folder === "string" ? card.folder : "";
     $("model-folder-change").disabled = launcher.acting || card.state === "starting";
     $("danger-zone").hidden = !pageCard;
+    // Owner 2026-10-28: the card can be taken off the list, its files kept - the running one too (stopped first)
+    $("model-remove-box").hidden = !pageCard;
+    $("model-remove").disabled = launcher.acting || card.state === "starting" || card.state === "calibrating";
     var inUse = card.state === "running" || card.state === "starting" || d.running === card.name;
     $("model-delete").disabled = inUse || launcher.acting;
     $("model-delete").title = inUse ? "Stop the model first" : "";
@@ -1617,7 +1620,8 @@
   var DL_CANCELLABLE = ["queued", "downloading", "paused"];
   // Owner 2026-10-28 ("change the banner from available to Locally Provided vs Downloaded"): what this PC already has of an
   // entry, as the server's list says it ("have", the one rule the page and strata-tui share).
-  var DL_HAVE = { downloaded: ["st-badge--generating", "Downloaded"], local: ["st-badge--reading", "Locally provided"] };
+  var DL_HAVE = { downloaded: ["st-badge--generating", "Downloaded"], local: ["st-badge--reading", "Locally provided"],
+                  other: ["st-badge--queued", "Other version on this PC"] };
   // Owner 2026-10-28 ("put accordion control so that user can expand per related section"): the family groups the viewer
   // opened, remembered for this tab (sessionStorage; the page works without it).
   var DL_OPEN_SLOT = "strata.downloads.open";
@@ -1675,6 +1679,11 @@
   function onThisPc(card) {
     var have = haveOf(card);
     return have !== null && !oneOf(DL_ACTIVE, card.state) && card.state !== "paused" ? have : null;
+  }
+  // A card has a file of that name and another size (another revision): said, with that card, while the download - the
+  // catalog's version - stays offered.
+  function otherVersion(card) {
+    return card.have === "other" && !oneOf(DL_ACTIVE, card.state) && card.state !== "paused";
   }
   function haveBadge(have) {
     var badge = DL_HAVE[have];
@@ -1893,15 +1902,17 @@
     var active = d.active && d.active.id === card.id ? d.active : null;
     // Owner 2026-10-28: a model already on this PC (from this download, or the same model added from a folder) wears what
     // it is - Downloaded or Locally provided - and names its card, with no Download; one under way or paused keeps its
-    // state and its controls.
+    // state and its controls. Another version of its file wears that, and keeps its Download.
     var have = onThisPc(card);
     var onPc = have !== null;
+    var other = !onPc && otherVersion(card);
     var box = el("div", "dl-card");
     box.setAttribute("data-state", String(card.state));
     if (onPc) { box.setAttribute("data-have", have); }
+    if (other) { box.setAttribute("data-have", "other"); }
     var head = el("div", "dl-card__head");
     head.appendChild(el("span", "dl-card__name", card.name));
-    head.appendChild(onPc ? haveBadge(have) : dlBadge(card.state));
+    head.appendChild(onPc ? haveBadge(have) : other ? haveBadge("other") : dlBadge(card.state));
     box.appendChild(head);
     if (card.about) { box.appendChild(el("p", "muted small", String(card.about))); }
     // Maya's catalog pins no sizes: the server reads them from Hugging Face when the download starts
@@ -1925,6 +1936,10 @@
       box.appendChild(visionLabel);
     } else if (card.vision === true) {
       box.appendChild(el("p", "muted small", "With its vision files: the model reads pictures"));
+    }
+    if (other) {
+      box.appendChild(el("p", "dl-card__here", "Another version of this file is on this PC" +
+                         (card.have_card ? " (its card: " + String(card.have_card) + ")" : "") + "; a download brings the catalog's"));
     }
     if (onPc) {
       box.appendChild(el("p", "dl-card__here", "Already on this PC" + (card.have_card ? "; its card: " + String(card.have_card) : "")));
@@ -2504,6 +2519,36 @@
     var picked = await pickFolder("Move " + card.name, "Pick the folder that holds " + (card.file ? card.file + ".gguf" : "the model's file") +
                                   " now.", "folder");
     if (picked && picked.folder) { await repointCard(card, picked.folder); }
+  }
+
+  // Owner 2026-10-28 ("an ability to remove an active model card but not delete files"): the card goes off the list, its
+  // model files stay; a running model is stopped first (the server removes the card once it has stopped).
+  async function removeCard() {
+    var card = findCard(launcher.selected);
+    if (!card || card.page_card !== true) { return; }
+    showStartError("");
+    var runs = launcher.data && launcher.data.running === card.name;
+    var question = "Remove the card " + card.name + "? Its model files stay on this PC; add it again from its folder." +
+      (runs ? " The running model is stopped first." : "");
+    if (!window.confirm(question)) { return; }
+    launcher.acting = true;
+    renderDetail(card, false);
+    var answer = await downloadsAnswer(api("/v1/strata/cards/remove", jsonPost({ name: card.name })));
+    launcher.acting = false;
+    if (answer.signedOut) { return; }
+    if (answer.error) { showStartError(answer.error); await refreshLauncher(); return; }
+    var stopping = answer.body && answer.body.stopping === true;
+    toast("success", stopping ? card.name + " is stopping; its card is removed when it has stopped" : card.name + "'s card was removed",
+          "Its model files stay on this PC.");
+    launcher.selected = "";
+    if (stopping) {
+      // the server stops it, then removes the card: follow it as a stop
+      stopLauncherPoll();
+      await pollLauncher();
+    } else {
+      await refreshLauncher();
+    }
+    if (downloads.enabled) { await refreshDownloads(); }   // the Download list says again what this PC has
   }
 
   // The Danger zone (spec section 4.5): a fresh code from the server, typed back; the API key typed again (the key this tab
@@ -3428,6 +3473,7 @@
     $("local-models-pick").addEventListener("click", addLocalModel);
     $("model-folder-change").addEventListener("click", changeCardFolder);
     $("model-delete").addEventListener("click", beginDelete);
+    $("model-remove").addEventListener("click", removeCard);
     $("model-calibrate").addEventListener("click", calibrateModel);
     $("model-calibrate-cancel").addEventListener("click", cancelCalibration);
     $("model-calibration-auto").addEventListener("change", setAutoRecalibrate);

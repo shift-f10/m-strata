@@ -280,6 +280,60 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z17 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner, testing the ab29ee2a build: "fix the issues while I test this version out"; then "also add an ability to
+remove an active model card but not delete files"; a Gemma 4 download that "did not even say why it failed"; "I ran a
+search with Gemma4, it searched the first time but the following messages it did not search again"; "make sure the
+other models don't have the same search issue".
+
+- **raon-1-mini was not "Locally provided"**: his file is another revision (30,693,556,000 bytes; the catalog pins
+  KRAFTON's current 30,693,555,936), so the strict match rightly declined it. A third `have`, `"other"`: a card has a
+  file of that name and another size; the page's badge **Other version on this PC** with that card's name, and the
+  Download stays (the catalog's version); strata-tui says "Other version" and Enter still downloads. RED shown (three
+  suites), then 42/42 on MSVC and 92/92 on Linux gcc.
+- **"Unreaped engine" after every model stop** (seen on his console for Qwen3.8, DeepSeek-V4.1 and MiniMax-M3.1, and
+  after each calibration trial of DeepSeek and Qwen3.8): a big model needs 10-25 s to free its memory and end, and a
+  model stop used the server's 5 s shutdown bound (RF5: EOF 2 s, TERM 1 s, kill, 1 s), so the engine was left
+  unreaped, the server would exit 1, and the next start - or the next calibration trial - began beside it.
+  - `EngineSupervisor::stop_engine()`: the same orderly stop, then up to `policy.reap_timeout` (30 s, the bound a
+    crashed engine already gets, spec V10) more for a killed engine still ending, inside its own bound; `hurry()` cuts
+    that wait at once (the server's own shutdown keeps RF5). The idle unload waits the same way (a shutdown cuts it), so
+    a big model's idle unload no longer opens the circuit.
+  - The launcher uses it for a stop, a switch, a failed start and each calibration step (`measuring_`, so the shutdown
+    can hurry a calibration's engine too); `ModelLauncher::shutdown()` keeps the 5 s path, and `begin_shutdown()`
+    hurries whatever is stopping.
+  - Tests: `a_model_stop_waits_for_an_engine_still_ending`, `hurry_cuts_a_model_stops_wait`,
+    `an_idle_unload_waits_for_an_engine_still_ending` (in-process fakes reapable only later), and the launcher's
+    `a_stop_waits_for_an_engine_still_ending` over the fake process factory (`CalibrationFixture` takes one now). RED
+    on stubs (4 failures), then 92/92 MSVC and 94/94 Linux gcc for the supervisor and launcher suites. Not measured on
+    the GPU: his server was calibrating; the next swap shows whether "unreaped" is gone from his console.
+- **Remove card, files kept**: `POST /v1/strata/cards/remove {"name"}` (kModelCardRoutes, keyed, the card routes'
+  client rule; request log name `strata_card_remove`). A page card only; its card file, remembered options and
+  calibration go, no model file; a running card is stopped first through a queued `remove` launcher job
+  (`RunningCard::stop_first` -> `CardChange::stopping`), and removed once stopped. The page's **Remove card** row under
+  the card (asked once), strata-tui's Del (asked, y/n). Docs: README, secure_frontend/README, GUI-first spec §4.5,
+  threat model. RED shown for the route table, its log name and the TUI key; the route and launcher code itself was
+  written before this session's context was reset, so its own RED is not on record (its two `card_routes` cases pass).
+- **The Gemma 4 download that "failed (ok)"**: both files came, matched their SHA-256 and were published (his
+  `acquire.log`, the store's `index.json`); the downloader printed `RESULT ok` and ended with a non-zero exit code, and
+  the manager took only ok-and-0 as done and printed the result word as the reason. Now `pull_failure` says each reason
+  in words (and names the exit code), and an ok with another exit code is kept when the store's version holds every
+  file at its pinned size (logged with the code). RED shown (`a_pull_that_said_ok_is_checked_in_the_store`), then
+  27/27. Why the downloader ended that way is not known: no crash was logged, and the same pull against the installed
+  copy ("already installed") exits 0, so it follows a real transfer; the new build logs the code next time. His copy is
+  recovered by pressing Download again (the downloader answers "already installed", exit 0).
+- **Search after the first message**: not a server bug. Every text turn is offered the tool (`chat_route.cpp`: no turn
+  condition), his console had no "cannot carry the web search tool" fallback line and no search start failure, and the
+  page sends earlier turns as plain text, which each family's fixture (from its own template) already covers - except
+  GLM-5.3, whose earlier assistant turns differ from Maya's template by design (the fixed profile). Each family's route
+  test now plans a follow-up turn and checks it gets the tool as the first turn does (Gemma 4, Qwen, GLM-5.3, DeepSeek,
+  MiniMax, raon1, flint: 30/30). So whether to search again is the model's choice; his Gemma 4 ran with thinking off.
+  Not checked on the GPU (busy).
+- **The whole tree**: Windows windows-msvc ON (email, search, TUI) 1359/1361, failing only the two `release-only` cases a hooks-on dev
+  build cannot pass; Linux gcc 13.3 1409/1412 (`egress_table_scan_during_lifecycle` under `-j 8` only,
+  it passes alone; the two `release-only` cases a hooks-on tree fails by design).
+
 ### Claude Code session, 2026-10-28 z16 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner: "when we point it to a local folder with the model, if it match the card of the model that is downloadable,

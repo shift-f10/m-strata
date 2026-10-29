@@ -305,9 +305,11 @@ Until 2026-10-28 the server was named `strata-secure-server`; an older out folde
   offered: each entry of `GET /v1/strata/downloads` carries `have` - `"downloaded"` (a card from this download, or the
   download ready or installed), `"local"` (another card runs the same model: the entry's first model file by name, and
   by size where the catalog pins one and the card's file is there, so another quant of that name is not it; nothing is
-  hashed; a Maya pack card's model is the shard its pack was built from, beside the pack) or `null` - and `have_card`,
-  that card's name. The page's badge says **Downloaded** or **Locally provided** with "its card: <name>" and offers no
-  Download; strata-tui shows the same and Enter downloads none of them. A card added from a folder whose file only
+  hashed; a Maya pack card's model is the shard its pack was built from, beside the pack), `"other"` (no card has that
+  file, but one has a file of that name and another size: another revision, as the owner's raon-1-mini Q8_0 is 64
+  bytes larger than KRAFTON's current one) or `null` - and `have_card`, that card's name. The page's badge says
+  **Downloaded** or **Locally provided** with "its card: <name>" and offers no Download; strata-tui shows the same and
+  Enter downloads none of them. **Other version on this PC** names that card and keeps the Download. A card added from a folder whose file only
   shares a download's card file name (another case on Windows) no longer marks that download done.
 - **The Download list** (owner 2026-10-28): a **Download to** panel heads it - the drive, the folder in a chip that
   shortens in its middle, a gauge of the drive's space (used, free, total), **Change...** (the folder picker), the
@@ -348,6 +350,10 @@ Until 2026-10-28 the server was named `strata-secure-server`; an older out folde
   over about 4K tokens of the out folder's `LICENSE` through MiniMax's template) and keeps the fastest in the pack's
   `prefill-tune.txt`, which every start reads. The card shows the result; one that did not finish is not retried by
   itself (Calibrate measures again).
+- **Remove card** (owner 2026-10-28, "remove an active model card but not delete files"), for a page card: asked once,
+  then `POST /v1/strata/cards/remove {"name"}` takes the card off the list with its card file, remembered options and
+  calibration; the model's files stay (add it again from its folder; a download's store keeps it). The running card's
+  model is stopped first, as Stop stops it, and the card goes once it has stopped (`"stopping": true`). strata-tui: Del.
 - **Danger zone**, for a page card that is not running: a one-time code to type back, the API key again, then a final
   confirmation that the delete is permanent. The server checks all three and deletes only that model's files (and a
   download's store entry), the card and its calibration.

@@ -322,6 +322,16 @@ void EngineSupervisor::shutdown(const std::chrono::milliseconds bound) {
   detach_leases();
 }
 
+void EngineSupervisor::stop_engine() {
+  slow_stop_.store(true);
+  shutdown(config_defaults::kShutdownBound + config_.policy.reap_timeout);
+}
+
+void EngineSupervisor::hurry() noexcept {
+  hurried_.store(true);
+  wake_.notify();
+}
+
 // RF4: a Lease still out (its generation stays in retired_ until the
 // supervisor is destroyed) never calls into the supervisor after this.
 void EngineSupervisor::detach_leases() noexcept {
@@ -652,7 +662,8 @@ void EngineSupervisor::wait_asleep() {
 // engine stdin; then SIGTERM to the group; then always SIGKILL the group
 // (§3.7a); reap, sweep (§3.7b), retire, remove a delegated cgroup (§3.7d).
 // Worst case 2 + 1 + 1 + 0.25 + 0.1 (kCgroupRemoveBound) = 4.35 s, inside the
-// 5 s bound (ruling RF5).
+// 5 s bound (ruling RF5); a model stop (stop_engine) adds up to reap_timeout
+// after the kill, inside its own bound.
 void EngineSupervisor::shutdown_generation(const std::shared_ptr<EngineInstance>& instance) {
   note_shutdown_started();
   bool lease_outstanding = false;
@@ -663,26 +674,19 @@ void EngineSupervisor::shutdown_generation(const std::shared_ptr<EngineInstance>
     changed_.notify_all();
   }
   SupervisedProcess& process = *instance->process;
-  const auto wait_reaped = [this, &process](const std::chrono::milliseconds limit) {
-    const auto deadline = deadline_after(limit);
-    while (!process.try_reap()) {
-      const auto remaining = remaining_until(deadline);
-      if (remaining.count() == 0) return false;
-      (void)wake_.wait(process.monitor_handle(), std::min(remaining, config_.monitor_poll));
-    }
-    return true;
-  };
   bool reaped = false;
   if (!lease_outstanding) {
     process.close_stdin();
-    reaped = wait_reaped(config_.shutdown_stdin_wait);
+    reaped = wait_reaped(process, config_.shutdown_stdin_wait);
   }
   if (!reaped) {
     process.signal_group_terminate();
-    reaped = wait_reaped(config_.shutdown_term_wait);
+    reaped = wait_reaped(process, config_.shutdown_term_wait);
   }
   process.kill_group();  // always, even after the leader has ended
-  if (!reaped) reaped = wait_reaped(config_.shutdown_term_wait);
+  if (!reaped) reaped = wait_reaped(process, config_.shutdown_term_wait);
+  // stop_engine() (a model stop): a big model may still be freeing its memory; hurry() ends this wait
+  if (!reaped && slow_stop_.load()) reaped = wait_reaped(process, config_.policy.reap_timeout, [this] { return hurried_.load(); });
   retire(instance, reaped);
   if (!reaped) {
     log_end(instance->number, "unreaped");
@@ -702,8 +706,9 @@ void EngineSupervisor::shutdown_generation(const std::shared_ptr<EngineInstance>
 // SP5 M1 Task 6 (parity row idle_unload_s; pin :4100-4109 + :6252): the same orderly stop
 // the shutdown path uses — STDIN EOF first, real engine exits 0 — but the supervisor
 // keeps running and parks unloaded. The end is an intentional unload, so the log names
-// it, not the exit classification. Returns false only when even KILL could not reap:
-// the caller routes that through the circuit like any other unreaped end (spec V10).
+// it, not the exit classification. Returns false only when even KILL and reap_timeout
+// more could not reap: the caller routes that through the circuit like any other
+// unreaped end (spec V10).
 bool EngineSupervisor::unload_generation(const std::shared_ptr<EngineInstance>& instance) {
   bool lease_outstanding = false;
   {
@@ -713,26 +718,19 @@ bool EngineSupervisor::unload_generation(const std::shared_ptr<EngineInstance>& 
     changed_.notify_all();
   }
   SupervisedProcess& process = *instance->process;
-  const auto wait_reaped = [this, &process](const std::chrono::milliseconds limit) {
-    const auto deadline = deadline_after(limit);
-    while (!process.try_reap()) {
-      const auto remaining = remaining_until(deadline);
-      if (remaining.count() == 0) return false;
-      (void)wake_.wait(process.monitor_handle(), std::min(remaining, config_.monitor_poll));
-    }
-    return true;
-  };
   bool reaped = false;
   if (!lease_outstanding) {
     process.close_stdin();
-    reaped = wait_reaped(config_.shutdown_stdin_wait);
+    reaped = wait_reaped(process, config_.shutdown_stdin_wait);
   }
   if (!reaped) {
     process.signal_group_terminate();
-    reaped = wait_reaped(config_.shutdown_term_wait);
+    reaped = wait_reaped(process, config_.shutdown_term_wait);
   }
   process.kill_group();  // always, even after the leader has ended
-  if (!reaped) reaped = wait_reaped(config_.shutdown_term_wait);
+  if (!reaped) reaped = wait_reaped(process, config_.shutdown_term_wait);
+  // a big model may still be freeing its memory, as after a model stop; a shutdown (or hurry()) ends this wait
+  if (!reaped) reaped = wait_reaped(process, config_.policy.reap_timeout, [this] { return hurried_.load() || stop_requested(); });
   retire(instance, reaped);
   if (!reaped) {
     log_end(instance->number, "unreaped");
@@ -741,6 +739,18 @@ bool EngineSupervisor::unload_generation(const std::shared_ptr<EngineInstance>& 
   if (config_.sweep_orphans) (void)sweep_orphans({}, std::chrono::milliseconds(250));
   process.release_resources(std::chrono::milliseconds(0));
   log_end(instance->number, "unloaded");
+  return true;
+}
+
+// Waits up to `limit` for `process` to be reaped: on the child itself, else every monitor_poll. `cut`, when set, ends
+// the wait early once it says so.
+bool EngineSupervisor::wait_reaped(SupervisedProcess& process, const std::chrono::milliseconds limit, const std::function<bool()>& cut) {
+  const auto deadline = deadline_after(limit);
+  while (!process.try_reap()) {
+    const auto remaining = remaining_until(deadline);
+    if (remaining.count() == 0 || (cut && cut())) return false;
+    (void)wake_.wait(process.monitor_handle(), std::min(remaining, config_.monitor_poll));
+  }
   return true;
 }
 
@@ -792,7 +802,9 @@ void EngineSupervisor::finish() {
 
 void EngineSupervisor::note_shutdown_started() noexcept {
   if (shutdown_deadline_ == std::chrono::steady_clock::time_point{}) {
-    shutdown_deadline_ = std::chrono::steady_clock::now() + config_defaults::kShutdownBound;
+    // stop_engine()'s bound has its wait for an engine still ending on top
+    shutdown_deadline_ = std::chrono::steady_clock::now() + config_defaults::kShutdownBound +
+                         (slow_stop_.load() ? config_.policy.reap_timeout : std::chrono::milliseconds(0));
   }
 }
 

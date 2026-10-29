@@ -200,7 +200,9 @@ bool download_card_file(const std::filesystem::path& cards_dir, const std::strin
 // What this PC already has of a catalog entry (owner 2026-10-28, "Locally Provided vs Downloaded"): "downloaded" - a card
 // from this download, or the download ready or installed (`downloaded`); "local" - another card runs the same model, its
 // file there: the entry's first model file by name, and by size too where the catalog pins one (another quant of that
-// name is not it; nothing is hashed); a card whose file is gone (deleted, a drive not plugged in) is not. Empty: neither.
+// name is not it; nothing is hashed); a card whose file is gone (deleted, a drive not plugged in) is not. "other" - no
+// card has that file, but one has a file of that name and another size (another revision of it: the owner's
+// raon-1-mini Q8_0 is 64 bytes larger than the catalog's); the download still brings the catalog's. Empty: none of these.
 // With it the card's name (empty: none).
 std::pair<std::string_view, std::string> have_of(const DownloadEntry& entry, const bool downloaded, const std::vector<HeldModel>& held) {
   for (const auto& model : held) {
@@ -209,14 +211,19 @@ std::pair<std::string_view, std::string> have_of(const DownloadEntry& entry, con
   const std::string stem = model_file_stem(entry);
   const auto* first = first_model_file(entry);
   std::string local;
+  std::string other;
   for (const auto& model : held) {
     if (stem.empty() || model.file != stem + ".gguf" || !model.size) continue;
-    if (first != nullptr && first->size && *first->size != *model.size) continue;
+    if (first != nullptr && first->size && *first->size != *model.size) {
+      if (other.empty()) other = model.name;
+      continue;
+    }
     local = model.name;
     break;
   }
   if (downloaded) return {"downloaded", local};
   if (!local.empty()) return {"local", local};
+  if (!other.empty()) return {"other", other};
   return {};
 }
 
@@ -295,6 +302,67 @@ bool maya_pack_engine(const std::string_view engine) {
 
 std::filesystem::path stored_file(const std::filesystem::path& version, const std::string& relative) {
   return (version / path_from_utf8(relative)).make_preferred();
+}
+
+// Every file of the download in its store version, at its pinned size where it has one (sizes only: the downloader
+// checked each SHA-256 before it published them).
+bool stored_whole(const std::filesystem::path& version, const HfDownload& download) {
+  for (const auto& file : download.files) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(stored_file(version, file.path), ec);
+    if (ec || (file.size != 0U && size != file.size)) return false;
+  }
+  return !download.files.empty();
+}
+
+// Why a pull failed, in words (owner 2026-10-28: "did not even say why it failed"): the downloader's RESULT reason, or
+// how it ended without one. Its own text goes nowhere (its stderr is NUL), so the page says these.
+std::string pull_failure(const std::string_view result, const int exit_code) {
+  struct Said final {
+    std::string_view reason;
+    std::string_view text;
+  };
+  static constexpr Said kSaid[] = {
+      {"disk_space", "insufficient disk space on the data drive"},
+      {"total_budget_exceeded", "the download is larger than the space downloads may use"},
+      {"digest_mismatch", "a file did not match its SHA-256 (it was deleted)"},
+      {"size_exceeded", "a file came larger than its pinned size (it was deleted)"},
+      {"dns_failed", "the download host's name did not resolve: check this PC's network, then Download again"},
+      {"connect_failed", "the download host could not be reached: check this PC's network, then Download again"},
+      {"tls_failed", "the secure connection to the download host failed; Download again"},
+      {"tls_untrusted", "the download host's certificate is not trusted"},
+      {"stalled", "the transfer stalled (no data for too long); Download again resumes it"},
+      {"size_short", "the connection ended before the file did; Download again resumes it"},
+      {"transport_failed", "the transfer failed; Download again resumes it"},
+      {"time_budget_exceeded", "the download took longer than allowed; Download again resumes it"},
+      {"http_status", "the download host refused the file (an HTTP error): it may have moved"},
+      {"range_mismatch", "the host sent another part of the file than asked; Download again starts that file over"},
+      {"size_mismatch_announced", "the host announced another size than the pinned one: the file may have changed"},
+      {"host_not_allowed", "a link led to a host downloads may not use"},
+      {"redirect_not_allowed", "the host redirected to a place downloads may not use"},
+      {"redirect_limit", "the host redirected too many times"},
+      {"address_not_allowed", "the host's address is one downloads may not use"},
+      {"response_malformed", "the host's answer was malformed; Download again"},
+      {"models_busy", "the download folder is in use by another strata; Download again in a moment"},
+      {"publish_failed", "the files came, but could not be put in place in the download folder"},
+      {"index_write_failed", "the download folder's index could not be written"},
+      {"index_inconsistent", "the download folder's index does not match its files"},
+      {"interrupted", "the downloader was interrupted; Download again resumes it"},
+      {"downloader_missing", "the downloader is missing beside the server"},
+  };
+  const std::string code = std::to_string(exit_code);
+  if (result.empty()) {
+    return exit_code < 0 ? std::string{"the downloader ended unexpectedly"}
+                         : "the downloader ended with exit code " + code + " before it said how the download went";
+  }
+  if (result == "ok") {
+    return "the downloader said the files came, then ended with exit code " + code +
+           ", and the download folder does not hold every file at its size; Download again";
+  }
+  for (const auto& said : kSaid) {
+    if (said.reason == result) return std::string{said.text};
+  }
+  return "the download failed (" + std::string{result} + ", exit code " + code + ")";
 }
 
 }  // namespace
@@ -1462,16 +1530,30 @@ bool DownloadManager::pull(const std::size_t index, const HfDownload& download, 
       result = std::string{w[1]};
     }
   }
-  if (result == "ok" && child->exit_code() == 0) {
+  const int code = child->exit_code();
+  bool done = result == "ok" && code == 0;
+  if (!done && result == "ok") {
+    // Owner 2026-10-28: a Gemma 4 download said ok, was published, and the downloader ended with another code. The
+    // download folder has the last word.
+    std::string id;
+    {
+      std::lock_guard lock(mutex_);
+      id = cards_[index].entry.id;
+    }
+    const auto version = settings_.seams.locate(store, id);
+    done = version.has_value() && stored_whole(*version, download);
+    if (done) {
+      log("[strata] downloads: " + id + ": the downloader said ok and ended with exit code " + std::to_string(code) +
+          "; every file is in the download folder, so the download is kept");
+    }
+  }
+  if (done) {
     std::lock_guard lock(mutex_);
     cards_[index].bytes = cards_[index].total;
     cards_[index].rate_bps = 0.0;
     return true;
   }
-  error = result == "disk_space"            ? "insufficient disk space on the data drive"
-          : result == "digest_mismatch"     ? "a file did not match its SHA-256 (it was deleted)"
-          : result.empty()                  ? "the downloader ended unexpectedly"
-                                            : "the download failed (" + result + ")";
+  error = pull_failure(result, code);
   return false;
 }
 

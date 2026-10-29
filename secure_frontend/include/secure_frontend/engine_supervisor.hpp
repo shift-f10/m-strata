@@ -205,6 +205,15 @@ class EngineSupervisor final {
   // Requests the orderly shutdown (spec §3.7) and waits for it; past `bound`
   // the process exits 1. Idempotent.
   void shutdown(std::chrono::milliseconds bound);
+  // A model stop while the server goes on (the launcher's stop, switch, failed start or calibration step; owner
+  // 2026-10-28, the "unreaped engine" after a model stop): shutdown(), except that a killed engine still ending is
+  // waited for up to policy.reap_timeout more, as a crashed one is (spec V10). A big model takes longer than the 5 s
+  // server bound (ruling RF5) to free its memory and end; the next model must not start beside it. hurry() cuts that
+  // wait short; past it the engine is left unreaped, as shutdown() leaves one. Called like shutdown().
+  void stop_engine();
+  // Ends stop_engine's wait for a killed engine, now or when it comes (the server's own shutdown keeps its bound).
+  // Any thread; nothing else changes.
+  void hurry() noexcept;
   // True once shutdown() was called or a shutdown signal arrived.
   [[nodiscard]] bool stop_requested() const noexcept;
   // After shutdown() has returned: true when a generation was never reaped
@@ -262,6 +271,7 @@ class EngineSupervisor final {
   // SP5 M1 Task 6: idle teardown — the same orderly stop as shutdown_generation
   // (stdin EOF first), but the unloaded supervisor parks instead of ending.
   bool unload_generation(const std::shared_ptr<EngineInstance>& instance);
+  bool wait_reaped(SupervisedProcess& process, std::chrono::milliseconds limit, const std::function<bool()>& cut = {});
   // Parked while unloaded; wakes on wake_for_request() latch or shutdown.
   void wait_asleep();
   void retire(const std::shared_ptr<EngineInstance>& instance, bool reaped);
@@ -295,6 +305,8 @@ class EngineSupervisor final {
   std::map<std::string, std::string> ready_readings_;  // guarded by mutex_; set at READY
   std::uint64_t ready_serial_{0};                      // guarded by mutex_; set at READY (engine_sample)
   std::atomic<bool> shutdown_requested_{false};
+  std::atomic<bool> slow_stop_{false};  // stop_engine(): a killed engine still ending is waited for
+  std::atomic<bool> hurried_{false};    // hurry(): no more of that wait
   std::atomic<bool> engine_left_unreaped_{false};  // set by finish(): abandoned_ was not empty
   std::shared_ptr<LeaseLink> lease_link_;
   std::function<void()> on_stopped_;

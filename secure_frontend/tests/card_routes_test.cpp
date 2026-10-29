@@ -752,6 +752,45 @@ void a_running_card_is_not_deleted() {
   expect(f.launcher->wait_until_settled(std::chrono::seconds(60)), "the stop settles");
 }
 
+// Owner 2026-10-28 ("also add an ability to remove an active model card but not delete files"): a card the page made is
+// removed - out of the launcher, its card file and its calibration gone - while the model's files stay where they are
+// and the download store is not touched; the model can be added again from its folder. An operator card stays.
+void a_card_is_removed_and_its_files_stay() {
+  Fixture f;
+  expect(f.add(f.models, kModelFile).status == 201, "the card");
+  const auto remove = [&f](const std::string& name) {
+    return f.post(secure_frontend::RouteId::strata_card_remove, "{\"name\":" + json_text(name) + "}");
+  };
+  const auto removed = remove("tiny-gemma-Q8_0");
+  expect(removed.status == 200 && has(removed, "\"name\":\"tiny-gemma-Q8_0\"") && has(removed, "\"stopping\":false"),
+         "removed: " + shown(removed));
+  expect(!f.launcher->card("tiny-gemma-Q8_0") && !std::filesystem::exists(f.data.state / "cards" / "tiny-gemma-Q8_0.json"),
+         "the card and its file are gone");
+  expect(std::filesystem::exists(f.models / kModelFile) && std::filesystem::exists(f.models / "notes.txt"), "the model's files stay");
+  expect(f.removed_downloads.empty(), "the download store is not touched");
+  expect(f.add(f.models, kModelFile).status == 201, "the model can be added again from its folder");
+  const auto op = remove("Op");
+  expect(op.status == 403 && has(op, "\"code\":\"card_read_only\"") && f.launcher->card("Op"), "an operator card stays: " + shown(op));
+  expect(remove("Nobody").status == 404, "an unknown card");
+}
+
+// The same for the card that runs ("an active model card"): its model is stopped first (as Stop does), then the card
+// goes; its files stay.
+void a_running_card_is_stopped_then_removed() {
+  Fixture f;
+  expect(f.add(f.models, kModelFile).status == 201, "the card");
+  expect(!f.launcher->start("tiny-gemma-Q8_0", nullptr, false).has_value() && f.launcher->wait_until_settled(std::chrono::seconds(60)) &&
+             f.launcher->state_of("tiny-gemma-Q8_0") == secure_frontend::CardState::running,
+         "it runs");
+  const auto removed = f.post(secure_frontend::RouteId::strata_card_remove, "{\"name\":\"tiny-gemma-Q8_0\"}");
+  expect(removed.status == 200 && has(removed, "\"stopping\":true"), "accepted, its model stopping first: " + shown(removed));
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(60)), "the stop settles");
+  expect(!f.launcher->card("tiny-gemma-Q8_0") && !std::filesystem::exists(f.data.state / "cards" / "tiny-gemma-Q8_0.json"),
+         "then the card is gone");
+  expect(f.launcher->list_json().find("\"running\":null") != std::string::npos, "nothing runs: " + f.launcher->list_json());
+  expect(std::filesystem::exists(f.models / kModelFile), "and the model's file stays");
+}
+
 // Owner 2026-10-27 ("an option to not change the permissions when browsing and using existing models in the local
 // system ... ignore that other users can access the files locally"): with roots.allow_untrusted_media the page uses a
 // model folder as it is - a model is added from a folder other users may change, a card moves to another, and a GLM
@@ -872,6 +911,8 @@ int main(int argc, char** argv) {
       {"a_new_private_folder_is_made", a_new_private_folder_is_made},
       {"delete_needs_the_code_the_key_and_permanent", delete_needs_the_code_the_key_and_permanent},
       {"a_running_card_is_not_deleted", a_running_card_is_not_deleted},
+      {"a_card_is_removed_and_its_files_stay", a_card_is_removed_and_its_files_stay},
+      {"a_running_card_is_stopped_then_removed", a_running_card_is_stopped_then_removed},
       {"a_downloaded_model_leaves_its_store_too", a_downloaded_model_leaves_its_store_too},
       {"listed_remote_clients_use_the_file_routes", listed_remote_clients_use_the_file_routes},
       {"a_raon1_model_is_added_from_its_folder", a_raon1_model_is_added_from_its_folder},

@@ -45,6 +45,7 @@ std::string_view route_name(const RouteId route) {
     case RouteId::strata_card_folder: return "strata_card_folder";
     case RouteId::strata_card_delete_begin: return "strata_card_delete_begin";
     case RouteId::strata_card_delete: return "strata_card_delete";
+    case RouteId::strata_card_remove: return "strata_card_remove";
     case RouteId::strata_folder_sharing: return "strata_folder_sharing";
     case RouteId::strata_about: return "strata_about";
   }

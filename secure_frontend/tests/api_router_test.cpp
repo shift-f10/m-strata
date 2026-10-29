@@ -533,6 +533,17 @@ void web_ui_cards_from_this_pc_and_the_danger_zone() {
   expect(js.find("$(\"model-delete\").disabled = inUse") != std::string::npos, "a running model can't be deleted from the page");
   expect(js.find("if (done.download_removed === false) {") != std::string::npos,
          "a downloaded model whose store kept its record says so after the delete");
+  // Owner 2026-10-28 ("an ability to remove an active model card but not delete files"): Remove card, the files kept, a
+  // running card stopped first; asked first, through the remove route
+  expect(html.find("id=\"model-remove-box\"") != std::string::npos && html.find("id=\"model-remove\"") != std::string::npos &&
+             html.find(">Remove card</button>") != std::string::npos,
+         "a card the page made can be removed, its files kept");
+  expect(js.find("api(\"/v1/strata/cards/remove\", jsonPost({ name: card.name }))") != std::string::npos &&
+             js.find("Its model files stay on this PC") != std::string::npos && js.find("$(\"model-remove-box\").hidden = !pageCard;") != std::string::npos &&
+             js.find("$(\"model-remove\").disabled = launcher.acting || card.state === \"starting\" || card.state === \"calibrating\";") !=
+                 std::string::npos,
+         "the remove asks first, says the files stay, and calls the remove route; a running card's too");
+  expect(css.find(".model-remove") != std::string::npos, "styled: .model-remove");
   expect(js.find("$(\"local-models\").hidden = !on;") != std::string::npos, "the PC's model files follow model control");
   for (const char* rule : {".folder-picker", ".folder-row", ".delete-dialog", ".danger-zone"}) {
     expect(css.find(rule) != std::string::npos, std::string{"styled: "} + rule);
@@ -872,7 +883,7 @@ void web_ui_downloads_say_what_is_on_this_pc() {
   const std::string css{secure_frontend::find_web_asset("/ui/app.css")->body};
   expect(js.find("function carded(") == std::string::npos && js.find("!carded(card)") == std::string::npos,
          "no download is hidden for having a card");
-  expect(js.find("var DL_HAVE = { downloaded: [\"st-badge--generating\", \"Downloaded\"], local: [\"st-badge--reading\", \"Locally provided\"] };") !=
+  expect(js.find("var DL_HAVE = { downloaded: [\"st-badge--generating\", \"Downloaded\"], local: [\"st-badge--reading\", \"Locally provided\"],") !=
              std::string::npos,
          "the two badges: Downloaded and Locally provided");
   expect(js.find("function haveOf(card) {") != std::string::npos && js.find("card.have === \"downloaded\" || card.have === \"local\"") != std::string::npos,
@@ -880,12 +891,20 @@ void web_ui_downloads_say_what_is_on_this_pc() {
   expect(js.find("function onThisPc(card) {") != std::string::npos &&
              js.find("return have !== null && !oneOf(DL_ACTIVE, card.state) && card.state !== \"paused\" ? have : null;") != std::string::npos &&
              js.find("var have = onThisPc(card);") != std::string::npos && js.find("var onPc = have !== null;") != std::string::npos &&
-             js.find("head.appendChild(onPc ? haveBadge(have) : dlBadge(card.state));") != std::string::npos,
-         "an entry on this PC wears its have badge (a download under way keeps its own)");
+             js.find("head.appendChild(onPc ? haveBadge(have) : other ? haveBadge(\"other\") : dlBadge(card.state));") != std::string::npos,
+         "an entry on this PC wears its have badge, an other version its own (a download under way keeps its state's)");
   expect(js.find("\"Already on this PC\" + (card.have_card ? \"; its card: \" + String(card.have_card) : \"\")") != std::string::npos &&
              js.find("if (card.state === \"failed\" && !onPc) {") != std::string::npos,
          "the entry says it is already here and names its card (an old failed attempt is not shown)");
   expect(js.find("var offerVision = !onPc && visionBytes > 0") != std::string::npos, "nor are its vision files offered");
+  // another file of the same name on this PC (another revision: other bytes): said, with its card, and still offered
+  expect(js.find("function otherVersion(card) {") != std::string::npos &&
+             js.find("return card.have === \"other\" && !oneOf(DL_ACTIVE, card.state) && card.state !== \"paused\";") != std::string::npos &&
+             js.find("other: [\"st-badge--queued\", \"Other version on this PC\"]") != std::string::npos &&
+             js.find("\"Another version of this file is on this PC\"") != std::string::npos,
+         "a same-named file of another size is an other version, shown with its card");
+  expect(js.find("var startable = !onPc && oneOf(DL_STARTABLE, card.state);") != std::string::npos,
+         "and its download is still offered (an other version is not onPc)");
   expect(css.find(".dl-card[data-have=") != std::string::npos, "an entry on this PC is styled");
 }
 
@@ -1728,7 +1747,8 @@ void model_card_routes_need_the_switch_and_the_key() {
       {"/v1/strata/cards/add", RouteId::strata_card_add},
       {"/v1/strata/cards/folder", RouteId::strata_card_folder},
       {"/v1/strata/cards/delete/begin", RouteId::strata_card_delete_begin},
-      {"/v1/strata/cards/delete", RouteId::strata_card_delete}};
+      {"/v1/strata/cards/delete", RouteId::strata_card_delete},
+      {"/v1/strata/cards/remove", RouteId::strata_card_remove}};
   const auto make = [](std::vector<std::string>* calls, const bool on) {
     secure_frontend::SecretBytes secret;
     (void)secret.assign(kRouterToken);

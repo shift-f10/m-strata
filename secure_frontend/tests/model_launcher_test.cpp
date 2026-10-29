@@ -16,6 +16,7 @@
 #include "secure_frontend/tool_runner.hpp"
 #include "support/config_json.hpp"
 #include "support/fake_engine_dump.hpp"
+#include "support/fake_supervised_process.hpp"
 #include "support/gguf_builder.hpp"
 #include "support/server_harness.hpp"
 #include "support/test_paths.hpp"
@@ -629,8 +630,10 @@ struct CalibrationFixture final {
   std::shared_ptr<std::vector<std::string>> events = std::make_shared<std::vector<std::string>>();  // alerts raised
   std::unique_ptr<secure_frontend::ModelLauncher> launcher;
 
-  // operator_cards: the two cards are the operator's (listed), which never calibrate before a first start
-  explicit CalibrationFixture(const std::vector<std::string>& extra_fake_options = {}, const bool operator_cards = false) {
+  // operator_cards: the two cards are the operator's (listed), which never calibrate before a first start; factory:
+  // how the engine processes are made (unset: the fake engine's real process)
+  explicit CalibrationFixture(const std::vector<std::string>& extra_fake_options = {}, const bool operator_cards = false,
+                              std::function<secure_frontend::ProcessFactory(secure_frontend::EngineLaunchPlan)> factory = {}) {
     secure_frontend_test::make_private_directory(models);
     const auto vocabulary = test_support::spm_tokenizer();
     for (const char* name : {"tiny-gemma-Q8_0.gguf", "other-gemma-Q8_0.gguf"}) {
@@ -667,6 +670,7 @@ struct CalibrationFixture final {
                                                .operator_cards = operator_cards ? cards.size() : 0U, .memory_file = {}, .gate = {}};
     settings.calibration_dir = data.state / "calibration";
     settings.log = [](std::string_view) {};
+    if (factory) settings.factory = std::move(factory);
     settings.on_event = [list = events](const std::string_view event, const std::string& subject, const std::string&) {
       list->push_back(std::string{event} + ": " + subject);
     };
@@ -890,6 +894,44 @@ void a_prefill_calibration_falls_back_to_the_default_chunk() {
   expect(record.has_value() && record->finished && record->tok_s == 950.5, "and it finished");
 }
 
+// Owner 2026-10-28 (the "unreaped engine" after a model stop): a big model took longer to end after a stop than the
+// server's 5 s bound, so it was left unreaped and the next model could start beside it. A stop now waits for an engine
+// still ending after the kill (EngineSupervisor::stop_engine): the card is stopped with no engine left behind. The
+// server's own shutdown during such a stop cuts that wait and keeps its bound.
+void a_stop_waits_for_an_engine_still_ending() {
+  test_support::FakeFactory fakes([](test_support::FakeChild& child, std::uint64_t) {
+    child.reapable = false;  // EOF and the kill land; it ends once the test frees it, like a model freeing its memory
+    child.push_line("READY 32768 stop");
+  });
+  CalibrationFixture f({}, true, [fakes](secure_frontend::EngineLaunchPlan) { return fakes.factory(); });
+  const std::string name = "tiny-gemma-Q8_0";
+  const auto start = [&f, &name] {
+    return !f.launcher->start(name, nullptr, false).has_value() && f.launcher->wait_until_settled(std::chrono::seconds(30)) &&
+           f.launcher->state_of(name) == secure_frontend::CardState::running;
+  };
+  expect(start(), "the card starts");
+  // freed 5 s after the stop: past its EOF, TERM and kill waits (2 + 1 + 1 s), where it used to be left
+  std::thread freed([child = fakes.child(1U)] {
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    if (!child) return;
+    std::lock_guard lock(child->mutex);
+    child->reapable = true;
+  });
+  (void)f.launcher->stop(false);
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(30)), "it stops");
+  freed.join();
+  expect(f.launcher->state_of(name) == secure_frontend::CardState::stopped && !f.launcher->engine_left_unreaped(),
+         "the stop waited for the engine: none is left");
+
+  expect(start(), "the card starts again");
+  (void)f.launcher->stop(false);
+  std::this_thread::sleep_for(std::chrono::milliseconds(4500));  // into the wait after the kill; this one never ends
+  const auto asked = std::chrono::steady_clock::now();
+  f.launcher->shutdown();
+  expect(std::chrono::steady_clock::now() - asked < std::chrono::seconds(3), "the server's shutdown cuts the wait");
+  expect(f.launcher->engine_left_unreaped(), "and reports the engine left behind");
+}
+
 // §4.5: a page card removed (the danger zone's delete) takes its calibration and its switch with it, so a later card
 // of the same name starts uncalibrated.
 void removing_a_card_removes_its_calibration() {
@@ -1099,6 +1141,7 @@ int main(int argc, char** argv) {
       {"a_prefill_calibration_falls_back_to_the_default_chunk", a_prefill_calibration_falls_back_to_the_default_chunk},
       {"a_calibration_can_be_cancelled", a_calibration_can_be_cancelled},
       {"removing_a_card_removes_its_calibration", removing_a_card_removes_its_calibration},
+      {"a_stop_waits_for_an_engine_still_ending", a_stop_waits_for_an_engine_still_ending},
       {"failures_raise_alerts", failures_raise_alerts},
       {"bad_card_refused_at_boot_and_main_rows_refused", bad_card_refused_at_boot_and_main_rows_refused},
   }, failures);
