@@ -377,11 +377,13 @@ ChatGenerationPlanResult make_gemma4_tool_generation_plan(const ChatCompletionRe
   if (token_ids->empty() || token_ids->size() > maximum_prompt_tokens) {
     return error(ChatGenerationPlanErrorCode::prompt_too_large, "encoded chat prompt exceeds native serving limits");
   }
-  // as the text plan, plus the call's tags as their text and the server's stop on <|tool_response>
+  // as the text plan, plus the call's tags as their text and the server's stop on <|tool_response>; after a round's
+  // results with thinking on, the prompt opened the thought channel (its name line included), so the reply starts in it
   std::vector<std::pair<std::size_t, std::string>> literals{{*tags[2], "<|tool_call>"}, {*tags[3], "<tool_call|>"}, {*tags[6], "<|\"|>"}};
   return ChatGenerationPlan{request.model, *token_ids, request.max_tokens.value_or(default_max_tokens),
                             merge_sampling(request.sampling, defaults), ThinkTokens{markers->channel_open, markers->channel_close},
-                            false, std::move(stops), std::string{"thought"}, std::vector<std::size_t>{*tags[4]}, std::move(literals)};
+                            thinking && !rounds.empty(), std::move(stops), std::string{"thought"}, std::vector<std::size_t>{*tags[4]},
+                            std::move(literals)};
 }
 
 ChatGenerationPlanResult make_gemma4_chat_generation_plan(const ChatCompletionRequest& request, const TokenizerPack& tokenizer,

@@ -92,14 +92,15 @@ void renders_the_template_bytes_thinking_off() {
 }
 
 void renders_the_template_bytes_thinking_on() {
+  // the newer template (owner 2026-10-28): <|think|> and a newline
   expect(shown(secure_frontend::render_gemma4_text_prompt({{"user", "Hi"}}, true)) ==
-             "<bos><|turn>system\n<|think|><turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
-         "thinking on without a system message: a system turn holding only <|think|>, an open generation prompt");
+             "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
+         "thinking on without a system message: a system turn holding only <|think|> and its newline, an open generation prompt");
   const Messages history{{"system", " Be brief. "}, {"user", "Hi"}, {"assistant", "Hello."}, {"user", "Bye"}};
   expect(shown(secure_frontend::render_gemma4_text_prompt(history, true)) ==
-             "<bos><|turn>system\n<|think|>Be brief.<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\nHello.<turn|>\n"
+             "<bos><|turn>system\n<|think|>\nBe brief.<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\nHello.<turn|>\n"
              "<|turn>user\nBye<turn|>\n<|turn>model\n",
-         "<|think|> first in the system turn, followed directly by the trimmed system text (no newline): " +
+         "<|think|> first in the system turn, then a newline and the trimmed system text: " +
              shown(secure_frontend::render_gemma4_text_prompt(history, true)));
 }
 
@@ -135,7 +136,7 @@ void trims_like_jinja() {
          "the renderer trims U+00A0, U+3000, U+2028, U+2029 and keeps the inner U+3000");
   const Messages nel{{"system", "\xC2\x85sys\xC2\x85"}, {"user", "\xE1\x9A\x80u\xE2\x80\xAF"}};
   expect(shown(secure_frontend::render_gemma4_text_prompt(nel, true)) ==
-             "<bos><|turn>system\n<|think|>sys<turn|>\n<|turn>user\nu<turn|>\n<|turn>model\n",
+             "<bos><|turn>system\n<|think|>\nsys<turn|>\n<|turn>user\nu<turn|>\n<|turn>model\n",
          "NEL, U+1680 and U+202F are trimmed in the system and user turns");
   const Messages zero_width{{"user", "\xE2\x80\x8BHi\xEF\xBB\xBF"}};
   expect(shown(secure_frontend::render_gemma4_text_prompt(zero_width, false)) ==
@@ -258,7 +259,7 @@ void plan_encodes_markers_as_single_ids_and_text_as_spm() {
   std::vector<std::size_t> on{markers->bos, markers->turn_open};
   append(on, ids_of(pack, "system\n"));
   on.push_back(markers->think);
-  append(on, ids_of(pack, "Be brief."));
+  append(on, ids_of(pack, "\nBe brief."));   // the newer template's newline after <|think|>, one text span with the system text
   on.push_back(markers->turn_close);
   append(on, ids_of(pack, "\n"));
   on.push_back(markers->turn_open);
@@ -271,7 +272,7 @@ void plan_encodes_markers_as_single_ids_and_text_as_spm() {
   const secure_frontend::ChatCompletionRequest with_system{"gemma-local", {{"system", "Be brief."}, {"user", "Hi world"}}, 4U};
   const auto on_result = secure_frontend::make_gemma4_chat_generation_plan(with_system, pack, 4096U, 16U, {}, true);
   const auto* on_plan = std::get_if<secure_frontend::ChatGenerationPlan>(&on_result);
-  expect(on_plan != nullptr && on_plan->prompt_token_ids == on, "thinking on: <|think|> one id at the head of the system turn");
+  expect(on_plan != nullptr && on_plan->prompt_token_ids == on, "thinking on: <|think|> one id at the head of the system turn, then its newline");
   expect(on_plan != nullptr && on_plan->think_tokens.has_value() && !on_plan->starts_in_reasoning,
          "thinking on: the model opens the channel itself, so the reply starts outside it");
 

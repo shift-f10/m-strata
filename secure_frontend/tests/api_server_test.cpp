@@ -1872,11 +1872,11 @@ std::vector<std::size_t> gemma4_prompt_thinking_off() {
                                  {"<|channel>", "thought", "\n", "<channel|>"}}));
 }
 
-// Thinking on: the system turn holds <|think|> and no text (no system message), and the
-// generation prompt is the open model turn:
-// <bos><|turn>system\n<|think|><turn|>\n<|turn>user\nHello world<turn|>\n<|turn>model\n
+// Thinking on: the system turn holds <|think|> and its newline (the newer template, 2026-10-28) and no text (no system
+// message), and the generation prompt is the open model turn:
+// <bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\nHello world<turn|>\n<|turn>model\n
 std::vector<std::size_t> gemma4_prompt_thinking_on() {
-  return gemma4_ids(gemma4_join({{"<bos>", "<|turn>"}, kGemma4System, {"<|think|>", "<turn|>", "\n", "<|turn>"}, kGemma4User,
+  return gemma4_ids(gemma4_join({{"<bos>", "<|turn>"}, kGemma4System, {"<|think|>", "\n", "<turn|>", "\n", "<|turn>"}, kGemma4User,
                                  kGemma4HelloWorld, {"<turn|>", "\n", "<|turn>"}, kGemma4Model}));
 }
 

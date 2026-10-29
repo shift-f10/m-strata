@@ -1882,6 +1882,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_gemma4_tool_calls_tests tests/gemma4_tool_calls_test.cpp
         secure_frontend_chat_generation_plan secure_frontend_tool_calls secure_frontend_chat_route)
     secure_frontend_add_cases(secure_frontend_gemma4_tool_calls_tests renders_the_templates_tool_prompts
+        renders_the_templates_text_prompts writes_the_templates_declarations
         ARGS ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gemma4_tool_prompts.json)
     secure_frontend_add_cases(secure_frontend_gemma4_tool_calls_tests
         refuses_what_the_tool_prompt_cannot_say reads_calls_as_llama_cpp_does plans_with_its_tags the_route_plans_gemma4_searches)

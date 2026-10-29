@@ -23,6 +23,7 @@ constexpr std::string_view kBos = "<bos>";
 constexpr std::string_view kTurnOpen = "<|turn>";
 constexpr std::string_view kTurnClose = "<turn|>\n";
 constexpr std::string_view kThink = "<|think|>";
+constexpr std::string_view kThinkLine = "<|think|>\n";   // the newer template's (2026-10-28): a newline after it
 constexpr std::string_view kClosedChannel = "<|channel>thought\n<channel|>";
 
 constexpr std::array<std::string_view, 24U> kControlLiterals{
@@ -133,9 +134,6 @@ constexpr std::string_view kQuote = "<|\"|>";
 constexpr std::size_t kMaximumDepth = 64U;
 constexpr JsonLimits kToolLimits{.max_bytes = 1U << 20U, .max_depth = 32U, .max_container_entries = 4096U,
                                  .max_string_bytes = 1U << 20U, .allow_fractions = true};
-// llama.cpp's collect_result reads a result as JSON when it parses (nlohmann's json::parse; no NaN or Infinity).
-constexpr JsonLimits kResultLimits{.max_bytes = kMaximumMessageBytes, .max_depth = kMaximumDepth, .max_container_entries = 1U << 20U,
-                                   .max_string_bytes = kMaximumMessageBytes, .allow_fractions = true};
 
 const JsonValue* get(const JsonValue* const object, const std::string_view key) {
   const auto* members = object != nullptr ? object->if_object() : nullptr;
@@ -220,7 +218,7 @@ class Writer final {
     switch (value.kind()) {
       case JsonKind::string: quoted(*value.if_string()); return true;
       case JsonKind::boolean: text(*value.if_boolean() ? "true" : "false"); return true;
-      case JsonKind::null: text("None"); return true;  // {{ argument }} of None
+      case JsonKind::null: text("null"); return true;
       case JsonKind::integer:
       case JsonKind::decimal: word(python_json_text(value)); return true;
       case JsonKind::array: {
@@ -272,14 +270,16 @@ class Writer final {
   bool untrusted_;
 };
 
-// format_parameters(properties, required) of this GGUF's template (the parameter list is unused there).
-bool parameters(Writer& w, const JsonValue& properties, const std::size_t depth) {
+// format_parameters(properties, required, filter_keys) of Gemma 4's newer template (the parameter list is unused there):
+// each property in key order with its description, its enum (a string) or items (an array), nullable, its properties
+// and required (an object; one without properties lists its own keys but the standard ones: filter_keys), then its type.
+bool parameters(Writer& w, const JsonValue& properties, const std::size_t depth, const bool filter_keys) {
   static constexpr std::array<std::string_view, 5U> kStandard{"description", "type", "properties", "required", "nullable"};
   const auto* members = properties.if_object();
   if (members == nullptr || depth > kMaximumDepth) return false;
   bool found_first = false;
   for (const JsonMember* m : dictsorted(*members, member_key)) {
-    if (std::find(kStandard.begin(), kStandard.end(), m->key) != kStandard.end()) continue;
+    if (filter_keys && std::find(kStandard.begin(), kStandard.end(), m->key) != kStandard.end()) continue;
     if (found_first) w.text(",");
     found_first = true;
     w.text(m->key);
@@ -297,10 +297,6 @@ bool parameters(Writer& w, const JsonValue& properties, const std::size_t depth)
       w.quoted(*description);
       add_comma = true;
     }
-    if (truthy(get(value, "nullable"))) {
-      comma();
-      w.text("nullable:true");
-    }
     const auto type = upper(get(value, "type"));
     if (!type) return false;
     if (*type == "STRING") {
@@ -309,24 +305,11 @@ bool parameters(Writer& w, const JsonValue& properties, const std::size_t depth)
         w.text("enum:");
         if (!w.argument(*choices, true)) return false;
       }
-    } else if (*type == "OBJECT") {
-      w.text(",properties:{");
-      const JsonValue* nested = get(value, "properties");
-      if (nested != nullptr && nested->if_object() != nullptr) {
-        if (!parameters(w, *nested, depth + 1U)) return false;
-      } else if (value->if_object() != nullptr && !parameters(w, *value, depth + 1U)) {
-        return false;
-      }
-      w.text("}");
-      if (const JsonValue* list = get(value, "required"); truthy(list)) {
-        w.text(",required:[");
-        if (!w.required(list)) return false;
-        w.text("]");
-      }
     } else if (*type == "ARRAY") {
       const JsonValue* items = get(value, "items");
       if (items != nullptr && items->if_object() != nullptr && truthy(items)) {
-        w.text(",items:{");
+        comma();
+        w.text("items:{");
         bool found = false;
         for (const JsonMember* item : dictsorted(*items->if_object(), member_key)) {
           if (item->value.kind() == JsonKind::null) continue;
@@ -334,7 +317,7 @@ bool parameters(Writer& w, const JsonValue& properties, const std::size_t depth)
           found = true;
           if (item->key == "properties") {
             w.text("properties:{");
-            if (item->value.if_object() != nullptr && !parameters(w, item->value, depth + 1U)) return false;
+            if (item->value.if_object() != nullptr && !parameters(w, item->value, depth + 1U, false)) return false;
             w.text("}");
           } else if (item->key == "required") {
             w.text("required:[");
@@ -365,6 +348,30 @@ bool parameters(Writer& w, const JsonValue& properties, const std::size_t depth)
         w.text("}");
       }
     }
+    if (truthy(get(value, "nullable"))) {
+      comma();
+      w.text("nullable:true");
+    }
+    if (*type == "OBJECT") {
+      const JsonValue* nested = get(value, "properties");
+      if (nested != nullptr && nested->if_object() != nullptr) {
+        comma();
+        w.text("properties:{");
+        if (!parameters(w, *nested, depth + 1U, false)) return false;
+        w.text("}");
+      } else if (value->if_object() != nullptr) {
+        comma();
+        w.text("properties:{");
+        if (!parameters(w, *value, depth + 1U, true)) return false;
+        w.text("}");
+      }
+      if (const JsonValue* list = get(value, "required"); truthy(list)) {
+        comma();
+        w.text("required:[");
+        if (!w.required(list)) return false;
+        w.text("]");
+      }
+    }
     comma();
     w.text("type:");
     w.quoted(*type);
@@ -390,7 +397,7 @@ bool declaration(Writer& w, const JsonValue& tool) {
     w.text(",parameters:{");
     if (const JsonValue* properties = get(params, "properties"); truthy(properties)) {
       w.text("properties:{");
-      if (!parameters(w, *properties, 0U)) return false;
+      if (!parameters(w, *properties, 0U, false)) return false;
       w.text("},");
     }
     if (const JsonValue* list = get(params, "required"); truthy(list)) {
@@ -427,33 +434,32 @@ bool declaration(Writer& w, const JsonValue& tool) {
   return true;
 }
 
-// One result as the template writes llama.cpp's tool_responses entry for it.
-bool tool_response(PromptBuilder& out, const std::string_view name, const std::string& result) {
+// One result as the newer template's format_tool_response_block writes a `tool` message's text: a string value, JSON or
+// not (the older template's results were read as JSON by llama.cpp's workaround for it, convert_tool_responses_gemma4).
+void tool_response(PromptBuilder& out, const std::string_view name, const std::string& result) {
   Writer w{out, true};
   out.marker("<|tool_response>");
   w.text("response:");
   w.word(name);
-  auto parsed = parse_json(result, kResultLimits);
-  const auto* value = std::get_if<JsonValue>(&parsed);
-  if (value != nullptr && value->if_object() != nullptr) {
-    w.text("{");
-    bool first = true;
-    for (const JsonMember* m : dictsorted(*value->if_object(), member_key)) {
-      if (!first) w.text(",");
-      first = false;
-      w.word(m->key);
-      w.text(":");
-      if (!w.argument(m->value, false)) return false;
-    }
-    w.text("}");
-  } else {
-    w.text("{value:");
-    if (value == nullptr) w.quoted(result);  // not JSON: the text, as a string
-    else if (!w.argument(*value, false)) return false;
-    w.text("}");
-  }
+  w.text("{value:");
+  w.quoted(result);
+  w.text("}");
   out.marker("<tool_response|>");
-  return true;
+}
+
+// The template's strip_thinking over a model's own text: what lies inside <|channel>...<channel|> goes, then trim.
+std::string strip_thinking(const std::string_view text) {
+  std::string kept;
+  std::size_t at = 0U;
+  while (true) {
+    const std::size_t close = text.find("<channel|>", at);
+    const std::string_view part = text.substr(at, close == std::string_view::npos ? std::string_view::npos : close - at);
+    const std::size_t open = part.find("<|channel>");
+    kept += open == std::string_view::npos ? part : part.substr(0U, open);
+    if (close == std::string_view::npos) break;
+    at = close + std::string_view{"<channel|>"}.size();
+  }
+  return std::string{gemma4_trim(kept)};
 }
 
 const std::string& argument_name(const ToolArgument& a) { return a.name; }
@@ -513,7 +519,7 @@ std::optional<std::string> render_gemma4_text_prompt(const std::vector<ChatMessa
       if (system_text.empty()) return std::nullopt;
       index = 1U;
     }
-    if (!append_turn(&prompt, "system", thinking ? kThink : std::string_view{}, system_text)) return std::nullopt;
+    if (!append_turn(&prompt, "system", thinking ? kThinkLine : std::string_view{}, system_text)) return std::nullopt;
   }
   if (index == messages.size()) return std::nullopt;
 
@@ -554,7 +560,10 @@ std::optional<std::vector<PromptPiece>> render_gemma4_tool_prompt(const std::vec
   out.marker(kBos);
   out.marker(kTurnOpen);
   out.text("system\n");
-  if (thinking) out.marker(kThink);
+  if (thinking) {
+    out.marker(kThink);
+    out.text("\n");
+  }
   std::size_t index = 0U;
   if (messages.front().role == "system") {
     out.text(safe_text(messages.front()));
@@ -575,26 +584,54 @@ std::optional<std::vector<PromptPiece>> render_gemma4_tool_prompt(const std::vec
     out.marker("<turn|>");
     out.text("\n");
   }
-  // llama.cpp's convert_tool_responses_gemma4: a round is one model turn of its calls and their responses, left open
-  for (const auto& round : rounds) {
-    out.marker(kTurnOpen);
-    out.text("model\n");
+  // The rounds as the newer template writes upstream's run_with_mcp messages (an assistant message of the round's
+  // stripped text and reasoning with its calls, then one `tool` message per result): one model turn they all continue,
+  // each round its reasoning in the thought channel, its calls, their results, then its own text (strip_thinking); the
+  // turn closes only after a last round with text of its own.
+  bool closed = false;
+  for (std::size_t r = 0U; r < rounds.size(); ++r) {
+    const auto& round = rounds[r];
+    if (r == 0U) {
+      out.marker(kTurnOpen);
+      out.text("model\n");
+    }
+    if (const std::string_view reasoning = gemma4_trim(round.reasoning); !reasoning.empty()) {
+      out.marker("<|channel>");
+      out.text("thought\n");
+      out.plain(reasoning);
+      out.text("\n");
+      out.marker("<channel|>");
+    }
     for (const auto& call : round.calls) {
       if (!tool_call(out, call)) return std::nullopt;
     }
-    for (std::size_t i = 0U; i < round.results.size(); ++i) {
-      if (!tool_response(out, round.calls[i].name, round.results[i])) return std::nullopt;
+    for (std::size_t i = 0U; i < round.results.size(); ++i) tool_response(out, round.calls[i].name, round.results[i]);
+    if (const std::string content = strip_thinking(gemma4_trim(round.content)); !content.empty()) {
+      out.plain(content);
+      if (r + 1U == rounds.size()) {
+        out.marker("<turn|>");
+        out.text("\n");
+        closed = true;
+      }
     }
   }
-  // the generation prompt: a new model turn only after the conversation (after a response the turn goes on)
+  // The generation prompt: after the conversation a new model turn (its thought channel closed when not thinking); after
+  // a round's results the turn goes on, into the thought channel when thinking - and a turn a round's text closed gets a
+  // new model turn when not (llama.cpp's common_chat_params_init_gemma4, for a prompt ending in "<turn|>\n").
   if (rounds.empty()) {
     out.marker(kTurnOpen);
     out.text("model\n");
-  }
-  if (!thinking) {
+    if (!thinking) {
+      out.marker("<|channel>");
+      out.text("thought\n");
+      out.marker("<channel|>");
+    }
+  } else if (thinking) {
     out.marker("<|channel>");
     out.text("thought\n");
-    out.marker("<channel|>");
+  } else if (closed) {
+    out.marker(kTurnOpen);
+    out.text("model\n");
   }
   if (out.bytes() > kMaximumPromptBytes) return std::nullopt;
   return out.take();

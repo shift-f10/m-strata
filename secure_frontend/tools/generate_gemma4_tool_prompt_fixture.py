@@ -1,15 +1,19 @@
 """Generate tests/fixtures/gemma4_tool_prompts.json - the prompts Gemma 4's own template renders for a chat with tools
-(owner 2026-10-28: web search for Gemma 4).
+(owner 2026-10-28: web search for Gemma 4), for plain chats ("text_cases") and for richer tool declarations
+("declarations").
 
-The template is the UD-Q8_K_XL GGUF's tokenizer.chat_template, rendered by upstream's serve/frontend.py ChatTemplate
-(Jinja with transformers' settings) with bos_token "<bos>" and enable_thinking. The messages and tools take llama.cpp's
-path for this template (llama.cpp 3cf03257, the Gemma 4 oracle): tools in the OpenAI form ({"type": "function",
-"function": tool}); the conversation as upstream's run_with_mcp appends a round (the assistant's stripped content and
-reasoning with its calls, then one `tool` message per result, as tools/generate_raon1_flint_tool_prompt_fixture.py
-builds it), folded by common/parsers/gemma4.cpp's convert_tool_responses_gemma4 (ported below: the calls, each result
-as JSON when it parses and as text otherwise, named after its call; the calling message's own content is dropped, as
-there), since this GGUF's template is the one llama.cpp calls outdated; and common_chat_params_init_gemma4's
-"<|turn>model\\n" after a prompt that ends in "<turn|>\\n".
+The template is a Gemma 4 GGUF's tokenizer.chat_template - since 2026-10-28 the newer, official one of unsloth's
+gemma-4-26B-A4B-it-Q8_0 at c099eb48 (owner: "update our Gemma 4 renderer to the newer chat template, one profile for
+both GGUFs"); the older UD-Q8_K_XL file's is the one llama.cpp calls outdated. It is rendered by upstream's
+serve/frontend.py ChatTemplate (Jinja with transformers' settings) with bos_token "<bos>" and enable_thinking. The
+messages and tools take llama.cpp's path for the template given (llama.cpp 3cf03257, the Gemma 4 oracle): tools in the
+OpenAI form ({"type": "function", "function": tool}); the conversation as upstream's run_with_mcp appends a round (the
+assistant's stripped content and reasoning with its calls, then one `tool` message per result, as
+tools/generate_raon1_flint_tool_prompt_fixture.py builds it); for an outdated template only (common/chat.cpp: no
+"{#- OpenAI Chat Completions:" in it), folded by common/parsers/gemma4.cpp's convert_tool_responses_gemma4 (ported
+below: the calls, each result as JSON when it parses and as text otherwise, named after its call; the calling
+message's own content is dropped, as there); and common_chat_params_init_gemma4's "<|turn>model\\n" after a prompt that
+ends in "<turn|>\\n".
 
 Usage: python -I tools/generate_gemma4_tool_prompt_fixture.py <upstream dir> <Gemma 4 chat_template.jinja>
            > tests/fixtures/gemma4_tool_prompts.json
@@ -78,6 +82,35 @@ CASES = [
     {"name": "the_limit_round", "thinking": True, "conversation": [{"role": "user", "content": QUESTION}],
      "rounds": [{"reasoning": "Search.", "content": "", "calls": [call(query="one")], "results": [RESULT]},
                 {"reasoning": "Again.", "content": "", "calls": [call(query="two")], "results": [LIMIT]}]},
+]
+
+
+# Plain chats (no tools): the text prompt, thinking on and off.
+TEXT_CASES = [
+    {"name": "one_turn", "conversation": [{"role": "user", "content": "Say hello."}]},
+    {"name": "system_and_history", "conversation": [{"role": "system", "content": "  Be brief.  "}, {"role": "user", "content": "Hi"},
+                                                    {"role": "assistant", "content": " Hello! How can I help? "},
+                                                    {"role": "user", "content": "Who are you?"}]},
+    {"name": "unicode_whitespace", "conversation": [{"role": "user", "content": "\u3000日本 "}]},
+]
+
+# Tool declarations past web_search's: nested objects, arrays of objects, nullable, enums, a property named like a
+# standard key - the newer template's format_parameters (its filter_keys, its comma order).
+DECLARATIONS = [
+    {"name": "lookup", "description": "Look things up.",
+     "parameters": {"type": "object", "required": ["where"],
+                    "properties": {"where": {"type": "object", "description": "Place",
+                                             "properties": {"city": {"type": "string", "nullable": True},
+                                                            "zip": {"type": "integer"}},
+                                             "required": ["city"]},
+                                   "type": {"type": "string", "enum": ["a", "b"], "description": "Kind"},
+                                   "tags": {"type": "array", "items": {"type": "string"}},
+                                   "rows": {"type": "array", "description": "Rows",
+                                            "items": {"type": "object", "properties": {"k": {"type": "string"}}, "required": ["k"]}},
+                                   "loose": {"type": "object", "description": "Free", "x": {"type": "number"},
+                                             "description2": {"type": "boolean"}},
+                                   "maybe": {"type": "number", "nullable": True}}}},
+    {"name": "bare", "description": "No parameters."},
 ]
 
 
@@ -154,15 +187,28 @@ def main():
     sys.path.insert(0, str(upstream))
     import serve.frontend as frontend               # noqa: E402 - upstream's own renderer
     chat = frontend.ChatTemplate(template)
+    source = template.read_text(encoding="utf-8")
+    outdated = "'<|tool_call>call:'" in source and "{#- OpenAI Chat Completions:" not in source   # common/chat.cpp
     out = {"generator": "tools/generate_gemma4_tool_prompt_fixture.py",
-           "template": hashlib.sha256(template.read_bytes()).hexdigest(), "tool": TOOL, "cases": []}
+           "template": hashlib.sha256(template.read_bytes()).hexdigest(), "outdated": outdated, "tool": TOOL, "cases": [],
+           "text_cases": [], "declarations": []}
     for case in CASES:
-        messages = convert_tool_responses_gemma4(messages_of(case))
+        messages = convert_tool_responses_gemma4(messages_of(case)) if outdated else messages_of(case)
         prompt = chat.render(messages, tools=[{"type": "function", "function": TOOL}], bos_token="<bos>",
                              enable_thinking=case["thinking"])
         if prompt.endswith("<turn|>\n"):           # common_chat_params_init_gemma4
             prompt += "<|turn>model\n"
         out["cases"].append({**case, "prompt": prompt})
+    for case in TEXT_CASES:
+        for thinking in (True, False):
+            prompt = chat.render([dict(m) for m in case["conversation"]], bos_token="<bos>", enable_thinking=thinking)
+            if prompt.endswith("<turn|>\n"):       # common_chat_params_init_gemma4
+                prompt += "<|turn>model\n"
+            out["text_cases"].append({"name": case["name"], "thinking": thinking, "conversation": case["conversation"], "prompt": prompt})
+    for tool in DECLARATIONS:                      # what the template writes between <|tool> and <tool|>
+        prompt = chat.render([{"role": "user", "content": "x"}], tools=[{"type": "function", "function": tool}], bos_token="<bos>",
+                             enable_thinking=False)
+        out["declarations"].append({"tool": tool, "text": prompt.split("<|tool>", 1)[1].split("<tool|>", 1)[0]})
     sys.stdout.buffer.write((json.dumps(out, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))  # -I: no PYTHONIOENCODING
 
 
