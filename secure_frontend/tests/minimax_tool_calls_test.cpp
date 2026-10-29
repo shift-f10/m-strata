@@ -335,7 +335,7 @@ void plans_with_the_namespace() {
     const auto pack = minimax_pack(with_call_tokens);
     const std::vector<std::string_view> special =
         with_call_tokens ? kAllSpecial : std::vector<std::string_view>{"]~!b[", "]~b]", "[e~[", "<mm:think>", "</mm:think>"};
-    for (const secure_frontend::MinimaxThinking thinking : {secure_frontend::MinimaxThinking{}, secure_frontend::MinimaxThinking{.off = true}}) {
+    for (const secure_frontend::MinimaxThinking& thinking : {secure_frontend::MinimaxThinking{}, secure_frontend::MinimaxThinking{.off = true}}) {
       const auto planned = secure_frontend::make_minimax_tool_generation_plan(request, pack, tools, rounds, 100000U, 64U, {}, thinking);
       const auto* plan = std::get_if<secure_frontend::ChatGenerationPlan>(&planned);
       expect(plan != nullptr, "a MiniMax tool plan");
@@ -383,7 +383,7 @@ void the_route_plans_minimax_searches() {
   request.model = "m";
   request.messages = {{"user", "Hi"}};
   const auto pack = minimax_pack(true);
-  for (const secure_frontend::MinimaxThinking thinking : {secure_frontend::MinimaxThinking{.effort = "high"}, secure_frontend::MinimaxThinking{.off = true}}) {
+  for (const secure_frontend::MinimaxThinking& thinking : {secure_frontend::MinimaxThinking{.effort = "high"}, secure_frontend::MinimaxThinking{.off = true}}) {
     const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, !thinking.off, {}, ToolFormat::minimax, thinking};
     const auto planned = secure_frontend::search_first_plan(config, turn, pack);
     const auto* plan = std::get_if<secure_frontend::ChatGenerationPlan>(&planned);
@@ -414,7 +414,7 @@ void the_real_pack_plans_its_search() {
   secure_frontend::ChatCompletionRequest request;
   request.model = "m";
   request.messages = {{"user", "what is today's headlines?"}};
-  for (const secure_frontend::MinimaxThinking thinking : {secure_frontend::MinimaxThinking{}, secure_frontend::MinimaxThinking{.off = true}}) {
+  for (const secure_frontend::MinimaxThinking& thinking : {secure_frontend::MinimaxThinking{}, secure_frontend::MinimaxThinking{.off = true}}) {
     const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, !thinking.off, {}, secure_frontend::ToolFormat::minimax,
                                            thinking};
     const auto planned = secure_frontend::search_first_plan(config, turn, *pack);

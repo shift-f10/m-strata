@@ -5,6 +5,8 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <cstdint>
+#include <initializer_list>
 #include <thread>
 #include <utility>
 
@@ -22,9 +24,15 @@ void append_count(std::string* out, const std::uint64_t value) { out->append(std
 // The Monitor's expert-tier whitelist (owner: the VRAM and RAM cards show experts
 // loaded): the engine's own key names, INFO split for the main engine and STAT for
 // the GLM engine. Only plain numbers are stored; the page adds the words.
-constexpr std::array<std::string_view, 9> kExpertReadingKeys{
+// Owner 2026-10-28 ("the System Ram reports MB usage only"): each family's own words for its RAM tier too - the GLM
+// and raon1 INFO's ram_slots/vram_slots, DeepSeek's ram_experts, MiniMax's experts_vram, Gemma 4's and flint's
+// pinned_gib, upstream's engine's arena_mib (engine_memory_view reads them).
+constexpr std::array<std::string_view, 15> kExpertReadingKeys{
     "expert_slots", "expert_slots_primary", "expert_cache_mib", "expert_cache_primary_mib", "vram_free_mib",
-    "vram_used", "ram_used", "vram_gb", "ram_gb"};
+    "vram_used", "ram_used", "vram_gb", "ram_gb", "ram_slots", "vram_slots", "ram_experts", "experts_vram",
+    "pinned_gib", "arena_mib"};
+// The conversation cache's INFO (upstream's engine, generate.cpp:11117): its budget and slots.
+constexpr std::array<std::string_view, 2> kCacheReadingKeys{"conversation_cache_mib", "conversation_cache_slots"};
 
 bool is_plain_number(const std::string_view value) {
   if (value.empty() || value.size() > 20U) return false;
@@ -41,6 +49,36 @@ bool is_plain_number(const std::string_view value) {
     digits = true;
   }
   return digits;
+}
+
+// A stored reading as a number: plain, finite and not negative; nullopt otherwise.
+std::optional<double> reading_number(const std::map<std::string, std::string>& readings, const std::string_view key) {
+  const auto found = readings.find(std::string{key});
+  if (found == readings.end() || !is_plain_number(found->second) || found->second.front() == '-') return std::nullopt;
+  double value = 0.0;
+  const char* const begin = found->second.data();
+  const char* const end = begin + found->second.size();
+  const auto [stop, error] = std::from_chars(begin, end, value);
+  if (error != std::errc{} || stop != end || !std::isfinite(value)) return std::nullopt;
+  return value;
+}
+
+// Whole units (a count, bytes) from a reading scaled by `unit`; nullopt past 2^62 (nothing real is that big).
+std::optional<std::uint64_t> reading_units(const std::map<std::string, std::string>& readings, const std::string_view key,
+                                           const double unit = 1.0) {
+  const auto value = reading_number(readings, key);
+  if (!value.has_value()) return std::nullopt;
+  const double scaled = *value * unit;
+  if (!std::isfinite(scaled) || scaled >= 4.6e18) return std::nullopt;
+  return static_cast<std::uint64_t>(std::llround(scaled));
+}
+
+template <typename T>
+std::optional<T> first_of(std::initializer_list<std::optional<T>> values) {
+  for (const auto& value : values) {
+    if (value.has_value()) return value;
+  }
+  return std::nullopt;
 }
 
 // Finite values only, two decimals; anything else is null (the page shows a dash).
@@ -71,6 +109,37 @@ void append_key(std::string* out, const std::string_view key, const bool first =
 }
 
 }  // namespace
+
+// Each family names its tiers in its own words (the engine sources, read for this):
+// - Gemma 4 and flint (g4_cli.cpp:234, f_cli.cpp:209): every routed expert is pinned in RAM (pinned_gib, GiB) and
+//   expert_slots counts all of them; expert_slots_primary are the ones in VRAM slots.
+// - upstream's engine, the Qwen cards (generate.cpp:11114): expert_slots is every VRAM tier; arena_mib is the experts'
+//   RAM arena in MiB. It gives no count of them.
+// - Maya's GLM and our raon1 (generate.cpp:1049, :2121; glm_driver.cpp:829): INFO vram_slots/ram_slots and ram_gb
+//   (GiB), then STAT vram_used/ram_used while decoding. MiniMax (mm3_main.cpp:276, :437): INFO experts_vram/ram_slots,
+//   STAT the same _used keys and ram_gb (GiB). DeepSeek (ds4_model.cu:13433, ds4_main.cpp:1078): INFO expert_slots
+//   (VRAM) and ram_experts, STAT the _used keys and ram_gb in decimal GB (tr.ram * cpu_blob / 1e9).
+// - Qwen 3.6 MoE (q36_engine.cu:3679) prints none.
+EngineMemoryView engine_memory_view(const std::map<std::string, std::string>& readings) {
+  constexpr double kGiB = 1073741824.0;
+  constexpr double kMiB = 1048576.0;
+  EngineMemoryView view;
+  if (readings.count("pinned_gib") != 0U) {
+    view.experts_ram = reading_units(readings, "expert_slots");
+    view.experts_vram = reading_units(readings, "expert_slots_primary");
+    view.experts_ram_bytes = reading_units(readings, "pinned_gib", kGiB);
+  } else if (readings.count("arena_mib") != 0U) {
+    view.experts_vram = reading_units(readings, "expert_slots");
+    view.experts_ram_bytes = reading_units(readings, "arena_mib", kMiB);
+  } else {
+    view.experts_vram = first_of({reading_units(readings, "vram_used"), reading_units(readings, "vram_slots"),
+                                  reading_units(readings, "experts_vram"), reading_units(readings, "expert_slots")});
+    view.experts_ram = first_of({reading_units(readings, "ram_used"), reading_units(readings, "ram_slots"),
+                                 reading_units(readings, "ram_experts")});
+    view.experts_ram_bytes = reading_units(readings, "ram_gb", readings.count("ram_experts") != 0U ? 1e9 : kGiB);
+  }
+  return view;
+}
 
 std::string_view monitor_finish(const RunEnd end, const RunCancel cancel) noexcept {
   switch (end) {
@@ -127,16 +196,28 @@ void ServeMonitor::on_done(const DoneFigures& figures) {
 
 void ServeMonitor::on_engine_stats(const std::map<std::string, std::string>& readings) {
   std::lock_guard lock(mutex_);
+  store_readings_locked(readings);
+}
+
+void ServeMonitor::store_readings_locked(const std::map<std::string, std::string>& readings) {
   for (const auto& key : kExpertReadingKeys) {
     const auto found = readings.find(std::string(key));
     if (found != readings.end() && is_plain_number(found->second)) experts_[std::string(key)] = found->second;
+  }
+  for (const auto& key : kCacheReadingKeys) {
+    const auto found = readings.find(std::string(key));
+    if (found != readings.end() && is_plain_number(found->second)) cache_info_[std::string(key)] = found->second;
   }
 }
 
 void ServeMonitor::engine_changed() {
   std::lock_guard lock(mutex_);
   experts_.clear();
+  cache_info_.clear();
   context_tokens_ = 0;
+  engine_generation_.reset();
+  engine_resident_.reset();
+  conversation_cache_.reset();
 }
 
 void ServeMonitor::end_locked(const std::string_view finish) {
@@ -189,6 +270,7 @@ std::optional<double> ServeMonitor::live_tok_s_locked() const {
 void ServeMonitor::add_host_sample(const HostSample& sample) {
   std::lock_guard lock(mutex_);
   host_ = sample;
+  host_.engine.reset();  // kept below in its own members
   if (sample.gpu.has_value()) gpu_name_ = sample.gpu->name;
   const auto gpu = [&sample](const auto field) -> std::optional<double> {
     if (!sample.gpu.has_value()) return std::nullopt;
@@ -203,6 +285,22 @@ void ServeMonitor::add_host_sample(const HostSample& sample) {
   gpu_mem_used_.push(gpu(&GpuReading::mem_used_bytes), cap);
   gpu_temp_.push(gpu(&GpuReading::temp_c), cap);
   gpu_power_.push(gpu(&GpuReading::power_w), cap);
+  disk_read_.push(sample.disk_read_mb, cap);
+  if (sample.engine.has_value()) {
+    // Another READY (a restart, a reload after an idle unload, another model): its own startup readings replace the
+    // last engine's, the STAT values that engine added included.
+    if (engine_generation_ != sample.engine->generation) {
+      experts_.clear();
+      cache_info_.clear();
+      store_readings_locked(sample.engine->readings);
+      engine_generation_ = sample.engine->generation;
+    }
+    engine_resident_ = sample.engine->resident_bytes;
+    conversation_cache_ = sample.engine->conversation_cache;
+  } else {
+    engine_resident_.reset();
+    conversation_cache_.reset();
+  }
 }
 
 std::optional<double> ServeMonitor::last_decode_tok_s() const {
@@ -229,17 +327,22 @@ std::string ServeMonitor::render_json(const MonitorView& view) const {
   // No engine runs (the launcher's "none": stopped, or none started yet): what the engine that ran reported no longer
   // describes anything loaded (owner 2026-10-27).
   const bool stopped = view.engine == "none";
+  // Owner 2026-10-28 ("when the models are stop and nothing is loaded, the stats seem to stay"): what the engine
+  // reported describes it only while it is up - not while one starts, has failed (a crash, a restart's backoff, the
+  // circuit open) or was unloaded after idling.
+  const bool loaded = !stopped && (view.engine == "ready" || view.engine == "generating");
+  const bool unloaded = !stopped && view.unloaded;
   append_key(&out, "engine", true);
   out.push_back('{');
   append_key(&out, "model", true);
   append_json_string(&out, view.model);
   append_key(&out, "max_context");
-  append_optional_count(&out, stopped || context_tokens_ == 0U ? std::optional<std::size_t>{} : std::optional<std::size_t>{context_tokens_});
+  append_optional_count(&out, !loaded || context_tokens_ == 0U ? std::optional<std::size_t>{} : std::optional<std::size_t>{context_tokens_});
   append_key(&out, "health");
   append_json_string(&out, view.engine);
   // The engine's expert-tier readings (validated on store): the page renders
   // "N experts loaded" on the VRAM and RAM cards from these.
-  if (!stopped && !experts_.empty()) {
+  if (loaded && !experts_.empty()) {
     append_key(&out, "experts");
     out.push_back('{');
     bool first_expert = true;
@@ -250,10 +353,31 @@ std::string ServeMonitor::render_json(const MonitorView& view) const {
     }
     out.push_back('}');
   }
+  append_key(&out, "loaded");
+  out.append(loaded ? "true" : "false");
+  append_key(&out, "unloaded");
+  out.append(unloaded ? "true" : "false");
+  if (loaded) {
+    // The RAM and VRAM cards' figures in one shape for every family (engine_memory_view), and the engine
+    // process's own resident memory.
+    const EngineMemoryView memory = engine_memory_view(experts_);
+    append_key(&out, "memory");
+    out.push_back('{');
+    append_key(&out, "experts_ram", true);
+    append_optional_count(&out, memory.experts_ram);
+    append_key(&out, "experts_ram_bytes");
+    append_optional_count(&out, memory.experts_ram_bytes);
+    append_key(&out, "experts_vram");
+    append_optional_count(&out, memory.experts_vram);
+    append_key(&out, "process_bytes");
+    append_optional_count(&out, engine_resident_);
+    out.push_back('}');
+  }
   out.push_back('}');
 
   std::string_view state = "idle";
   if (stopped) state = "stopped";
+  else if (unloaded) state = "unloaded";
   else if (view.engine == "starting") state = "starting";
   else if (view.engine == "failed") state = "error";
   else if (live_.has_value()) state = live_->first_token.has_value() ? "generating" : "reading";
@@ -334,6 +458,63 @@ std::string ServeMonitor::render_json(const MonitorView& view) const {
   append_decimal(&out, total_decode_ms_);
   out.push_back('}');
 
+  // Upstream's conversation_cache_view (serve/server.py:827-837), field for field, plus `supported`: whether the
+  // engine that is up has the cache at all (its INFO names it; null with none up). The parked conversations live in
+  // the engine, so with none up nothing is parked.
+  {
+    const std::optional<double> budget = loaded ? reading_number(cache_info_, "conversation_cache_mib") : std::nullopt;
+    const std::optional<double> slots = loaded ? reading_number(cache_info_, "conversation_cache_slots") : std::nullopt;
+    const ConversationCacheState parked = loaded && conversation_cache_.has_value() ? *conversation_cache_ : ConversationCacheState{};
+    const auto whole = [](const std::optional<double> value) {
+      return value.has_value() ? std::optional<std::uint64_t>{static_cast<std::uint64_t>(std::llround(*value))} : std::nullopt;
+    };
+    append_key(&out, "conversation_cache");
+    out.push_back('{');
+    append_key(&out, "enabled", true);
+    out.append(budget.value_or(0.0) > 0.0 ? "true" : "false");
+    append_key(&out, "budget_mib");
+    append_optional_count(&out, whole(budget));
+    append_key(&out, "slots");
+    append_optional_count(&out, whole(slots));
+    append_key(&out, "supported");
+    out.append(!loaded ? "null" : cache_info_.count("conversation_cache_mib") != 0U ? "true" : "false");
+    append_key(&out, "parked");
+    append_count(&out, parked.parked);
+    append_key(&out, "bytes");
+    append_count(&out, parked.bytes);
+    append_key(&out, "evictions");
+    append_count(&out, parked.evictions);
+    append_key(&out, "parks");
+    append_count(&out, parked.parks);
+    append_key(&out, "restores");
+    append_count(&out, parked.restores);
+    append_key(&out, "last_event");
+    if (!parked.last_event.has_value()) out.append("null");
+    else append_json_string(&out, *parked.last_event == ConversationCacheEvent::restored ? "restored" : "parked");
+    append_key(&out, "last_tokens");
+    append_optional_count(&out, parked.last_tokens);
+    append_key(&out, "last_at");
+    if (parked.last_at.has_value()) out.append(std::to_string(*parked.last_at));
+    else out.append("null");
+    std::size_t reused_requests = 0;
+    for (const auto& record : requests_) {
+      if (record.reused.value_or(0U) > 0U) ++reused_requests;
+    }
+    append_key(&out, "requests");
+    append_count(&out, requests_.size());
+    append_key(&out, "requests_reused");
+    append_count(&out, reused_requests);
+    append_key(&out, "reused_tokens");
+    append_count(&out, total_reused_);
+    append_key(&out, "prompt_tokens");
+    append_count(&out, total_prompt_tokens_);
+    append_key(&out, "last_reused");
+    append_optional_count(&out, requests_.empty() ? std::nullopt : requests_.front().reused);
+    append_key(&out, "last_prompt");
+    append_optional_count(&out, requests_.empty() ? std::optional<std::size_t>{} : std::optional<std::size_t>{requests_.front().prompt_tokens});
+    out.push_back('}');
+  }
+
   const auto& gpu = host_.gpu;
   append_key(&out, "hardware");
   out.push_back('{');
@@ -361,6 +542,11 @@ std::string ServeMonitor::render_json(const MonitorView& view) const {
   append_optional_count(&out, gpu.has_value() ? gpu->pcie_gen_max : std::nullopt);
   append_key(&out, "gpu_pcie_width");
   append_optional_count(&out, gpu.has_value() ? gpu->pcie_width : std::nullopt);
+  // upstream's telemetry.py:631: every disk's reads and writes over the last second, MiB/s
+  append_key(&out, "disk_read_mb");
+  append_decimal(&out, host_.disk_read_mb);
+  append_key(&out, "disk_write_mb");
+  append_decimal(&out, host_.disk_write_mb);
   out.push_back('}');
 
   append_key(&out, "hardware_static");
@@ -377,12 +563,13 @@ std::string ServeMonitor::render_json(const MonitorView& view) const {
 
   append_key(&out, "history");
   out.push_back('{');
-  const std::array<std::pair<std::string_view, const Series*>, 6> series{{{"tok_s", &tok_s_},
+  const std::array<std::pair<std::string_view, const Series*>, 7> series{{{"tok_s", &tok_s_},
                                                                           {"cpu", &cpu_},
                                                                           {"gpu_util", &gpu_util_},
                                                                           {"gpu_mem_used", &gpu_mem_used_},
                                                                           {"gpu_temp", &gpu_temp_},
-                                                                          {"gpu_power", &gpu_power_}}};
+                                                                          {"gpu_power", &gpu_power_},
+                                                                          {"disk_read_mb", &disk_read_}}};
   bool first_series = true;
   for (const auto& [name, values] : series) {
     append_key(&out, name, first_series);

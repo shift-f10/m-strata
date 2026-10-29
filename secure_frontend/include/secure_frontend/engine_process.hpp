@@ -41,6 +41,11 @@ struct EngineCommand final {
   // The longest line the child may write (EngineStdioProcess::kMaxReadLineBytes for an engine, whose records are short);
   // the MCP search child writes a tool's result as one JSON line (web search, spec 2026-10-27-web-search-design §2).
   std::size_t max_read_line_bytes{8192U};
+  // The Monitor's conversation cache (owner 2026-10-28; upstream ConvCacheLog): EngineStdioProcess reads the child's
+  // stderr through a pipe and keeps only the numbers of its conversation cache lines (conversation_cache_log.hpp);
+  // every line is dropped, none is kept or logged. Set for the Qwen engine only, the one that prints them. false:
+  // stderr goes to NUL / /dev/null. `{false}`: designated initializers that omit it keep compiling (-Werror).
+  bool read_conversation_cache{false};
 };
 
 enum class ProcessErrorCode {

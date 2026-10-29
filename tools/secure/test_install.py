@@ -63,6 +63,18 @@ def test_a_named_llama_cpp_folder_is_used_as_it_is():
             assert script.count(command) == 1 and script.index(command) > otherwise, (name, command)
 
 
+def test_both_front_ends_by_default():
+    """The owner (2026-10-28): "have the installer compile both as an option by default so the user can pick if they
+    want the tui or window version or specify" - both unless -With / --with says otherwise; a Linux machine without a
+    display (a server over SSH) gets the TUI only."""
+    assert '[string]$With = "email,search,window,tui",' in text("install.ps1")
+    sh = text("install.sh")
+    assert 'with=""' in sh and 'then with="email,search,window,tui"' in sh and 'else with="email,search,tui"; no_display=1; fi' in sh
+    assert '"${DISPLAY:-}${WAYLAND_DISPLAY:-}"' in sh
+    # make itself takes the feature
+    assert '"tui")' in text("make.py") and "strata-tui" in text("make.py")
+
+
 def test_the_cpp_workload_is_what_make_asks_for():
     """The script installs, or adds to Build Tools, the workload make's own message names."""
     ps1 = text("install.ps1")

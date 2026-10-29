@@ -124,7 +124,7 @@ std::variant<ServerInvocation, std::string> parse_arguments(const std::vector<st
   if (const auto* error = std::get_if<CliError>(&parsed)) return "the server's options: " + error->message;
   auto invocation = std::get<ServerInvocation>(std::move(parsed));
   if (invocation.command != ServerCommand::serve) {
-    return std::string{"strata-window runs the server; use strata-unified-server itself for init, --check and --help"};
+    return std::string{"this program runs the server; use strata-unified-server itself for init, --check and --help"};
   }
   return invocation;
 }
@@ -227,7 +227,7 @@ std::optional<TrayModels> tray_models(const std::string_view launcher_json) {
       (running->if_string() == nullptr && running->kind() != JsonKind::null)) {
     return std::nullopt;
   }
-  TrayModels models{.state = *state->if_string()};
+  TrayModels models{.models = {}, .running = {}, .state = *state->if_string()};
   if (const auto* name = running->if_string()) models.running = *name;
   for (const auto& card : *data->if_array()) {
     const auto* name = member(card, "name");
@@ -365,7 +365,9 @@ void RotatingLog::write(const std::string_view line) {
   if (size_ > 0U && size_ + bytes > max_bytes_) {
     out_.close();
     std::error_code error;
-    std::filesystem::rename(file_, std::filesystem::path{file_.string() + ".1"}, error);  // replaces the older one
+    auto older = file_;  // (a path joined, never through string(): a folder name the code page cannot spell)
+    older += ".1";
+    std::filesystem::rename(file_, older, error);  // replaces the older one
     if (error) std::filesystem::remove(file_, error);
     open();
   }
@@ -641,6 +643,9 @@ std::optional<std::string> ServerChild::start(const std::filesystem::path& execu
     sigemptyset(&none);
     (void)::sigprocmask(SIG_SETMASK, &none, nullptr);
     if (::dup2(null_input, 0) < 0 || ::dup2(pipe_ends[1], 1) < 0 || ::dup2(pipe_ends[1], 2) < 0) ::_exit(127);
+    // its own process group: a terminal's hangup (SSH gone, the terminal closed), Ctrl-C or Ctrl-Z reaches the window or
+    // the TUI, which stops the server in order, never the server itself (or the parent-death signal below does)
+    (void)::setpgid(0, 0);
 #if defined(__linux__)
     (void)::prctl(PR_SET_PDEATHSIG, SIGTERM);  // the server stops in order when the window ends
     if (::getppid() != parent) ::_exit(127);

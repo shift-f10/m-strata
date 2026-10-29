@@ -129,14 +129,95 @@ std::string card_name_for(const DownloadEntry& entry) {
   return name.empty() ? entry.id : name;
 }
 
-// The model file's stem (a split model's first shard): what a card from the page names as its model (engine.model_id),
-// so the page can hide a download whose model already has a card.
+// The model file's stem (a split model's first shard): what a card from a GGUF names as its model (engine.model_id).
 std::string model_file_stem(const DownloadEntry& entry) {
   if (entry.files.empty()) return {};
   const std::string first = gguf_shard_set(entry.files.front().path).front();
   std::string name = first.substr(first.rfind('/') == std::string::npos ? 0 : first.rfind('/') + 1U);
   if (name.size() > 5U && name.substr(name.size() - 5U) == ".gguf") name.resize(name.size() - 5U);
   return name;
+}
+
+// The catalog's row for that first shard (its pinned size), or nullptr when the entry does not list it.
+const CatalogFile* first_model_file(const DownloadEntry& entry) {
+  if (entry.files.empty()) return nullptr;
+  const std::string first = gguf_shard_set(entry.files.front().path).front();
+  for (const auto& file : entry.files) {
+    if (file.path == first) return &file;
+  }
+  return nullptr;
+}
+
+// A card the launcher holds, as the list matches it to the catalog (owner 2026-10-28): the download it came from (its
+// source download:<id>), and the name and size of the model file it runs (card_model_file; the size when the file is there).
+struct HeldModel final {
+  std::string name;
+  std::string download;
+  std::string file;
+  std::optional<std::uint64_t> size;
+};
+
+std::vector<HeldModel> held_models(const std::function<std::vector<ModelCard>()>& cards) {
+  std::vector<HeldModel> held;
+  if (!cards) return held;
+  constexpr std::string_view kDownload = "download:";
+  for (const auto& card : cards()) {
+    HeldModel model{.name = card.name, .download = {}, .file = {}, .size = std::nullopt};
+    if (card.source.rfind(kDownload, 0) == 0U) model.download = card.source.substr(kDownload.size());
+    if (const auto file = card_model_file(card)) {
+      model.file = path_to_utf8(file->filename());
+      std::error_code ec;
+      const auto size = std::filesystem::file_size(*file, ec);
+      if (!ec) model.size = size;
+    }
+    held.push_back(std::move(model));
+  }
+  return held;
+}
+
+// <cards>/<id>.json is download <id>'s own card: one this manager wrote, its source that download's - or none, a card the
+// prepare step wrote before cards named their source; a file that cannot be read counts as before. A card added from a
+// folder whose file only shares the name (the page names a card's file after the card: on Windows "Gemma-Small.json" is
+// "gemma-small.json") is not, so that download is not taken for done.
+bool download_card_file(const std::filesystem::path& cards_dir, const std::string& id) {
+  const auto file = cards_dir / path_from_utf8(id + ".json");
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(file, ec)) return false;
+  if (const auto size = std::filesystem::file_size(file, ec); ec || size > (1U << 20U)) return true;   // not read: as before
+  std::ifstream in(file, std::ios::binary);
+  if (!in) return true;
+  std::ostringstream text;
+  text << in.rdbuf();
+  // a card's options hold fractions (temperature 1.0, min_p 0.05)
+  constexpr JsonLimits kCardLimits{.max_bytes = 1U << 20U, .max_depth = 8U, .max_container_entries = 65536U, .max_string_bytes = 4096U,
+                                   .allow_fractions = true};
+  const auto parsed = parse_json(text.str(), kCardLimits);
+  const auto* root = std::get_if<JsonValue>(&parsed);
+  const auto* source = root == nullptr ? nullptr : member(*root, "source");
+  return source == nullptr || (source->if_string() != nullptr && *source->if_string() == "download:" + id);
+}
+
+// What this PC already has of a catalog entry (owner 2026-10-28, "Locally Provided vs Downloaded"): "downloaded" - a card
+// from this download, or the download ready or installed (`downloaded`); "local" - another card runs the same model, its
+// file there: the entry's first model file by name, and by size too where the catalog pins one (another quant of that
+// name is not it; nothing is hashed); a card whose file is gone (deleted, a drive not plugged in) is not. Empty: neither.
+// With it the card's name (empty: none).
+std::pair<std::string_view, std::string> have_of(const DownloadEntry& entry, const bool downloaded, const std::vector<HeldModel>& held) {
+  for (const auto& model : held) {
+    if (model.download == entry.id) return {"downloaded", model.name};
+  }
+  const std::string stem = model_file_stem(entry);
+  const auto* first = first_model_file(entry);
+  std::string local;
+  for (const auto& model : held) {
+    if (stem.empty() || model.file != stem + ".gguf" || !model.size) continue;
+    if (first != nullptr && first->size && *first->size != *model.size) continue;
+    local = model.name;
+    break;
+  }
+  if (downloaded) return {"downloaded", local};
+  if (!local.empty()) return {"local", local};
+  return {};
 }
 
 // strata's argv: --config <file>, then --store <folder> when the download goes elsewhere than models.downloads_root.
@@ -205,6 +286,11 @@ class StdioLineChild final : public LineChild {
 bool vision_offered(const DownloadEntry& entry) {
   if (entry.engine != "qwen" || !entry.mmproj || !entry.mmproj->size) return false;
   return is_hf_commit(entry.mmproj->revision.empty() ? entry.revision : entry.mmproj->revision);
+}
+
+// The engines whose downloads Maya's step packs (prepare maya_pack; strata-prepare download --maya).
+bool maya_pack_engine(const std::string_view engine) {
+  return engine == "glm53" || engine == "raon1" || engine == "deepseek" || engine == "minimax";
 }
 
 std::filesystem::path stored_file(const std::filesystem::path& version, const std::string& relative) {
@@ -418,6 +504,7 @@ std::string_view DownloadManager::state_name(const State state) noexcept {
 std::uint64_t DownloadManager::total_of(const DownloadEntry& entry, const bool vision) const {
   std::uint64_t total = 0;
   for (const auto& file : entry.files) total += file.size.value_or(0);
+  if (entry.mtp) total += entry.mtp->size.value_or(0);   // Gemma 4's MTP draft file: always fetched with the model
   if (vision && entry.mmproj) total += entry.mmproj->size.value_or(0);
   return total;
 }
@@ -566,8 +653,7 @@ void DownloadManager::set_state(const std::size_t index, const State state, std:
 void DownloadManager::refresh_installed() {
   std::lock_guard lock(mutex_);
   for (auto& card : cards_) {
-    std::error_code ec;
-    if (std::filesystem::exists(settings_.cards_dir / (card.entry.id + ".json"), ec)) {
+    if (download_card_file(settings_.cards_dir, card.entry.id)) {
       card.state = State::ready;
       card.bytes = card.total;
       continue;
@@ -631,6 +717,8 @@ std::string DownloadManager::list_json() {
     }
   }
   for (auto& [store, free] : spaces) free = disk(store);
+  // the launcher's cards and the model files they run, read outside this manager's lock (the launcher takes its own)
+  const auto held = held_models(settings_.cards);
   std::lock_guard lock(mutex_);
   std::string out = "{\"object\":\"list\",\"disk\":{\"root\":";
   std::string root_label = settings_.downloads_root.root_name().string();
@@ -673,12 +761,14 @@ std::string DownloadManager::list_json() {
     else if (glm_ready && e.engine == "minimax") {
       note = "MiniMax Community License (non-commercial use; engine/templates/minimax-m3.1 has it); after the download the "
              "MiniMax pack is built (about a minute) and a card appears in Models";
-    } else if (glm_ready) note = "after the download the GLM pack is built (a few minutes) and a card appears in Models";
+    } else if (glm_ready && e.engine == "raon1") note = "after the download the raon-1-mini pack is built (a few minutes) and a card appears in Models";
+    else if (glm_ready) note = "after the download the GLM pack is built (a few minutes) and a card appears in Models";
     else if (e.engine == "minimax" && e.prepare == "maya_pack" && native_prepare_tool() && !minimax_template())
       note = "download only: MiniMax's chat template is not beside this server's engine (engine/templates/minimax-m3.1)";
-    else if ((e.engine == "glm53" || e.engine == "deepseek" || e.engine == "minimax") && e.prepare == "maya_pack")
+    else if (maya_pack_engine(e.engine) && e.prepare == "maya_pack")
       note = "download only: this server names no engine for new cards (models.default_engine) with strata-prepare beside it";
     else if (e.engine == "glm53") note = "download only: the GLM-5.3 engine is not built here yet";
+    else if (gguf_ready && e.mtp) note = "its MTP draft file comes too; after the download a card is made from the GGUF, drafting with it, and appears in Models";
     else if (gguf_ready) note = "after the download a card is made from the GGUF and appears in Models";
     else if (e.engine == "gemma4" || e.engine == "flint")
       note = "download only: this server names no engine for new cards (models.default_engine)";
@@ -689,18 +779,22 @@ std::string DownloadManager::list_json() {
     else note = "after the download the pack is built (a few minutes) and a card appears in Models";
     // Maya pins no sizes (read from Hugging Face at the start): until then the card's size is not known, not 0
     const bool size_known = std::all_of(e.files.begin(), e.files.end(), [](const CatalogFile& f) { return f.size.has_value(); });
+    // owner 2026-10-28: what this PC already has of it - the page's and strata-tui's "Downloaded" / "Locally provided"
+    const auto [have, have_card] = have_of(e, card.state == State::ready || card.state == State::installed, held);
     out += i != 0U ? "," : "";
     out += "{\"id\":" + json_text(e.id) + ",\"name\":" + json_text(e.name) + ",\"source\":" + json_text(e.source) + ",\"family\":" +
            json_text(e.family) + ",\"about\":" + json_text(e.about) + ",\"repo\":" + json_text(e.repo) + ",\"size_bytes\":" +
            std::to_string(card.total) + ",\"size_known\":" + (size_known ? "true" : "false") + ",\"files\":" +
-           std::to_string(e.files.size()) + ",\"state\":" + json_text(state_name(card.state)) +
+           std::to_string(e.files.size() + (e.mtp ? 1U : 0U)) + ",\"state\":" + json_text(state_name(card.state)) +
            ",\"bytes\":" + std::to_string(card.bytes) + ",\"total\":" + std::to_string(card.total) + ",\"error\":" +
            (card.error.empty() ? std::string{"null"} : json_text(card.error)) + ",\"needed_bytes\":" + std::to_string(needed) +
            ",\"fits\":" + (fits ? "true" : "false") + ",\"runnable\":" + (qwen_ready || gguf_ready || glm_ready ? "true" : "false") +
            ",\"note\":" + json_text(note) + ",\"folder\":" + json_text(path_to_utf8(store_of(card))) +
            ",\"file\":" + json_text(model_file_stem(e)) +
            ",\"vision_bytes\":" + std::to_string(vision_offered(e) ? e.mmproj->size.value_or(0) : 0U) +
-           ",\"vision\":" + (card.vision ? "true" : "false") + "}";
+           ",\"vision\":" + (card.vision ? "true" : "false") +
+           ",\"have\":" + (have.empty() ? std::string{"null"} : json_text(have)) +
+           ",\"have_card\":" + (have_card.empty() ? std::string{"null"} : json_text(have_card)) + "}";
   }
   // The families a pasted GGUF can be matched to (the page's profile picker). "runnable" is whether
   // a card is written after the download; Gemma 4 is listed but stays download-only (no tokenizer).
@@ -1202,6 +1296,10 @@ void DownloadManager::run_card(const std::size_t index) {
   download.commit = card.entry.revision;
   download.license_url = "https://huggingface.co/" + card.entry.repo;
   for (const auto& file : card.entry.files) download.files.push_back(HfFile{file.path, file.size.value_or(0), file.sha256, false});
+  if (card.entry.mtp) {   // Gemma 4's MTP draft file (owner 2026-10-28): a weights file of its own pin, always with the model
+    const auto& mtp = *card.entry.mtp;
+    download.files.push_back(HfFile{mtp.path, mtp.size.value_or(0), mtp.sha256, false, mtp.repo, mtp.revision});
+  }
   if (card.vision && vision_offered(card.entry)) {   // the picture encoder: role mmproj, from its own repository and revision
     const auto& encoder = *card.entry.mmproj;
     download.files.push_back(HfFile{encoder.path, encoder.size.value_or(0), encoder.sha256, true, encoder.repo, encoder.revision});
@@ -1539,7 +1637,7 @@ bool DownloadManager::native_prepare(const std::size_t index, std::string& error
 }
 
 bool DownloadManager::maya_prepare_ready(const DownloadEntry& entry) const {
-  return (entry.engine == "glm53" || entry.engine == "deepseek" || entry.engine == "minimax") && entry.prepare == "maya_pack" &&
+  return maya_pack_engine(entry.engine) && entry.prepare == "maya_pack" &&
          native_prepare_tool().has_value() && (entry.engine != "minimax" || minimax_template().has_value());
 }
 
@@ -1557,6 +1655,8 @@ std::optional<std::filesystem::path> DownloadManager::minimax_template() const {
 // <store>/packs/<id> holds hard links to its shards (no copy; the same drive) and the pack in pack/. Then the card:
 // glm53, the pack as roots.models with Maya's model name as its marker file (the inventory's model, whose folder the
 // launch passes as --glm-pack), the pack's tokenizer, Maya's GLM menus (maya.py CONTEXTS, DEFAULT_CONTEXT, SAMPLING).
+// raon-1-mini (owner 2026-10-28, our pin) is packed the same way, as its folder card is (strata-prepare's raon1 port of
+// Maya's step): the GGUF linked beside pack/, the served model name its marker, a raon1 card.
 bool DownloadManager::maya_prepare(const std::size_t index, std::string& error) {
   DownloadEntry entry;
   std::filesystem::path store;
@@ -1659,13 +1759,14 @@ bool DownloadManager::maya_prepare(const std::size_t index, std::string& error) 
     error = "its pack could not be made private";
     return false;
   }
-  // the inventory's model: the GLM launch passes its folder, the pack, as --glm-pack
-  if (!write_glm_pack_marker(pack)) {
+  // the inventory's model: the GLM launch passes its folder, the pack, as --glm-pack (raon1: the served model name)
+  const bool raon1 = entry.engine == "raon1";
+  if (!write_pack_marker(pack, raon1 ? kRaon1ModelName : kGlmModelName)) {
     error = "the pack's model file could not be written";
     return false;
   }
-  const auto card = card_for_pack({.family = PackedFamily::glm53, .name = card_name_for(entry), .engine = *settings_.gguf_engine,
-                                   .source = "download:" + entry.id, .pack = pack});
+  const auto card = card_for_pack({.family = raon1 ? PackedFamily::raon1 : PackedFamily::glm53, .name = card_name_for(entry),
+                                   .engine = *settings_.gguf_engine, .source = "download:" + entry.id, .pack = pack});
   return write_download_card(entry, card.name, card.json, error);
 }
 
@@ -1710,6 +1811,15 @@ bool DownloadManager::run_prepare_tool(const std::filesystem::path& tool, std::v
 
 bool DownloadManager::write_download_card(const DownloadEntry& entry, const std::string& card_name, const std::string& card,
                                           std::string& error) {
+  // never over a card added from a folder whose file shares the name (on Windows "Gemma-Small.json" is "gemma-small.json"):
+  // that card already runs the model, and replacing it would lose its folder and its options
+  std::error_code ec;
+  if (std::filesystem::exists(settings_.cards_dir / path_from_utf8(entry.id + ".json"), ec) &&
+      !download_card_file(settings_.cards_dir, entry.id)) {
+    error = "this PC already has a card in " + entry.id + ".json (added from a model folder), so the download's card was not written "
+            "over it; its files are installed";
+    return false;
+  }
   auto cards_root = open_root(settings_.cards_dir);
   const auto card_file = parse_relative_path(entry.id + ".json");
   if (!std::holds_alternative<CanonicalRoot>(cards_root) || !std::holds_alternative<RelativePath>(card_file) ||
@@ -1762,9 +1872,11 @@ bool DownloadManager::gguf_card(const std::size_t index, std::string& error) {
   }
   std::optional<std::filesystem::path> encoder;   // the picture encoder that came with it
   if (vision) encoder = stored_file(*version, entry.mmproj->path);
+  std::optional<std::filesystem::path> mtp;       // Gemma 4's MTP draft file, which always comes with it
+  if (entry.mtp) mtp = stored_file(*version, entry.mtp->path);
   const auto made = card_for_gguf(std::get<GgufMetadata>(header), {.folder = std::get<CanonicalRoot>(root).path(), .file = file,
                                                                    .engine = *settings_.gguf_engine, .source = "download:" + entry.id,
-                                                                   .mmproj = std::move(encoder)});
+                                                                   .mmproj = std::move(encoder), .mtp = std::move(mtp)});
   if (const auto* refused = std::get_if<CardError>(&made)) {
     error = refused->message;
     return false;

@@ -448,6 +448,125 @@ void repointing_rewrites_only_the_folder() {
          "only roots.models changes");
 }
 
+// Owner 2026-10-28 ("gemma4 has an mtp ... make sure we work that mtp in our gemma engine"): a Gemma 4 card made with
+// its MTP draft file runs it (engine.args --mtp <the file>) and lists the MTP option, on by default (off drops --mtp);
+// without one, or for flint (its engine runs none), neither. find_mtp_gguf: the model folder's one mtp-*.gguf, beside
+// the model or in its MTP/ folder (unsloth's layout), a regular file; none or two: none (never a guess).
+void a_gemma4_card_runs_its_mtp_file() {
+  const auto folder = secure_frontend_test::make_scratch_directory();
+  const auto mtp = folder / "MTP" / "mtp-gemma-4-Q8_0.gguf";
+  const auto card_of = [&folder](const secure_frontend::CardText* text) -> std::optional<secure_frontend::ModelCard> {
+    if (text == nullptr) return std::nullopt;
+    auto parsed = secure_frontend::parse_model_card(text->json, folder);
+    std::string why;
+    if (const auto* issues = std::get_if<secure_frontend::ConfigErrors>(&parsed)) {
+      for (const auto& issue : *issues) why += secure_frontend::format_issue(issue) + "; ";
+    }
+    expect(std::holds_alternative<secure_frontend::ModelCard>(parsed), "a valid card file: " + why);
+    if (!std::holds_alternative<secure_frontend::ModelCard>(parsed)) return std::nullopt;
+    return std::get<secure_frontend::ModelCard>(std::move(parsed));
+  };
+  const auto args_of = [](const secure_frontend::ModelCard& card) {
+    const auto found = card.config.entries.find("engine.args");
+    return found == card.config.entries.end() ? std::vector<std::string>{} : std::get<std::vector<std::string>>(found->second.value);
+  };
+  const auto mtp_default = [](const secure_frontend::ModelCard& card) -> std::optional<bool> {
+    for (const auto& limit : card.options) {
+      if (limit.spec != nullptr && limit.spec->name == "mtp") return std::get<bool>(limit.default_value);
+    }
+    return std::nullopt;
+  };
+  const auto with = secure_frontend::card_for_gguf(metadata("gemma4"), {.folder = folder, .file = "gemma-4-Q8_0.gguf", .engine = folder / "e.exe",
+                                                                       .source = "folder", .mtp = mtp});
+  const auto card = card_of(std::get_if<secure_frontend::CardText>(&with));
+  expect(card && args_of(*card) == std::vector<std::string>{"--mtp", secure_frontend::path_to_utf8(mtp)} &&
+             mtp_default(*card) == std::optional<bool>{true},
+         "the Gemma 4 card drafts with its MTP file (--mtp <file>), the MTP option on");
+  // and lists the drafter's window and confidence: a window of 4 (llama.cpp's 3 drafts) and 0.6, the floor measured
+  // fastest on the 4080 SUPER (86.5-91.9 tok/s against 81.2 at llama.cpp's 0 and 74-76 without the drafter)
+  const auto listed = [](const secure_frontend::ModelCard& c, const std::string_view name) {
+    for (const auto& limit : c.options) {
+      if (limit.spec != nullptr && limit.spec->name == name) return std::optional<secure_frontend::ModelOptionValue>{limit.default_value};
+    }
+    return std::optional<secure_frontend::ModelOptionValue>{};
+  };
+  const auto window = card ? listed(*card, "spec") : std::nullopt;
+  const auto confidence = card ? listed(*card, "spec_min_p") : std::nullopt;
+  expect(window && std::get<std::int64_t>(*window) == 4 && confidence && std::get<double>(*confidence) == 0.6,
+         "its draft window (4) and draft confidence (0.6) are on the card");
+  const auto plain = secure_frontend::card_for_gguf(metadata("gemma4"), {.folder = folder, .file = "gemma-4-Q8_0.gguf", .engine = folder / "e.exe",
+                                                                        .source = "folder"});
+  const auto plain_card = card_of(std::get_if<secure_frontend::CardText>(&plain));
+  expect(plain_card && args_of(*plain_card).empty() && !mtp_default(*plain_card) && !listed(*plain_card, "spec") &&
+             !listed(*plain_card, "spec_min_p"),
+         "without one: no --mtp, no MTP option, no draft window or confidence");
+  const auto flint = secure_frontend::card_for_gguf(metadata("flint"), {.folder = folder, .file = "flint-Q8_0.gguf", .engine = folder / "e.exe",
+                                                                       .source = "folder", .mtp = mtp});
+  const auto flint_card = card_of(std::get_if<secure_frontend::CardText>(&flint));
+  expect(flint_card && args_of(*flint_card).empty() && !mtp_default(*flint_card), "flint's engine runs no MTP file: none on its card");
+
+  // find_mtp_gguf: the one named for the model, else the folder's only one when it holds this model alone
+  using Found = std::optional<std::filesystem::path>;
+  const auto models = folder / "models";
+  secure_frontend_test::make_private_directory(models);
+  secure_frontend_test::write_file(models / "gemma-4-Q8_0.gguf", "GGUF");
+  secure_frontend_test::write_file(models / "mmproj-F16.gguf", "GGUF");   // a picture encoder is not another model
+  secure_frontend_test::write_file(models / "mtp-notes.txt", "not a GGUF");
+  expect(!secure_frontend::find_mtp_gguf(models, "gemma-4-Q8_0.gguf"), "no MTP file in the folder: none");
+  secure_frontend_test::make_private_directory(models / "MTP");
+  secure_frontend_test::write_file(models / "MTP" / "mtp-gemma-4-Q8_0.gguf", "GGUF");
+  expect(secure_frontend::find_mtp_gguf(models, "gemma-4-Q8_0.gguf") == Found{models / "MTP" / "mtp-gemma-4-Q8_0.gguf"},
+         "the one in its MTP/ folder named for the model (unsloth's layout)");
+  secure_frontend_test::write_file(models / "MTP-gemma-4-Q4.gguf", "GGUF");
+  expect(secure_frontend::find_mtp_gguf(models, "gemma-4-Q8_0.gguf") == Found{models / "MTP" / "mtp-gemma-4-Q8_0.gguf"},
+         "the one named for the model wins over another");
+  expect(!secure_frontend::find_mtp_gguf(models, "gemma-4-Q4_K_M.gguf"), "two MTP files, none named for the model: none (never a guess)");
+  std::filesystem::remove(models / "MTP" / "mtp-gemma-4-Q8_0.gguf");
+  expect(secure_frontend::find_mtp_gguf(models, "gemma-4-Q8_0.gguf") == Found{models / "MTP-gemma-4-Q4.gguf"},
+         "the folder's only MTP file, beside its only model (names in any case)");
+  secure_frontend_test::write_file(models / "gemma-4-31B-Q8_0.gguf", "GGUF");
+  expect(!secure_frontend::find_mtp_gguf(models, "gemma-4-Q8_0.gguf"),
+         "a folder of two models: an MTP file named for neither is never guessed");
+  secure_frontend_test::write_file(models / "mtp-gemma-4-31B-Q8_0.gguf", "GGUF");
+  expect(secure_frontend::find_mtp_gguf(models, "gemma-4-31B-Q8_0.gguf") == Found{models / "mtp-gemma-4-31B-Q8_0.gguf"},
+         "but the one named for the model is");
+}
+
+// A Gemma 4 card's MTP file in its model folder moves with the folder when the new folder holds it at the same place
+// (spec section 4.4: the files were moved together); one the new folder lacks (the model alone moved), or one kept elsewhere, stays
+// as it was.
+void repointing_moves_the_mtp_file_with_the_folder() {
+  const auto folder = secure_frontend_test::make_scratch_directory();
+  const auto moved = secure_frontend_test::make_scratch_directory();
+  const auto elsewhere = secure_frontend_test::make_scratch_directory();
+  secure_frontend_test::make_private_directory(moved / "MTP");
+  secure_frontend_test::write_file(moved / "MTP" / "mtp-g.gguf", "GGUF");
+  secure_frontend_test::write_file(moved / "mtp-g.gguf", "GGUF");
+  const auto args_after = [&](const std::filesystem::path& mtp) {
+    const auto made = std::get<secure_frontend::CardText>(secure_frontend::card_for_gguf(
+        metadata("gemma4"), {.folder = folder, .file = "g.gguf", .engine = folder / "e.exe", .source = "folder", .mtp = mtp}));
+    const auto repointed = secure_frontend::card_with_folder(made.json, moved);
+    const auto* text = std::get_if<std::string>(&repointed);
+    if (text == nullptr) return std::vector<std::string>{"<not rewritten>"};
+    const auto parsed = secure_frontend::parse_model_card(*text, folder);
+    const auto* card = std::get_if<secure_frontend::ModelCard>(&parsed);
+    if (card == nullptr || std::get<std::string>(card->config.entries.at("roots.models").value) != secure_frontend::path_to_utf8(moved)) {
+      return std::vector<std::string>{"<not moved>"};
+    }
+    return std::get<std::vector<std::string>>(card->config.entries.at("engine.args").value);
+  };
+  expect(args_after(folder / "MTP" / "mtp-g.gguf") ==
+             std::vector<std::string>{"--mtp", secure_frontend::path_to_utf8(moved / "MTP" / "mtp-g.gguf")},
+         "the MTP file in the model folder follows it");
+  expect(args_after(folder / "mtp-g.gguf") == std::vector<std::string>{"--mtp", secure_frontend::path_to_utf8(moved / "mtp-g.gguf")},
+         "beside the model too");
+  expect(args_after(elsewhere / "mtp-g.gguf") == std::vector<std::string>{"--mtp", secure_frontend::path_to_utf8(elsewhere / "mtp-g.gguf")},
+         "one outside the model folder stays where it is");
+  expect(args_after(folder / "MTP" / "mtp-other.gguf") ==
+             std::vector<std::string>{"--mtp", secure_frontend::path_to_utf8(folder / "MTP" / "mtp-other.gguf")},
+         "one the new folder does not hold stays where it was (the model alone moved)");
+}
+
 void delete_codes_are_one_time() {
   using Clock = secure_frontend::DeleteCodes::Clock;
   secure_frontend::DeleteCodes codes;
@@ -499,6 +618,104 @@ void deleting_removes_only_the_model_files() {
   expect(std::holds_alternative<secure_frontend::CardError>(missing), "a model file that is not there is an error, not a no-op");
 }
 
+// Owner 2026-10-28 ("when we point it to a local folder with the model, if it match the card of the model that is
+// downloadable, we should change the banner from available to Locally Provided vs Downloaded"): the model file a card
+// runs, which the Download list matches to a catalog entry. A card from a GGUF and a Qwen3.8 pack card name it
+// (roots.models / engine.model_id .gguf); a card on a Maya pack (GLM-5.3, raon-1-mini, DeepSeek, MiniMax) names the pack
+// and Maya's model name (its marker), so its model is the first shard the pack was built from, beside the pack - the one
+// native_experts.txt indexes, else the first sources.json lists (MiniMax's indexers file after the shards is not it).
+void a_cards_model_file_is_the_gguf_it_runs() {
+  using secure_frontend::PackedFamily;
+  const auto folder = secure_frontend_test::make_scratch_directory();
+  const auto engine = folder / "multiengine.exe";
+  const auto card_of = [&folder](const std::string& json) -> std::optional<secure_frontend::ModelCard> {
+    auto parsed = secure_frontend::parse_model_card(json, folder);
+    std::string why;
+    if (const auto* issues = std::get_if<secure_frontend::ConfigErrors>(&parsed)) {
+      for (const auto& issue : *issues) why += secure_frontend::format_issue(issue) + "; ";
+    }
+    expect(std::holds_alternative<secure_frontend::ModelCard>(parsed), "a valid card file: " + why);
+    if (auto* card = std::get_if<secure_frontend::ModelCard>(&parsed)) return std::move(*card);
+    return std::nullopt;
+  };
+  const auto model_file = [](const std::optional<secure_frontend::ModelCard>& card) -> std::string {
+    if (!card) return "no card";
+    const auto file = secure_frontend::card_model_file(*card);
+    return file ? secure_frontend::path_to_utf8(*file) : std::string{"none"};
+  };
+  const auto at = [](const std::filesystem::path& path) { return secure_frontend::path_to_utf8(path); };
+  const auto nested = [](const std::filesystem::path& path) {
+    secure_frontend_test::make_private_directory(path.parent_path());
+    secure_frontend_test::make_private_directory(path);
+  };
+
+  // from a GGUF: the file picked (a split model's first shard)
+  const auto flint = secure_frontend::card_for_gguf(metadata("flint"), {.folder = folder / "f", .file = "flint-Q8_0-00001-of-00002.gguf",
+                                                                        .engine = engine, .source = "folder"});
+  const auto* flint_text = std::get_if<secure_frontend::CardText>(&flint);
+  expect(flint_text != nullptr && model_file(card_of(flint_text->json)) == at(folder / "f" / "flint-Q8_0-00001-of-00002.gguf"),
+         "a card from a GGUF runs that file: " + (flint_text != nullptr ? model_file(card_of(flint_text->json)) : std::string{}));
+
+  // Qwen3.8: the model folder and the first shard, the pack elsewhere
+  const auto qwen = secure_frontend::card_for_pack({.family = PackedFamily::qwen38, .name = "Q", .engine = engine, .source = "folder",
+                                                    .pack = folder / "packs" / "Q", .folder = folder / "models",
+                                                    .model_id = "q-00001-of-00002"});
+  expect(model_file(card_of(qwen.json)) == at(folder / "models" / "q-00001-of-00002.gguf"),
+         "a Qwen3.8 card runs its first shard: " + model_file(card_of(qwen.json)));
+
+  // GLM-5.3 and raon-1-mini on pack/: the shard native_experts.txt indexes, beside the pack
+  const auto glm_folder = folder / "glm";
+  nested(glm_folder / "pack");
+  secure_frontend_test::write_file(glm_folder / "pack" / "native_experts.txt",
+                                   "# strata native experts v3: ... absolute offsets in GLM-Test-00001-of-00002.gguf, or in the named shard(s) beside it)\n1 2 3\n");
+  const auto glm = card_of(secure_frontend::card_for_pack({.family = PackedFamily::glm53, .name = "G", .engine = engine, .source = "folder",
+                                                           .pack = glm_folder / "pack"}).json);
+  expect(model_file(glm) == at(glm_folder / "GLM-Test-00001-of-00002.gguf"), "a GLM card runs the shards its pack indexes: " + model_file(glm));
+  const auto raon_folder = folder / "raon";
+  nested(raon_folder / "pack-raon");
+  secure_frontend_test::write_file(raon_folder / "pack-raon" / "native_experts.txt",
+                                   "# strata native experts v3: ... absolute offsets in raon-1-mini-preview-Q8_0.gguf, or in the named shard(s) beside it)\r\n");
+  const auto raon = card_of(secure_frontend::card_for_pack({.family = PackedFamily::raon1, .name = "R", .engine = engine, .source = "folder",
+                                                            .pack = raon_folder / "pack-raon"}).json);
+  expect(model_file(raon) == at(raon_folder / "raon-1-mini-preview-Q8_0.gguf"), "a raon1 card likewise (a CRLF line too): " + model_file(raon));
+
+  // DeepSeek-V4.1 and MiniMax-M3.1: no native_experts.txt; the first model file sources.json lists
+  const auto ds_folder = folder / "ds";
+  nested(ds_folder / "maya-ds4");
+  secure_frontend_test::write_file(ds_folder / "maya-ds4" / "sources.json",
+                                   "{\n \"files\": [\n  {\n   \"name\": \"DS-Test-00001-of-00002.gguf\",\n   \"size\": 10,\n   \"mtime_ns\": 1\n  },\n"
+                                   "  {\n   \"name\": \"DS-Test-00002-of-00002.gguf\",\n   \"size\": 10,\n   \"mtime_ns\": 1\n  }\n ],\n \"tools\": \"x\"\n}");
+  const auto ds = card_of(secure_frontend::card_for_pack({.family = PackedFamily::deepseek, .name = "D", .engine = engine, .source = "folder",
+                                                          .pack = ds_folder / "maya-ds4"}).json);
+  expect(model_file(ds) == at(ds_folder / "DS-Test-00001-of-00002.gguf"), "a DeepSeek card runs the shards sources.json lists: " + model_file(ds));
+  const auto mm_folder = folder / "mm";
+  nested(mm_folder / "maya-mm3");
+  secure_frontend_test::write_file(mm_folder / "maya-mm3" / "sources.json",
+                                   "{\"files\": [{\"name\": \"MM-Test-maya-indexers.gguf\", \"size\": 1, \"mtime_ns\": 1}, "
+                                   "{\"name\": \"MM-Test-IQ1_S-00002-of-00002.gguf\", \"size\": 1, \"mtime_ns\": 1}, "
+                                   "{\"name\": \"MM-Test-IQ1_S-00001-of-00002.gguf\", \"size\": 1, \"mtime_ns\": 1}]}");
+  const auto mm = card_of(secure_frontend::card_for_pack({.family = PackedFamily::minimax, .name = "M", .engine = engine, .source = "folder",
+                                                          .pack = mm_folder / "maya-mm3"}).json);
+  expect(model_file(mm) == at(mm_folder / "MM-Test-IQ1_S-00001-of-00002.gguf"),
+         "a MiniMax card runs its first shard, never its indexers file nor a later shard: " + model_file(mm));
+
+  // a pack that records no source, a name that is a path, and a card naming no model folder: nothing is guessed
+  const auto bare = folder / "bare";
+  nested(bare / "pack");
+  const auto unknown = card_of(secure_frontend::card_for_pack({.family = PackedFamily::glm53, .name = "U", .engine = engine, .source = "folder",
+                                                               .pack = bare / "pack"}).json);
+  expect(model_file(unknown) == "none", "a pack that names no source: none: " + model_file(unknown));
+  const auto away = folder / "away";
+  nested(away / "pack");
+  secure_frontend_test::write_file(away / "pack" / "native_experts.txt", "# ... absolute offsets in ../elsewhere/GLM-00001-of-00002.gguf, or ...\n");
+  const auto outside = card_of(secure_frontend::card_for_pack({.family = PackedFamily::glm53, .name = "W", .engine = engine, .source = "folder",
+                                                               .pack = away / "pack"}).json);
+  expect(model_file(outside) == "none", "a pack's source is a file name beside the pack, never a path: " + model_file(outside));
+  const auto handwritten = card_of(R"({"schema_version":1,"name":"H","profile":"gemma4","config":{"engine":{"executable":")" +
+                                   engine.generic_string() + R"("}},"options":{}})");
+  expect(model_file(handwritten) == "none", "a card that names no model folder or model: none: " + model_file(handwritten));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -514,7 +731,10 @@ int main(int argc, char** argv) {
       {"a_minimax_pack_makes_a_minimax_card", a_minimax_pack_makes_a_minimax_card},
       {"a_raon1_pack_makes_a_raon1_card", a_raon1_pack_makes_a_raon1_card},
       {"repointing_rewrites_only_the_folder", repointing_rewrites_only_the_folder},
+      {"a_gemma4_card_runs_its_mtp_file", a_gemma4_card_runs_its_mtp_file},
+      {"repointing_moves_the_mtp_file_with_the_folder", repointing_moves_the_mtp_file_with_the_folder},
       {"delete_codes_are_one_time", delete_codes_are_one_time},
       {"deleting_removes_only_the_model_files", deleting_removes_only_the_model_files},
+      {"a_cards_model_file_is_the_gguf_it_runs", a_cards_model_file_is_the_gguf_it_runs},
   }, failures);
 }

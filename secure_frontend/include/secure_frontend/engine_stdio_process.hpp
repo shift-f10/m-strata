@@ -1,19 +1,29 @@
 #pragma once
 
+#include "secure_frontend/conversation_cache_log.hpp"
 #include "secure_frontend/engine_process.hpp"
 #include "secure_frontend/engine_protocol_client.hpp"
 #include "secure_frontend/exit_status.hpp"
 #include "secure_frontend/supervised_process.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace secure_frontend {
+
+// Linux /proc/<pid>/status: its VmRSS line ("VmRSS:\t 123456 kB") in bytes; nullopt without a valid one.
+[[nodiscard]] std::optional<std::uint64_t> parse_proc_status_resident_bytes(std::string_view text) noexcept;
+
+// The longest stderr line the conversation cache reader looks at; a longer one is dropped unread to its line end.
+inline constexpr std::size_t kStderrLineBytes = 4096U;
 
 // Owns a Strata --serve child and provides its line-delimited stdin/stdout
 // protocol.  It deliberately starts a supplied executable directly, with an
@@ -63,6 +73,11 @@ class EngineStdioProcess final : public EngineLineTransport, public SupervisedPr
   void kill_group() noexcept override;
   void release_resources(std::chrono::milliseconds bound) noexcept override;
   [[nodiscard]] long pid() const noexcept override;
+  // The Monitor (owner 2026-10-28): the running child's working set (Windows) / VmRSS (Linux); nullopt once it ended.
+  [[nodiscard]] std::optional<std::uint64_t> resident_bytes() const noexcept override;
+  // With EngineCommand::read_conversation_cache: what the child's stderr told of its conversation cache so far (only
+  // the parsed numbers; every stderr line is dropped). nullopt without the flag.
+  [[nodiscard]] std::optional<ConversationCacheState> conversation_cache() const override;
   // The generation's private temp directory (Task 18). release_resources()
   // removes it, which the supervisor calls only after the leader is reaped.
   void set_generation_temp_dir(std::filesystem::path directory) { generation_temp_dir_ = std::move(directory); }
@@ -102,10 +117,18 @@ class EngineStdioProcess final : public EngineLineTransport, public SupervisedPr
   std::uint32_t kill_exit_code_{kSupervisorKillExitCode};
   // The EngineCommand's max_read_line_bytes (kMaxReadLineBytes for an engine), captured by start().
   std::size_t max_read_line_{kMaxReadLineBytes};
+  // EngineCommand::read_conversation_cache: the thread that drains the child's stderr pipe and keeps only the
+  // conversation cache's numbers (engine_stdio_process.cpp). Stopped and joined by cleanup().
+  struct StderrReader;
+  std::shared_ptr<StderrReader> stderr_reader_;
+#if !defined(_WIN32)
+  std::atomic<int> live_pid_{-1};  // the child while it runs (resident_bytes() reads it from another thread)
+#endif
 
   // Removes and validates one complete line from pending_stdout_, or returns
   // nullopt when no newline has arrived yet.
   [[nodiscard]] std::optional<EngineReadResult> take_pending_line();
+  void stop_stderr_reader() noexcept;
   void cleanup() noexcept;
 };
 

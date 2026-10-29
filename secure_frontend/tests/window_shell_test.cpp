@@ -12,6 +12,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <mutex>
@@ -163,6 +164,18 @@ void the_log_rotates_at_its_bound() {
   struct stat info {};
   expect(::stat(file.c_str(), &info) == 0 && (info.st_mode & 0777) == 0600, "owner-only");
 #endif
+  // a data folder whose name the system's ANSI code page cannot spell (path::string() throws for it on Windows)
+  const auto named = root / std::filesystem::path{u8"logs-日本"};
+  std::filesystem::create_directories(named);
+  auto rotated = named / "server.log";
+  rotated += ".1";
+  try {
+    w::RotatingLog log(named / "server.log", 64);
+    for (int i = 1; i <= 4; ++i) log.write("line-" + std::to_string(i) + " 0123456789ab");
+    expect(std::filesystem::exists(rotated), "it rotates under any folder name");
+  } catch (const std::exception&) {
+    expect(false, "it rotates under any folder name (no exception)");
+  }
 }
 
 // The window starts the server beside it with its own arguments; the data folder is the one that start uses.
@@ -274,12 +287,17 @@ std::optional<std::string> start_fake(w::ServerChild& child, Watched& watched, s
 void the_server_child_stops_in_order() {
   Watched watched;
   w::ServerChild child;
-  expect(!start_fake(child, watched, {}).has_value(), "started");
+  expect(!start_fake(child, watched, {"--show-group"}).has_value(), "started");
   {
     std::unique_lock lock(watched.mutex);
     expect(watched.changed.wait_for(lock, std::chrono::seconds(20), [&] { return watched.saw("#login=" + std::string{kCode}); }),
            "its stdout reaches the window");
     expect(watched.saw("waiting for the page"), "and its stderr");
+#if !defined(_WIN32)
+    // its own process group: a terminal's hangup, Ctrl-C or Ctrl-Z reaches the window or the TUI, which stops it in
+    // order, never the server itself mid-generation
+    expect(watched.saw("group own"), "the server leads its own process group");
+#endif
   }
   expect(child.running(), "running");
   expect(child.stop(std::chrono::seconds(15)), "it stopped when asked (Ctrl-Break / SIGTERM), not killed");

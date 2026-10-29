@@ -854,6 +854,31 @@ LGPL licence), found by pkg-config; nothing of them is vendored or bundled.
 
 [webview2]: https://www.nuget.org/packages/Microsoft.Web.WebView2
 
+## strata-tui (the server in a terminal, 2026-10-28)
+
+`strata-tui` (spec `docs/superpowers/specs/2026-10-28-server-tui-design.md`) is our own code, all of it: the screen
+(cells, rounded boxes, eighth-block gauges, braille charts, and the VT output between frames) in `tui_screen.cpp`, the
+key decoder in `tui_input.cpp`, the views in `tui_app.cpp`, the terminal in `tui_terminal.cpp`, and the program in
+`tui_main.cpp`, over the window's own `window_shell` (the server child, its log, its loopback requests). No library is
+added: it uses only the C++ standard library and the system's own console, the Win32 console API on Windows (VT mode,
+`ReadConsoleInputW`) and POSIX `termios`, `poll` and `TIOCGWINSZ` elsewhere. Its escape sequences are standard ECMA-48
+ones and xterm's private modes (the alternate screen 1049, SGR mouse reports 1000/1006), and its glyphs are Unicode's
+box-drawing, block and braille characters. No terminal library's code (curses, FTXUI, notcurses or others) was consulted
+or copied.
+
+## The Linux build environment (build tool only, 2026-10-28)
+
+The owner asked for the toolchains the TUI's Linux compile needs ("download and install the needed toolchains for the tui
+compile"). A WSL 2 distro, `mstrata-linux`, compiles and tests the frontend with CI's Linux compilers on this PC. It is
+Canonical's Ubuntu 24.04 WSL image `ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz` from
+`https://cloud-images.ubuntu.com/wsl/releases/24.04/current/` (356,739,129 bytes, sha256
+`8251e27ffff381a4af5f41dcb94d867de3e0d9774a9241908ab34555d99315ea`, which matched that folder's `SHA256SUMS`). It was
+imported with `wsl --import` into the git-ignored `/.toolchains/wsl/`, its disk included. Inside it, Ubuntu's own packages
+were installed with apt: `build-essential`, `g++` (GCC 13.3), `clang` (Clang 18.1), `cmake` (3.28), `ninja-build`,
+`pkg-config`, `libssl-dev`, `python3`, `python3-venv`, `git` and `ca-certificates`. They match CI's `ubuntu-24.04`
+runners. Builds run as an unprivileged user in the distro, from `/mnt/c/multi-strata`, into folders on the distro's own
+disk. Nothing from it is in this tree or shipped. Windows claims still come only from CI's `windows-msys2-clang` job.
+
 ## llvm-mingw (build tool only)
 
 [mstorsjo/llvm-mingw][llvmmingw] release `20261006` is the open-source
@@ -949,6 +974,24 @@ contains those rules word for word; its output `secure_frontend/catalog/download
 `tools/secure/prepare_download.py` is ours and embedded at build too; it runs upstream's
 `tools/iq_pack.py` and `tools/strata_tokenizer.py` in place at run time (read only, from the
 operator's `models.prepare_tools`), and nothing of them is copied into this tree.
+
+**Our own catalog pins (2026-10-28; owner: "there are no download cards for ... flint, raon1, gemma4", and "gemma4 has
+an mtp ... make sure we work that mtp in our gemma engine").** `tools/secure/catalog_pins.json` is ours, hand-written
+data (source `m-strata` in the catalog), read by `download_catalog.py`'s `pin_entries`, which drops any entry that is
+not pinned by a 40-hex commit and a size and SHA-256 per file, names another engine or prepare step, or names no
+licence. Each fact was read from Hugging Face on 2026-10-28 with metadata requests only, never a download: the resolve
+URL's HEAD (`X-Repo-Commit`, `X-Linked-Size`, `X-Linked-ETag` = the LFS SHA-256) and the model API's
+`cardData.license`. No model file is in this tree.
+
+| entry | repository @ commit | file | bytes | SHA-256 | licence (model card) |
+|---|---|---|---|---|---|
+| `flint-q8_0` | `unsloth/flint-GGUF` @ `20468edfc38ab43d6914cc88b08cbecb05d0fc62` | `flint-Q8_0.gguf` | 42301076928 | `5df42b56859c7b5142228005d7d63c327ec9e34c99c72548016d805309a0d284` | `apache-2.0` (base model RecursiveSI/flint) |
+| `raon-1-mini-preview-q8_0` | `KRAFTON/Raon-1-mini-preview-gguf` @ `cd61e81afcdfdf4b13cb345b3587c0ba4b918d00` | `raon-1-mini-preview-Q8_0.gguf` | 30693555936 | `15582e05c3dc028b16d14ddf1a692a1602884b9ec48055fade2078369f99f6fc` | `apache-2.0` |
+| `gemma-4-26b-a4b-it-q8_0` | `unsloth/gemma-4-26B-A4B-it-GGUF` @ `c099eb48e663fd284577b04978a94ffccb261841` | `gemma-4-26B-A4B-it-Q8_0.gguf` | 26859861728 | `5f7cbd0f4564e84342fc34321a09acb54b1a3da9215124e5bf444baa6dda152c` | `apache-2.0` (its card's `license_link`: Google's Gemma 4 licence page, ai.google.dev/gemma/docs/gemma_4_license) |
+| (its MTP draft file) | the same | `MTP/mtp-gemma-4-26B-A4B-it-Q8_0.gguf` | 461766816 | `6326fb9f5e487aa8dcdd313a091e3c67724cb2a666ec3b7d2895b5b26d93ed1b` | the same |
+
+The page's card states the licence ("Licence: apache-2.0 (its model card)."); the download's manifest points at the
+repository's model card as its licence URL, as for every other download.
 
 The parallel ranged downloader (2026-10-23; `download_pieces`, the parallel path in
 `fetch_file.cpp`) is ours. Its design mirrors upstream Strata's downloader (`upstream/setup.py`

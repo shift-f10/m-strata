@@ -111,6 +111,33 @@ void supervisor_captures_startup_readings_at_ready() {
   supervisor.shutdown(5s);
 }
 
+// The Monitor's sampler (owner 2026-10-28): the engine that is up, with its READY readings and its process's memory;
+// a restart is another READY with a number of its own, so its readings replace the last one's.
+void supervisor_samples_the_engine_that_is_up() {
+  test_support::FakeFactory fakes([](test_support::FakeChild& child, const std::uint64_t generation) {
+    child.resident = generation * (1ULL << 30U);
+    child.push_line("INFO context=4096 expert_slots=" + std::to_string(100U * generation));
+    child.push_line("READY 4096 stop");
+  });
+  auto clock = std::make_shared<test_support::ManualClock>();
+  secure_frontend::EngineSupervisor supervisor({}, fakes.factory(), clock);
+  expect(!supervisor.engine_sample().has_value(), "before start: no engine");
+  expect(supervisor.start(), "the supervisor starts");
+  expect(test_support::wait_generation_ready(supervisor, 1U, 5s), "generation 1 ready");
+  const auto first = supervisor.engine_sample();
+  expect(first.has_value() && first->readings.count("expert_slots") == 1U && first->readings.at("expert_slots") == "100" &&
+             first->resident_bytes == std::optional<std::uint64_t>{1ULL << 30U} && !first->conversation_cache.has_value(),
+         "generation 1: its readings and its memory");
+  fakes.child(1U)->end({false, 1U});  // a crash: the supervisor restarts it
+  expect(test_support::wait_generation_ready(supervisor, 2U, 5s), "generation 2 ready");
+  const auto second = supervisor.engine_sample();
+  expect(second.has_value() && first.has_value() && second->generation != first->generation &&
+             second->readings.at("expert_slots") == "200" && second->resident_bytes == std::optional<std::uint64_t>{2ULL << 30U},
+         "the restarted engine: another number, its own readings");
+  supervisor.shutdown(5s);
+  expect(!supervisor.engine_sample().has_value(), "after shutdown: no engine");
+}
+
 void proc04_restart_backoff_then_circuit_open() {
   test_support::FakeFactory fakes([](test_support::FakeChild& child, std::uint64_t) { child.end({false, 1U}); });
   auto clock = std::make_shared<test_support::ManualClock>();
@@ -187,6 +214,25 @@ void idle_unload_tears_down_then_respawns_on_next_request() {
   supervisor.wake_for_request();  // the GenerationGate does this for a request that finds the engine unloaded
   expect(test_support::wait_generation_ready(supervisor, 2U, 5s), "the request path gets generation 2 on the same composed launch");
   expect(supervisor.snapshot().state == SupervisorState::ready, "ready again");
+  supervisor.shutdown(5s);
+}
+
+// The idle window a Lease's release arms must reach a supervisor thread that waits on the engine itself (the process
+// handle, a pidfd: no poll slices). A generation that began right after READY sent that wait unbounded (no window while
+// it ran), and the window armed at its release never fired: api_server_tests' idle_unload_respawns_before_the_next_request
+// failed now and then (seen 2026-10-28, once the Monitor's stderr reader moved the start's timing).
+void idle_unload_fires_after_a_request_that_began_at_ready() {
+  secure_frontend::SupervisorConfig config;
+  config.idle_unload = std::chrono::seconds(1);
+  secure_frontend::EngineSupervisor supervisor(config, secure_frontend::make_stdio_process_factory(fake_plan({})));
+  expect(supervisor.start(), "the supervisor starts");
+  expect(test_support::wait_generation_ready(supervisor, 1U, 10s), "generation 1 ready");
+  {
+    auto lease = supervisor.acquire();
+    expect(lease.has_value(), "a request takes the engine at READY");
+    std::this_thread::sleep_for(1500ms);  // past the window armed at READY; the supervisor thread now waits unbounded
+  }  // the release arms the window at now + 1 s
+  expect(supervisor.wait_for_state(SupervisorState::unloaded, 5s), "the window armed at the release tears the engine down");
   supervisor.shutdown(5s);
 }
 
@@ -1165,10 +1211,10 @@ void vision_child_argv_follows_upstreams_strata_vision() {
          "upstream's order, --gpu after the files, flash attention in upstream's spelling");
   // upstream's Vision.token_limit (serve/server.py): without a limit of its own, the encoder's kind decides - 1024 image
   // tokens on the GPU, 300 on the CPU (setup.py's VISION table)
-  const auto cpu = secure_frontend::compose_vision_arguments({.mmproj = "/p/m.gguf", .model = "/p/x.gguf", .upstream_encoder = true});
+  const auto cpu = secure_frontend::compose_vision_arguments({.mmproj = "/p/m.gguf", .model = "/p/x.gguf", .max_tokens = {}, .upstream_encoder = true});
   expect((cpu == std::vector<std::string>{"--mmproj", "/p/m.gguf", "--model", "/p/x.gguf", "--max-tokens", "300"}),
          "the CPU encoder: upstream's 300 image tokens");
-  const auto gpu = secure_frontend::compose_vision_arguments({.mmproj = "/p/m.gguf", .model = "/p/x.gguf", .gpu = true, .upstream_encoder = true});
+  const auto gpu = secure_frontend::compose_vision_arguments({.mmproj = "/p/m.gguf", .model = "/p/x.gguf", .max_tokens = {}, .gpu = true, .upstream_encoder = true});
   expect((gpu == std::vector<std::string>{"--mmproj", "/p/m.gguf", "--model", "/p/x.gguf", "--gpu", "--max-tokens", "1024"}),
          "the GPU encoder: upstream's 1024 image tokens");
 }
@@ -2270,6 +2316,9 @@ int main(int argc, char* argv[]) {
                                                 {"fake_maya_vram_records_reach_ready_only_under_the_maya_dialect",
                                                  fake_maya_vram_records_reach_ready_only_under_the_maya_dialect},
                                                 {"proc02_child_env_is_exact_allowlist", proc02_child_env_is_exact_allowlist},
+                                                {"supervisor_samples_the_engine_that_is_up", supervisor_samples_the_engine_that_is_up},
+                                                {"idle_unload_fires_after_a_request_that_began_at_ready",
+                                                 idle_unload_fires_after_a_request_that_began_at_ready},
 #if !defined(_WIN32)
                                                 {"shutdown_signal_preserves_errno", shutdown_signal_preserves_errno},
                                                 {"supervisor_start_refuses_without_wake", supervisor_start_refuses_without_wake},

@@ -8,9 +8,11 @@
 // is loaded into this process (upstream reads NVML in-process, serve/telemetry.py), and nothing
 // here touches a network.
 
+#include "secure_frontend/conversation_cache_log.hpp"
 #include "secure_frontend/engine_process.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -20,6 +22,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace secure_frontend {
@@ -88,6 +91,47 @@ struct MemoryReading final {
   std::uint64_t total_bytes;
 };
 [[nodiscard]] std::optional<MemoryReading> read_memory();
+
+// Disk reads and writes (owner 2026-10-28; upstream's serve/telemetry.py:586-600 _disk(), which reads psutil's
+// disk_io_counters()): this machine's disks' cumulative bytes, read natively as psutil reads them.
+struct DiskCounters final {
+  std::uint64_t read_bytes{0};
+  std::uint64_t write_bytes{0};
+};
+using DiskDevices = std::map<std::string, DiskCounters, std::less<>>;  // per disk, by its name
+// Linux /proc/diskstats: sectors read and written (fields 6 and 10, x512) of the lines with 14 or at least 18 fields
+// whose device `whole_disk` accepts (psutil: a name under /sys/block, so a partition is not counted twice); other
+// lines are skipped. nullopt when no line counted.
+[[nodiscard]] std::optional<DiskDevices> parse_diskstats(std::string_view text, const std::function<bool(std::string_view)>& whole_disk);
+// Linux: /proc/diskstats over the devices in /sys/block. Windows: IOCTL_DISK_PERFORMANCE on \\.\PhysicalDrive0-32
+// (psutil's own way; a drive that cannot be opened or does not answer is left out). nullopt when no disk answered.
+[[nodiscard]] std::optional<DiskDevices> read_disk_counters();
+struct DiskRates final {
+  double read_mb{0.0};   // MiB/s (upstream: / 2**20)
+  double write_mb{0.0};
+};
+// Rates between two readings, as _disk() (upstream sums psutil's totals first; this sums per disk, so a disk missing
+// from one reading - unplugged, or it did not answer - never adds its lifetime count to one second): the disks in both
+// readings whose counters did not go back. None for the first reading, a missing reading (the last one is kept), or
+// no disk to compare.
+class DiskMeter final {
+ public:
+  [[nodiscard]] std::optional<DiskRates> sample();  // read_disk_counters(), now
+  [[nodiscard]] std::optional<DiskRates> next(std::optional<DiskDevices> devices, std::chrono::steady_clock::time_point now);
+
+ private:
+  std::optional<std::pair<std::chrono::steady_clock::time_point, DiskDevices>> last_{};
+};
+
+// The engine that is up, for the Monitor (EngineSupervisor::engine_sample, once a second): which generation (a restart
+// is the next one), its startup readings (the INFO before READY), its process's resident memory (Windows working set,
+// Linux VmRSS) and its conversation cache as its stderr told it (the Qwen engine; nullopt for the others).
+struct EngineSample final {
+  std::uint64_t generation{0};
+  std::map<std::string, std::string> readings{};
+  std::optional<std::uint64_t> resident_bytes{};
+  std::optional<ConversationCacheState> conversation_cache{};
+};
 
 // One nvidia-smi child on its own thread, keeping the newest valid line. A tool that is
 // missing, fails to start or exits leaves no reading and a note saying why; it is not

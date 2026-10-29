@@ -40,6 +40,7 @@ struct FakeChild final {
   int kills{0};
   std::thread::id spawned_on{};    // the thread that ran the factory (the supervisor thread)
   std::thread::id destroyed_on{};  // the thread that destroyed this generation's process
+  std::optional<std::uint64_t> resident{};  // what resident_bytes() answers (the Monitor's engine memory)
 
   void push_line(std::string line) {
     std::lock_guard lock(mutex);
@@ -111,6 +112,10 @@ class FakeSupervisedProcess final : public secure_frontend::SupervisedProcess {
   }
   void release_resources(std::chrono::milliseconds) noexcept override {}
   long pid() const noexcept override { return -1; }
+  std::optional<std::uint64_t> resident_bytes() const noexcept override {
+    std::lock_guard lock(child_->mutex);
+    return child_->resident;
+  }
 
  private:
   void end_with(const secure_frontend::ExitStatus status) noexcept {

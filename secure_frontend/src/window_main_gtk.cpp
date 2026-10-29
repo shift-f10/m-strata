@@ -97,6 +97,7 @@ void on_main_thread(Fn fn) {
 }
 
 void show_status(const std::string& text) {
+  if (app.status == nullptr) return;  // (no window yet in this process)
   gtk_label_set_text(GTK_LABEL(app.status), text.c_str());
   if (app.stack != nullptr) gtk_stack_set_visible_child_name(GTK_STACK(app.stack), "status");
 }
@@ -369,6 +370,9 @@ void activate(GtkApplication* application, gpointer) {
     return;
   }
   app.window = gtk_application_window_new(application);
+  // the first start only: the tray keeps it running while the window is hidden (a second start's activation is sent
+  // here instead, so that process holds nothing and ends once it has shown this window)
+  g_application_hold(G_APPLICATION(application));
   gtk_window_set_title(GTK_WINDOW(app.window), "M-Strata");
   gtk_window_set_default_size(GTK_WINDOW(app.window), 1280, 860);
   GdkPixbuf* icon = make_icon(64);
@@ -449,13 +453,16 @@ int main(int argc, char** argv) {
   g_signal_connect(app.application, "activate", G_CALLBACK(activate), nullptr);
   // SIGTERM / SIGINT (a session's end, a service manager): the server stops in order, then the window
   const auto on_signal = [](gpointer) -> gboolean {
+    if (app.window == nullptr) {  // no window and no server here (before the first activation)
+      g_application_quit(G_APPLICATION(app.application));
+      return G_SOURCE_CONTINUE;
+    }
     app.exiting = true;
     stop_server_then(false);
     return G_SOURCE_CONTINUE;
   };
   g_unix_signal_add(SIGTERM, on_signal, nullptr);
   g_unix_signal_add(SIGINT, on_signal, nullptr);
-  g_application_hold(G_APPLICATION(app.application));  // the tray keeps it running while the window is hidden
   char* only_name[] = {argv[0], nullptr};               // the window parses its own arguments (the server's)
   const int status = g_application_run(G_APPLICATION(app.application), 1, only_name);
   if (app.server.running()) (void)app.server.stop(std::chrono::seconds(30));

@@ -2,7 +2,8 @@
 // and sign-in lines (stdout) and a log line (stderr), then waits for what stops the real server - a console Ctrl-Break
 // on Windows, SIGTERM elsewhere - and exits 0 after "fake: stopping". --exit <n> ends at once with n; --ignore-stop
 // keeps running through the request (the window must then kill it); --show-env <name> first prints whether that
-// variable reached it ("env <name>=set" or "=unset", never its value).
+// variable reached it ("env <name>=set" or "=unset", never its value); --show-group prints whether it leads its own
+// process group ("group own" / "group shared"; "group n/a" on Windows).
 #if defined(_WIN32)
 #include "secure_frontend/win32_prelude.hpp"
 #else
@@ -49,6 +50,13 @@ int main(int argc, char** argv) {
       const bool set = value != nullptr && *value != '\0';
 #endif
       std::printf("env %s=%s\n", name, set ? "set" : "unset");
+    }
+    if (std::strcmp(argv[i], "--show-group") == 0) {
+#if defined(_WIN32)
+      std::printf("group n/a\n");
+#else
+      std::printf("group %s\n", ::getpgrp() == ::getpid() ? "own" : "shared");
+#endif
     }
   }
   std::fputs("[strata] models: no model started (models.start is unset); waiting for the page\n", stderr);

@@ -1601,7 +1601,10 @@
                      ["gyro", "Qwen3.8-Flash-Next (Gyro)"], ["coder", "Qwen3.8-Flash-Next Coder"],
                      ["qwen36", "Qwen3.6-35B-A3B"], ["swift", "Swift 1.5"],
                      ["glm53", "GLM-5.3-Flash (Project Maya)"], ["deepseek", "DeepSeek-V4.1-Flash (Project Maya)"],
-                     ["minimax", "MiniMax-M3.1-Flash (Project Maya; MiniMax Community License)"], ["custom", "Your downloads"]];
+                     ["minimax", "MiniMax-M3.1-Flash (Project Maya; MiniMax Community License)"],
+                     // owner 2026-10-28: our own pins (catalog source m-strata)
+                     ["gemma4", "Gemma 4 (Google)"], ["flint", "flint (RecursiveSI)"], ["raon1", "Raon-1-mini (KRAFTON)"],
+                     ["custom", "Your downloads"]];
   var DL_STATES = {
     available: ["", "Available"], queued: ["st-badge--queued", "Queued"], downloading: ["st-badge--reading", "Downloading"],
     verifying: ["st-badge--reading", "Verifying"], preparing: ["st-badge--reading", "Preparing"],
@@ -1612,13 +1615,23 @@
   var DL_ACTIVE = ["queued", "downloading", "verifying", "preparing"];
   var DL_STARTABLE = ["available", "failed", "cancelled"];
   var DL_CANCELLABLE = ["queued", "downloading", "paused"];
+  // Owner 2026-10-28 ("change the banner from available to Locally Provided vs Downloaded"): what this PC already has of an
+  // entry, as the server's list says it ("have", the one rule the page and strata-tui share).
+  var DL_HAVE = { downloaded: ["st-badge--generating", "Downloaded"], local: ["st-badge--reading", "Locally provided"] };
+  // Owner 2026-10-28 ("put accordion control so that user can expand per related section"): the family groups the viewer
+  // opened, remembered for this tab (sessionStorage; the page works without it).
+  var DL_OPEN_SLOT = "strata.downloads.open";
   // A pasted link: an https address on huggingface.co whose path (before any query or fragment)
   // names a .gguf file. The server checks the link again, and the downloader every redirect.
   var HF_LINK = /^https:\/\/huggingface\.co\//;
   var GGUF_FILE = /\.gguf$/i;
   var downloads = { enabled: false, data: null, timer: null, acting: false, errors: Object.create(null),
                     states: Object.create(null), confirm: null, folder: "", folderFree: null,
-                    vision: Object.create(null) };   // the "Vision files" boxes ticked here (id -> bool)
+                    folderTotal: null, folderVolume: "",     // the picked folder's drive: its size and name (the folders route)
+                    vision: Object.create(null),   // the "Vision files" boxes ticked here (id -> bool)
+                    open: readOpenGroups(),        // groups the viewer opened (remembered)
+                    closedHere: Object.create(null), openHere: Object.create(null), wanted: Object.create(null),
+                    justAdded: "" };               // the id of a link just started (its group opens)
 
   function oneOf(list, value) { return list.indexOf(value) >= 0; }
   function dlCards(d) {
@@ -1635,7 +1648,8 @@
   function freeBytes() {
     if (downloads.folder) { return typeof downloads.folderFree === "number" ? downloads.folderFree : null; }
     var disk = downloads.data && downloads.data.disk;
-    return disk && typeof disk.free_bytes === "number" ? disk.free_bytes : null;
+    // the server writes 0 of 0 bytes for a drive it could not read: not known
+    return disk && typeof disk.free_bytes === "number" && Number(disk.total_bytes) > 0 ? disk.free_bytes : null;
   }
   // GUI-first start-up (spec section 4.3): where downloads go - the server's downloads folder, or one picked here, sent
   // with every start and link check (the server checks the folder and its free space again).
@@ -1649,13 +1663,22 @@
     var free = freeBytes();
     return free !== null && typeof card.needed_bytes === "number" && card.needed_bytes > free;
   }
-  // Section 4.3a: a model that already has a card - from this download, or the same file added from this PC - is not
-  // offered for download.
-  function carded(card) {
-    if (card.state === "ready") { return true; }
-    return cardsOf(launcher.data).some(function (model) {
-      return model.source === "download:" + card.id || (typeof model.file === "string" && model.file !== "" && model.file === card.file);
-    });
+  // Section 4.3a: a model that already has a card - from this download, or the same model added from a folder on this PC -
+  // is not offered for download; since 2026-10-28 it is shown as what this PC has ("downloaded", "local" or null). A
+  // server without "have" still names a download that is set up or installed.
+  function haveOf(card) {
+    if (card.have === "downloaded" || card.have === "local") { return card.have; }
+    return card.state === "ready" || card.state === "installed" ? "downloaded" : null;
+  }
+  // What an entry shows as on this PC: its have, unless a download of it is under way or paused (its state says how that
+  // goes); null otherwise.
+  function onThisPc(card) {
+    var have = haveOf(card);
+    return have !== null && !oneOf(DL_ACTIVE, card.state) && card.state !== "paused" ? have : null;
+  }
+  function haveBadge(have) {
+    var badge = DL_HAVE[have];
+    return el("span", "st-badge " + badge[0], badge[1]);
   }
   async function chooseDestination() {
     var picked = await pickFolder("Where downloads go", "Pick a drive and a folder for the model files, or make a new private " +
@@ -1663,7 +1686,186 @@
     if (!picked || !picked.folder) { return; }
     downloads.folder = picked.folder;
     downloads.folderFree = typeof picked.free === "number" ? picked.free : null;
+    downloads.folderTotal = null;
+    downloads.folderVolume = "";
     renderDownloads();
+    lookupVolume(picked.folder);
+  }
+  // Back to the server's own downloads folder (nothing is sent with the requests then).
+  function useDefaultDestination() {
+    downloads.folder = "";
+    downloads.folderFree = null;
+    downloads.folderTotal = null;
+    downloads.folderVolume = "";
+    renderDownloads();
+    $("downloads-dest-change").focus();   // the button pressed is hidden now
+  }
+  // A path as compared here: a Windows path (a drive letter) in one case with one separator, no trailing separator but a
+  // drive's or the root's own.
+  function folderKey(path) {
+    var text = String(path || "");
+    if (/^[A-Za-z]:/.test(text)) { text = text.replace(/\//g, "\\").toLowerCase(); }
+    while (text.length > 1 && /[\\/]$/.test(text) && !/^[a-z]:\\$/.test(text)) { text = text.slice(0, -1); }
+    return text;
+  }
+  function sameFolder(a, b) { return folderKey(a) === folderKey(b); }
+  // Whether `path` is on the drive or mount `root`.
+  function under(path, root) {
+    var p = folderKey(path);
+    var r = folderKey(root);
+    if (p.indexOf(r) !== 0) { return false; }
+    var rest = p.slice(r.length);
+    return rest === "" || /[\\/]$/.test(r) || rest.charAt(0) === "/" || rest.charAt(0) === "\\";
+  }
+  // The picked folder's drive, its name and size, from this PC's drives (the folders route; the longest that holds it).
+  async function lookupVolume(folder) {
+    var answer = await downloadsAnswer(api("/v1/strata/folders", jsonPost({})));
+    if (answer.signedOut || answer.error || downloads.folder !== folder) { return; }
+    var volumes = answer.body && Array.isArray(answer.body.volumes) ? answer.body.volumes : [];
+    var best = null;
+    volumes.forEach(function (v) {
+      if (v && typeof v.path === "string" && v.path && under(folder, v.path) && (!best || v.path.length > best.path.length)) { best = v; }
+    });
+    if (!best) { return; }
+    downloads.folderVolume = best.path + (best.label ? " (" + String(best.label) + ")" : "");
+    downloads.folderTotal = typeof best.total_bytes === "number" ? best.total_bytes : null;
+    renderDownloads();
+  }
+  // Owner 2026-10-28 ("make prominent the device and download location selection so that it does not look just a bunch of
+  // text"): the Download to panel. A path in its chip shortens in the middle: the start gives way, the last folder stays.
+  function middleChip(node, path) {
+    clear(node);
+    var end = path.length;
+    while (end > 1 && /[\\/]/.test(path.charAt(end - 1))) { end -= 1; }   // a trailing separator is not the last folder
+    var cut = Math.max(path.lastIndexOf("\\", end - 1), path.lastIndexOf("/", end - 1));
+    var tail = cut > 0 && cut < end - 1 ? path.slice(cut) : "";
+    node.appendChild(el("span", "dl-dest__path-head", tail ? path.slice(0, cut) : path));
+    if (tail) { node.appendChild(el("span", "dl-dest__path-tail", tail)); }
+    node.title = path;
+  }
+  function destinationDrive() {
+    var disk = downloads.data && downloads.data.disk;
+    if (!downloads.folder) { return disk && disk.root ? String(disk.root) : "-"; }
+    if (downloads.folderVolume) { return downloads.folderVolume; }
+    var letter = /^([A-Za-z]:)/.exec(downloads.folder);
+    return letter ? letter[1].toUpperCase() : "This PC";
+  }
+  // The largest download waiting to go where downloads now go - queued, under way or paused there, or the link being
+  // confirmed - when the free space cannot hold it; null when everything fits or the free space is not known.
+  function destinationShort() {
+    var free = freeBytes();
+    if (free === null) { return null; }
+    var disk = downloads.data && downloads.data.disk;
+    var here = downloads.folder || (disk && typeof disk.folder === "string" ? disk.folder : "");
+    var pending = dlCards(downloads.data).filter(function (card) {
+      return oneOf(DL_CANCELLABLE, card.state) && sameFolder(card.folder, here);
+    }).map(function (card) { return { name: card.name, bytes: Number(card.needed_bytes) || 0 }; });
+    var offer = downloads.confirm && downloads.confirm.data;
+    if (offer) { pending.push({ name: offer.name ? String(offer.name) : "the pasted link", bytes: Number(offer.needed_bytes) || 0 }); }
+    var largest = null;
+    pending.forEach(function (item) { if (!largest || item.bytes > largest.bytes) { largest = item; } });
+    return largest && largest.bytes > free ? largest : null;
+  }
+  function renderDestination() {
+    var d = downloads.data;
+    if (!d) { return; }
+    var disk = d.disk || null;
+    var box = $("downloads-dest");
+    var picked = downloads.folder !== "";
+    var path = picked ? downloads.folder : (disk && typeof disk.folder === "string" ? disk.folder : "");
+    $("downloads-dest-drive").textContent = destinationDrive();
+    middleChip($("downloads-dest-path"), path || "the server's downloads folder");
+    $("downloads-dest-default").textContent = picked ? "Picked on this page (the server's own downloads folder is the default)"
+                                                     : "The server's downloads folder (default)";
+    $("downloads-dest-reset").hidden = !picked;
+    var line = $("downloads-disk");
+    var free = freeBytes();
+    var total = picked ? downloads.folderTotal : (disk && typeof disk.total_bytes === "number" ? disk.total_bytes : null);
+    if (picked) {
+      line.textContent = "Free space there: " + (typeof downloads.folderFree === "number" ? dgb(downloads.folderFree) + " GB" : "-") +
+                         (typeof total === "number" && total > 0 ? " of " + dgb(total) + " GB" : "");
+      line.hidden = false;
+    } else if (disk && typeof disk.free_bytes === "number" && typeof disk.total_bytes === "number") {
+      var root = String(disk.root || "the downloads drive");
+      line.textContent = "Free space on " + root + (/:$/.test(root) ? " " : ": ") + dgb(disk.free_bytes) + " GB of " + dgb(disk.total_bytes) + " GB";
+      line.hidden = false;
+    } else {
+      line.hidden = true;
+    }
+    var short = destinationShort();
+    var gauge = $("downloads-dest-gauge");
+    var known = free !== null && typeof total === "number" && total > 0;
+    gauge.hidden = !known;
+    if (known) {
+      var used = Math.max(0, Math.min(100, Math.round((100 * (total - free)) / total)));
+      $("downloads-dest-gauge-bar").style.width = used + "%";
+      gauge.setAttribute("aria-valuenow", String(used));
+      gauge.setAttribute("aria-valuetext", dgb(total - free) + " GB used, " + dgb(free) + " GB free of " + dgb(total) + " GB");
+      var tone = short ? "danger" : used >= 90 ? "warn" : "";
+      if (tone) { gauge.setAttribute("data-tone", tone); } else { gauge.removeAttribute("data-tone"); }
+    }
+    var warn = $("downloads-dest-warn");
+    warn.textContent = short ? "Not enough room for " + short.name + ": " + dgb(short.bytes) + " GB needed, " + dgb(free) + " GB free" : "";
+    warn.hidden = !short;
+    box.setAttribute("data-short", short ? "true" : "false");
+  }
+  // The accordion (owner 2026-10-28): the groups the viewer opened, kept for this tab as the page keeps everything (load
+  // and save: sessionStorage, every access guarded; the threat model keeps this script off lasting storage). Without
+  // storage every group starts as its contents say.
+  function readOpenGroups() {
+    var open = Object.create(null);
+    var saved = load(DL_OPEN_SLOT, null);
+    if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+      Object.keys(saved).forEach(function (key) { if (saved[key] === true) { open[key] = true; } });
+    }
+    return open;
+  }
+  function saveOpenGroups() { save(DL_OPEN_SLOT, downloads.open); }
+  // A group with a download under way, a paused one, a failed one (of a model not on this PC), or a link just added opens
+  // itself.
+  function groupWantsOpen(members) {
+    return members.some(function (card) {
+      return oneOf(DL_ACTIVE, card.state) || card.state === "paused" || (card.state === "failed" && onThisPc(card) === null) ||
+             card.id === downloads.justAdded;
+    });
+  }
+  // Open: the viewer opened it (remembered), or it opened itself on this page and the viewer has not closed it since; it
+  // opens itself again when something new is under way in it, or a link was just added to it.
+  function groupOpen(key, members) {
+    var wants = groupWantsOpen(members);
+    var added = members.some(function (card) { return card.id === downloads.justAdded; });
+    if (wants && (!downloads.wanted[key] || added)) { delete downloads.closedHere[key]; downloads.openHere[key] = true; }
+    if (added) { downloads.justAdded = ""; }
+    downloads.wanted[key] = wants;
+    if (downloads.closedHere[key]) { return false; }
+    return downloads.open[key] === true || downloads.openHere[key] === true;
+  }
+  function setGroupOpen(key, open) {
+    if (open) {
+      downloads.open[key] = true;
+      delete downloads.closedHere[key];
+    } else {
+      delete downloads.open[key];
+      delete downloads.openHere[key];
+      downloads.closedHere[key] = true;
+    }
+    saveOpenGroups();
+  }
+  // "6 models, 1 downloading, 2 on this PC" (DOT between them): what the group holds, for its header.
+  function groupSummary(members) {
+    var count = function (test) { return members.filter(test).length; };
+    var parts = [fmt(members.length) + (members.length === 1 ? " model" : " models")];
+    var running = count(function (card) { return card.state === "downloading" || card.state === "verifying" || card.state === "preparing"; });
+    var queued = count(function (card) { return card.state === "queued"; });
+    var paused = count(function (card) { return card.state === "paused"; });
+    var failed = count(function (card) { return card.state === "failed"; });
+    var here = count(function (card) { return onThisPc(card) !== null; });
+    if (running) { parts.push(fmt(running) + " downloading"); }
+    if (queued) { parts.push(fmt(queued) + " queued"); }
+    if (paused) { parts.push(fmt(paused) + " paused"); }
+    if (failed) { parts.push(fmt(failed) + " failed"); }
+    if (here) { parts.push(fmt(here) + " on this PC"); }
+    return parts.join(DOT);
   }
   function noRoomText(needed) {
     var free = freeBytes();
@@ -1689,11 +1891,17 @@
 
   function downloadCard(card, d) {
     var active = d.active && d.active.id === card.id ? d.active : null;
+    // Owner 2026-10-28: a model already on this PC (from this download, or the same model added from a folder) wears what
+    // it is - Downloaded or Locally provided - and names its card, with no Download; one under way or paused keeps its
+    // state and its controls.
+    var have = onThisPc(card);
+    var onPc = have !== null;
     var box = el("div", "dl-card");
     box.setAttribute("data-state", String(card.state));
+    if (onPc) { box.setAttribute("data-have", have); }
     var head = el("div", "dl-card__head");
     head.appendChild(el("span", "dl-card__name", card.name));
-    head.appendChild(dlBadge(card.state));
+    head.appendChild(onPc ? haveBadge(have) : dlBadge(card.state));
     box.appendChild(head);
     if (card.about) { box.appendChild(el("p", "muted small", String(card.about))); }
     // Maya's catalog pins no sizes: the server reads them from Hugging Face when the download starts
@@ -1704,7 +1912,7 @@
     // Vision for cards (spec 2026-10-28): the model's picture encoder, a second file, comes too when ticked; its card then
     // reads pictures. Offered before the download starts (and on a resume); afterwards the card says it came.
     var visionBytes = Number(card.vision_bytes) || 0;
-    var offerVision = visionBytes > 0 && (oneOf(DL_STARTABLE, card.state) || card.state === "paused");
+    var offerVision = !onPc && visionBytes > 0 && (oneOf(DL_STARTABLE, card.state) || card.state === "paused");
     if (offerVision) {
       var visionLabel = el("label", "option-auto dl-card__vision");
       var visionBox = el("input");
@@ -1718,10 +1926,16 @@
     } else if (card.vision === true) {
       box.appendChild(el("p", "muted small", "With its vision files: the model reads pictures"));
     }
-    if (card.state === "ready") { box.appendChild(el("p", "muted small", "Downloaded and set up: its card is in the model list.")); }
-    else if (card.runnable === false && card.note) { box.appendChild(el("p", "dl-card__note", String(card.note))); }
-    else if (card.note) { box.appendChild(el("p", "muted small", String(card.note))); }
-    var startable = oneOf(DL_STARTABLE, card.state);
+    if (onPc) {
+      box.appendChild(el("p", "dl-card__here", "Already on this PC" + (card.have_card ? "; its card: " + String(card.have_card) : "")));
+      // downloaded without a card (download only): the note says why
+      if (!card.have_card && card.note) { box.appendChild(el("p", "muted small", String(card.note))); }
+    } else if (card.runnable === false && card.note) {
+      box.appendChild(el("p", "dl-card__note", String(card.note)));
+    } else if (card.note) {
+      box.appendChild(el("p", "muted small", String(card.note)));
+    }
+    var startable = !onPc && oneOf(DL_STARTABLE, card.state);
     var noRoom = startable && lacksRoom(card);
     if (noRoom) { box.appendChild(el("p", "msg-warn", noRoomText(card.needed_bytes))); }
     if (card.state === "paused" && lacksRoom(card)) { box.appendChild(el("p", "msg-warn", noRoomText(card.needed_bytes))); }
@@ -1745,7 +1959,10 @@
     } else if (card.state === "queued") {
       box.appendChild(el("p", "dl-card__progress", "Queued: starts when the download before it ends"));
     }
-    if (card.state === "failed") { box.appendChild(el("p", "msg-error", "Download failed: " + (card.error ? String(card.error) : "no reason given"))); }
+    // an earlier attempt that failed does not matter for a model already here
+    if (card.state === "failed" && !onPc) {
+      box.appendChild(el("p", "msg-error", "Download failed: " + (card.error ? String(card.error) : "no reason given")));
+    }
     var refused = downloads.errors[card.id];
     if (refused) { box.appendChild(el("p", "msg-error", refused)); }
     var actions = el("div", "dl-card__actions");
@@ -1786,33 +2003,52 @@
   function renderDownloads() {
     var d = downloads.data;
     if (!d) { return; }
-    var disk = d.disk || null;
-    var line = $("downloads-disk");
-    $("downloads-dest-path").textContent = downloads.folder || (disk && typeof disk.folder === "string" ? disk.folder : "the server's downloads folder");
-    if (downloads.folder) {
-      line.textContent = "Free space there: " + (typeof downloads.folderFree === "number" ? dgb(downloads.folderFree) + " GB" : "-");
-      line.hidden = false;
-    } else if (disk && typeof disk.free_bytes === "number" && typeof disk.total_bytes === "number") {
-      var root = String(disk.root || "the downloads drive");
-      line.textContent = "Free space on " + root + (/:$/.test(root) ? " " : ": ") + dgb(disk.free_bytes) + " GB of " + dgb(disk.total_bytes) + " GB";
-      line.hidden = false;
-    } else {
-      line.hidden = true;
-    }
+    renderDestination();
     var list = $("downloads-list");
+    // a group header in focus keeps it across the redraw (the list is redrawn on every poll)
+    var focused = document.activeElement && list.contains(document.activeElement) ? document.activeElement.id : "";
     clear(list);
-    var cards = dlCards(d).filter(function (card) { return !carded(card); });
+    var cards = dlCards(d);
     var known = DL_FAMILIES.map(function (group) { return group[0]; });
+    // Owner 2026-10-28: each family group an accordion section - its header a button naming the family and what it holds,
+    // its cards shown when it is open
     DL_FAMILIES.concat([["", "Other models"]]).forEach(function (group) {
       var members = cards.filter(function (card) { return group[0] ? card.family === group[0] : !oneOf(known, card.family); });
       if (!members.length) { return; }
+      var key = group[0] || "other";
+      var open = groupOpen(key, members);
       var section = el("div", "dl-group");
-      section.appendChild(el("span", "dl-group__title", group[1]));
-      var grid = el("div", "dl-cards");
-      members.forEach(function (card) { grid.appendChild(downloadCard(card, d)); });
-      section.appendChild(grid);
+      section.setAttribute("data-family", key);
+      var panel = el("div", "dl-cards");
+      panel.id = "dl-panel-" + key;
+      var toggle = el("button", "dl-group__head");
+      toggle.type = "button";
+      toggle.id = "dl-head-" + key;
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      toggle.setAttribute("aria-controls", panel.id);
+      var chevron = icon("i-chevron", true);
+      chevron.setAttribute("class", "st-icon st-icon--sm dl-group__chevron");
+      chevron.setAttribute("aria-hidden", "true");
+      toggle.appendChild(chevron);
+      var words = el("span", "dl-group__words");
+      words.appendChild(el("span", "dl-group__title", group[1]));
+      words.appendChild(el("span", "dl-group__summary", groupSummary(members)));
+      toggle.appendChild(words);
+      toggle.addEventListener("click", function () {
+        var now = toggle.getAttribute("aria-expanded") !== "true";
+        setGroupOpen(key, now);
+        toggle.setAttribute("aria-expanded", now ? "true" : "false");
+        panel.hidden = !now;
+      });
+      section.appendChild(toggle);
+      panel.setAttribute("role", "region");
+      panel.setAttribute("aria-labelledby", toggle.id);
+      panel.hidden = !open;
+      members.forEach(function (card) { panel.appendChild(downloadCard(card, d)); });
+      section.appendChild(panel);
       list.appendChild(section);
     });
+    if (focused && $(focused)) { $(focused).focus(); }
   }
 
   function setDownloadsShown(on) {
@@ -1956,6 +2192,7 @@
     downloads.confirm = null;
     clear($("downloads-confirm"));
     $("downloads-confirm").hidden = true;
+    renderDestination();   // the panel's warning counts a link being confirmed
   }
   // The families a pasted GGUF can be matched to (from the list's "profiles"): picking one has the
   // server write a runnable card after the download. The empty choice downloads without a card.
@@ -2091,6 +2328,7 @@
     actions.appendChild(later);
     box.appendChild(actions);
     box.hidden = false;
+    renderDestination();
   }
   async function startLink() {
     var offer = downloads.confirm;
@@ -2104,6 +2342,8 @@
     if (answer.error) { renderConfirm(); showLinkError(answer.error); return; }
     hideConfirm();
     $("downloads-url").value = "";
+    // its group opens, wherever it is listed
+    downloads.justAdded = answer.body && typeof answer.body.id === "string" ? answer.body.id : "";
     toast("success", "Download queued", offer.data.name ? String(offer.data.name) : "");
     await refreshDownloads();
   }
@@ -2255,6 +2495,7 @@
     toast("success", card.name + " reads its files from the new folder",
           card.state === "running" ? "The running model keeps going; the new folder applies at its next start." : "");
     await refreshLauncher();
+    if (downloads.enabled) { await refreshDownloads(); }   // the Download list says again what this PC has
   }
   async function changeCardFolder() {
     var card = findCard(launcher.selected);
@@ -2735,11 +2976,14 @@
     { key: "temp", label: "GPU temp", icon: "i-thermometer", series: "gpu_temp", tone: "warn", max: 90 },
     { key: "power", label: "Power", icon: "i-bolt", series: "gpu_power" },
     { key: "pcie", label: "PCIe", icon: "i-link", tone: "info" },
-    { key: "cpu", label: "CPU", icon: "i-cpu", series: "cpu", max: 100 }
+    { key: "cpu", label: "CPU", icon: "i-cpu", series: "cpu", max: 100 },
+    // upstream's eighth tile (serve/web/app.js:132): this PC's disks' reads, MB/s (GB/s past 1000); eight tiles fill
+    // the grid's rows evenly at four, two and one across
+    { key: "disk", label: "Disk read", icon: "i-disk", series: "disk_read_mb", tone: "info" }
   ];
   var FINISH = { stop: ["", "Done"], length: ["", "Max tokens"], cancel: ["st-badge--queued", "Stopped"],
                  disconnect: ["st-badge--queued", "Closed"], error: ["st-badge--error", "Error"] };
-  var monitor = { timer: null, showAll: false, last: null };
+  var monitor = { timer: null, showAll: false, last: null, polling: false };
 
   function fmt(value, digits) {
     if (value === null || value === undefined || !isFinite(value)) { return "-"; }
@@ -2747,6 +2991,8 @@
     return Number(value).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
   }
   function gb(bytes, digits) { return fmt(bytes / 1073741824, digits === undefined ? 1 : digits); }
+  // A size with its unit: GB from 1 GiB up, MB below (an engine's own memory, a parked conversation).
+  function size(bytes) { return bytes >= 1073741824 ? gb(bytes) + " GB" : fmt(bytes / 1048576) + " MB"; }
   function kfmt(n) { return n >= 1000 ? fmt(n / 1000, n >= 10000 ? 0 : 1) + "K" : fmt(n); }
   function ctxfmt(n) { return n >= 1048576 ? fmt(n / 1048576, n % 1048576 ? 1 : 0) + "M" : n >= 1024 ? fmt(n / 1024) + "K" : fmt(n); }
   function svgNode(tag, attributes) {
@@ -2852,7 +3098,13 @@
     var requests = m.requests || [];
     // stopped (owner 2026-10-27): no engine runs, so no live figures of the one that ran; the history stays below
     var stopped = live.state === "stopped";
-    var last = stopped ? null : requests[0];
+    // Owner 2026-10-28 ("when the models are stop and nothing is loaded, the stats seem to stay"): the engine's own
+    // figures (the last request's speeds, its context, its experts and memory) only while an engine is up - not while
+    // one starts, has failed or was unloaded after idling, nor while the server does not answer (offline). A server
+    // without engine.loaded: up unless stopped.
+    var offline = live.state === "offline";
+    var loaded = eng.loaded === undefined ? !stopped && !offline : eng.loaded === true;
+    var last = loaded ? requests[0] : null;
     var busy = live.state === "reading" || live.state === "generating";
     // The model state.
     var on = live.queued > 0 ? "queued" : live.state;
@@ -2863,9 +3115,16 @@
     var label = "Waiting for a request", detail = "", pct = 0;
     var progress = $("state-progress");
     progress.removeAttribute("data-tone");
-    if (stopped) {
+    if (offline) {
+      label = "The server is not answering";
+      detail = "its figures come back when it does";
+    } else if (stopped) {
       label = "No model is running";
       detail = "stopped";
+    } else if (live.state === "unloaded") {
+      // unloaded after idling, or a lazy start that has not loaded yet: either way not in memory now
+      label = "The model is not loaded";
+      detail = "the next request loads it";
     } else if (live.state === "starting") {
       label = "The engine is starting";
     } else if (live.state === "error") {
@@ -2894,22 +3153,41 @@
     setMetric("prefill", prefill === null ? null : fmt(prefill), "t/s",
               live.state === "reading" ? "Prefill now" : busy ? "Prefill this request" : last ? "Prefill last request" : "Prefill");
     spark("speed", h.tok_s);
+    var has = function (v) { return v !== null && v !== undefined; };
+    // A PC without a GPU reading keeps the GPU tiles in place, each saying so (GPU load says why: the note).
+    var gpuNone = !offline && !has(hw.gpu_util) && !has(hw.gpu_mem_used) && !has(hw.gpu_temp) ? "no GPU reading" : "";
     var gpuSub = st.gpu_name || st.gpu_note || "";
     setMetric("gpu", hw.gpu_util === null || hw.gpu_util === undefined ? null : fmt(hw.gpu_util), "%", gpuSub);
     spark("gpu", h.gpu_util, 100);
     setMetric("vram", hw.gpu_mem_used === null || hw.gpu_mem_used === undefined ? null : gb(hw.gpu_mem_used),
-              hw.gpu_mem_total ? "/ " + gb(hw.gpu_mem_total, 0) + " GB" : "GB", "");
+              hw.gpu_mem_total ? "/ " + gb(hw.gpu_mem_total, 0) + " GB" : "GB", gpuNone);
     spark("vram", h.gpu_mem_used, hw.gpu_mem_total);
-    setMetric("temp", hw.gpu_temp === null || hw.gpu_temp === undefined ? null : fmt(hw.gpu_temp), DEG + "C", "");
+    setMetric("temp", hw.gpu_temp === null || hw.gpu_temp === undefined ? null : fmt(hw.gpu_temp), DEG + "C", gpuNone);
     spark("temp", h.gpu_temp, 90);
     setMetric("power", hw.gpu_power === null || hw.gpu_power === undefined ? null : fmt(hw.gpu_power), "W",
-              hw.gpu_power_limit ? "of " + fmt(hw.gpu_power_limit) + " W limit" : "");
+              hw.gpu_power_limit ? "of " + fmt(hw.gpu_power_limit) + " W limit" : gpuNone);
     spark("power", h.gpu_power, hw.gpu_power_limit);
     var gen = hw.gpu_pcie_gen_max || hw.gpu_pcie_gen;
     setMetric("pcie", gen ? "Gen" + gen : null, hw.gpu_pcie_width ? "x" + hw.gpu_pcie_width : "",
-              hw.gpu_pcie_gen && gen && hw.gpu_pcie_gen < gen ? "idle Gen" + hw.gpu_pcie_gen : "");
+              hw.gpu_pcie_gen && gen && hw.gpu_pcie_gen < gen ? "idle Gen" + hw.gpu_pcie_gen : gpuNone);
     setMetric("cpu", hw.cpu === null || hw.cpu === undefined ? null : fmt(hw.cpu), "%", st.threads ? st.threads + " threads" : "");
     spark("cpu", h.cpu, 100);
+    // Disk read (owner 2026-10-28, upstream's tile: serve/web/app.js:312-319): every disk of this PC, MB/s, GB/s past
+    // 1000, with the write rate and the minute's peak; a disk-bound model reads its experts here.
+    var diskHistory = h.disk_read_mb || [];
+    var diskPeak = Math.max.apply(null, [0].concat(diskHistory.filter(has)));
+    var rate = function (mb) { return mb >= 1000 ? fmt(mb / 1024, 2) + " GB/s" : fmt(mb, mb < 10 ? 1 : 0) + " MB/s"; };
+    if (!has(hw.disk_read_mb)) {
+      setMetric("disk", null, "", !offline && diskHistory.length > 2 && !diskHistory.some(has) ? "not readable on this PC" : "");
+    } else {
+      var bigDisk = hw.disk_read_mb >= 1000;
+      var diskSub = [];
+      if (has(hw.disk_write_mb)) diskSub.push("write " + rate(hw.disk_write_mb));
+      if (diskPeak > 0) diskSub.push("peak " + rate(diskPeak));
+      setMetric("disk", bigDisk ? fmt(hw.disk_read_mb / 1024, 2) : fmt(hw.disk_read_mb, hw.disk_read_mb < 10 ? 1 : 0),
+                bigDisk ? "GB/s" : "MB/s", diskSub.join(DOT));
+    }
+    spark("disk", diskHistory);
     // Context fill: the running request, else the last one.
     var ctx = eng.max_context || 0;
     var used = busy ? (live.prompt_tokens || 0) + (live.generated || 0) : last ? (last.prompt_tokens || 0) + (last.output_tokens || 0) : 0;
@@ -2918,26 +3196,23 @@
     $("ctx-fill").style.opacity = 235.6 * frac >= 3 ? "1" : "0";  // a near-zero arc would draw just its round cap
     $("ctx-pct").textContent = Math.round(frac * 100) + "%";
     $("ctx-sub").textContent = ctx ? kfmt(used) + " / " + ctxfmt(ctx) : "-";
-    // Owner ruling: the VRAM and RAM cards show EXPERTS LOADED beside the GB. The
-    // numbers come from the engine itself (/metrics engine.experts): GLM STAT
-    // vram_used/ram_used when present, else the startup INFO expert split
-    // (expert_slots_primary is the VRAM part; the rest of expert_slots is the RAM
-    // tier). GB-only when the engine has reported no expert figures yet.
-    var ex = eng.experts || null;
-    var has = function (v) { return v !== null && v !== undefined; };
-    var vramE = has(ex && ex.vram_used) ? ex.vram_used
-              : has(ex && ex.expert_slots_primary) ? ex.expert_slots_primary
-              : has(ex && ex.expert_slots) ? ex.expert_slots : null;
-    var ramE = has(ex && ex.ram_used) ? ex.ram_used
-              : has(ex && ex.expert_slots) && has(ex && ex.expert_slots_primary)
-                ? Math.max(0, ex.expert_slots - ex.expert_slots_primary) : null;
+    // Owner ruling: the VRAM and RAM cards show EXPERTS LOADED beside the GB. Owner 2026-10-28 ("the System Ram reports
+    // MB usage only and not experts + mb usage"): /metrics engine.memory carries every family's own figures in one
+    // shape (the experts in VRAM and in RAM, their RAM bytes) and the engine process's own memory - from its start,
+    // not only once it decodes; none of it while no engine is up.
+    var mem = loaded && eng.memory ? eng.memory : {};
     var vramParts = [];
-    if (vramE !== null) vramParts.push(fmt(vramE) + " experts loaded");
+    if (has(mem.experts_vram)) vramParts.push(fmt(mem.experts_vram) + " experts loaded");
     if (hw.gpu_mem_total) vramParts.push(gb(hw.gpu_mem_used) + " / " + gb(hw.gpu_mem_total, 0) + " GB");
     $("vram-text").textContent = vramParts.length ? vramParts.join(" \u00b7 ") : "-";
     setBar("vram-bar", hw.gpu_mem_total ? (100 * hw.gpu_mem_used) / hw.gpu_mem_total : 0);
     var ramParts = [];
-    if (ramE !== null) ramParts.push(fmt(ramE) + " experts loaded");
+    if (has(mem.experts_ram)) {
+      ramParts.push(fmt(mem.experts_ram) + " experts loaded" + (has(mem.experts_ram_bytes) ? " (" + size(mem.experts_ram_bytes) + ")" : ""));
+    } else if (has(mem.experts_ram_bytes)) {
+      ramParts.push("experts " + size(mem.experts_ram_bytes));
+    }
+    if (has(mem.process_bytes)) ramParts.push("engine " + size(mem.process_bytes));
     if (hw.ram_total) ramParts.push(gb(hw.ram_used) + " / " + gb(hw.ram_total, 0) + " GB");
     $("ram-text").textContent = ramParts.length ? ramParts.join(" \u00b7 ") : "-";
     var ramPct = hw.ram_total ? (100 * hw.ram_used) / hw.ram_total : 0;
@@ -2962,21 +3237,99 @@
     $("req-all").textContent = monitor.showAll ? "Show fewer" : "Show all (" + kept + ")";
     $("req-wrap").classList.toggle("all", monitor.showAll);
     $("req-totals").textContent = totalsText(m.totals);
+    renderConvCache(m.conversation_cache, live.state);
   }
 
+  // The conversation cache (owner 2026-10-28: "upstream strata has disk read and conversation cache as well"; upstream's
+  // card, serve/web/app.js:210-241, on /metrics conversation_cache): what the engine keeps of earlier conversations -
+  // the state of the last one always, whole conversations parked in RAM with --conversation-cache-mib - and how much of
+  // the prompts the requests got back from it.
+  function sinceText(t) {
+    if (!t) { return ""; }
+    var s = Math.max(0, Date.now() / 1000 - t);
+    return s < 60 ? "just now" : s < 3600 ? fmt(s / 60) + " min ago" : fmt(s / 3600, 1) + " h ago";
+  }
+  function ccFact(list, label, value) {
+    list.appendChild(el("dt", null, label));
+    list.appendChild(el("dd", null, value === null || value === undefined ? "-" : value));
+  }
+  function renderConvCache(c, liveState) {
+    var list = $("cc-facts");
+    clear(list);
+    var cache = c || {};
+    var enabled = cache.enabled === true;
+    $("cc-bars").hidden = !enabled;
+    var pct = function (a, b) { return b ? Math.min(100, (100 * a) / b) : 0; };
+    if (enabled) {
+      $("cc-slots-text").textContent = fmt(cache.parked) + " / " + fmt(cache.slots);
+      setBar("cc-slots-bar", pct(cache.parked, cache.slots));
+      var budget = cache.budget_mib * 1048576;
+      $("cc-mem-text").textContent = size(cache.bytes) + " / " + size(budget);
+      setBar("cc-mem-bar", pct(cache.bytes, budget));
+    }
+    $("cc-sum").textContent = cache.requests ? fmt(cache.requests_reused) + " of " + fmt(cache.requests) + " requests reused part of their prompt" : "";
+    var share = cache.prompt_tokens ? " (" + fmt((100 * cache.reused_tokens) / cache.prompt_tokens) + "% of all prompt tokens)" : "";
+    ccFact(list, "Last request", cache.last_prompt !== null && cache.last_prompt !== undefined
+      ? fmt(cache.last_reused || 0) + " of " + fmt(cache.last_prompt) + " prompt tokens reused" : null);
+    ccFact(list, "Reused since start", cache.requests ? fmt(cache.reused_tokens) + " tokens" + share : null);
+    if (enabled) {
+      ccFact(list, "Parked / restored", fmt(cache.parks) + " / " + fmt(cache.restores) + (cache.evictions ? DOT + fmt(cache.evictions) + " evicted" : ""));
+      ccFact(list, "Last switch", cache.last_event
+        ? (cache.last_event === "parked" ? "Parked " : "Restored ") + fmt(cache.last_tokens) + " tokens, " + sinceText(cache.last_at) : null);
+    }
+    var note;
+    if (liveState === "offline") {
+      note = "The server is not answering.";
+    } else if (!c) {
+      note = "This server does not report a conversation cache.";
+    } else if (cache.supported !== true && cache.supported !== false) {
+      note = "No engine is up: nothing is kept of earlier conversations now.";
+    } else if (cache.supported === false) {
+      note = "Not used by this engine: it keeps no conversation cache, so this card only counts the reuse its requests report.";
+    } else if (enabled) {
+      note = "A request that continues a parked conversation gets its state back instead of reading it again; the oldest goes when the slots or the memory are full.";
+    } else {
+      note = "The engine keeps the last conversation's state, so a follow-up reads only what is new. To keep several conversations (agents taking turns), start it with --conversation-cache-mib 8192.";
+    }
+    $("cc-note").textContent = note;
+  }
+
+  // The server does not answer the Monitor (it stopped or restarts, the network is down, the key changed): no live
+  // figure stays on the page - the engine's or this PC's - while the history (the recent requests, the totals, the
+  // charts) keeps what happened.
+  function offlineSnapshot(previous) {
+    var p = previous || {};
+    return { engine: { loaded: false }, live: { state: "offline", queued: 0 }, hardware: {}, hardware_static: {},
+             history: p.history || {}, requests: p.requests || [], requests_kept: p.requests_kept, totals: p.totals,
+             conversation_cache: null };
+  }
   function showMonitorOff(off) {
     $("monitor-off").hidden = !off;
-    ["state-card", "metrics", "monitor-row"].forEach(function (id) { $(id).hidden = off; });
+    ["state-card", "metrics", "monitor-row", "req-card"].forEach(function (id) { $(id).hidden = off; });
   }
   async function pollMonitor() {
+    if (monitor.polling) { return; }  // one poll at a time: a slow one never lands after a newer one
+    monitor.polling = true;
+    var response, text;
     try {
-      var response = await api("/metrics");
-      var text = await response.text();
-      if (response.status === 404) { showMonitorOff(true); stopMonitor(); return; }
-      if (!response.ok) { return; }
-      showMonitorOff(false);
-      renderMonitor(JSON.parse(text));
-    } catch (e) { /* the next poll tries again; the pill says when the server is gone */ }
+      response = await api("/metrics");
+      text = await response.text();
+    } catch (e) {
+      // the next poll tries again; meanwhile nothing the server said last stays on the page as if it were live
+      monitor.polling = false;
+      renderMonitor(offlineSnapshot(monitor.last));
+      return;
+    }
+    monitor.polling = false;
+    if (response.status === 404) { showMonitorOff(true); stopMonitor(); return; }
+    if (response.status === 401 && !state.keyless) { signOut("The server no longer accepts this API key."); return; }
+    // a busy server (this address's connection cap while the page polls several things) is up: keep the figures
+    if (response.status === 429 || (response.status === 503 && errorCode(text) === "server_busy")) { return; }
+    var parsed = null;
+    try { parsed = response.ok ? JSON.parse(text) : null; } catch (e) { parsed = null; }
+    if (!parsed) { renderMonitor(offlineSnapshot(monitor.last)); return; }
+    showMonitorOff(false);
+    renderMonitor(parsed);
   }
   function startMonitor() {
     stopMonitor();
@@ -3070,6 +3423,7 @@
     $("model-defaults").addEventListener("click", resetOptions);
     $("downloads-refresh").addEventListener("click", function () { refreshDownloads(); });
     $("downloads-dest-change").addEventListener("click", chooseDestination);
+    $("downloads-dest-reset").addEventListener("click", useDefaultDestination);
     $("models-empty-add").addEventListener("click", function () { showModelsSubtab("download"); });
     $("local-models-pick").addEventListener("click", addLocalModel);
     $("model-folder-change").addEventListener("click", changeCardFolder);

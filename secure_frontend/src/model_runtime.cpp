@@ -215,6 +215,10 @@ std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& 
   // Spec §3.7(d): detected, never configured; off unless this process runs in
   // a writable delegated cgroup v2.
   plan.use_delegated_cgroup = true;
+  // The Monitor's conversation cache (owner 2026-10-28): upstream's engine (the Qwen profile) prints its park and
+  // restore lines on stderr; only their numbers are kept (EngineCommand::read_conversation_cache). Every other
+  // family's stderr still goes to NUL.
+  plan.command.read_conversation_cache = launch.profile == EngineProfile::qwen;
   // Spec §3.12 (G2): PR_SET_NO_NEW_PRIVS on the engine unless
   // engine.allow_new_privileges (--allow-new-privileges); when it is set, an
   // engine that dies before READY gets the one-time /dev/nvidia-uvm hint.

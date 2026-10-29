@@ -49,7 +49,8 @@
       "prepare": "maya_pack",
       "pack_args": [],
       "expert_profile": null,
-      "mmproj": null
+      "mmproj": null,
+      "mtp": null
     },
     {
       "id": "deepseek-v4.1-flash-maya-xs",
@@ -90,7 +91,8 @@
       "prepare": "maya_pack",
       "pack_args": [],
       "expert_profile": null,
-      "mmproj": null
+      "mmproj": null,
+      "mtp": null
     },
     {
       "id": "deepseek-v4.1-flash-ud-q4_k_xl",
@@ -151,7 +153,8 @@
       "prepare": "maya_pack",
       "pack_args": [],
       "expert_profile": null,
-      "mmproj": null
+      "mmproj": null,
+      "mtp": null
     },
     {
       "id": "deepseek-v4.1-flash-ud-q8_k_xl",
@@ -212,7 +215,58 @@
       "prepare": "maya_pack",
       "pack_args": [],
       "expert_profile": null,
-      "mmproj": null
+      "mmproj": null,
+      "mtp": null
+    },
+    {
+      "id": "flint-q8_0",
+      "name": "flint Q8_0",
+      "source": "m-strata",
+      "family": "flint",
+      "engine": "flint",
+      "about": "RecursiveSI's Flint Preview as unsloth's 8-bit Q8_0 GGUF, one file, run by our flint engine; its card is made from the GGUF once it is verified. Licence: apache-2.0 (its model card).",
+      "repo": "unsloth/flint-GGUF",
+      "revision": "20468edfc38ab43d6914cc88b08cbecb05d0fc62",
+      "files": [
+        {
+          "path": "flint-Q8_0.gguf",
+          "size": 42301076928,
+          "sha256": "5df42b56859c7b5142228005d7d63c327ec9e34c99c72548016d805309a0d284"
+        }
+      ],
+      "prepare": "none",
+      "pack_args": [],
+      "expert_profile": null,
+      "mmproj": null,
+      "mtp": null
+    },
+    {
+      "id": "gemma-4-26b-a4b-it-q8_0",
+      "name": "Gemma 4 26B-A4B Q8_0",
+      "source": "m-strata",
+      "family": "gemma4",
+      "engine": "gemma4",
+      "about": "Google's Gemma 4 26B-A4B instruct as unsloth's 8-bit Q8_0 GGUF with its MTP draft file (always fetched with it), run by our Gemma 4 engine; its card is made from the GGUF and drafts with the MTP file while its MTP option is on. Licence: apache-2.0 (its model card).",
+      "repo": "unsloth/gemma-4-26B-A4B-it-GGUF",
+      "revision": "c099eb48e663fd284577b04978a94ffccb261841",
+      "files": [
+        {
+          "path": "gemma-4-26B-A4B-it-Q8_0.gguf",
+          "size": 26859861728,
+          "sha256": "5f7cbd0f4564e84342fc34321a09acb54b1a3da9215124e5bf444baa6dda152c"
+        }
+      ],
+      "prepare": "none",
+      "pack_args": [],
+      "expert_profile": null,
+      "mmproj": null,
+      "mtp": {
+        "path": "MTP/mtp-gemma-4-26B-A4B-it-Q8_0.gguf",
+        "size": 461766816,
+        "sha256": "6326fb9f5e487aa8dcdd313a091e3c67724cb2a666ec3b7d2895b5b26d93ed1b",
+        "repo": "unsloth/gemma-4-26B-A4B-it-GGUF",
+        "revision": "c099eb48e663fd284577b04978a94ffccb261841"
+      }
     },
     {
       "id": "glm-5.3-flash-maya-l",
@@ -254,7 +308,8 @@
         "sha256": "3627575df16bd152db0f3fd7e488d270b33f3a9e6c7fa3b1b8ac381faafde882",
         "repo": "peasantsmith/GLM-5.3-Flash-Maya-GGUF",
         "revision": "main"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "glm-5.3-flash-maya-m",
@@ -291,7 +346,8 @@
         "sha256": "3627575df16bd152db0f3fd7e488d270b33f3a9e6c7fa3b1b8ac381faafde882",
         "repo": "peasantsmith/GLM-5.3-Flash-Maya-GGUF",
         "revision": "main"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "glm-5.3-flash-maya-m-derisked",
@@ -328,7 +384,8 @@
         "sha256": "3627575df16bd152db0f3fd7e488d270b33f3a9e6c7fa3b1b8ac381faafde882",
         "repo": "peasantsmith/GLM-5.3-Flash-Maya-GGUF",
         "revision": "main"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "glm-5.3-flash-maya-s-v2-iq2_xxs",
@@ -365,7 +422,8 @@
         "sha256": "3627575df16bd152db0f3fd7e488d270b33f3a9e6c7fa3b1b8ac381faafde882",
         "repo": "peasantsmith/GLM-5.3-Flash-Maya-GGUF",
         "revision": "main"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "glm-5.3-flash-maya-s24",
@@ -402,7 +460,8 @@
         "sha256": "3627575df16bd152db0f3fd7e488d270b33f3a9e6c7fa3b1b8ac381faafde882",
         "repo": "peasantsmith/GLM-5.3-Flash-Maya-GGUF",
         "revision": "main"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "minimax-m3.1-flash-maya-s",
@@ -438,7 +497,8 @@
       "prepare": "maya_pack",
       "pack_args": [],
       "expert_profile": null,
-      "mmproj": null
+      "mmproj": null,
+      "mtp": null
     },
     {
       "id": "minimax-m3.1-flash-maya-xs",
@@ -469,7 +529,8 @@
       "prepare": "maya_pack",
       "pack_args": [],
       "expert_profile": null,
-      "mmproj": null
+      "mmproj": null,
+      "mtp": null
     },
     {
       "id": "qwen3.6-35b-a3b-q8_0",
@@ -496,7 +557,8 @@
         "sha256": "71f3cbc1f7cc0f30d09d41cfa924c0060827ebc33bf15ace7e86661e856f0160",
         "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
         "revision": "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "qwen3.6-35b-a3b-ud-q4_k_xl",
@@ -523,7 +585,8 @@
         "sha256": "71f3cbc1f7cc0f30d09d41cfa924c0060827ebc33bf15ace7e86661e856f0160",
         "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
         "revision": "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "qwen3.6-35b-a3b-ud-q6_k_xl",
@@ -550,7 +613,8 @@
         "sha256": "71f3cbc1f7cc0f30d09d41cfa924c0060827ebc33bf15ace7e86661e856f0160",
         "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
         "revision": "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "qwen3.8-flash-next-coder-iq1_m",
@@ -582,7 +646,8 @@
         "sha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
         "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF",
         "revision": "5348543e0147355ac9cbcb031184a3546350988e"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "qwen3.8-flash-next-gyro-gyro-m",
@@ -611,7 +676,8 @@
         "sha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
         "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "qwen3.8-flash-next-gyro-gyro-s",
@@ -640,7 +706,8 @@
         "sha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
         "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "qwen3.8-flash-next-iq2_xs",
@@ -672,7 +739,8 @@
         "sha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
         "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "qwen3.8-flash-next-iq3_s",
@@ -704,7 +772,8 @@
         "sha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
         "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "qwen3.8-flash-next-iq3_xxs",
@@ -736,7 +805,8 @@
         "sha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
         "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "qwen3.8-flash-next-q2_0",
@@ -768,7 +838,8 @@
         "sha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
         "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "qwen3.8-flash-next-unsloth-q8_0",
@@ -822,7 +893,8 @@
         "sha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
         "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "qwen3.8-flash-next-unsloth-ud-iq4_xs",
@@ -861,7 +933,8 @@
         "sha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
         "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
@@ -905,7 +978,8 @@
         "sha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
         "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "qwen3.8-flash-next-unsloth-ud-q5_k_xl",
@@ -959,7 +1033,8 @@
         "sha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
         "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "qwen3.8-flash-next-unsloth-ud-q6_k_xl",
@@ -1013,7 +1088,30 @@
         "sha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
         "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09"
-      }
+      },
+      "mtp": null
+    },
+    {
+      "id": "raon-1-mini-preview-q8_0",
+      "name": "raon-1-mini Q8_0",
+      "source": "m-strata",
+      "family": "raon1",
+      "engine": "raon1",
+      "about": "KRAFTON's Raon-1-mini preview as its own 8-bit Q8_0 GGUF, one file, run by our raon1 engine; strata-prepare packs it first (Maya's step with our raon1 port), then its card appears. Licence: apache-2.0 (its model card).",
+      "repo": "KRAFTON/Raon-1-mini-preview-gguf",
+      "revision": "cd61e81afcdfdf4b13cb345b3587c0ba4b918d00",
+      "files": [
+        {
+          "path": "raon-1-mini-preview-Q8_0.gguf",
+          "size": 30693555936,
+          "sha256": "15582e05c3dc028b16d14ddf1a692a1602884b9ec48055fade2078369f99f6fc"
+        }
+      ],
+      "prepare": "maya_pack",
+      "pack_args": [],
+      "expert_profile": null,
+      "mmproj": null,
+      "mtp": null
     },
     {
       "id": "swift-1.5-iq2_xs",
@@ -1045,7 +1143,8 @@
         "sha256": "cd1140f4abba943ce8d9fa92fed8407e389954d26907efde7b72153c75bd8a60",
         "repo": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "revision": "99bb8f7f95c7aa7b24a36a7786a4f657b30f5d3d"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "swift-1.5-iq3_s",
@@ -1077,7 +1176,8 @@
         "sha256": "cd1140f4abba943ce8d9fa92fed8407e389954d26907efde7b72153c75bd8a60",
         "repo": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "revision": "99bb8f7f95c7aa7b24a36a7786a4f657b30f5d3d"
-      }
+      },
+      "mtp": null
     },
     {
       "id": "swift-1.5-iq3_xxs",
@@ -1109,7 +1209,8 @@
         "sha256": "cd1140f4abba943ce8d9fa92fed8407e389954d26907efde7b72153c75bd8a60",
         "repo": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "revision": "99bb8f7f95c7aa7b24a36a7786a4f657b30f5d3d"
-      }
+      },
+      "mtp": null
     }
   ]
 }

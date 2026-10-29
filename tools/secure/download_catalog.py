@@ -6,6 +6,9 @@ Model downloads plan (docs/superpowers/plans/2026-10-23-model-downloads.md), Tas
 
   upstream/setup.py          MODELS, FAMILIES, OWN_PATH_FAMILIES, REPO_PINS (bytes + SHA-256 per file), HF_REVISIONS
   engines/maya-ref/maya.py   MODELS (SHA-256 per shard at revision "main", no sizes), MODEL_NAME
+  tools/secure/catalog_pins.json   our own pins (source "m-strata", owner 2026-10-28): flint, raon-1-mini and Gemma 4
+                             (with its MTP draft file), each file's commit, size and SHA-256 and the licence its model
+                             card names, read as JSON data
 
 A table is read only when it is a literal (constants, tuples, lists, dicts, `**` merges, names of other such tables,
 `+` of strings and numbers, `*` of numbers, and upstream's `hf("<repo>")` folder helper); anything else is refused with
@@ -21,6 +24,8 @@ pinned (a 64-hex SHA-256; upstream: also a size and a 40-hex commit) is dropped 
 
 `mmproj` carries `repo` and `revision` besides the schema's path/size/sha256: the image encoder often lives in another
 repository than the model (Unsloth's and Gyro's in ISTA-DASLab's, Maya-M-Derisked's in Maya's main repository).
+`mtp` (Gemma 4 only, owner 2026-10-28: "make sure we work that mtp in our gemma engine") is the model's MTP draft file
+in the same shape, always fetched with the model; null for every other entry.
 """
 
 from __future__ import annotations
@@ -96,6 +101,18 @@ DS4_FAMILY = "deepseek"
 # MiniMax-M3.1-Flash (owner 2026-10-28): Maya v1.1.30's manifest, vendored in our copy of Maya's tree
 MM3_FAMILY = "minimax"
 MM3_MANIFEST = REPO / "engine" / "third_party" / "maya" / "tools" / "mm3" / "download_gguf.json"
+# Our own pins (owner 2026-10-28: "there are no download cards for ... flint, raon1, gemma4"): hand-written JSON data.
+PINS = HERE / "catalog_pins.json"
+PIN_SOURCE = "m-strata"
+# The engines we pin for and each one's step after the download: flint's and Gemma 4's card is made from the GGUF
+# (card_for_gguf), raon-1-mini is packed first (strata-prepare download --maya, as its folder card is).
+PIN_ENGINES = {"flint": "none", "gemma4": "none", "raon1": "maya_pack"}
+MTP_ENGINES = ("gemma4",)   # the engines that run an MTP draft file (--mtp <file>)
+PIN_KEYS = {"name", "family", "engine", "prepare", "license", "about", "repo", "revision", "files", "mtp"}
+FILE_KEYS = ("path", "size", "sha256")
+MTP_FILE_KEYS = FILE_KEYS + ("repo", "revision")
+LICENSE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]{0,63}")   # an SPDX-style id, as Hugging Face's cardData.license
+SHARD = re.compile(r"-\d{5}-of-\d{5}\.gguf$", re.IGNORECASE)   # a split GGUF's shard name (hf_source gguf_shard_set)
 MUTATORS = {"update", "setdefault", "pop", "popitem", "clear", "append", "extend", "insert", "remove", "__setitem__"}
 # Non-ASCII the about texts may use, spelled in ASCII; anything else becomes "?".
 ASCII = {"—": "-", "–": "-", "−": "-", "‘": "'", "’": "'", "“": '"', "”": '"',
@@ -336,7 +353,7 @@ def upstream_entries(up: Source, notes: list[str]) -> list[dict]:
                     "revision": upstream_revision(revisions, repo), "files": files, "prepare": "iq_pack",
                     "pack_args": pack_args, "expert_profile": fam.get("profile", DEFAULT_PROFILE),
                     "mmproj": upstream_mmproj(pins, revisions, fam.get("mmproj_hf"), fam.get("mmproj"))
-                    if vision else None})
+                    if vision else None, "mtp": None})
             except Dropped as why:
                 notes.append(f"dropped: strata {fam_key} {model}: {why}")
     for fam_key, fam in own.items():
@@ -355,7 +372,7 @@ def upstream_entries(up: Source, notes: list[str]) -> list[dict]:
                     # tokenizer only)
                     "prepare": "none", "pack_args": [], "expert_profile": None,
                     "mmproj": upstream_mmproj(pins, revisions, fam.get("mmproj_hf"), fam.get("mmproj"))
-                    if fam.get("vision") is not False else None})
+                    if fam.get("vision") is not False else None, "mtp": None})
             except Dropped as why:
                 notes.append(f"dropped: strata {fam_key} {model}: {why}")
     return out
@@ -406,7 +423,7 @@ def maya_entries(maya: Source, notes: list[str]) -> list[dict]:
                 "engine": "glm53", "about": ascii_text(spec["about"]), "repo": repo, "revision": rev, "files": files,
                 # Maya's GLM engine reads these from Maya's pack (maya.py pack_step), which the server builds with
                 # `strata-prepare download --maya` (owner 2026-10-27): runnable once packed
-                "prepare": "maya_pack", "pack_args": [], "expert_profile": None, "mmproj": mmproj})
+                "prepare": "maya_pack", "pack_args": [], "expert_profile": None, "mmproj": mmproj, "mtp": None})
         except (Dropped, KeyError) as why:
             notes.append(f"dropped: maya {key}: {why if isinstance(why, Dropped) else f'no {why} in its entry'}")
     return out
@@ -441,7 +458,8 @@ def maya_ds4_entries(maya: Source, manifest: Path, notes: list[str]) -> list[dic
                 out.append({
                     "id": f"{base}-{key.lower()}", "name": f"{doc['name']} {key}", "source": "maya", "family": DS4_FAMILY,
                     "engine": DS4_FAMILY, "about": about or ascii_text(spec["about"]), "repo": repo, "revision": rev,
-                    "files": files, "prepare": "maya_pack", "pack_args": [], "expert_profile": None, "mmproj": None})
+                    "files": files, "prepare": "maya_pack", "pack_args": [], "expert_profile": None, "mmproj": None,
+                    "mtp": None})
             except (Dropped, KeyError) as why:
                 notes.append(f"dropped: maya deepseek {key}: {why if isinstance(why, Dropped) else f'no {why} in its entry'}")
     return out
@@ -474,9 +492,91 @@ def maya_mm3_entries(manifest: Path, notes: list[str]) -> list[dict]:
             out.append({
                 "id": key.lower(), "name": f"{name} {tier}", "source": "maya", "family": MM3_FAMILY, "engine": MM3_FAMILY,
                 "about": ascii_text(spec["about"]), "repo": repo, "revision": rev, "files": files, "prepare": "maya_pack",
-                "pack_args": [], "expert_profile": None, "mmproj": None})
+                "pack_args": [], "expert_profile": None, "mmproj": None, "mtp": None})
         except (Dropped, KeyError) as why:
             notes.append(f"dropped: maya minimax {key}: {why if isinstance(why, Dropped) else f'no {why} in its entry'}")
+    return out
+
+
+# ------------------------------------------------------------------------------------------------ our own pins
+def pin_file(pin, what: str, keys: tuple[str, ...] = FILE_KEYS) -> dict:
+    """One pinned file of ours: {"path", "size", "sha256"} (an MTP file may also name its own repo and revision)."""
+    if not isinstance(pin, dict):
+        raise Dropped(f"{what} is not a pinned file")
+    unknown = sorted(set(pin) - set(keys))
+    if unknown:
+        raise Dropped(f"{what} has an unknown key {unknown[0]}")
+    path = pin.get("path")
+    if not isinstance(path, str):
+        raise Dropped(f"{what} names no path")
+    size = pin.get("size")
+    if type(size) is not int or size <= 0:
+        raise Dropped(f"{path} has no size")
+    return {"path": gguf_path(path), "size": size, "sha256": sha256_of(pin.get("sha256"), path)}
+
+
+def pin_entries(pins: Path, notes: list[str]) -> list[dict]:
+    """Our own pins (tools/secure/catalog_pins.json, owner 2026-10-28): flint and Gemma 4, whose cards are made from the
+    GGUF, and raon-1-mini, packed first by strata-prepare download --maya. Every file pinned by its commit, size and
+    SHA-256, the licence its model card names stated on the card; Gemma 4's MTP draft file (its engine's --mtp) from the
+    same repository and commit unless it names its own. Anything unpinned, unknown or misspelt drops the entry."""
+    try:
+        doc = json.loads(pins.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as e:
+        raise CatalogError(f"cannot read {pins.name} ({e.__class__.__name__})") from None
+    models = doc.get("models") if isinstance(doc, dict) else None
+    if not isinstance(models, dict):
+        raise CatalogError(f"{pins.name}: no models table")
+    out = []
+    for key, spec in models.items():
+        try:
+            if not ID.fullmatch(key):
+                raise Dropped("its id is not [a-z0-9._-]{1,64}")
+            if not isinstance(spec, dict):
+                raise Dropped("not a table")
+            unknown = sorted(set(spec) - PIN_KEYS)
+            if unknown:
+                raise Dropped(f"an unknown key {unknown[0]}")
+            engine, prepare = spec.get("engine"), spec.get("prepare")
+            if engine not in PIN_ENGINES:
+                raise Dropped(f"engine {engine!r} is not one we pin for ({', '.join(sorted(PIN_ENGINES))})")
+            if prepare != PIN_ENGINES[engine]:
+                raise Dropped(f"prepare {prepare!r} is not the {engine} engine's ({PIN_ENGINES[engine]})")
+            family, licence = spec.get("family"), spec.get("license")
+            if not isinstance(family, str) or not ID.fullmatch(family):
+                raise Dropped("no family")
+            if not isinstance(licence, str) or not LICENSE.fullmatch(licence):
+                raise Dropped("no licence read from its model card")
+            name, about = spec.get("name"), spec.get("about")
+            if not (isinstance(name, str) and name.strip() and isinstance(about, str) and about.strip()):
+                raise Dropped("no name or about text")
+            repo, rev = hf_repo(spec.get("repo")), spec.get("revision")
+            if not isinstance(rev, str) or not HEX40.fullmatch(rev):
+                raise Dropped("not pinned to a commit")
+            listed = spec.get("files")
+            if not isinstance(listed, list) or not listed:
+                raise Dropped("no files")
+            files = [pin_file(f, "a file") for f in listed]
+            mtp = spec.get("mtp")
+            if mtp is not None:
+                if engine not in MTP_ENGINES:
+                    raise Dropped(f"an MTP file the {engine} engine does not run")
+                side = pin_file(mtp, "its MTP file", MTP_FILE_KEYS)
+                if side["path"] in {f["path"] for f in files} or SHARD.search(side["path"]):
+                    raise Dropped("its MTP file is one of its model files or named as a shard")
+                mtp_rev = mtp.get("revision", rev)
+                if not isinstance(mtp_rev, str) or not HEX40.fullmatch(mtp_rev):
+                    raise Dropped("its MTP file is not pinned to a commit")
+                mtp = {**side, "repo": hf_repo(mtp.get("repo", repo)), "revision": mtp_rev}
+            name, about = ascii_text(name), f"{ascii_text(about)} Licence: {licence} (its model card)."
+            if len(name) > 128 or len(about) > 1024:   # the server's reader refuses longer ones (download_catalog.cpp)
+                raise Dropped("a name over 128 or an about text over 1024 characters")
+            out.append({
+                "id": key, "name": name, "source": PIN_SOURCE, "family": family, "engine": engine, "about": about,
+                "repo": repo, "revision": rev, "files": files, "prepare": prepare, "pack_args": [], "expert_profile": None,
+                "mmproj": None, "mtp": mtp})
+        except Dropped as why:
+            notes.append(f"dropped: {PIN_SOURCE} {key}: {why}")
     return out
 
 
@@ -493,14 +593,15 @@ def read_versions(upstream_version: Path, maya: Path) -> dict:
     return {"upstream": up, "maya": found.group(1)}
 
 
-def build(upstream: Path, maya: Path, upstream_version: Path, mm3_manifest: Path = MM3_MANIFEST) -> tuple[dict, list[str]]:
+def build(upstream: Path, maya: Path, upstream_version: Path, mm3_manifest: Path = MM3_MANIFEST,
+          pins: Path = PINS) -> tuple[dict, list[str]]:
     """The catalog document and the notes (what was left out by O4 and what was dropped, and why)."""
     notes: list[str] = []
     generated_from = read_versions(upstream_version, maya)
     maya_source = Source(maya / "maya.py")
     models = (upstream_entries(Source(upstream / "setup.py"), notes) + maya_entries(maya_source, notes) +
               maya_ds4_entries(maya_source, maya / "tools" / "ds4" / "download_gguf.json", notes) +
-              maya_mm3_entries(mm3_manifest, notes))
+              maya_mm3_entries(mm3_manifest, notes) + pin_entries(pins, notes))
     ids = [m["id"] for m in models]
     bad = [i for i in ids if not ID.fullmatch(i)]
     if bad or len(set(ids)) != len(ids):

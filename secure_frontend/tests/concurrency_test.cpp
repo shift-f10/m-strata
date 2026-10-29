@@ -16,7 +16,9 @@
 #include <optional>
 #include <algorithm>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -334,6 +336,26 @@ void request_log_format_and_token_bucket() {
   const secure_frontend::RequestLogRecord gone{secure_frontend::RouteId::health, 0, "client_gone", std::chrono::milliseconds(1), 0U,
                                                secure_frontend::AddressScope::remote};
   expect(secure_frontend::format_request_line(8, gone) == "req 8 health 0 client_gone 1 0 remote", "log-only code");
+  // every route the router knows is logged by its own name, never as "other" (a route added later included)
+  using R = secure_frontend::RouteId;
+  const std::pair<R, std::string_view> named[] = {
+      {R::strata_calibrate, "strata_calibrate"},       {R::strata_calibrate_cancel, "strata_calibrate_cancel"},
+      {R::strata_calibrate_auto, "strata_calibrate_auto"}, {R::strata_login_link, "strata_login_link"},
+      {R::strata_alerts, "strata_alerts"},             {R::strata_alerts_settings, "strata_alerts_settings"},
+      {R::strata_alerts_password, "strata_alerts_password"}, {R::strata_alerts_test, "strata_alerts_test"},
+      {R::strata_search, "strata_search"},             {R::strata_search_settings, "strata_search_settings"},
+      {R::strata_search_test, "strata_search_test"},   {R::strata_config, "strata_config"},
+      {R::strata_config_settings, "strata_config_settings"}, {R::strata_key_rotate, "strata_key_rotate"},
+      {R::strata_folders, "strata_folders"},           {R::strata_folder_private, "strata_folder_private"},
+      {R::strata_folder_new, "strata_folder_new"},     {R::strata_card_add, "strata_card_add"},
+      {R::strata_card_folder, "strata_card_folder"},   {R::strata_card_delete_begin, "strata_card_delete_begin"},
+      {R::strata_card_delete, "strata_card_delete"},   {R::strata_folder_sharing, "strata_folder_sharing"},
+      {R::strata_about, "strata_about"},               {R::strata_download_link, "strata_download_link"}};
+  for (const auto& [route, name] : named) {
+    const secure_frontend::RequestLogRecord line{route, 200, "", std::chrono::milliseconds(1), 0U, secure_frontend::AddressScope::loopback};
+    expect(secure_frontend::format_request_line(1, line) == "req 1 " + std::string{name} + " 200 - 1 0 loopback",
+           "the " + std::string{name} + " route is logged by its name: " + secure_frontend::format_request_line(1, line));
+  }
   auto now = RequestLogger::Clock::time_point{} + std::chrono::seconds(10);
   std::vector<std::string> lines;
   RequestLogger logger(true, [&lines](std::string_view line) { lines.emplace_back(line); }, [&now] { return now; });

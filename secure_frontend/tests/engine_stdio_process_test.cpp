@@ -4,9 +4,14 @@
 #include "support/fake_engine_dump.hpp"
 #include "support/test_paths.hpp"
 
+#include <array>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
+#include <optional>
+#include <thread>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -171,6 +176,139 @@ void terminate_reaps_killed_child(const std::filesystem::path& fake) {
 }
 #endif
 
+// --- the Monitor (owner 2026-10-28): the engine's memory, its conversation cache from its stderr ---------------
+// The payload the fake writes to its stderr, built at run time from its lower-case spelling as the fake builds it, so
+// this binary holds no copy of it but this buffer.
+struct Needle final {
+  std::array<char, 19> bytes{};
+  Needle() {
+    static const char lower[] = "usersecretpayloadqz";
+    volatile unsigned char flip = 0x20U;
+    for (std::size_t index = 0; index < bytes.size(); ++index) bytes[index] = static_cast<char>(static_cast<unsigned char>(lower[index]) ^ flip);
+  }
+};
+
+bool region_holds(const unsigned char* begin, const unsigned char* end, const Needle& needle) {
+  const auto* skip = reinterpret_cast<const unsigned char*>(needle.bytes.data());
+  const unsigned char first = static_cast<unsigned char>(needle.bytes[0]);
+  for (const unsigned char* at = begin; at + needle.bytes.size() <= end; ++at) {
+    if (*at != first || (at >= skip && at < skip + needle.bytes.size())) continue;
+    if (std::memcmp(at, needle.bytes.data(), needle.bytes.size()) == 0) return true;
+  }
+  return false;
+}
+
+// Every writable private page of this process (the heap, the stacks, the globals): does it hold the payload?
+bool this_process_holds(const Needle& needle) {
+#if defined(_WIN32)
+  SYSTEM_INFO system{};
+  GetSystemInfo(&system);
+  auto* address = static_cast<unsigned char*>(system.lpMinimumApplicationAddress);
+  MEMORY_BASIC_INFORMATION region{};
+  while (address < static_cast<unsigned char*>(system.lpMaximumApplicationAddress) && VirtualQuery(address, &region, sizeof(region)) == sizeof(region)) {
+    auto* const base = static_cast<unsigned char*>(region.BaseAddress);
+    const bool writable = (region.Protect & (PAGE_READWRITE | PAGE_WRITECOPY)) != 0U && (region.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0U;
+    if (region.State == MEM_COMMIT && writable && region_holds(base, base + region.RegionSize, needle)) return true;
+    address = base + region.RegionSize;
+  }
+  return false;
+#else
+  std::ifstream maps("/proc/self/maps");
+  for (std::string line; std::getline(maps, line);) {
+    unsigned long long from = 0;
+    unsigned long long to = 0;
+    char perms[5]{};
+    if (std::sscanf(line.c_str(), "%llx-%llx %4s", &from, &to, perms) != 3 || perms[0] != 'r' || perms[1] != 'w') continue;
+    if (line.find("[vvar") != std::string::npos || line.find("[vsyscall]") != std::string::npos) continue;
+    if (region_holds(reinterpret_cast<const unsigned char*>(from), reinterpret_cast<const unsigned char*>(to), needle)) return true;
+  }
+  return false;
+#endif
+}
+
+void wait_ready(secure_frontend::EngineStdioProcess& transport, const std::chrono::seconds bound) {
+  const auto until = std::chrono::steady_clock::now() + bound;
+  while (std::chrono::steady_clock::now() < until) {
+    const auto read = transport.read_line(std::chrono::milliseconds(200));
+    if (read.kind == secure_frontend::EngineReadKind::line && read.line.rfind("READY ", 0) == 0) return;
+    expect(read.kind == secure_frontend::EngineReadKind::line || read.kind == secure_frontend::EngineReadKind::timeout, "the fake engine must stay up");
+  }
+  throw std::runtime_error("no READY within the bound");
+}
+
+// Upstream's conversation cache lines (ConvCacheLog) reach the Monitor as numbers; every other stderr line - one with
+// a user-text-looking payload among them - is dropped, and nothing of it stays in this process.
+void stderr_gives_only_the_conversation_cache_numbers(const std::filesystem::path& fake) {
+  const Needle needle;
+  secure_frontend::ConversationCacheState state;
+  {
+    secure_frontend::EngineStdioProcess transport;
+    expect(!transport.start({.executable = fake, .arguments = {"--fake-engine", "--stderr-cache-lines"}, .environment = {},
+                             .read_conversation_cache = true})
+                .has_value(),
+           "fake engine must start");
+    wait_ready(transport, std::chrono::seconds(10));
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < until) {
+      const auto seen = transport.conversation_cache();
+      expect(seen.has_value(), "the reader runs for this launch");
+      state = *seen;
+      if (state.parks == 2U && state.restores == 1U && state.parked == 1U) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    expect(transport.terminate(std::chrono::milliseconds(500)), "child cleanup must succeed");
+  }  // the reader is joined here
+  expect(state.parks == 2U && state.restores == 1U && state.parked == 1U && state.bytes == 2097152U && state.evictions == 0U &&
+             state.last_event == std::optional<secure_frontend::ConversationCacheEvent>{secure_frontend::ConversationCacheEvent::restored} &&
+             state.last_tokens == std::optional<std::uint64_t>{1200U} && state.last_at.has_value(),
+         "two parks and a restore, then a drop; the near miss and the over-long line counted nothing");
+  expect(!this_process_holds(needle), "no byte of the payload is left anywhere in this process");
+  secure_frontend::EngineStdioProcess plain;
+  expect(!plain.start({.executable = fake, .arguments = {"--fake-engine", "--stderr-cache-lines"}, .environment = {}}).has_value(),
+         "fake engine must start");
+  wait_ready(plain, std::chrono::seconds(10));
+  expect(!plain.conversation_cache().has_value(), "without the flag stderr goes to NUL and nothing is read");
+  (void)plain.terminate(std::chrono::milliseconds(500));
+}
+
+// The drain keeps up: 16 MiB of stderr (and one 1 MiB line) before READY never stall the engine, and the cache line
+// after them is still read.
+void stderr_flood_never_blocks_the_engine(const std::filesystem::path& fake) {
+  secure_frontend::EngineStdioProcess transport;
+  expect(!transport.start({.executable = fake, .arguments = {"--fake-engine", "--stderr-flood=16384"}, .environment = {},
+                           .read_conversation_cache = true})
+              .has_value(),
+         "fake engine must start");
+  wait_ready(transport, std::chrono::seconds(60));
+  std::optional<secure_frontend::ConversationCacheState> state;
+  for (int i = 0; i < 250 && !(state && state->parked == 7U); ++i) {
+    state = transport.conversation_cache();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  expect(state.has_value() && state->parked == 7U && state->parks == 1U, "the line after the flood is read");
+  const auto started = std::chrono::steady_clock::now();
+  expect(transport.terminate(std::chrono::milliseconds(500)), "child cleanup must succeed");
+  expect(std::chrono::steady_clock::now() - started < std::chrono::seconds(5), "the stop does not wait on the pipe");
+}
+
+// The running engine's memory (Windows working set, Linux VmRSS), and none once it ended.
+void resident_bytes_read_the_running_engine(const std::filesystem::path& fake) {
+  expect(secure_frontend::parse_proc_status_resident_bytes("Name:\tstrata\nVmPeak:\t  9000 kB\nVmRSS:\t   123456 kB\nThreads:\t4\n") ==
+             std::optional<std::uint64_t>{123456ULL * 1024ULL},
+         "VmRSS in bytes");
+  for (const char* bad : {"", "VmRSS:\t abc kB\n", "VmRSS:\t 12 MB\n", "VmRSS:\t 12\n", "VmRSSx: 12 kB\n", "Name: x\n"}) {
+    expect(!secure_frontend::parse_proc_status_resident_bytes(bad).has_value(), std::string{"refused: "} + bad);
+  }
+  secure_frontend::EngineStdioProcess transport;
+  expect(!transport.resident_bytes().has_value(), "no child: nothing");
+  expect(!transport.start({.executable = fake, .arguments = {"--fake-engine"}, .environment = {}}).has_value(), "fake engine must start");
+  wait_ready(transport, std::chrono::seconds(10));
+  const auto running = transport.resident_bytes();
+  expect(running.has_value() && *running > (256U << 10U), "the running child's memory");
+  expect(transport.terminate(std::chrono::milliseconds(500)), "child cleanup must succeed");
+  expect(!transport.resident_bytes().has_value(), "an ended child: nothing");
+}
+
 }  // namespace
 
 // SP1 Task 2's case list, unchanged; only the engine is now the standalone fake.
@@ -183,6 +321,9 @@ int main(int argc, char* argv[]) {
       {"write_line_fails_once_deadline_passed", [] { write_line_fails_once_deadline_passed(fake); }},
       {"read_line_rejects_oversize_on_all_platforms", [] { read_line_rejects_oversize_on_all_platforms(fake); }},
       {"read_line_waits_for_a_record_split_across_writes", [] { read_line_waits_for_a_record_split_across_writes(fake); }},
+      {"stderr_gives_only_the_conversation_cache_numbers", [] { stderr_gives_only_the_conversation_cache_numbers(fake); }},
+      {"stderr_flood_never_blocks_the_engine", [] { stderr_flood_never_blocks_the_engine(fake); }},
+      {"resident_bytes_read_the_running_engine", [] { resident_bytes_read_the_running_engine(fake); }},
 #if defined(_WIN32)
       {"job_object_terminates_grandchild", [] { job_object_terminates_grandchild(fake); }},
 #else

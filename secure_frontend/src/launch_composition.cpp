@@ -29,6 +29,15 @@ LaunchFailure config_failure(std::vector<std::string> messages) { return LaunchF
 
 LaunchFailure store_failure(const AcquireError& error) { return LaunchFailure{exit_class(error.reason), {format_error(error)}}; }
 
+// A file a card names beside its model (the picture encoder, Gemma 4's MTP draft file), held at each launch to the model
+// folders' rule: a regular file, not a link, in a folder no other user of this PC may change (unless
+// roots.allow_untrusted_media).
+bool trusted_side_file(const std::filesystem::path& file, const FrontendConfig& config) {
+  const auto folder = open_root(file.parent_path(), config.roots.allow_untrusted_media ? RootPolicy::external : RootPolicy::existing);
+  std::error_code ec;
+  return std::holds_alternative<CanonicalRoot>(folder) && std::filesystem::is_regular_file(file, ec) && !std::filesystem::is_symlink(file, ec);
+}
+
 bool is_weight_flag(const std::string& argument) {
   return std::any_of(kWeightFlags.begin(), kWeightFlags.end(), [&](const std::string_view flag) {
     return argument == flag || (argument.size() > flag.size() && argument.starts_with(flag) && argument[flag.size()] == '=');
@@ -80,6 +89,17 @@ std::variant<ComposedLaunch, LaunchFailure> expert_launch(const FrontendConfig& 
     return config_failure({"Engine arguments rejected: " + failure->message});
   }
   auto argv = std::get<std::vector<std::string>>(std::move(args));
+  // Gemma 4's MTP draft file (owner 2026-10-28; the card's --mtp <file>, an absolute .gguf by the allowlist): held at
+  // each launch to the rule a card's picture encoder is - a regular file, not a link, in a folder no other user of this
+  // PC may change unless roots.allow_untrusted_media - and refused by name, never by its path.
+  if (profile == EngineProfile::gemma4) {
+    const auto& user = config.engine.args;
+    if (const auto at = std::find(user.begin(), user.end(), "--mtp"); at != user.end() && at + 1 != user.end() &&
+                                                                       !trusted_side_file(path_from_utf8(*(at + 1)), config)) {
+      return config_failure({"engine.args --mtp: the MTP draft file is missing, a link, or in a folder other users of this PC can "
+                             "change (turn the card's MTP option off to start without it)"});
+    }
+  }
   // Gemma 4 plan 1 Task 3: the qwen engine's composed tails are qwen's only. The Gemma
   // engine's argv is its allowlisted engine.args, --gpu and --native (build_engine_arguments);
   // the config refuses the typed rows that would compose these tails on gemma4 by name.
@@ -127,10 +147,7 @@ std::variant<ComposedLaunch, LaunchFailure> expert_launch(const FrontendConfig& 
   if (config.vision.enabled) {
     if (profile != EngineProfile::qwen) return config_failure({"vision: only a qwen model reads images here"});
     const std::filesystem::path& mmproj = *config.vision.mmproj;  // set: compose_engine_launch refused otherwise
-    auto folder = open_root(mmproj.parent_path(), config.roots.allow_untrusted_media ? RootPolicy::external : RootPolicy::existing);
-    std::error_code ec;
-    if (!std::holds_alternative<CanonicalRoot>(folder) || !std::filesystem::is_regular_file(mmproj, ec) ||
-        std::filesystem::is_symlink(mmproj, ec)) {
+    if (!trusted_side_file(mmproj, config)) {
       return config_failure({"vision.mmproj: the picture encoder file is missing, a link, or in a folder other users of this PC "
                              "can change"});
     }

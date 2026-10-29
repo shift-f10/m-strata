@@ -7,6 +7,7 @@
 #include "secure_frontend/engine_process.hpp"
 #include "secure_frontend/engine_protocol_client.hpp"
 #include "secure_frontend/exit_status.hpp"
+#include "secure_frontend/host_readings.hpp"
 #include "secure_frontend/restart_policy.hpp"
 #include "secure_frontend/supervised_process.hpp"
 #include "secure_frontend/supervisor_clock.hpp"
@@ -237,6 +238,10 @@ class EngineSupervisor final {
   // the Monitor reads the expert tier from these so a just-started model shows experts loaded
   // without a first generation. Empty before READY, or when the engine printed none.
   [[nodiscard]] std::map<std::string, std::string> ready_readings() const;
+  // The Monitor (owner 2026-10-28), once a second: the engine that is up (ready or generating) - a number that changes
+  // with each READY and never repeats in this process, its READY readings, its process's resident memory and its
+  // conversation cache (SupervisedProcess). nullopt while none is up (starting, failed, unloaded, stopped).
+  [[nodiscard]] std::optional<EngineSample> engine_sample() const;
 
  private:
   friend class Lease;
@@ -288,6 +293,7 @@ class EngineSupervisor final {
   std::vector<std::shared_ptr<EngineInstance>> abandoned_;
   std::atomic<std::uint64_t> generations_started_{0};
   std::map<std::string, std::string> ready_readings_;  // guarded by mutex_; set at READY
+  std::uint64_t ready_serial_{0};                      // guarded by mutex_; set at READY (engine_sample)
   std::atomic<bool> shutdown_requested_{false};
   std::atomic<bool> engine_left_unreaped_{false};  // set by finish(): abandoned_ was not empty
   std::shared_ptr<LeaseLink> lease_link_;
