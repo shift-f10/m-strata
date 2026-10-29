@@ -3,7 +3,11 @@ download dependencies, install them then run the build"): what they pin is what 
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -80,6 +84,26 @@ def test_the_cpp_workload_is_what_make_asks_for():
     ps1 = text("install.ps1")
     assert ps1.count("Microsoft.VisualStudio.Workload.VCTools") == 2
     assert "Microsoft.VisualStudio.Workload.VCTools" in text("make.py")
+
+
+def test_the_scripts_parse():
+    """Owner 2026-10-29: install.bat stopped before doing anything ("$WebView2Version:" in a string is a drive-qualified
+    variable to PowerShell). PowerShell's own parser reads install.ps1 - Windows PowerShell 5.1, which install.bat runs,
+    else pwsh - and the shell reads install.sh with -n; skipped where neither shell is installed."""
+    powershell = shutil.which("powershell") or shutil.which("pwsh")
+    sh = shutil.which("sh")
+    if not powershell and not sh:
+        pytest.skip("neither PowerShell nor sh is on PATH")
+    if powershell:
+        path = str(ROOT / "install.ps1").replace("'", "''")
+        parse = ("$errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile('" + path +
+                 "', [ref]$null, [ref]$errors); foreach ($e in $errors) { '{0}: {1}' -f $e.Extent.StartLineNumber, $e.Message }")
+        result = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-Command", parse],
+                                capture_output=True, text=True, timeout=120, check=False)
+        assert result.returncode == 0 and result.stdout.strip() == "", f"install.ps1 does not parse: {result.stdout}{result.stderr}"
+    if sh:
+        result = subprocess.run([sh, "-n", str(ROOT / "install.sh")], capture_output=True, text=True, timeout=60, check=False)
+        assert result.returncode == 0, f"install.sh does not parse: {result.stderr}"
 
 
 def test_batch_and_powershell_line_endings():

@@ -33,6 +33,7 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -1227,6 +1228,65 @@ void a_card_without_sampling_starts_with_the_recommended() {
          "the chat's temperature 0 wins (greedy), the card's others stay: " + generations[1]);
 }
 
+// The owner's GLM-5.3 calibration, 2026-10-29 ("a calibration reply failed (unsupported_parameter)", every time): a
+// calibration's replies are chats its card's profile takes, and GLM-5.3 takes no reasoning_effort per request (its
+// prompt always opens its think block). A GLM-5.3 card (a glm53 pack: its marker and a tokenizer with GLM's markers)
+// on the fake engine in Maya's dialect measures every trial and keeps a result.
+void a_glm_card_calibrates() {
+  const auto root = secure_frontend_test::make_scratch_directory();
+  const auto data = secure_frontend::data_folder_layout(root / "data");
+  const std::string name = "GLM-5.3-Flash";
+  const auto pack = root / "packs" / "glm";
+  std::filesystem::create_directories(pack / "tokenizer");
+  (void)secure_frontend::write_pack_marker(pack, secure_frontend::kGlmModelName);
+  auto vocabulary = test_support::byte_tokenizer();
+  for (const auto& [literal, type] : std::vector<std::pair<std::string, int>>{
+           {"[gMASK]", 3}, {"<sop>", 3}, {"<|system|>", 3}, {"<|user|>", 3}, {"<|assistant|>", 3}, {"<|observation|>", 3},
+           {"<|endoftext|>", 3}, {"<think>", 4}, {"</think>", 4}}) {
+    vocabulary.tokens_by_id.push_back(literal);
+    vocabulary.token_types.push_back(type);
+  }
+  for (const auto& [file, bytes] : test_support::tokenizer_pack_files(vocabulary)) secure_frontend_test::write_file(pack / "tokenizer" / file, bytes);
+  const auto bin = root / "bin";
+  secure_frontend_test::make_private_directory(bin);
+  const std::filesystem::path fake{STRATA_FAKE_ENGINE_PATH};
+  const auto engine = bin / fake.filename();
+  std::error_code ec;
+  std::filesystem::copy_file(fake, engine, ec);
+  secure_frontend_test::write_file(bin / "fake-engine.options",
+                                   "--dialect=maya\n--tokens=8\n--token-ids=" + std::to_string(test_support::token_id(vocabulary, "a")) + "\n");
+  (void)secure_frontend::ensure_data_folder(data, engine);
+  const auto main = std::get<secure_frontend::FrontendConfigDraft>(
+      secure_frontend::parse_config_text(secure_frontend_test::read_file(data.config_file), data.root));
+  const auto made = secure_frontend::card_for_pack(
+      {.family = secure_frontend::PackedFamily::glm53, .name = name, .engine = engine, .source = "download:glm", .pack = pack});
+  auto parsed = secure_frontend::parse_model_card(made.json, data.root);
+  auto lines = std::make_shared<std::vector<std::string>>();
+  auto lines_mutex = std::make_shared<std::mutex>();
+  secure_frontend::LauncherSettings settings{.main = main, .cards = {}, .operator_cards = 0U, .memory_file = {}, .gate = {}};
+  settings.calibration_dir = data.state / "calibration";
+  settings.log = [lines, lines_mutex](const std::string_view line) {
+    std::lock_guard lock(*lines_mutex);
+    lines->emplace_back(line);
+  };
+  secure_frontend::ModelLauncher launcher(std::move(settings));
+  expect(std::holds_alternative<secure_frontend::ModelCard>(parsed) && launcher.add_card(std::get<secure_frontend::ModelCard>(std::move(parsed))),
+         "the GLM-5.3 card is added");
+  expect(!launcher.calibrate(name, nullptr, false, std::nullopt, false).has_value(), "a calibration is accepted");
+  expect(launcher.wait_until_settled(std::chrono::seconds(300)), "it ends");
+  launcher.shutdown();
+  std::string failed;
+  {
+    std::lock_guard lock(*lines_mutex);
+    for (const auto& line : *lines) {
+      if (line.find("calibration reply failed") != std::string::npos || line.find("did not start for the calibration") != std::string::npos) failed += line + "; ";
+    }
+  }
+  expect(failed.empty(), "every trial's replies are answered: " + failed);
+  const auto stored = secure_frontend::parse_calibration(secure_frontend_test::read_file(data.state / "calibration" / (name + ".json")));
+  expect(stored.has_value(), "the calibration keeps a result");
+}
+
 // Owner 2026-10-23 ("Every model should be showing the number of experts loaded along with
 // memory used"): the Monitor's VRAM and RAM cards read the expert split from the engine's startup
 // INFO. A model shows its experts as soon as it is running, without a first chat.
@@ -1274,6 +1334,7 @@ int main(int argc, char** argv) {
       {"calibration_finds_the_win_and_starts_with_it", calibration_finds_the_win_and_starts_with_it},
       {"a_first_start_calibrates_first", a_first_start_calibrates_first},
       {"a_minimax_card_measures_its_prompt_reading_first", a_minimax_card_measures_its_prompt_reading_first},
+      {"a_glm_card_calibrates", a_glm_card_calibrates},
       {"a_failed_prefill_calibration_is_not_retried_by_itself", a_failed_prefill_calibration_is_not_retried_by_itself},
       {"a_prefill_calibration_falls_back_to_the_default_chunk", a_prefill_calibration_falls_back_to_the_default_chunk},
       {"a_calibration_can_be_cancelled", a_calibration_can_be_cancelled},
