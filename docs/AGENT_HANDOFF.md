@@ -306,7 +306,9 @@ The owner: "Make it an option in the card setting".
   suites 103/103). Linux gcc and clang 1429/1434 each: the same three, `net01_workers_add_no_listener` (gcc) or
   `net01_ipv6_loopback_listener_only` (clang), and `egress_table_scan_during_lifecycle`; after the schema text, the
   touched suites 130/130 on both and each of those three alone 3 of 3 on both.
-- **Not run**: a GLM start from the page at 6 GB (the A/B ran ours at 6 through the server's row).
+- **Live** (the release build, a scratch server, GLM-5.3 Maya-S-v2 started through `POST /v1/strata/models/start`
+  with the option): at `ram_headroom` 6 the engine pinned 9463 experts in RAM (62.7 GB), at 16 7959 (52.7 GB); VRAM
+  932 either way (`/metrics`). The page's dropdown itself was not clicked.
 
 ### Claude Code session, 2026-10-29 z23 (Windows box; owner-directed; committed with this entry, not pushed)
 
