@@ -94,6 +94,7 @@ struct CpuLane::Impl {
   std::size_t staging_bytes{0};
   std::vector<FlagSet> flag_sets;
   std::uint32_t ring{0};
+  int n_tok{1};  // the step's tokens (begin_token)
   std::atomic<bool> abort{false};
   double pool_ms{0};
   long long staged{0};
@@ -155,13 +156,14 @@ bool CpuLane::start(const std::vector<Layer>& layers, int n_embd, int n_ff, cons
   I.n_embd = n_embd;
   cudaGetDevice(&I.device);
 
-  // the mapped words: the doorbell and the three flags on lines of their own, then the payload, the plan and the rows
+  // the mapped words: the doorbell and the three flags on lines of their own, then the payload, the plan and the rows,
+  // each sized for a verify window of LanePlan::kMaxTok tokens (a decode step uses their first token's part)
   auto line = [](std::size_t b) { return (b + 63) & ~std::size_t{63}; };
   const std::size_t o_seq = 0, o_a = 64, o_b = 128, o_c = 192, o_ids = 256;
-  const std::size_t o_plan = line(o_ids + sizeof(std::int32_t) * kTopK);
-  const std::size_t o_x = line(o_plan + sizeof(std::int32_t) * LanePlan::kWords);
-  const std::size_t o_rows = line(o_x + sizeof(float) * static_cast<std::size_t>(n_embd));
-  const std::size_t total = line(o_rows + sizeof(float) * kTopK * static_cast<std::size_t>(n_embd));
+  const std::size_t o_plan = line(o_ids + sizeof(std::int32_t) * LanePlan::kMaxCap);
+  const std::size_t o_x = line(o_plan + sizeof(std::int32_t) * kLanePlanMaxWords);
+  const std::size_t o_rows = line(o_x + sizeof(float) * LanePlan::kMaxTok * static_cast<std::size_t>(n_embd));
+  const std::size_t total = line(o_rows + sizeof(float) * LanePlan::kMaxCap * static_cast<std::size_t>(n_embd));
   if (cudaHostAlloc(&I.mapped, total, cudaHostAllocMapped | cudaHostAllocPortable) != cudaSuccess) {
     error = "cannot allocate the CPU lane's mapped memory";
     return false;
@@ -242,8 +244,21 @@ void CpuLane::stop() {
 
 void CpuLane::abort_token() { impl_->abort.store(true); }
 
-void CpuLane::begin_token() {
+void CpuLane::begin_token(const int n_tok) {
   Impl& I = *impl_;
+  // the plan's layout for the step's entries (the lane thread waits on the condition variable: it reads them once armed)
+  I.n_tok = std::clamp(n_tok, 1, LanePlan::kMaxTok);
+  const LanePlan L = LanePlan::at(kTopK * I.n_tok);
+  strata::core::GpuPlanSink& P = I.sink;
+  P.counts = I.h_plan + L.counts;
+  P.start = I.h_plan + L.start;
+  P.dst = I.h_plan + L.dst;
+  P.tok = I.h_plan + L.tok;
+  P.ptr = reinterpret_cast<unsigned long long*>(I.h_plan + L.ptr);
+  P.ptr2 = reinterpret_cast<unsigned long long*>(I.h_plan + L.ptr2);
+  P.start2 = I.h_plan + L.start2;
+  P.cap = L.cap;
+  if (I.n_tok > 1) ++windows_;
   store_flag(I.h_seq, 0);
   store_flag(I.h_flag_a, 0);
   store_flag(I.h_flag_b, 0);
@@ -278,6 +293,7 @@ CpuLane::Stats CpuLane::stats() const {
   const Impl& I = *impl_;
   Stats s;
   s.tokens = begun_;
+  s.windows = windows_;
   s.hits = I.d.cache_hits;
   s.staged = I.d.pcie_experts;
   s.cpu_entries = I.d.multi_entries;
@@ -334,7 +350,7 @@ bool CpuLane::serve(int layer) {
   I.sink.staging_cap = static_cast<std::int64_t>(std::min<std::size_t>(64, bb > 0 ? I.staging_bytes / bb : 0));
   std::atomic_thread_fence(std::memory_order_acquire);
   const auto t0 = Clock::now();
-  strata::core::expert_pool_dispatch_multi(I.d, I.h_x, I.h_ids, 1, kTopK, I.h_rows);
+  strata::core::expert_pool_dispatch_multi(I.d, I.h_x, I.h_ids, I.n_tok, kTopK, I.h_rows);
   I.pool_ms += std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
   if (I.d.failed) {
     fail_ = std::string("the CPU lane failed: ") + (I.d.fail != nullptr ? I.d.fail : "unknown");

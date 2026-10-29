@@ -86,7 +86,7 @@ the CPU pool.
 | --- | --- |
 | Images (`mmproj-*.gguf`, the 27-layer vision tower, `GENI`) | a second large port; text first (§11 D2) |
 | Streaming experts from SSD (upstream's main-path `expert_source.cpp`) | the Q8 experts (25.2 GB) fit in RAM; hybrid VRAM + RAM is in scope (§4.2), SSD is not |
-| MTP / speculative decoding, `--batch` slots | the 26B GGUF has no MTP block (§2.6); LC's drafter is a separate `gemma4-assistant` arch; the frontend refuses `--batch` today |
+| MTP / speculative decoding (built since 2026-10-28 with the separate drafter: §12), `--batch` slots | the 26B GGUF has no MTP block (§2.6); LC's drafter is a separate `gemma4-assistant` arch; the frontend refuses `--batch` today |
 | Tools / function calls (`<|tool>`, `<|tool_call>`, `<|tool_response>`) | the frontend's extensions stay disabled (EXT-01) |
 | Gemma 4's other sizes (E2B, E4B with per-layer embeddings and KV-shared layers; 31B dense) | only the 26B-A4B shape is loaded; the loader refuses `embedding_length_per_layer_input > 0`, `shared_kv_layers > 0` and a block count other than 30 (§4.1) |
 | Any change under `upstream/` | project rule |
@@ -635,7 +635,7 @@ decisions.
 | D2 | Images in v1 | no: text only; vision is its own plan later |
 | D3 | KV precision | fp16 for both cache kinds from the start (halves the context cost; §4.3) |
 | D4 | Experts outside VRAM | **yes** (changed 2026-10-22 with D8): Q36's hybrid placement — all experts in pinned RAM, VRAM slots rebalanced by routing, the rest on a GELU/BF16 CPU pool (§4.2, §5.4); no SSD streaming |
-| D5 | MTP / speculative | no (the GGUF has no MTP block, §2.6) |
+| D5 | MTP / speculative | no (the GGUF has no MTP block, §2.6). **Superseded 2026-10-28** (owner: "make sure we work that mtp in our gemma engine"): MTP with the separate `gemma4-assistant` drafter, §12 |
 | D6 | Prefix reuse in v1 | strict-prefix only, as Q36 |
 | D7 | The LC reference dump tool | build `libllama` at the existing pin, test-only, never shipped; run C3's automated scan and C5 on it instead of a line-by-line C4 read (it runs only on the box for validation) |
 | D8 | Which quants are supported | **UD-Q8_K_XL** (27.9 GB, `C:\Strata-data\models\gemma4_q8`) is the v1 target, the file every gate of §9 runs on (owner, 2026-10-22: "no use the q8"); it needs hybrid placement (D4) and BF16 kernels (§5.5); smaller quants load if their types pass §5.5 |
@@ -643,3 +643,116 @@ decisions.
 | D10 | Thinking default and the page | thinking off unless asked (the template's default); the page's Off/Low/Medium/High stay, all but Off meaning "on" for Gemma |
 | D11 | Executable and family names | `strata-gemma4-engine`, family `gemma4`, profile `gemma4` |
 | D12 | An interim engine before the port | **none** (owner, 2026-10-22: "Keep to the Strata-style port in the spec; Gemma joins the 8080 UI when that engine is done"). No llama.cpp-backed engine is built; the frontend profile (plan 1) and the engine (plans 2-3) reach the 8080 UI together in plan 4. llama.cpp stays the parity reference only (§9.2). |
+
+## 12. MTP speculative decoding (2026-10-28)
+
+Owner, 2026-10-28: "gemma4 has an mtp: https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/MTP/mtp-gemma-4-26B-A4B-it-Q8_0.gguf
+... make sure we work that mtp in our gemma engine". This supersedes D5 and the MTP non-goal of §1.2: the 26B file still
+has no MTP block, and the drafter is Google's separate assistant model. The design is llama.cpp's at the pin (LC
+`src/models/gemma4-assistant.cpp`, `common/speculative.cpp` draft-mtp in its shared-memory mode, `common/sampling.cpp`
+`common_sampler_sample_and_accept_n`), built on the engine's own decode kernels and its Strata-paper expert tiering
+(the verify window is the paper's own unit of decode work); upstream Strata has no Gemma 4 drafter, and its
+`MtpDrafter` is Qwen3.8's (its own K/V, MoE), so it is not used.
+
+### 12.1 The drafter file and its guard
+
+Header read 2026-10-28 (461,766,816 bytes, unsloth/gemma-4-26B-A4B-it-GGUF at `c099eb48`): GGUF v3, 46 keys, 49
+tensors, `general.architecture = gemma4-assistant`; `block_count` 4 = `nextn_predict_layers`; `embedding_length` 1024,
+`embedding_length_out` 2816 (the target's); `feed_forward_length` 8192; `head_count` 16, `head_count_kv` [8, 8, 8, 2],
+`sliding_window_pattern` [T, T, T, F]; `key_length` 512, `_swa` 256; `sliding_window` 1024; RoPE bases 1e6 / 1e4 over
+512 / 256 dimensions; rms eps 1e-6; `shared_kv_layers` 4; no soft-cap key; the target's vocabulary (262,144 tokens).
+Tensors, all Q8_0 matrices and F32 vectors: `token_embd` [1024 x 262144] (its tied head, 285 MB), `output_norm`,
+`rope_freqs` [256], `nextn.pre_projection` [5632 -> 1024], `nextn.post_projection` [1024 -> 2816]; per layer
+`attn_norm`, `attn_q` (16 heads), `attn_q_norm`, `attn_output`, `post_attention_norm`, `ffn_norm`,
+`ffn_gate`/`ffn_up`/`ffn_down` (GEGLU, 8192), `post_ffw_norm`, `layer_output_scale`. No K or V weights, no experts.
+
+`check_assistant` (`g4_model.cpp`) reads the drafter's own width, depth and FFN from the header and refuses, with a
+fixed message, what this engine cannot run against the target: another architecture; `embedding_length_out` other than
+2816; `nextn_predict_layers` other than the block count; 1-16 layers; widths not a multiple of 32; a layer whose head
+width, KV heads or window is not the target cache it reads (§12.2); RoPE over less than the whole head; query heads
+other than 16 (the attention kernels' groups); a vocabulary other than the target's, token for token
+(`same_vocabulary`); F16 or other types; a missing, misshaped or unknown tensor (llama.cpp's two optional
+masked-embedding tensors are accepted and ignored, as llama.cpp ignores them). The target's layers 28 and 29 must be
+sliding and full.
+
+### 12.2 A draft step
+
+The drafter runs beside the target on the target's own pieces (shared memory):
+`x = pre_projection([target token_embd(id) * sqrt(2816) | h])`, `h` the target's final normed hidden state of the row
+that gave `id`; per layer `q = rope(rms_head(Wq rms(x)) * q_norm, pos0)`, Q-only attention (scale 1) over the target's
+K/V - its sliding layers over target layer 28's ring, its full layer over layer 29 (LC's share map, n-2 and n-1) -
+then the sandwich norms, GEGLU and `layer_output_scale`; `logits = token_embd_d(rms(x) * output_norm)` (no soft-cap);
+`h_next = post_projection(...)`. The query sits at `pos0`, the position of the token being drafted from; the target holds
+`0 .. pos0-1`, so a sliding layer reads keys `[pos0 - 1023, pos0 - 1]` (LC's mask: `pos0 - key < 1024` over the target's
+cells) and a full one `[0, pos0 - 1]` - decode attention at `pos0 - 1` with a window of 1023. Every draft of a step uses
+the same `pos0` (LC `speculative.cpp:1717-1721`). The draft is the top-1 of the drafter's logits, its probability the
+softmax of its top 10 (LC's top-k 10 sampler); drafting stops at `--spec - 1` drafts, at the first draft below
+`--spec-min-p` (not offered), or at the answer's or the context's end. A step's chain is one captured graph (each token
+the previous step's top-1, chained on the device); with a floor above 0, a graph per draft, the chain stopping at the
+first draft below it.
+
+The drafter's weights (425 MiB) and buffers stay in VRAM, taken before the expert slots (two slots a layer fewer at a
+4K context: 57 -> 55); its decode attention shares the target's scratch.
+
+### 12.3 The verify window
+
+The target reads `[token, d0 .. d(n-1)]` (T = n + 1 <= 8 rows) at `pos .. pos + T - 1` as one step of the decode
+kernels: `matvec_rows` (each weight row read once for all rows, each row's arithmetic `matvec`'s), the norms and
+`qkv_post` over T rows, one decode attention per row with that row's own split count, the router per row, and the
+experts grouped across the rows - on the CPU lane, the paper's window dispatcher (`expert_pool_dispatch_multi`) over the
+8 T entries, each distinct missed expert computed once for every row routed to it (`LanePlan::at(8 T)`, the mapped
+buffers sized for 8 tokens); without the lane, one group per distinct expert (`plan_window`). Every row's arithmetic is
+the decode step's, so every row's logits are bitwise those of the same tokens' single decode steps over the same expert
+residency: checked per kernel (`window_rows_are_the_single_rows_bitwise`, the lane's
+`window_dispatch_rows_are_the_single_token_rows`) and on the model (`--spec-check`). One captured graph per window
+size, lane and per-row split pattern. The rows' K/V land at their positions; a rejected row's are overwritten before
+anything reads them; the reuse rule's spare shrinks by `--spec - 1` rows (the ring rows a window may write past the
+held tokens). Only the kept rows' routing reaches the expert tier's counts (`count_picks` at accept).
+
+### 12.4 Acceptance and the serve loop
+
+LC's sample-and-accept: rows sampled in order with the request's own sampler (greedy: the rows' argmax; top-k on the
+GPU; with penalties the host sampler on the row's logits, its history extended by each sample), a draft kept while the
+row's sample equals it; the answer gets the kept drafts, then the first sample that disagreed (or the bonus row's). The
+engine then holds exactly the tokens plain decode holds - every shown token but the last (`accept(n)`, a truncate) - and
+the sampler has made the same draws in the same order as plain decode, so a seeded sampled answer is plain decode's.
+The tier moves every 8 shown tokens, as in plain decode. `DONE` fields 6 and 7 are the drafts accepted and offered (the
+Qwen engine's), 0 0 without a drafter; accepted counts every draft the sampler agreed with, also inside an answer that
+ended there (as the Qwen engine and LC count them).
+
+### 12.5 Flags (the frontend's contract)
+
+`--mtp GGUF` (MTP on); `--spec N` (2-8, default 4 = LC's 3 drafts); `--spec-min-p P` (0-1, default 0, LC's). Without
+`--mtp`, `--spec` and `--spec-min-p` change nothing. Test-only: `--spec-check N` (with `--mtp` and `--tokens`: N tokens
+first as decode steps, then as windows, every row's logits compared bit for bit), `--settle` (every swap lands after the
+prompt), `--check` (with `--mtp` the drafter's summary).
+
+### 12.6 What is exact, and what moves the last bits
+
+With the same expert residency every window row is bitwise the decode step's; the model checks confirm it (`--spec-check`
+over 1,800 positions past the ring's wrap, lane on and off, windows of 2-8, graphs and plain launches; greedy
+`--tokens` with and without the drafter; served answers, greedy and seeded sampled, with the tier moving, the lane off
+and MMQ off). Two things move an answer's last bits between a run with the drafter and one without, as they move them
+between any two plain runs whose residency differs: the CPU lane's dots round differently from the GPU's grouped
+kernel, so which experts sit in VRAM when a token is read matters; and a streamed prompt's MMQ products round by the slot
+split. The drafter takes two slots a layer and the tier moves at window boundaries, so with the lane on (the default)
+a long answer's tokens can part from a plain run's at a near tie, each run as correct as the other.
+
+### 12.7 Measured, and not done
+
+Measured (RTX 4080 SUPER 16 GB, 2026-10-28): `--serve`, the CPU lane on, an 8K context, the owner's Q8_K_XL file;
+per configuration one engine, a warm-up round then two measured rounds of three prompts (the 293-token
+`g4_prompt_ids.txt`, the poem and the France prompts of the model tests), 256 tokens each, decode tok/s from `DONE`.
+Plain was run twice in each block to show the run-to-run spread.
+
+| Requests | Plain | `--spec 4` | `--spec 3` | `--spec 4 --spec-min-p 0.6` |
+| --- | --- | --- | --- | --- |
+| greedy | 74.1, 76.0 tok/s | 81.2 (50% of drafts accepted) | 86.9 (56%) | 86.5, 91.9 (64-65%) |
+| sampled (temperature 1, top-p 0.95, top-k 64) | 76.6, 71.5 | 81.4 (50%) | - | 84.9 (58%) |
+
+So about 1.08-1.10x at LC's defaults (3 drafts, no floor) and 1.15-1.19x with a floor of 0.6, which the card's option
+can set. The gain is bounded by the CPU lane: a 4-row window's distinct missed experts are about three times a single
+step's (the lane's counters: 2.45 CPU experts a layer a window against 0.73 a step), and the GPU waits on them layer
+by layer; rejected rows cost that work too, which is why a floor helps. Not done: upstream's
+split verify window (two halves pipelined across the CPU and the GPU), a fitted copy-engine share for windows
+(`PcieModel`; a fixed share of 0.3 was slower), drafting the next window while the CPU lane works.

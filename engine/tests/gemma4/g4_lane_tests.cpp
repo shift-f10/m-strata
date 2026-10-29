@@ -4,6 +4,7 @@
 // model file: synthetic experts in the GGUF block formats.
 //
 //   g4_lane_tests --case NAME
+#include "g4_lane.hpp"
 #include "strata/core/expert_source.hpp"
 #include "strata/kernels/cpu/expert_layout.hpp"
 #include "strata/kernels/cpu/native_expert.hpp"
@@ -327,10 +328,84 @@ void window_dispatch_uses_the_layers_width() {
   check(d.multi_misses == 2 && d.cache_hits == 1 && d.multi_entries == 3, "two CPU experts for three entries, one hit");
 }
 
+// The lane's GPU plan for a verify window (spec §12): the layout of a window of T tokens holds 8 T entries; at T = 1
+// it is the decode step's layout word for word (the captured decode graph is unchanged), and every u64 table sits on
+// an 8-byte word, the tables never overlap.
+void lane_plan_layout_grows_with_the_window() {
+  const g4::LanePlan one = g4::LanePlan::at(g4::LanePlan::kCap);
+  check(one.counts == g4::LanePlan::kCounts && one.start == g4::LanePlan::kStart && one.dst == g4::LanePlan::kDst &&
+            one.tok == g4::LanePlan::kTok && one.ptr == g4::LanePlan::kPtr && one.ptr2 == g4::LanePlan::kPtr2 &&
+            one.start2 == g4::LanePlan::kStart2 && one.words == g4::LanePlan::kWords,
+        "one token: the decode step's layout");
+  bool ok = true;
+  for (int t = 1; t <= 8; ++t) {
+    const g4::LanePlan p = g4::LanePlan::at(8 * t);
+    const int cap = 8 * t;
+    ok = ok && p.cap == cap && p.start >= p.counts + 3 && p.dst >= p.start + cap + 1 && p.tok >= p.dst + cap &&
+         p.ptr >= p.tok + cap && p.ptr % 2 == 0 && p.ptr2 >= p.ptr + 2 * cap && p.ptr2 % 2 == 0 && p.start2 >= p.ptr2 + 2 * cap &&
+         p.words >= p.start2 + cap + 1 && p.words <= g4::kLanePlanMaxWords;
+  }
+  check(ok, "windows of 2-8 tokens: 8 T entries, aligned u64 tables, no overlap, within the mapped plan's words");
+}
+
+// A verify window's routing as the lane hands it to the dispatcher: T tokens at once, each missed expert computed once
+// for all of the tokens routed to it, its rows bitwise the rows of each token computed alone.
+void window_dispatch_rows_are_the_single_token_rows() {
+  std::string err;
+  const C::NativeFmt f = gemma_fmt(kQ8_0, kQ8_0, 1, err);
+  if (f.bytes == 0) {
+    check(false, "native_fmt: " + err);
+    return;
+  }
+  constexpr int kNe = 6, kK = 2, kT = 3;
+  std::vector<std::uint8_t> arena(f.bytes * kNe);
+  for (int e = 0; e < kNe; ++e) {
+    const Expert x = make_expert(f, 61u + static_cast<std::uint32_t>(e));
+    std::memcpy(arena.data() + f.bytes * static_cast<std::size_t>(e), x.blob.data(), f.bytes);
+  }
+  C::ExpertLayout lay;
+  lay.native = true;
+  lay.n_layers = 1;
+  lay.n_expert = kNe;
+  lay.fmt = {f};
+  lay.offset = {0};
+  lay.bytes = {f.bytes};
+  lay.max_blob = f.bytes;
+  lay.total = arena.size();
+  C::expert_layout_set(lay);
+  MemorySource src(arena.data(), f.bytes);
+  C::ExpertPool pool(3, /*pin=*/false);
+  std::vector<std::int32_t> res = {-1, -1, -1, 0, -1, -1};  // expert 3 in VRAM
+  auto dispatch = [&](const float* x, const std::int32_t* ids, int n_tok, float* out) {
+    strata::core::ExpertDispatch d;
+    d.pool = &pool;
+    d.src = &src;
+    d.n_expert = kNe;
+    d.host_res = res.data();
+    d.layers = 0;
+    strata::core::expert_pool_dispatch_multi(d, x, ids, n_tok, kK, out);
+    return !d.failed;
+  };
+  std::vector<float> x;
+  for (int t = 0; t < kT; ++t) {
+    const auto row = make_x(71u + static_cast<std::uint32_t>(t));
+    x.insert(x.end(), row.begin(), row.end());
+  }
+  const std::int32_t ids[kT * kK] = {1, 3, 1, 5, 5, 1};  // expert 1 in all three tokens, 5 in two
+  std::vector<float> win(kT * kK * static_cast<std::size_t>(kEmbd), -1.0f), alone(win.size(), -2.0f);
+  bool ok = dispatch(x.data(), ids, kT, win.data());
+  for (int t = 0; t < kT && ok; ++t)
+    ok = dispatch(x.data() + static_cast<std::size_t>(t) * kEmbd, ids + t * kK, 1, alone.data() + static_cast<std::size_t>(t) * kK * kEmbd);
+  check(ok, "the window and the single tokens dispatch");
+  check(std::memcmp(win.data(), alone.data(), win.size() * 4) == 0, "every entry's row: the window's bits are the single token's");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   const std::vector<std::pair<std::string, std::function<void()>>> cases = {
+      {"lane_plan_layout_grows_with_the_window", lane_plan_layout_grows_with_the_window},
+      {"window_dispatch_rows_are_the_single_token_rows", window_dispatch_rows_are_the_single_token_rows},
       {"native_fmt_takes_the_gemma4_geometry", native_fmt_takes_the_gemma4_geometry},
       {"geglu_rows_match_the_reference", geglu_rows_match_the_reference},
       {"pool_runs_gemma4_experts", pool_runs_gemma4_experts},

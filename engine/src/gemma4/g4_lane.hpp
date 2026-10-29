@@ -33,7 +33,27 @@ struct LanePlan {
   static constexpr int kPtr2 = 46;    // kCap x u64: the staged groups' blobs (staging slots)
   static constexpr int kStart2 = 62;  // kCap + 1
   static constexpr int kWords = 72;
+  // a verify window's (spec §12): T tokens' 8 T entries in the same order of tables
+  static constexpr int kMaxTok = 8;
+  static constexpr int kMaxCap = 8 * kMaxTok;
+  int cap{0}, counts{0}, start{0}, dst{0}, tok{0}, ptr{0}, ptr2{0}, start2{0}, words{0};
+  // the layout for `cap` entries: counts [4], start [cap + 1], dst [cap], tok [cap], ptr [cap] u64 (on an even word),
+  // ptr2 [cap] u64, start2 [cap + 1], rounded to an even word count; at kCap it is the constants above
+  static constexpr LanePlan at(int cap) {
+    LanePlan p;
+    p.cap = cap;
+    p.counts = kCounts;
+    p.start = 4;
+    p.dst = p.start + cap + 1;
+    p.tok = p.dst + cap;
+    p.ptr = (p.tok + cap + 1) & ~1;
+    p.ptr2 = p.ptr + 2 * cap;
+    p.start2 = p.ptr2 + 2 * cap;
+    p.words = (p.start2 + cap + 1 + 1) & ~1;
+    return p;
+  }
 };
+inline constexpr int kLanePlanMaxWords = LanePlan::at(LanePlan::kMaxCap).words;
 
 class CpuLane {
  public:
@@ -48,13 +68,14 @@ class CpuLane {
     const std::uint32_t* flag_a{};
     const std::uint32_t* flag_b{};
     const std::uint32_t* flag_c{};
-    float* x{};                // the experts' input row (kEmbd floats)
-    std::int32_t* ids{};       // the 8 routed experts
-    const float* rows{};       // the CPU's rows, [8][kEmbd]
-    const std::int32_t* plan{};  // LanePlan::kWords
+    float* x{};                // the experts' input rows ([T][kEmbd] floats, T <= LanePlan::kMaxTok)
+    std::int32_t* ids{};       // the routed experts, [T][8]
+    const float* rows{};       // the CPU's rows, [T * 8][kEmbd]
+    const std::int32_t* plan{};  // LanePlan::at(8 T).words (kLanePlanMaxWords at most)
   };
   struct Stats {
     long long tokens{0}, hits{0}, staged{0}, cpu_entries{0}, cpu_experts{0};
+    long long windows{0};  // the steps that were verify windows of more than one token (spec §12)
     double pool_ms{0};
   };
 
@@ -78,9 +99,10 @@ class CpuLane {
   [[nodiscard]] const Device& device() const { return dev_; }
   [[nodiscard]] int workers() const;
 
-  // One decode token, between stream syncs (the GPU is idle): the doorbell and the flags back to 0, then the lane
-  // serves the token's layers as they ring.
-  void begin_token();
+  // One decode step of `n_tok` tokens (1, or a verify window's 2 .. LanePlan::kMaxTok), between stream syncs (the GPU
+  // is idle): the plan's layout for its 8 n_tok entries, the doorbell and the flags back to 0, then the lane serves the
+  // step's layers as they ring - each layer's distinct missed experts computed once for every token routed to them.
+  void begin_token(int n_tok = 1);
   // After the token's stream sync: false (and the reason) when the lane could not serve a layer.
   bool end_token(std::string& error);
   [[nodiscard]] Stats stats() const;
@@ -101,6 +123,7 @@ class CpuLane {
   bool armed_{false}, quit_{false};
   std::atomic<long long> served_{0};
   long long begun_{0};
+  long long windows_{0};
   std::atomic<bool> failed_{false};
   std::string fail_;
 };

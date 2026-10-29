@@ -189,4 +189,156 @@ std::variant<ModelDesc, ModelError> check_model(const GgufFile& f) {
   return m;
 }
 
+namespace {
+
+ModelError refuse_drafter(std::string what) { return ModelError{"gemma4 drafter: " + std::move(what)}; }
+
+// A per-layer integer: an array of `n` values, or one scalar for every layer (llama.cpp's get_key_or_arr).
+bool per_layer(const GgufFile& f, std::string_view key, std::size_t n, std::vector<std::int64_t>& out) {
+  const auto* v = f.find(key);
+  if (v == nullptr) return false;
+  if (v->type == GgufType::array) {
+    if (v->element == GgufType::string || v->element == GgufType::f32 || v->element == GgufType::f64 || v->element == GgufType::boolean ||
+        v->integers.size() != n) {
+      return false;
+    }
+    out = v->integers;
+    return true;
+  }
+  std::int64_t one = 0;
+  if (!integer_key(f, key, one)) return false;
+  out.assign(n, one);
+  return true;
+}
+
+}  // namespace
+
+std::variant<AssistantDesc, ModelError> check_assistant(const GgufFile& f) {
+  const auto* arch = f.find("general.architecture");
+  if (arch == nullptr || arch->type != GgufType::string || arch->text != "gemma4-assistant") {
+    return refuse_drafter("the architecture is not gemma4-assistant");
+  }
+  const std::string a = "gemma4-assistant.";
+  std::int64_t layers = 0, nextn = 0, embd = 0, out = 0;
+  if (!integer_key(f, a + "block_count", layers) || layers < 1 || layers > kAssistantMaxLayers) {
+    return refuse_drafter("block_count must be 1-16");
+  }
+  if (!integer_key(f, a + "nextn_predict_layers", nextn) || nextn != layers) {
+    return refuse_drafter("nextn_predict_layers must be the block count (every layer drafts)");
+  }
+  if (!integer_key(f, a + "embedding_length_out", out) || out != kEmbd) {
+    return refuse_drafter("embedding_length_out is not the target's width (2816)");
+  }
+  if (!integer_key(f, a + "embedding_length", embd) || embd < 32 || embd > 16384 || embd % 32 != 0) {
+    return refuse_drafter("embedding_length must be a multiple of 32, at most 16384");
+  }
+  // the target's KV geometry: each drafter layer reads a target layer's cache as it stands
+  struct Exact {
+    const char* key;
+    std::int64_t value;
+  };
+  for (const Exact& e : {Exact{"attention.key_length", kHeadFull}, Exact{"attention.value_length", kHeadFull},
+                         Exact{"attention.key_length_swa", kHeadSwa}, Exact{"attention.value_length_swa", kHeadSwa},
+                         Exact{"attention.sliding_window", kWindow}, Exact{"rope.dimension_count", kHeadFull},
+                         Exact{"rope.dimension_count_swa", kHeadSwa}}) {
+    std::int64_t v = 0;
+    if (!integer_key(f, a + e.key, v) || v != e.value) return refuse_drafter(std::string{e.key} + " is not the target's");
+  }
+  {
+    std::int64_t v = 0;
+    if (integer_key(f, a + "embedding_length_per_layer_input", v) && v != 0) {
+      return refuse_drafter("embedding_length_per_layer_input must be 0");
+    }
+  }
+  const std::size_t n = static_cast<std::size_t>(layers);
+  std::vector<std::int64_t> heads, kv, ff;
+  if (!per_layer(f, a + "attention.head_count", n, heads)) return refuse_drafter("bad attention.head_count");
+  if (!per_layer(f, a + "attention.head_count_kv", n, kv)) return refuse_drafter("bad attention.head_count_kv");
+  if (!per_layer(f, a + "feed_forward_length", n, ff)) return refuse_drafter("bad feed_forward_length");
+  const auto* pattern = f.find(a + "attention.sliding_window_pattern");
+  if (pattern == nullptr || pattern->type != GgufType::array || pattern->element != GgufType::boolean || pattern->integers.size() != n) {
+    return refuse_drafter("attention.sliding_window_pattern must list every layer");
+  }
+  AssistantDesc d;
+  d.n_embd = static_cast<int>(embd);
+  double real = 0.0;
+  if (!real_key(f, a + "attention.layer_norm_rms_epsilon", real) || real <= 0.0 || real > 1e-3) {
+    return refuse_drafter("bad attention.layer_norm_rms_epsilon");
+  }
+  d.rms_eps = static_cast<float>(real);
+  if (!real_key(f, a + "rope.freq_base", real) || real <= 1.0) return refuse_drafter("bad rope.freq_base");
+  d.rope_base_full = static_cast<float>(real);
+  d.rope_base_swa = d.rope_base_full;   // llama.cpp: freq_base_swa is optional and defaults to freq_base
+  if (f.find(a + "rope.freq_base_swa") != nullptr) {
+    if (!real_key(f, a + "rope.freq_base_swa", real) || real <= 1.0) return refuse_drafter("bad rope.freq_base_swa");
+    d.rope_base_swa = static_cast<float>(real);
+  }
+  d.layers.resize(n);
+  bool any_full = false;
+  for (std::size_t i = 0; i < n; ++i) {
+    AssistantLayerDesc& L = d.layers[i];
+    L.sliding = pattern->integers[i] != 0;
+    any_full = any_full || !L.sliding;
+    L.head_dim = L.sliding ? kHeadSwa : kHeadFull;
+    L.kv_heads = L.sliding ? kKvHeadsSwa : kKvHeadsFull;
+    L.target_layer = L.sliding ? kLayers - 2 : kLayers - 1;
+    // the target's layer 28 is sliding and 29 full (check_model's pattern has them so), so the KV it reads is this kind's
+    if (kv[i] != L.kv_heads) return refuse_drafter("a layer's KV heads are not its target layer's");
+    // the attention kernels' query groups: 16 heads over the target's 8 (sliding) or 2 (full) KV heads
+    if (heads[i] != kHeads) return refuse_drafter("a layer's query heads are not 16 (the attention kernels' groups)");
+    if (ff[i] < 32 || ff[i] > 65536 || ff[i] % 32 != 0) return refuse_drafter("a layer's feed_forward_length must be a multiple of 32");
+    L.n_ff = static_cast<int>(ff[i]);
+  }
+  const auto* tokens = f.find("tokenizer.ggml.tokens");
+  if (tokens != nullptr && (tokens->type != GgufType::array || tokens->texts.size() != static_cast<std::size_t>(kVocab))) {
+    return refuse_drafter("tokenizer.ggml.tokens must hold the target's 262144 tokens");
+  }
+
+  std::set<std::string> bound;
+  std::string why;
+  const std::uint64_t E = static_cast<std::uint64_t>(embd), W = kEmbd;
+  auto fail = [&]() { return refuse_drafter(why); };
+  if (!bind(f, bound, "token_embd.weight", {E, kVocab}, Kind::matrix, d.token_embd, why) ||
+      !bind(f, bound, "output_norm.weight", {E}, Kind::vector_f32, d.output_norm, why) ||
+      !bind(f, bound, "nextn.pre_projection.weight", {2 * W, E}, Kind::matrix, d.pre_projection, why) ||
+      !bind(f, bound, "nextn.post_projection.weight", {E, W}, Kind::matrix, d.post_projection, why)) {
+    return fail();
+  }
+  // full layers rotate by the drafter's own rope_freqs (llama.cpp: required once a full layer exists)
+  if (any_full || f.tensor("rope_freqs.weight") != nullptr) {
+    if (!bind(f, bound, "rope_freqs.weight", {kRopeFreqs}, Kind::vector_f32, d.rope_freqs, why)) return fail();
+  }
+  for (std::size_t i = 0; i < n; ++i) {
+    AssistantLayerDesc& L = d.layers[i];
+    const std::string p = "blk." + std::to_string(i) + ".";
+    const std::uint64_t hd = static_cast<std::uint64_t>(L.head_dim), q = kHeads * hd, F = static_cast<std::uint64_t>(L.n_ff);
+    const bool ok = bind(f, bound, p + "attn_norm.weight", {E}, Kind::vector_f32, L.attn_norm, why) &&
+                    bind(f, bound, p + "attn_q.weight", {E, q}, Kind::matrix, L.attn_q, why) &&
+                    bind(f, bound, p + "attn_q_norm.weight", {hd}, Kind::vector_f32, L.attn_q_norm, why) &&
+                    bind(f, bound, p + "attn_output.weight", {q, E}, Kind::matrix, L.attn_output, why) &&
+                    bind(f, bound, p + "post_attention_norm.weight", {E}, Kind::vector_f32, L.post_attention_norm, why) &&
+                    bind(f, bound, p + "ffn_norm.weight", {E}, Kind::vector_f32, L.ffn_norm, why) &&
+                    bind(f, bound, p + "ffn_gate.weight", {E, F}, Kind::matrix, L.ffn_gate, why) &&
+                    bind(f, bound, p + "ffn_up.weight", {E, F}, Kind::matrix, L.ffn_up, why) &&
+                    bind(f, bound, p + "ffn_down.weight", {F, E}, Kind::matrix, L.ffn_down, why) &&
+                    bind(f, bound, p + "post_ffw_norm.weight", {E}, Kind::vector_f32, L.post_ffw_norm, why) &&
+                    bind(f, bound, p + "layer_output_scale.weight", {1}, Kind::vector_f32, L.layer_output_scale, why);
+    if (!ok) return fail();
+  }
+  for (const auto& t : f.tensors) {
+    if (bound.count(t.name) != 0) continue;
+    // llama.cpp creates these two as optional and never reads them (gemma4-assistant.cpp:39-40)
+    if (t.name == "masked_embd_centroids.weight" || t.name == "masked_embd_ordering") continue;
+    return refuse_drafter("the file carries a tensor the drafter does not have");
+  }
+  return d;
+}
+
+bool same_vocabulary(const GgufFile& target, const GgufFile& drafter) {
+  const auto* a = target.find("tokenizer.ggml.tokens");
+  const auto* b = drafter.find("tokenizer.ggml.tokens");
+  return a != nullptr && b != nullptr && a->type == GgufType::array && b->type == GgufType::array &&
+         a->element == GgufType::string && b->element == GgufType::string && a->texts == b->texts;
+}
+
 }  // namespace g4

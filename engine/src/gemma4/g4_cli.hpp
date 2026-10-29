@@ -30,6 +30,10 @@ struct EngineOptions final {
   std::string expert_profile;    // --expert-profile P: fill the VRAM tier from Strata's profile.bin (empty: experts 0..S-1)
   std::string expert_profile_save;  // --expert-profile-save P: write what the tier learned there (on exit, and between requests)
   bool prompt_borrow{true};      // --no-prompt-borrow: the prompt's buffers in VRAM of their own, not lent by the expert cache
+  // MTP (spec §12): the gemma4-assistant drafter. Without --mtp, --spec and --spec-min-p change nothing.
+  std::string mtp;               // --mtp GGUF: the drafter; drafting on
+  int spec{4};                   // --spec N: the verify window's rows, 2-8 (1 + the drafts; llama.cpp's 3 drafts)
+  double spec_min_p{0.0};        // --spec-min-p P: drafting stops at a draft whose top-1 probability is below P
   // Test-only (refused with --serve).
   std::string tokens;            // --tokens id,id,...: run them, then greedy --n tokens
   int n_gen{16};                 // --n
@@ -39,6 +43,9 @@ struct EngineOptions final {
   int bench_pp{0};               // --bench-pp N: time an N-token prompt
   int bench_tg{0};               // --bench-tg N: time N decode steps
   bool check{false};             // --check: load the header, run the guard, print a summary
+  int spec_check{0};             // --spec-check N (with --tokens and --mtp): N greedy tokens through verify windows, each
+                                 // window's logits compared bit for bit with the same tokens' single decode steps
+  bool settle{false};            // --settle: every expert swap lands after the prompt (a run-independent residency)
 };
 
 // Fixed messages; never echoes an argument.

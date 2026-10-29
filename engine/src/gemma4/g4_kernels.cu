@@ -862,6 +862,203 @@ std::size_t topk_scratch_bytes(int n) {
   return 2 * first * (sizeof(float) + sizeof(int)) + 256;
 }
 
+namespace {
+
+// rows_dot for NT rows of x at once: each weight chunk is loaded once and dotted with every row's chunk, in matvec's
+// chunk order with matvec's expression per (row, token), so each token's sums are bitwise k_matvec's.
+template <int KIND, int NT>
+__device__ __forceinline__ void rows_dot_rows(const void* __restrict__ w, const __half* __restrict__ s, const float* __restrict__ x,
+                                              int cols, int row0, int nr, int lane, int T, float acc[NT][kRowsPerWarp]) {
+  if constexpr (KIND == 0) {
+    const auto* q = static_cast<const signed char*>(w);
+    const int nb = cols >> 5;
+    for (int c = lane * 16; c < cols; c += 512) {
+      int4 v[kRowsPerWarp];
+      float sc[kRowsPerWarp];
+#pragma unroll
+      for (int r = 0; r < kRowsPerWarp; ++r) {
+        if (r < nr) {
+          const std::size_t row = static_cast<std::size_t>(row0 + r);
+          v[r] = *reinterpret_cast<const int4*>(q + row * cols + c);
+          sc[r] = __half2float(s[row * nb + (c >> 5)]);
+        }
+      }
+#pragma unroll
+      for (int t = 0; t < NT; ++t) {
+        if (t < T) {
+          const float4* xp = reinterpret_cast<const float4*>(x + static_cast<std::size_t>(t) * cols + c);
+          const float4 a = __ldg(xp), b = __ldg(xp + 1), cc = __ldg(xp + 2), d = __ldg(xp + 3);
+#pragma unroll
+          for (int r = 0; r < kRowsPerWarp; ++r) {
+            if (r < nr) acc[t][r] = fmaf(dot16_q8(v[r], a, b, cc, d), sc[r], acc[t][r]);
+          }
+        }
+      }
+    }
+  } else if constexpr (KIND == 1) {
+    const auto* q = static_cast<const unsigned short*>(w);
+    for (int c = lane * 8; c < cols; c += 256) {
+      uint4 v[kRowsPerWarp];
+#pragma unroll
+      for (int r = 0; r < kRowsPerWarp; ++r) {
+        if (r < nr) v[r] = *reinterpret_cast<const uint4*>(q + static_cast<std::size_t>(row0 + r) * cols + c);
+      }
+#pragma unroll
+      for (int t = 0; t < NT; ++t) {
+        if (t < T) {
+          const float4* xp = reinterpret_cast<const float4*>(x + static_cast<std::size_t>(t) * cols + c);
+          const float4 a = __ldg(xp), b = __ldg(xp + 1);
+#pragma unroll
+          for (int r = 0; r < kRowsPerWarp; ++r) {
+            if (r < nr) acc[t][r] += dot8_bf16(v[r], a, b);
+          }
+        }
+      }
+    }
+  } else {
+    const auto* q = static_cast<const float*>(w);
+    for (int c = lane * 4; c < cols; c += 128) {
+      float4 v[kRowsPerWarp];
+#pragma unroll
+      for (int r = 0; r < kRowsPerWarp; ++r) {
+        if (r < nr) v[r] = *reinterpret_cast<const float4*>(q + static_cast<std::size_t>(row0 + r) * cols + c);
+      }
+#pragma unroll
+      for (int t = 0; t < NT; ++t) {
+        if (t < T) {
+          const float4 a = __ldg(reinterpret_cast<const float4*>(x + static_cast<std::size_t>(t) * cols + c));
+#pragma unroll
+          for (int r = 0; r < kRowsPerWarp; ++r) {
+            if (r < nr) acc[t][r] += v[r].x * a.x + v[r].y * a.y + v[r].z * a.z + v[r].w * a.w;
+          }
+        }
+      }
+    }
+  }
+}
+
+template <int KIND, int NT>
+__global__ void __launch_bounds__(kMatvecThreads) k_matvec_rows(const void* __restrict__ w, const __half* __restrict__ s,
+                                                                const float* __restrict__ x, float* __restrict__ y, int rows, int cols,
+                                                                int T) {
+  const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+  const int row0 = blockIdx.x * kRowsPerBlock + warp * kRowsPerWarp;
+  if (row0 >= rows) return;
+  const int nr = min(kRowsPerWarp, rows - row0);
+  float acc[NT][kRowsPerWarp];
+#pragma unroll
+  for (int t = 0; t < NT; ++t) {
+#pragma unroll
+    for (int r = 0; r < kRowsPerWarp; ++r) acc[t][r] = 0.0f;
+  }
+  rows_dot_rows<KIND, NT>(w, s, x, cols, row0, nr, lane, T, acc);
+#pragma unroll
+  for (int t = 0; t < NT; ++t) {
+    if (t < T) {
+#pragma unroll
+      for (int r = 0; r < kRowsPerWarp; ++r) acc[t][r] = warp_sum(acc[t][r]);
+      if (lane == 0) {
+        for (int r = 0; r < nr; ++r) y[static_cast<std::size_t>(t) * rows + row0 + r] = acc[t][r];
+      }
+    }
+  }
+}
+
+template <int NT>
+void launch_matvec_rows(const Mat& m, const float* x, float* y, int T, cudaStream_t st) {
+  const dim3 grid(blocks(m.rows, kRowsPerBlock));
+  switch (m.kind) {
+    case WKind::q8: k_matvec_rows<0, NT><<<grid, kMatvecThreads, 0, st>>>(m.w, m.s, x, y, m.rows, m.cols, T); break;
+    case WKind::bf16: k_matvec_rows<1, NT><<<grid, kMatvecThreads, 0, st>>>(m.w, m.s, x, y, m.rows, m.cols, T); break;
+    case WKind::f32: k_matvec_rows<2, NT><<<grid, kMatvecThreads, 0, st>>>(m.w, m.s, x, y, m.rows, m.cols, T); break;
+  }
+}
+
+// One thread plans the window (at most 64 entries): groups in first-appearance order, then a counting sort.
+__global__ void k_plan_window(const int* __restrict__ picks, int n, const unsigned long long* __restrict__ ptrtab,
+                              unsigned long long* __restrict__ grp_ptr, int* __restrict__ grp_start, int* __restrict__ n_groups,
+                              int* __restrict__ ent_dst, int* __restrict__ ent_tok) {
+  if (threadIdx.x != 0 || blockIdx.x != 0) return;
+  constexpr int kMaxEnt = 64;
+  int group_of[128];
+  for (int e = 0; e < 128; ++e) group_of[e] = -1;
+  int expert[kMaxEnt], count[kMaxEnt], cursor[kMaxEnt];
+  int ng = 0;
+  n = min(n, kMaxEnt);
+  for (int a = 0; a < n; ++a) {
+    int e = picks[a];
+    if (e < 0 || e >= 128) e = 0;  // a router fed non-finite logits; the step's logits then end the answer
+    if (group_of[e] < 0) {
+      group_of[e] = ng;
+      expert[ng] = e;
+      count[ng] = 0;
+      ++ng;
+    }
+    ++count[group_of[e]];
+  }
+  int at = 0;
+  for (int g = 0; g < ng; ++g) {
+    grp_start[g] = at;
+    cursor[g] = at;
+    grp_ptr[g] = ptrtab[expert[g]];
+    at += count[g];
+  }
+  grp_start[ng] = at;
+  for (int a = 0; a < n; ++a) {
+    int e = picks[a];
+    if (e < 0 || e >= 128) e = 0;
+    const int i = cursor[group_of[e]]++;
+    ent_dst[i] = a;
+    ent_tok[i] = a / 8;
+  }
+  *n_groups = ng;
+}
+
+__global__ void k_count_picks(const int* __restrict__ picks, int stride, int n, int* __restrict__ counts) {
+  const int l = blockIdx.x;
+  for (int a = threadIdx.x; a < n; a += blockDim.x) {
+    const int e = picks[static_cast<std::size_t>(l) * stride + a];
+    if (e >= 0 && e < 128) atomicAdd(&counts[l * 128 + e], 1);
+  }
+}
+
+__global__ void k_add_rmsnorm_scale(const float* __restrict__ x, const float* __restrict__ y, const float* __restrict__ w,
+                                    const float* __restrict__ scale, float* __restrict__ out, int n, float eps) {
+  __shared__ float red[32];
+  const std::size_t base = static_cast<std::size_t>(blockIdx.x) * n;
+  float ss = 0.0f;
+  for (int i = threadIdx.x; i < n; i += blockDim.x) ss += y[base + i] * y[base + i];
+  const float inv = rsqrtf(block_sum(ss, red) / float(n) + eps);
+  const float s = scale[0];
+  for (int i = threadIdx.x; i < n; i += blockDim.x) out[base + i] = (x[base + i] + y[base + i] * inv * w[i]) * s;
+}
+
+}  // namespace
+
+void matvec_rows(const Mat& m, const float* x, float* y, int T, cudaStream_t st) {
+  if (T <= 0) return;
+  if (T == 1) launch_matvec_rows<1>(m, x, y, T, st);
+  else if (T == 2) launch_matvec_rows<2>(m, x, y, T, st);
+  else if (T <= 4) launch_matvec_rows<4>(m, x, y, T, st);
+  else if (T <= kMatvecRowsMax) launch_matvec_rows<8>(m, x, y, T, st);
+  else matvec(m, x, y, T, st);
+}
+
+void plan_window(const int* picks, int n_ent, const unsigned long long* ptrtab, unsigned long long* grp_ptr, int* grp_start,
+                 int* n_groups, int* ent_dst, int* ent_tok, cudaStream_t st) {
+  k_plan_window<<<1, 32, 0, st>>>(picks, n_ent, ptrtab, grp_ptr, grp_start, n_groups, ent_dst, ent_tok);
+}
+
+void count_picks(const int* picks, int stride, int n_layers, int n_ent, int* counts, cudaStream_t st) {
+  if (n_layers <= 0 || n_ent <= 0) return;
+  k_count_picks<<<static_cast<unsigned>(n_layers), 64, 0, st>>>(picks, stride, n_ent, counts);
+}
+
+void add_rmsnorm_scale(const float* x, const float* y, const float* w, const float* scale, float* out, int rows, int n, float eps,
+                       cudaStream_t st) {
+  k_add_rmsnorm_scale<<<static_cast<unsigned>(rows), 256, 0, st>>>(x, y, w, scale, out, n, eps);
+}
+
 void topk(const float* x, int n, int k, float* vals, int* ids, int* nonfinite, void* scratch, cudaStream_t st) {
   if (n <= 0 || k <= 0 || k > kTopkMax) return;
   const std::size_t first = blocks(n, kTopkBlock) * static_cast<std::size_t>(kTopkMax);

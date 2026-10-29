@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <initializer_list>
 #include <random>
 #include <string>
@@ -713,6 +714,260 @@ void topk_matches_a_cpu_ranking() {
   }
 }
 
+// ---- MTP (spec §12): the verify window runs a decode step's kernels over T rows; each row must keep the bits it has
+// when the kernel runs on that row alone, so that accepted text is exactly what plain decode writes ----
+
+void window_rows_are_the_single_rows_bitwise() {
+  // matvec: T rows in one launch, and matvec_rows (each weight row read once for every row), against one row a launch
+  for (const auto& [rows, cols] : std::vector<std::pair<int, int>>{{2112, 2816}, {128, 2816}, {1024, 5632}, {2816, 1024}, {300, 8192}}) {
+    const auto w = randv(std::size_t(rows) * cols);
+    const Q8 q = quantise(w, rows, cols);
+    std::vector<float> bv;
+    const auto b = to_bf16(w, bv);
+    auto* dq = dev(q.q);
+    auto* ds = dev(q.s);
+    auto* db = dev(b);
+    auto* dw = dev(w);
+    const auto x = randv(std::size_t(8) * cols, -2, 2);
+    auto* dx = dev(x);
+    float *y1 = nullptr, *yt = nullptr, *ym = nullptr;
+    cudaMalloc(&y1, std::size_t(8) * rows * 4);
+    cudaMalloc(&yt, std::size_t(8) * rows * 4);
+    cudaMalloc(&ym, std::size_t(8) * rows * 4);
+    for (const auto& [kind, name] : std::vector<std::pair<g4k::WKind, const char*>>{{g4k::WKind::q8, "q8"}, {g4k::WKind::bf16, "bf16"}, {g4k::WKind::f32, "f32"}}) {
+      const g4k::Mat m{kind, rows, cols, kind == g4k::WKind::q8 ? static_cast<const void*>(dq) : kind == g4k::WKind::bf16 ? static_cast<const void*>(db) : static_cast<const void*>(dw),
+                       kind == g4k::WKind::q8 ? ds : nullptr};
+      for (int t = 0; t < 8; ++t) g4k::matvec(m, dx + std::size_t(t) * cols, y1 + std::size_t(t) * rows, 1, nullptr);
+      const auto one = host(y1, std::size_t(8) * rows);
+      for (const int T : {1, 2, 3, 4, 5, 8}) {
+        cudaMemset(yt, 0xff, std::size_t(8) * rows * 4);
+        cudaMemset(ym, 0xff, std::size_t(8) * rows * 4);
+        g4k::matvec(m, dx, yt, T, nullptr);
+        g4k::matvec_rows(m, dx, ym, T, nullptr);
+        const std::vector<float> want(one.begin(), one.begin() + std::ptrdiff_t(T) * rows);
+        const auto gt = host(yt, std::size_t(T) * rows), gm = host(ym, std::size_t(T) * rows);
+        const std::string what = std::string(name) + " " + std::to_string(rows) + "x" + std::to_string(cols) + " T" + std::to_string(T);
+        expect(same_bits(gt, want), "matvec over T rows = one row at a time: " + what);
+        expect(same_bits(gm, want), "matvec_rows (weights read once) = one row at a time: " + what);
+      }
+    }
+    for (void* p : std::initializer_list<void*>{dq, ds, db, dw, dx, y1, yt, ym}) cudaFree(p);
+  }
+  // the norms, the layer end and the combine over T rows
+  const int n = 2816, T = 5;
+  const float eps = 1e-6f;
+  const auto x = randv(std::size_t(T) * n, -3, 3), y = randv(std::size_t(T) * n, -5, 5), z = randv(std::size_t(T) * n);
+  const auto w = randv(n, 0, 2), w2 = randv(n, 0, 2), w3 = randv(n, 0, 2);
+  const std::vector<float> ls{0.6f};
+  auto* dx = dev(x);
+  auto* dy = dev(y);
+  auto* dz = dev(z);
+  auto* dw = dev(w);
+  auto* dw2 = dev(w2);
+  auto* dw3 = dev(w3);
+  auto* dls = dev(ls);
+  float *a = nullptr, *b = nullptr;
+  cudaMalloc(&a, x.size() * 4);
+  cudaMalloc(&b, x.size() * 4);
+  auto rows_vs_one = [&](const std::string& what, const std::function<void(int r0, int rows, float* out)>& run) {
+    run(0, T, a);
+    for (int r = 0; r < T; ++r) run(r, 1, b + std::size_t(r) * n);
+    expect(same_bits(host(a, x.size()), host(b, x.size())), what + " over T rows = one row at a time");
+  };
+  rows_vs_one("rmsnorm", [&](int r0, int rows, float* out) { g4k::rmsnorm(dx + std::size_t(r0) * n, dw, nullptr, 1.0f, out, rows, n, eps, nullptr); });
+  rows_vs_one("router rms", [&](int r0, int rows, float* out) {
+    g4k::rmsnorm(dx + std::size_t(r0) * n, nullptr, dw2, 0.0188f, out, rows, n, eps, nullptr);
+  });
+  rows_vs_one("add_rmsnorm", [&](int r0, int rows, float* out) {
+    g4k::add_rmsnorm(dx + std::size_t(r0) * n, dy + std::size_t(r0) * n, dw, out, rows, n, eps, nullptr);
+  });
+  rows_vs_one("ffn_end", [&](int r0, int rows, float* out) {
+    g4k::ffn_end(dx + std::size_t(r0) * n, dy + std::size_t(r0) * n, dz + std::size_t(r0) * n, dw, dw2, dw3, dls, out, rows, n, eps, nullptr);
+  });
+  {
+    // scatter_combine through the identity (the window's rows in routing order) = moe_combine on each token's 8 rows
+    const auto yy = randv(std::size_t(T) * 8 * n);
+    std::vector<int> ident(std::size_t(T) * 8), picks(std::size_t(T) * 8);
+    for (int i = 0; i < T * 8; ++i) {
+      ident[std::size_t(i)] = i;
+      picks[std::size_t(i)] = (i * 37) % 128;
+    }
+    const auto wts = randv(std::size_t(T) * 8, 0, 1), dsc = randv(128, 0.5f, 2.0f);
+    auto* dyy = dev(yy);
+    auto* did = dev(ident);
+    auto* dp = dev(picks);
+    auto* dwt = dev(wts);
+    auto* dd = dev(dsc);
+    g4k::scatter_combine(dyy, did, dwt, dp, dd, T, n, a, nullptr);
+    for (int t = 0; t < T; ++t)
+      g4k::moe_combine(dyy + std::size_t(t) * 8 * n, dwt + t * 8, dp + t * 8, dd, 8, n, b + std::size_t(t) * n, nullptr);
+    expect(same_bits(host(a, x.size()), host(b, x.size())), "scatter_combine (identity) over T tokens = moe_combine per token");
+    for (void* p : std::initializer_list<void*>{dyy, did, dp, dwt, dd}) cudaFree(p);
+  }
+  {
+    // qkv_post: T rows from the device position = each row with its own device position
+    for (const bool full : {true, false}) {
+      const int hd = full ? 512 : 256, n_kv = full ? 2 : 8, n_head = 16, pos0 = full ? 3000 : 2045;
+      const int ring = full ? 0 : 2048, cap = full ? 4096 : 2048;
+      const auto q = randv(std::size_t(T) * n_head * hd, -2, 2), k = randv(std::size_t(T) * n_kv * hd, -2, 2),
+                 v = randv(std::size_t(T) * n_kv * hd, -2, 2), qn = randv(hd, 0.5f, 1.5f), kn = randv(hd, 0.5f, 1.5f);
+      std::vector<float> ff(256, 1e30f);
+      for (int i = 0; i < 64; ++i) ff[std::size_t(i)] = 1.0f;
+      std::vector<int> pos(static_cast<std::size_t>(T));
+      for (int t = 0; t < T; ++t) pos[std::size_t(t)] = pos0 + t;
+      auto *dq = dev(q), *dk = dev(k), *dv = dev(v), *dqn = dev(qn), *dkn = dev(kn), *dff = dev(ff);
+      auto* dpos = dev(pos);
+      float *qa = nullptr, *qb = nullptr;
+      __half *ka = nullptr, *va = nullptr, *kb = nullptr, *vb = nullptr;
+      const std::size_t cache = std::size_t(n_kv) * cap * hd;
+      cudaMalloc(&qa, q.size() * 4);
+      cudaMalloc(&qb, q.size() * 4);
+      for (__half** p : {&ka, &va, &kb, &vb}) {
+        cudaMalloc(p, cache * 2);
+        cudaMemset(*p, 0, cache * 2);
+      }
+      g4k::QkvPost pa{dq, dk, full ? dk : dv, dqn, dkn, full ? dff : nullptr, full ? 1e6f : 1e4f, hd, n_head, n_kv, -1, T, ring, cap,
+                      eps, qa, nullptr, ka, va, 0.0f, dpos};
+      g4k::qkv_post(pa, nullptr);
+      for (int t = 0; t < T; ++t) {
+        g4k::QkvPost pb{dq + std::size_t(t) * n_head * hd, dk + std::size_t(t) * n_kv * hd, (full ? dk : dv) + std::size_t(t) * n_kv * hd,
+                        dqn, dkn, full ? dff : nullptr, full ? 1e6f : 1e4f, hd, n_head, n_kv, -1, 1, ring, cap, eps,
+                        qb + std::size_t(t) * n_head * hd, nullptr, kb, vb, 0.0f, dpos + t};
+        g4k::qkv_post(pb, nullptr);
+      }
+      expect(same_bits(host(qa, q.size()), host(qb, q.size())) && same_bits(host(ka, cache), host(kb, cache)) &&
+                 same_bits(host(va, cache), host(vb, cache)),
+             std::string("qkv_post over T rows = one row at a time, ") + (full ? "full" : "sliding"));
+      for (void* p : std::initializer_list<void*>{dq, dk, dv, dqn, dkn, dff, dpos, qa, qb, ka, va, kb, vb}) cudaFree(p);
+    }
+  }
+  for (void* p : std::initializer_list<void*>{dx, dy, dz, dw, dw2, dw3, dls, a, b}) cudaFree(p);
+}
+
+// The window's expert plan without the CPU lane: one group per distinct expert (first appearance), each group's
+// entries ascending, each entry's row its own index and its token the index / 8.
+void window_plan_groups_entries_by_expert() {
+  const int T = 3;
+  const std::vector<int> picks{5, 9, 0, 127, 3, 4, 1, 2,      // token 0
+                               9, 5, 77, 3, 6, 7, 8, 10,      // token 1: 9, 5, 3 again
+                               11, 12, 13, 5, 14, 15, 16, 0};  // token 2: 5 and 0 again
+  std::vector<unsigned long long> table(128);
+  for (int e = 0; e < 128; ++e) table[std::size_t(e)] = 0x100000ull + 0x1000ull * static_cast<unsigned long long>(e);
+  auto* dp = dev(picks);
+  auto* dt = dev(table);
+  unsigned long long* gp = nullptr;
+  int *gs = nullptr, *ng = nullptr, *dst = nullptr, *tok = nullptr;
+  cudaMalloc(&gp, 64 * 8);
+  cudaMalloc(&gs, 65 * 4);
+  cudaMalloc(&ng, 4);
+  cudaMalloc(&dst, 64 * 4);
+  cudaMalloc(&tok, 64 * 4);
+  g4k::plan_window(dp, T * 8, dt, gp, gs, ng, dst, tok, nullptr);
+  const int groups = host(ng, 1)[0];
+  // the reference
+  std::vector<int> order;
+  std::vector<std::vector<int>> ent(128);
+  for (int a = 0; a < T * 8; ++a) {
+    const int e = picks[std::size_t(a)];
+    if (ent[std::size_t(e)].empty()) order.push_back(e);
+    ent[std::size_t(e)].push_back(a);
+  }
+  expect(groups == int(order.size()), "one group per distinct expert (" + std::to_string(order.size()) + ")");
+  if (groups != int(order.size())) return;
+  const auto hgp = host(gp, std::size_t(groups));
+  const auto hgs = host(gs, std::size_t(groups) + 1);
+  const auto hd = host(dst, std::size_t(T) * 8);
+  const auto ht = host(tok, std::size_t(T) * 8);
+  bool ok = hgs[0] == 0 && hgs[std::size_t(groups)] == T * 8;
+  int at = 0;
+  for (int g = 0; g < groups && ok; ++g) {
+    const int e = order[std::size_t(g)];
+    ok = hgp[std::size_t(g)] == table[std::size_t(e)] && hgs[std::size_t(g)] == at;
+    for (const int a : ent[std::size_t(e)]) {
+      ok = ok && hd[std::size_t(at)] == a && ht[std::size_t(at)] == a / 8;
+      ++at;
+    }
+  }
+  expect(ok, "groups in first-appearance order, their blobs from the table, entries ascending, rows and tokens by entry");
+  for (void* p : std::initializer_list<void*>{dp, dt, gp, gs, ng, dst, tok}) cudaFree(p);
+}
+
+// Only the kept rows of a window count in the expert tier's routing statistics.
+void kept_rows_count_their_routing() {
+  const int layers = 30, stride = 64, keep = 2;
+  std::vector<int> picks(std::size_t(layers) * stride, -1);
+  for (int l = 0; l < layers; ++l)
+    for (int a = 0; a < 4 * 8; ++a) picks[std::size_t(l) * stride + a] = (l * 7 + a * 3) % 128;
+  auto* dp = dev(picks);
+  std::vector<int> counts(std::size_t(layers) * 128, 1);
+  auto* dc = dev(counts);
+  g4k::count_picks(dp, stride, layers, keep * 8, dc, nullptr);
+  const auto got = host(dc, counts.size());
+  std::vector<int> want = counts;
+  for (int l = 0; l < layers; ++l)
+    for (int a = 0; a < keep * 8; ++a) ++want[std::size_t(l) * 128 + std::size_t(picks[std::size_t(l) * stride + a])];
+  expect(got == want, "each layer's counts gain the kept rows' picks (rows 0 .. keep-1), the rejected rows' none");
+  cudaFree(dp);
+  cudaFree(dc);
+}
+
+// The drafter's layer end: (x + rms(y) * w) * scale; at scale 1 bitwise add_rmsnorm.
+void scaled_sandwich_norm_matches_cpu() {
+  const int rows = 2, n = 1024;
+  const float eps = 1e-6f;
+  const auto x = randv(std::size_t(rows) * n, -3, 3), y = randv(std::size_t(rows) * n, -5, 5), w = randv(n, 0, 2);
+  auto* dx = dev(x);
+  auto* dy = dev(y);
+  auto* dw = dev(w);
+  const std::vector<float> s{0.37f}, one{1.0f};
+  auto* ds = dev(s);
+  auto* d1 = dev(one);
+  float *out = nullptr, *ref = nullptr;
+  cudaMalloc(&out, x.size() * 4);
+  cudaMalloc(&ref, x.size() * 4);
+  g4k::add_rmsnorm_scale(dx, dy, dw, ds, out, rows, n, eps, nullptr);
+  auto want = cpu_rms(y, w.data(), nullptr, 1.0f, rows, n, eps);
+  for (std::size_t i = 0; i < want.size(); ++i) want[i] = (want[i] + x[i]) * 0.37f;
+  close(host(out, x.size()), want, 1e-5f, 1e-5f, "add_rmsnorm_scale");
+  g4k::add_rmsnorm_scale(dx, dy, dw, d1, out, rows, n, eps, nullptr);
+  g4k::add_rmsnorm(dx, dy, dw, ref, rows, n, eps, nullptr);
+  expect(same_bits(host(out, x.size()), host(ref, x.size())), "scale 1: bitwise add_rmsnorm");
+  for (void* p : std::initializer_list<void*>{dx, dy, dw, ds, d1, out, ref}) cudaFree(p);
+}
+
+// The drafter's query at position p attends over the target's cached keys before p only (llama.cpp's shared KV:
+// the cache holds 0 .. p-1, the sliding mask p - key < 1024): decode attention at p - 1 with window 1023.
+void drafter_attention_reads_the_keys_before_its_position() {
+  struct Case { int hd, n_kv, cap, ring, window, pos; };
+  for (const Case c : {Case{256, 8, 2048, 2048, 1023, 3000}, Case{256, 8, 2048, 2048, 1023, 500}, Case{512, 2, 4096, 0, 0, 2500}}) {
+    const int n_head = 16;
+    std::vector<__half> kc(std::size_t(c.n_kv) * c.cap * c.hd), vc(kc.size());
+    const auto kf = randv(kc.size(), -1, 1), vf = randv(vc.size(), -1, 1);
+    for (std::size_t i = 0; i < kc.size(); ++i) {
+      kc[i] = __float2half(kf[i] * 3.0f);
+      vc[i] = __float2half(vf[i]);
+    }
+    const auto q = randv(std::size_t(n_head) * c.hd, -1, 1);
+    const int hi = c.pos - 1;
+    auto* dq = dev(q);
+    auto* dk = dev(kc);
+    auto* dv = dev(vc);
+    auto* dhi = dev(std::vector<int>{hi});
+    float *out = nullptr, *scratch = nullptr;
+    const int splits = 64;
+    cudaMalloc(&out, q.size() * 4);
+    cudaMalloc(&scratch, std::size_t(n_head) * splits * (c.hd + 2) * 4);
+    const int n_split = g4k::attn_decode_splits(g4k::attn_decode_keys(hi, c.window));
+    g4k::attn_decode_dev(dq, dk, dv, c.hd, n_head, c.n_kv, c.cap, c.ring, c.window, dhi, n_split, out, scratch, splits, nullptr);
+    // the reference: keys max(0, pos - 1023) .. pos - 1 (sliding), 0 .. pos - 1 (full)
+    const int lo = c.ring ? std::max(0, c.pos - 1023) : 0;
+    const auto want = cpu_attn(q, kc, vc, c.hd, n_head, c.n_kv, c.cap, c.ring, hi - lo + 1, hi);
+    close(host(out, q.size()), want, 1e-4f, 1e-4f, "the drafter's attention at " + std::to_string(c.pos) + " (hd " + std::to_string(c.hd) + ")");
+    expect(g4k::attn_decode_keys(hi, c.window) == hi - lo + 1, "the keys it reads: " + std::to_string(hi - lo + 1));
+    for (void* p : std::initializer_list<void*>{dq, dk, dv, dhi, out, scratch}) cudaFree(p);
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -733,5 +988,10 @@ int main(int argc, char** argv) {
       {"prompt_softmax_masks_like_the_model", prompt_softmax_masks_like_the_model},
       {"dequant_and_gather_match_cpu", dequant_and_gather_match_cpu},
       {"topk_matches_a_cpu_ranking", topk_matches_a_cpu_ranking},
+      {"window_rows_are_the_single_rows_bitwise", window_rows_are_the_single_rows_bitwise},
+      {"window_plan_groups_entries_by_expert", window_plan_groups_entries_by_expert},
+      {"kept_rows_count_their_routing", kept_rows_count_their_routing},
+      {"scaled_sandwich_norm_matches_cpu", scaled_sandwich_norm_matches_cpu},
+      {"drafter_attention_reads_the_keys_before_its_position", drafter_attention_reads_the_keys_before_its_position},
   });
 }
