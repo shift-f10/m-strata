@@ -131,6 +131,7 @@ HttpResponse CardRoutes::answer(const RouteId route, const std::string_view body
     case RouteId::strata_folder_sharing: return sharing(body);
     case RouteId::strata_card_add: return add(body);
     case RouteId::strata_card_folder: return repoint(body);
+    case RouteId::strata_card_mtp: return point_draft(body);
     case RouteId::strata_card_delete_begin: return delete_begin(body);
     case RouteId::strata_card_delete: return delete_confirm(body);
     case RouteId::strata_card_remove: return remove(body);
@@ -473,13 +474,16 @@ HttpResponse CardRoutes::publish(const CardText& text) {
   if (const auto failure = write_card(settings_.cards_dir, file_name, text.json, TokenStoreMode::create_new, &exists)) {
     return exists ? make_error_response(ApiError::card_exists) : refused(ApiError::card_refused, *failure);
   }
+  // where its own draft layer is (the page offers to point at one when none was found)
+  const auto slot = draft_layer_slot(std::get<ModelCard>(card));
+  const std::string draft = slot ? ",\"draft\":" + draft_layer_json(*slot) : std::string{};
   if (!launcher_.add_card(std::get<ModelCard>(std::move(card)))) {
     std::error_code ec;
     std::filesystem::remove(settings_.cards_dir / file_name, ec);
     return make_error_response(ApiError::card_exists);
   }
   log("[strata] models: card " + text.name + " added from a model folder");
-  return json_answer(201, "{\"name\":" + json_string(text.name) + ",\"profile\":" + json_string(profile_name(text.profile)) + "}\n");
+  return json_answer(201, "{\"name\":" + json_string(text.name) + ",\"profile\":" + json_string(profile_name(text.profile)) + draft + "}\n");
 }
 
 HttpResponse CardRoutes::repoint(const std::string_view body) {
@@ -523,6 +527,70 @@ HttpResponse CardRoutes::repoint(const std::string_view body) {
   }
   log("[strata] models: card " + *name + " now reads its model from another folder");
   return json_answer(200, "{\"name\":" + json_string(*name) + "}\n");
+}
+
+// Owner 2026-10-29 ("when browsing for models, if it supports mtp we should be able to point where the mtp is at too"):
+// a page card's own draft layer, picked by the user - Qwen3.8's in a folder (the rt folder, or one holding rt/ or
+// mtp/rt/), Gemma 4's a .gguf file in a folder - held to the model folders' rule like the model itself, then the card
+// drafts with it (card_with_draft_layer) as a card made with it would.
+HttpResponse CardRoutes::point_draft(const std::string_view body) {
+  const auto read = read_body(body, {"name", "folder", "file"});
+  const auto* name = read ? read->get("name") : nullptr;
+  const auto* folder = read ? read->get("folder") : nullptr;
+  const auto* file = read ? read->get("file") : nullptr;
+  if (name == nullptr || folder == nullptr) return make_error_response(ApiError::invalid_request);
+  const std::scoped_lock lock(files_);
+  const auto held = launcher_.card(*name);
+  if (!held) return make_error_response(ApiError::model_not_found);
+  if (!held->page_card) return make_error_response(ApiError::card_read_only);
+  if (held->state == CardState::starting) return make_error_response(ApiError::card_in_use);
+  const auto slot = draft_layer_slot(held->card);
+  if (!slot) return refused(ApiError::card_refused, "this card's model has no draft layer of its own to point at");
+  auto trusted = trusted_folder(*folder, shared_folders_);
+  if (auto* answer = std::get_if<HttpResponse>(&trusted)) return std::move(*answer);
+  const auto& root = std::get<CanonicalRoot>(trusted);
+  std::filesystem::path draft;
+  if (slot->folder) {
+    const auto rt = mtp_runtime_at(root.path());
+    if (!rt) {
+      return refused(ApiError::card_refused,
+                     "that folder holds no MTP draft layer (dense.bin, experts.bin and draft_vocab.bin, in it, in rt or in mtp/rt)");
+    }
+    // the rt folder itself under the same rule (a private folder may hold one other users can change)
+    auto rt_root = trusted_folder(path_to_utf8(*rt), shared_folders_);
+    if (auto* answer = std::get_if<HttpResponse>(&rt_root)) return std::move(*answer);
+    draft = std::get<CanonicalRoot>(rt_root).path();
+  } else {
+    const bool gguf = file != nullptr && file->size() > 5U && file->compare(file->size() - 5U, 5U, ".gguf") == 0 &&
+                      file->find_first_of("/\\") == std::string::npos;
+    const auto relative = gguf ? parse_relative_path(*file) : std::variant<RelativePath, PathError>{PathError{PathErrorCode::empty, ""}};
+    if (!gguf || !std::holds_alternative<RelativePath>(relative) ||
+        !std::holds_alternative<OpenedFile>(open_beneath(root, std::get<RelativePath>(relative)))) {
+      return refused(ApiError::card_refused, "pick the model's MTP draft file (a .gguf file) in that folder");
+    }
+    draft = root.path() / path_from_utf8(*file);
+  }
+  const auto card_path = card_file(settings_.cards_dir, *name);
+  if (!card_path) return refused(ApiError::card_refused, "the card's file is not in the server's cards folder");
+  const auto old_text = read_trusted_config_text(*card_path);
+  if (!std::holds_alternative<TrustedConfigText>(old_text)) return refused(ApiError::card_refused, "the card's file could not be read");
+  const std::string& before = std::get<TrustedConfigText>(old_text).text;
+  const auto rewritten = card_with_draft_layer(before, held->card.profile, draft);
+  if (const auto* error = std::get_if<CardError>(&rewritten)) return refused(ApiError::card_refused, error->message);
+  auto card = validated_card(std::get<std::string>(rewritten), settings_.main, settings_.cards_dir,
+                             [this](const std::string_view line) { log(line); });
+  if (auto* answer = std::get_if<HttpResponse>(&card)) return std::move(*answer);
+  const std::string file_name = path_to_utf8(card_path->filename());
+  if (const auto failure = write_card(settings_.cards_dir, file_name, std::get<std::string>(rewritten), TokenStoreMode::replace, nullptr)) {
+    return refused(ApiError::card_refused, *failure);
+  }
+  const auto changed = launcher_.replace_card(std::get<ModelCard>(std::move(card)));
+  if (changed != CardChange::done) {
+    (void)write_card(settings_.cards_dir, file_name, before, TokenStoreMode::replace, nullptr);   // the file as it was
+    return make_error_response(changed == CardChange::not_found ? ApiError::model_not_found : ApiError::card_in_use);
+  }
+  log("[strata] models: card " + *name + " now drafts with the MTP draft layer in " + path_to_utf8(draft));
+  return json_answer(200, "{\"name\":" + json_string(*name) + ",\"draft\":" + json_string(path_to_utf8(draft)) + "}\n");
 }
 
 HttpResponse CardRoutes::delete_begin(const std::string_view body) {

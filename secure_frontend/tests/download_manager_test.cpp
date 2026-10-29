@@ -783,6 +783,67 @@ void a_downloaded_qwen38_is_packed_natively() {
   expect(!f.manager->remove_installed("qwen-small").has_value() && !std::filesystem::exists(pack), "removed, the pack with it");
 }
 
+// Owner 2026-10-29 ("check which models in the download needs draft layers ... configured correctly automatically"):
+// every Qwen3.8 model drafts with the one MTP draft layer upstream's setup builds (<data>/mtp/rt, beside packs/); a
+// download store that holds one (private, complete) gives the download's card --mtp and the MTP settings.
+void a_downloaded_qwen38_drafts_with_the_stores_draft_layer() {
+  Fixture f;
+  f.with_gguf_engine = true;
+  f.with_prepare = true;
+#if defined(_WIN32)
+  const auto tool = f.dir / "strata-prepare.exe";
+#else
+  const auto tool = f.dir / "strata-prepare";
+#endif
+  secure_frontend_test::write_file(tool, "tool");
+  secure_frontend_test::make_private_directory(f.dir / "profiles");
+  secure_frontend_test::write_file(f.dir / "profiles" / "expert-profile.bin", "profile");
+  f.spawner.pulls.push_back(Script{pull_lines("qwen-small")});
+  f.spawner.pulls.push_back(Script{{"STEP pack", "DONE"}});
+  const auto installed = f.dir / "installed";
+  secure_frontend_test::make_private_directory(installed);
+  const auto shards = installed / "Q";
+  secure_frontend_test::make_private_directory(shards);
+  const auto rt = f.dir / "downloads" / "mtp" / "rt";   // upstream's layout: <data>/mtp/rt beside packs/
+  f.spawner.on_spawn = [&](const secure_frontend::EngineCommand& command) {
+    if (command.executable != tool) {   // the pull: the store is there now
+      secure_frontend_test::make_private_directory(rt.parent_path());
+      secure_frontend_test::make_private_directory(rt);
+      for (const char* file : {"dense.bin", "experts.bin", "draft_vocab.bin"}) secure_frontend_test::write_file(rt / file, "x");
+      return;
+    }
+    const auto& a = command.arguments;
+    const auto out = std::find(a.begin(), a.end(), "--out");
+    if (out == a.end() || out + 1 == a.end()) return;
+    const std::filesystem::path pack = secure_frontend::path_from_utf8(*(out + 1));
+    std::filesystem::create_directories(pack);
+    secure_frontend_test::write_file(pack / "prepared.json", "{\"pack\": " + json_of(pack) + ", \"tokenizer\": null, \"ple\": null, \"shards\": 2}\n");
+  };
+  f.start(1U << 30U);
+  {
+    std::lock_guard lock(f.spawner.mutex);
+    f.spawner.installed = installed;
+  }
+  expect(!f.manager->start("qwen-small").has_value() && f.manager->wait_idle(std::chrono::seconds(10)), "it downloads");
+  const std::string listed = f.manager->list_json();
+  expect(has(listed, "\"state\":\"ready\""), "ready - a card was made: " + listed);
+  const auto read = secure_frontend::read_model_card(f.dir / "cards" / "qwen-small.json");
+  const auto* card = std::get_if<secure_frontend::ModelCard>(&read);
+  expect(card != nullptr, "the card reads");
+  if (card == nullptr) return;
+  const auto args = std::get<std::vector<std::string>>(card->config.entries.at("engine.args").value);
+  const auto mtp = std::find(args.begin(), args.end(), "--mtp");
+  expect(mtp != args.end() && mtp + 1 != args.end() && *(mtp + 1) == secure_frontend::path_to_utf8(rt),
+         "the card drafts with the store's mtp/rt: " + [&args] {
+           std::string all;
+           for (const auto& a : args) all += " " + a;
+           return all;
+         }());
+  expect(std::any_of(card->options.begin(), card->options.end(), [](const auto& limit) { return limit.spec->name == "mtp"; }) &&
+             std::any_of(card->options.begin(), card->options.end(), [](const auto& limit) { return limit.spec->name == "spec_min_p"; }),
+         "and lists the MTP settings");
+}
+
 // Owner 2026-10-27 ("Yes continue with the others": GLM after Qwen): with an engine for new cards and strata-prepare
 // beside it, a GLM-5.3 download (prepare maya_pack) is packed as Maya's setup packs it - `strata-prepare download
 // --maya`, the pack in a folder beside the shards, as the engine reads them (<pack>/..). The store's own version folder
@@ -1684,6 +1745,7 @@ int main(int argc, char** argv) {
       {"a_downloaded_model_can_be_removed", a_downloaded_model_can_be_removed},
       {"a_downloaded_qwen36_becomes_a_card", a_downloaded_qwen36_becomes_a_card},
       {"a_downloaded_qwen38_is_packed_natively", a_downloaded_qwen38_is_packed_natively},
+      {"a_downloaded_qwen38_drafts_with_the_stores_draft_layer", a_downloaded_qwen38_drafts_with_the_stores_draft_layer},
       {"a_downloaded_glm_is_packed_with_mayas_step", a_downloaded_glm_is_packed_with_mayas_step},
       {"a_downloaded_deepseek_is_packed_with_mayas_step", a_downloaded_deepseek_is_packed_with_mayas_step},
       {"a_downloaded_minimax_is_packed_with_mayas_step", a_downloaded_minimax_is_packed_with_mayas_step},

@@ -117,7 +117,8 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 
 - **Chat** with Markdown, the model's reasoning in its own block, text-file and picture attachments (PNG, JPEG, WebP,
   while the running card reads pictures), saving a chat as Markdown, and
-  the sampling drawer (thinking, temperature, top-p, max tokens, seed). **Monitor:** GPU load, VRAM, temperature, power,
+  the sampling drawer (thinking, temperature, top-p, max tokens, seed): it starts at the running card's thinking
+  level, temperature and top-p, and every start of a model sets it back to that card's (Reset does too). **Monitor:** GPU load, VRAM, temperature, power,
   PCIe, CPU, disk reads and RAM, decode and prefill speed, the context fill, the experts in each tier with the engine's
   own memory, the conversation cache, and the recent requests (never their text); its live figures clear when no model
   runs. **About:** the engines this folder was built with and this PC's hardware. Light and dark; fits a phone.
@@ -464,16 +465,23 @@ On the page, open **Models**:
   A Gemma 4 model with its MTP draft file beside it (`mtp-<model>.gguf`, or in an `MTP/` folder; the catalog's Gemma 4
   download brings it) drafts with it: its card has an MTP switch, a draft window (2-8, default 4) and a draft confidence
   (0-1, default 0.6, the fastest measured on a 4080 SUPER).
+  When none is found beside the model, the page offers to point to it (upstream's `mtp\rt` folder, or a folder holding
+  it; Gemma 4's `mtp-*.gguf`), and a card shows its **MTP draft layer** with **Choose...** to change it later.
   A Qwen3.8 or Qwen3.6 model with its picture encoder beside it (one `mmproj*.gguf` in the folder) reads pictures.
 - **Download** fetches a model from the built-in catalog (every file pinned by its SHA-256) or a Hugging Face link
   into a drive or folder you choose; the free space is checked first. A large file comes over 16 connections at once
   (`pull.connections`, 1-32; 1 is one stream). A Qwen entry's **Vision files** box also fetches its picture encoder.
-  When it is verified, it is packed if needed and appears as a card. The list says what is already on this PC:
+  When it is verified, it is packed if needed and appears as a card. Draft layers: Gemma 4's MTP file comes with it,
+  Qwen3.6's is inside its GGUF, and a Qwen3.8-family download (Qwen3.8, Swift, Coder, Unsloth, Gyro) drafts with
+  upstream's `mtp/rt` when the download folder holds one (`<folder>/mtp/rt`) or the model's folder is near one. The list says what is already on this PC:
   **Downloaded**, or **Locally provided** for the same model added from a folder (no Download button for either), or
   **Other version on this PC** for a same-named file of another size (its Download fetches the catalog's). Each
   model family is a section you open (one with a download under way opens by itself; the page remembers the ones you
   opened for the tab), under the **Download to** panel: the drive and folder, the drive's space, **Change...**.
 - **Start a model** starts and stops a card, with its options (context length, cache format, thinking, sampling).
+  Every card offers its model's recommended sampling (Qwen3.8 and Qwen3.6 temperature 1.0, top-p 0.95, top-k 20;
+  Gemma 4 1.0 / 0.95 / 64 / min-p 0.05; flint and Raon-1 1.0 / 0.95 / 20; GLM-5.3 and MiniMax 1.0 / 0.95; DeepSeek
+  1.0 / 1.0), a card made before cards carried it included.
   **Calibrate** tunes the engine settings that depend on this PC, once per card, for every model; it reruns after a
   settings change if you ask it to.
 - A model folder must normally be private (other users of the PC cannot change it); the page offers to make it so -

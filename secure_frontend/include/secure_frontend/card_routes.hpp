@@ -14,6 +14,9 @@
 //                                                              start uses model folders as they are; owner 2026-10-27)
 //   POST /v1/strata/cards/add           {"folder","file"}   -> 201 {"name","profile"}   (card_for_gguf; source "folder")
 //   POST /v1/strata/cards/folder        {"name","folder"}   -> {"name"}   (the card's model file must be there)
+//   POST /v1/strata/cards/mtp           {"name","folder"[,"file"]} -> {"name","draft"}   (a page card's own draft layer:
+//                                                              Qwen3.8's mtp/rt in or under the folder, Gemma 4's file in
+//                                                              it; card_with_draft_layer; owner 2026-10-29)
 //   POST /v1/strata/cards/delete/begin  {"name"}            -> {"code"}   (DeleteCodes; Cache-Control: no-store)
 //   POST /v1/strata/cards/delete        {"name","code","key","permanent": true}
 //                                                           -> {"name","files","bytes","folder_removed"}
@@ -81,6 +84,7 @@ class CardRoutes final {
   HttpResponse add_packed(PackedFamily family, const GgufMetadata& metadata, const CanonicalRoot& root, const std::string& file);
   HttpResponse publish(const CardText& text);
   HttpResponse repoint(std::string_view body);
+  HttpResponse point_draft(std::string_view body);
   HttpResponse delete_begin(std::string_view body);
   HttpResponse delete_confirm(std::string_view body);
   HttpResponse remove(std::string_view body);

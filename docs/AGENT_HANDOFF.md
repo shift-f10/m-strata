@@ -280,6 +280,50 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z22 (Windows box; owner-directed; committed with this entry, not pushed)
+
+After an A/B of our engine and upstream's on Qwen3.8 IQ3_S (his voxel prompt and a prose one, same pack, profile and
+flags; ours 94.4 tok/s mean against upstream's 89.0, a full answer 101.1 against 92.0; his slow card ran without the
+MTP draft layer, `--mtp`), the owner asked: "Make sure the card matches the chat settings when the engine is started as
+default so each model reset it to the recommended"; "When browsing for models, if it supports mtp we should be able to
+point where the mtp is at too"; "Check which models in the download needs draft layers as well and make sure when they
+are downloaded ... configured correctly automatically".
+
+- **Recommended sampling on every card** (`recommended_sampling`, `model_options.cpp`; `offer_sampling`,
+  `model_launcher.cpp`): a card whose file lists no temperature, top-p, top-k or min-p offers its model's - upstream's
+  MODEL_CARD_SAMPLING for thinking (Qwen3.8 and Qwen3.6 1.0 / 0.95 / top-k 20, DeepSeek-V4.1 1.0 / 1.0) and the shipped
+  and page-made cards for the rest (Gemma 4 1.0 / 0.95 / 64 / min-p 0.05; flint and raon1 1.0 / 0.95 / 20; GLM-5.3 and
+  MiniMax 1.0 / 0.95) - or its config's own `defaults.sampling` row, in the profile's order. A start with the card's
+  defaults then samples as the model's card says: the owner's Qwen3.8 card (made from its pack before cards carried
+  sampling) ran greedy. A Qwen3.8 pack's new card lists them in its file too (`card_for_pack`).
+- **The chat follows the card** (`web/app.js`): the drawer's thinking level, temperature and top-p are the running
+  card's (its values as started: Gemma's and flint's on / off are High / Off, MiniMax's auto is a new **Auto** that names
+  no level) until changed there; a start the page saw, a restart or another model sets them back, a start made
+  elsewhere does when the page sees it; Reset gives the card's; untuned it shows "1.00 (the card's)" and the card's
+  top-k and min-p under top-p. A reload keeps the user's own values (`settings.card`: the card and its values).
+- **Pointing a card at its draft layer** (`POST /v1/strata/cards/mtp`, `CardRoutes::point_draft`;
+  `draft_layer_slot`, `mtp_runtime_at`, `card_with_draft_layer` in `card_builder.cpp`): a page card whose model drafts
+  with a layer of its own - a Qwen3.8 pack's upstream `mtp/rt` (the folder itself, its `rt/` or `mtp/rt/`), a Gemma 4
+  model's `.gguf` - lists it in the model list (`"draft": {"kind", "path"}`), and the route rewrites the card: `--mtp`
+  (replacing one there) and the MTP options it lacks (on; Qwen3.8's confidence 0.5, Gemma 4's window 4 and confidence
+  0.6). The picked folder and the `rt` folder pass the model folders' rule. The page: a card's **MTP draft layer** row
+  with **Choose...**, and after Add a model a model with none found is offered the picker at once. Threat model updated.
+- **Downloads' draft layers** (catalog checked): Gemma 4's MTP file was already fetched with it and wired; Qwen3.6's is
+  inside its GGUF (`--mtp 2`); the Maya families (GLM-5.3, DeepSeek-V4.1, MiniMax-M3.1), flint and raon1 have none in
+  the catalog. Every Qwen3.8 family (Qwen3.8, Swift, Coder, Unsloth, Gyro) drafts with the one layer upstream's setup
+  builds from the original checkpoint (`tools/mtp_fetch.py`, `mtp_pack.py`, `mtp_rt.py`, about 5 GB fetched). A
+  Qwen3.8-family download's card now drafts with the store's `<folder>/mtp/rt`, else one near the model's folder,
+  when private (`native_prepare`). **Not done**: building that layer here (a native port of the three tools into
+  `strata-prepare`); until then it comes from upstream's setup or is pointed at with the new route.
+- **Proof**: RED first for each piece (the launcher listing and a fake-engine start: the GEN line had no sampling; the
+  pack card; the route: 404 with its dispatch left out; the download: its card had no `--mtp`). The whole Windows tree 1372/1374 (the
+  two release-only cases). Linux gcc 1421/1425: the release-only two, and `net01_workers_add_no_listener` and
+  `egress_table_scan_during_lifecycle` (each passes alone, 3 of 3). Linux clang: the six changed suites, 166/166.
+  The page (the real `web/` files) in headless Edge on a mock of the server's routes, 24 checks: the drawer at each
+  card's values, nothing sent untuned, a tuned value sent and kept over a reload, a start, a restart and a start made
+  elsewhere setting it back, Auto naming no level, Reset, the draft row and its picker posting `cards/mtp`. Not run
+  against a model or the owner's server; his Qwen3.8 card is unchanged (he points it with Choose...).
+
 ### Claude Code session, 2026-10-29 z21 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner, after z20's finding: "Yes: when web search is on, add today's date and a short line telling the model its

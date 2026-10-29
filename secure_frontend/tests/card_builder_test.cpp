@@ -271,6 +271,11 @@ void a_qwen38_pack_with_its_draft_layer_offers_mtp() {
   expect(!plain.empty() && !plain.contains("mtp") && !plain.contains("spec_min_p") && plain.contains("spec") &&
              std::get<std::string>(plain.at("args")).find("--mtp") == std::string::npos,
          "without a draft layer: prompt lookup's --spec, no MTP settings");
+  // owner 2026-10-29 ("each model reset it to the recommended"): Qwen3.8's own sampling (upstream's MODEL_CARD_SAMPLING
+  // for thinking, the shipped qwen38-iq3s card), as every other pack's card lists its model's
+  expect(plain.contains("temperature") && std::get<double>(plain.at("temperature")) == 1.0 && plain.contains("top_p") &&
+             std::get<double>(plain.at("top_p")) == 0.95 && plain.contains("top_k") && std::get<std::int64_t>(plain.at("top_k")) == 20,
+         "the card lists Qwen3.8's recommended sampling: temperature 1.0, top-p 0.95, top-k 20");
   request.mtp = folder / "mtp" / "rt";
   const auto with = options_of(secure_frontend::card_for_pack(request));
   expect(with.contains("mtp") && std::get<bool>(with.at("mtp")) && with.contains("spec") && std::get<std::int64_t>(with.at("spec")) == 4 &&

@@ -584,6 +584,94 @@ void a_new_private_folder_is_made() {
   expect(make("open").status == 422, "an existing folder others may write is not taken");
 }
 
+// Owner 2026-10-29 ("when browsing for models, if it supports mtp we should be able to point where the mtp is at too"):
+// a page card whose model drafts with a draft layer of its own (a Qwen3.8 pack's upstream mtp/rt, Gemma 4's mtp-*.gguf)
+// says where it is in the model list ("draft": its kind and path, null when none was found), and cards/mtp points it
+// at one the user picked: Qwen3.8's in a folder (the rt folder itself, or one holding rt/ or mtp/rt), Gemma 4's a file.
+// The folder is held to the model folders' rule; the card then runs --mtp with the MTP settings.
+void a_card_is_pointed_at_its_draft_layer() {
+  Fixture f;
+  const auto profiles = f.engine.parent_path() / "profiles";
+  secure_frontend_test::make_private_directory(profiles);
+  secure_frontend_test::write_file(profiles / "expert-profile.bin", "profile");
+  const std::string first = "Qwen3.8-Test-IQ3_S-00001-of-00002.gguf";
+  secure_frontend_test::write_file(f.models / first, test_support::gguf_with_tokenizer(test_support::byte_tokenizer(), "gpt2", "qwen4exp")
+                                                         .u32("qwen4exp.expert_count", 512U)
+                                                         .bytes());
+  secure_frontend_test::write_file(f.models / "Qwen3.8-Test-IQ3_S-00002-of-00002.gguf", "shard two");
+  f.on_prepare = [&f](const std::vector<std::string>& a) {
+    const auto out = secure_frontend::path_from_utf8(value_after(a, "--out"));
+    std::filesystem::create_directories(out / "tokenizer");
+    secure_frontend_test::write_file(out / "native_experts.txt", "# strata native experts v3: ... absolute offsets in Qwen3.8-Test-IQ3_S-00001-of-00002.gguf\n");
+    secure_frontend_test::write_file(out / "prepared.json", "{\"pack\": " + json_path(out) + ", \"tokenizer\": null, \"ple\": " +
+                                                                json_path(f.models / "Qwen3.8-Test-IQ3_S-00002-of-00002.gguf") + ", \"shards\": 2}\n");
+  };
+  const auto added = f.add(f.models, first);
+  expect(added.status == 201 && has(added, R"("draft":{"kind":"folder","path":null})"),
+         "a Qwen3.8 model with no draft layer near it says it can take one: " + shown(added));
+  const std::string name = "Qwen3.8-Test-IQ3_S";
+  const auto point = [&f](const std::string& card, const std::filesystem::path& folder, const std::string& file = {}) {
+    return f.post(secure_frontend::RouteId::strata_card_mtp, "{\"name\":" + json_text(card) + ",\"folder\":" + json_path(folder) +
+                                                                 (file.empty() ? std::string{} : ",\"file\":" + json_text(file)) + "}");
+  };
+  const auto args_and_options = [&f](const std::string& card) {
+    const auto held = f.launcher->card(card);
+    if (!held) return std::string{"<no card>"};
+    std::string all;
+    const auto found = held->card.config.entries.find("engine.args");
+    if (found != held->card.config.entries.end()) {
+      for (const auto& a : std::get<std::vector<std::string>>(found->second.value)) all += " " + a;
+    }
+    for (const auto& limit : held->card.options) all += " option:" + std::string{limit.spec->name};
+    return all;
+  };
+  // the draft layer kept elsewhere, as upstream's setup puts it: <data>/mtp/rt
+  const auto data = f.root / "upstream-data";
+  for (const auto& dir : {data, data / "mtp", data / "mtp" / "rt"}) secure_frontend_test::make_private_directory(dir);
+  const auto empty = point(name, f.models);
+  expect(empty.status == 422 && has(empty, "\"code\":\"card_refused\""), "a folder with no draft layer is refused: " + shown(empty));
+  for (const char* file : {"dense.bin", "experts.bin", "draft_vocab.bin"}) secure_frontend_test::write_file(data / "mtp" / "rt" / file, "x");
+  const auto pointed = point(name, data);
+  const std::string rt = secure_frontend::path_to_utf8(std::filesystem::canonical(data) / "mtp" / "rt");
+  expect(pointed.status == 200, "a folder holding mtp/rt is taken: " + shown(pointed));
+  const std::string after = args_and_options(name);
+  expect(after.find(" --mtp " + rt) != std::string::npos && after.find(" option:mtp") != std::string::npos &&
+             after.find(" option:spec_min_p") != std::string::npos && after.find(" --pack ") != std::string::npos,
+         "the card runs --mtp with the MTP settings, its pack as it was:" + after);
+  const auto reread = secure_frontend::read_model_card(f.data.state / "cards" / (name + ".json"));
+  expect(std::holds_alternative<secure_frontend::ModelCard>(reread), "its file is a valid card");
+  expect(f.launcher->list_json().find(R"("draft":{"kind":"folder","path":)" + json_text(rt) + "}") != std::string::npos,
+         "the model list says where it is: " + f.launcher->list_json());
+  const auto again = point(name, data / "mtp" / "rt");
+  expect(again.status == 200 && args_and_options(name).find(" --mtp " + rt) != std::string::npos &&
+             args_and_options(name).find("--mtp", args_and_options(name).find("--mtp") + 1U) == std::string::npos,
+         "the rt folder itself is taken too, and replaces the old --mtp:" + args_and_options(name));
+  const auto open = f.root / "open-data";
+  for (const auto& dir : {open, open / "rt"}) secure_frontend_test::make_private_directory(dir);
+  for (const char* file : {"dense.bin", "experts.bin", "draft_vocab.bin"}) secure_frontend_test::write_file(open / "rt" / file, "x");
+  Fixture::widen(open);
+  const auto shared = point(name, open);
+  expect(shared.status == 409 && has(shared, "\"code\":\"folder_not_private\""), "a folder other users can change: " + shown(shared));
+  // Gemma 4: the draft file picked in a folder
+  expect(f.add(f.models, kModelFile).status == 201, "a Gemma 4 card");
+  expect(f.launcher->list_json().find(R"("draft":{"kind":"file","path":null})") != std::string::npos, "it can take a draft file");
+  const auto drafts = f.root / "drafts";
+  secure_frontend_test::make_private_directory(drafts);
+  secure_frontend_test::write_file(drafts / "mtp-tiny-gemma-Q8_0.gguf", "GGUF");
+  const auto no_file = point("tiny-gemma-Q8_0", drafts);
+  expect(no_file.status == 422 && has(no_file, "\"code\":\"card_refused\""), "Gemma's needs its file picked: " + shown(no_file));
+  const auto gemma = point("tiny-gemma-Q8_0", drafts, "mtp-tiny-gemma-Q8_0.gguf");
+  const std::string draft_file = secure_frontend::path_to_utf8(std::filesystem::canonical(drafts) / "mtp-tiny-gemma-Q8_0.gguf");
+  const std::string gemma_card = args_and_options("tiny-gemma-Q8_0");
+  expect(gemma.status == 200 && gemma_card.rfind(" --mtp " + draft_file + " option:", 0) == 0 &&
+             gemma_card.find(" option:mtp option:spec option:spec_min_p option:thinking") != std::string::npos,
+         "the Gemma 4 card drafts with the picked file, with its window and confidence: " + shown(gemma) + gemma_card);
+  const auto op = point("Op", drafts);
+  expect(op.status == 403 && has(op, "\"code\":\"card_read_only\""), "an operator card: " + shown(op));
+  const auto nobody = point("Nobody", drafts);
+  expect(nobody.status == 404 && has(nobody, "\"code\":\"model_not_found\""), "an unknown card: " + shown(nobody));
+}
+
 void a_card_follows_its_moved_folder() {
   Fixture f;
   expect(f.add(f.models, kModelFile).status == 201, "the card");
@@ -908,6 +996,7 @@ int main(int argc, char** argv) {
       {"a_deepseek_model_is_added_with_mayas_ds4_pack", a_deepseek_model_is_added_with_mayas_ds4_pack},
       {"a_minimax_model_is_added_with_mayas_mm3_pack", a_minimax_model_is_added_with_mayas_mm3_pack},
       {"a_card_follows_its_moved_folder", a_card_follows_its_moved_folder},
+      {"a_card_is_pointed_at_its_draft_layer", a_card_is_pointed_at_its_draft_layer},
       {"a_new_private_folder_is_made", a_new_private_folder_is_made},
       {"delete_needs_the_code_the_key_and_permanent", delete_needs_the_code_the_key_and_permanent},
       {"a_running_card_is_not_deleted", a_running_card_is_not_deleted},

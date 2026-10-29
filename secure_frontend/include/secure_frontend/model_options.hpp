@@ -57,6 +57,13 @@ struct ModelOptionSpec final {
 using ModelOptionValue = std::variant<bool, std::int64_t, double, std::string>;
 using ModelOptionValues = std::map<std::string, ModelOptionValue, std::less<>>;
 
+// Each model family's recommended sampling (owner 2026-10-29: "each model reset it to the recommended"): upstream's
+// MODEL_CARD_SAMPLING for thinking (serve/server.py:8054: Qwen3.8 and Qwen3.6 1.0 / 0.95 / top-k 20, DeepSeek-V4.1
+// 1.0 / 1.0) and the shipped and page-made cards for the rest (Gemma 4 1.0 / 0.95 / 64 / min-p 0.05; flint and raon1
+// 1.0 / 0.95 / 20; GLM-5.3 and MiniMax 1.0 / 0.95). A card whose file does not list one of these options offers it
+// with this default (the model launcher), so a start with the card's defaults samples as the model's card says.
+[[nodiscard]] ModelOptionValues recommended_sampling(EngineProfile profile);
+
 // A card's view of one option: its default and the card's own bounds inside the spec's.
 struct ModelOptionLimits final {
   const ModelOptionSpec* spec{nullptr};
