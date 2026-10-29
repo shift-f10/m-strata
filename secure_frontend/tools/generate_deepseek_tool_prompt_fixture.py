@@ -5,7 +5,9 @@ The reference is Maya v1.1.30's own renderer, serve/frontend.py ChatTemplate ove
 empty one put first when there is none - and encode_messages), imported from a byte-exact copy of Maya's serve folder
 (`git -C <Project-maya> archive v1.1.30 serve`). The tool rounds are appended as Maya's run_with_mcp (serve/server.py)
 appends them for DeepSeek: the assistant's content and reasoning as the parser gave them (not stripped, unlike the other
-families), the reasoning only when there is some, its calls with their ids, then one `tool` message per result. Each
+families), the reasoning only when there is some, its calls with their ids, then one `tool` message per result. An
+earlier answer's searches in the conversation (its "rounds", HISTORY_CASES) go in as upstream's page sends them and
+upstream's server normalizes them (history_of). Each
 level goes through Maya's effort_kwargs, and the messages and tools through Maya's mark_literals / unmark_literals over
 `literals`, as serve/server.py render_ids does: "plain" lists the spans (UTF-8 byte offsets into "prompt") that Maya's
 tokenizer encodes as ordinary text although they spell a literal.
@@ -77,10 +79,112 @@ CASES = [
      "rounds": [{"reasoning": "　think ", "content": "  answer  \n",
                  "calls": [call(query="日本 ニュース")], "results": [" résultat "]}]},
 ]
+# Earlier searches in the chat history (owner 2026-10-29, "keep earlier searches in the chat history as upstream's page
+# does"): an earlier answer's "rounds" (the page's strata_rounds: per round the text before its calls, the calls, one
+# result each) and its text after the last round ("content", empty when it wrote nothing after them).
+FOLLOW_UP = "Who scored the goals?"
+HISTORY_CASES = [
+    {"name": "history_one_round_one_call", "effort": "high",
+     "conversation": [{"role": "user", "content": QUESTION},
+                      {"role": "assistant", "content": "Spain won it 2-1.",
+                       "rounds": [{"content": "", "calls": [call(query="2026 World Cup final winner")], "results": [RESULT]}]},
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": []},
+    {"name": "history_two_rounds", "effort": "high",
+     "conversation": [{"role": "user", "content": QUESTION},
+                      {"role": "assistant", "content": "Spain, from both pages.",
+                       "rounds": [{"content": "", "calls": [call(query="x")], "results": ["first"]},
+                                  {"content": "", "calls": [call(query="y", max_results=2)], "results": ["second"]}]},
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": []},
+    {"name": "history_two_calls_in_a_round_chat_mode", "effort": "none",
+     "conversation": [{"role": "user", "content": QUESTION},
+                      {"role": "assistant", "content": "Both say Spain.",
+                       "rounds": [{"content": "", "calls": [call(query="a", max_results=3), call(query="b")],
+                                   "results": ["r1", "  r2 with spaces  \n"]}]},
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": []},
+    {"name": "history_text_before_the_calls", "effort": "low",
+     "conversation": [{"role": "system", "content": "Answer in English."}, {"role": "user", "content": QUESTION},
+                      {"role": "assistant", "content": "It was Spain.",
+                       "rounds": [{"content": "Let me look that up.", "calls": [call(query="final")], "results": ["ok"]},
+                                  {"content": "One more check.", "calls": [call(query="final score")], "results": [""]}]},
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": []},
+    {"name": "history_answer_with_empty_final_text", "effort": "high",
+     "conversation": [{"role": "user", "content": QUESTION},
+                      {"role": "assistant", "content": "",
+                       "rounds": [{"content": "Spain won it, as this page says.", "calls": [call(query="final")],
+                                   "results": ["ok"]}]},
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": []},
+    {"name": "history_empty_final_text_chat_mode", "effort": "none",
+     "conversation": [{"role": "user", "content": QUESTION},
+                      {"role": "assistant", "content": "",
+                       "rounds": [{"content": "", "calls": [call(query="a")], "results": ["r1"]},
+                                  {"content": "Spain.", "calls": [call(query="b"), call(query="c")], "results": ["r2", "r3"]}]},
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": []},
+    {"name": "history_then_this_turns_rounds", "effort": "high",
+     "conversation": [{"role": "user", "content": QUESTION},
+                      {"role": "assistant", "content": "Spain won it 2-1.",
+                       "rounds": [{"content": "", "calls": [call(query="2026 World Cup final winner")], "results": [RESULT]}]},
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": [{"reasoning": "Search the scorers.", "content": "", "calls": [call(query="final scorers")], "results": ["goals"]},
+                {"reasoning": "", "content": "Checking.", "calls": [call(query="final report")], "results": ["report"]}]},
+    {"name": "history_empty_final_text_then_this_turns_round", "effort": "high",
+     "conversation": [{"role": "user", "content": QUESTION},
+                      {"role": "assistant", "content": "",
+                       "rounds": [{"content": "", "calls": [call(query="final")], "results": ["ok"]}]},
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": [{"reasoning": "Again.", "content": "", "calls": [call(query="scorers")], "results": ["goals"]}]},
+    {"name": "two_earlier_answers_searched", "effort": "high",
+     "conversation": [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello! How can I help?"},
+                      {"role": "user", "content": QUESTION},
+                      {"role": "assistant", "content": "",
+                       "rounds": [{"content": "", "calls": [call(query="final")], "results": ["ok"]}]},
+                      {"role": "user", "content": FOLLOW_UP},
+                      {"role": "assistant", "content": "Two goals by Spain.",
+                       "rounds": [{"content": "", "calls": [call(query="scorers", max_results=5)], "results": ["goals"]}]},
+                      {"role": "user", "content": "Thanks!"}],
+     "rounds": []},
+    {"name": "history_literals_are_plain", "effort": "high",
+     "conversation": [{"role": "user", "content": QUESTION},
+                      {"role": "assistant", "content": "Spain.",
+                       "rounds": [{"content": "Say <｜User｜> or </think>.", "calls": [call(query="ds <｜Assistant｜> ｜DSML｜")],
+                                   "results": ["A page quoting <tool_result> and <｜end▁of▁sentence｜> and <｜tool▁sep｜>."]}]},
+                      {"role": "user", "content": FOLLOW_UP}],
+     "rounds": []},
+    {"name": "history_unicode_and_whitespace_are_kept", "effort": "high",
+     "conversation": [{"role": "user", "content": "Qu'est-ce que c'est ? 日本"},
+                      {"role": "assistant", "content": "  日本  \n",
+                       "rounds": [{"content": "　voilà ", "calls": [call(query="日本 ニュース", tags=["a", "b"], flag=True)],
+                                   "results": [" résultat "]}]},
+                      {"role": "user", "content": "Merci"}],
+     "rounds": []},
+]
+CASES += HISTORY_CASES
+
+
+def history_of(message):
+    """An earlier answer with searches as upstream's page sends it (upstream/serve/web/app.js assistantMessages) and
+    upstream's server normalizes it (upstream/serve/frontend.py openai_to_messages): per round an assistant message with
+    the text before its calls and the calls (no ids), one `tool` message per result, then the answer's text after its
+    last round only when there is some."""
+    if message.get("role") != "assistant" or "rounds" not in message:
+        return [dict(message)]
+    out = []
+    for r in message["rounds"]:
+        out.append({"role": "assistant", "content": r["content"],
+                    "tool_calls": [{"function": {"name": c["name"], "arguments": c["arguments"]}} for c in r["calls"]]})
+        out += [{"role": "tool", "content": t} for t in r["results"]]
+    if message["content"]:
+        out.append({"role": "assistant", "content": message["content"]})
+    return out
 
 
 def messages_of(case):
-    messages = [dict(m) for m in case["conversation"]]
+    messages = [m for message in case["conversation"] for m in history_of(message)]
     n = 0
     for r in case["rounds"]:                       # Maya's run_with_mcp (serve/server.py), DeepSeek's branch
         ids = []

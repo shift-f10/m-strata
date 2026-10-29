@@ -160,11 +160,11 @@ bool holds_think_marker(const ChatMessage& message) {
   return false;
 }
 
-}  // namespace
-
-std::optional<std::string> render_qwen_text_prompt(const std::vector<ChatMessage>& messages,
-                                                   const std::span<const std::size_t> image_token_counts,
-                                                   const QwenThinking thinking, const std::optional<QwenEffortPlacement> effort) {
+// render_qwen_text_prompt. With `searched_history` (the tool prompt's check of its conversation), an earlier answer that
+// searched (ChatMessage::rounds) may have no text after its last round: its rounds are its turn.
+std::optional<std::string> text_prompt(const std::vector<ChatMessage>& messages, const std::span<const std::size_t> image_token_counts,
+                                       const QwenThinking thinking, const std::optional<QwenEffortPlacement>& effort,
+                                       const bool searched_history) {
   if (messages.empty() || messages.size() > kMaximumMessages) return std::nullopt;
   if (thinking != QwenThinking::absent) {
     for (const auto& message : messages) {
@@ -188,7 +188,8 @@ std::optional<std::string> render_qwen_text_prompt(const std::vector<ChatMessage
     const std::string_view expected_role = expect_user ? "user" : "assistant";
     if (message.role != expected_role) return std::nullopt;
     if (message.parts.empty()) {
-      if (!safe_content(message.content)) return std::nullopt;
+      const bool rounds_only = searched_history && message.content.empty() && !message.rounds.empty();
+      if (!rounds_only && !safe_content(message.content)) return std::nullopt;
     } else if (message.role != "user" && !image_free_parts(message)) {
       return std::nullopt;  // images ride user turns (the pin reads the request's user images)
     }
@@ -236,6 +237,14 @@ std::optional<std::string> render_qwen_text_prompt(const std::vector<ChatMessage
   return prompt;
 }
 
+}  // namespace
+
+std::optional<std::string> render_qwen_text_prompt(const std::vector<ChatMessage>& messages,
+                                                   const std::span<const std::size_t> image_token_counts,
+                                                   const QwenThinking thinking, const std::optional<QwenEffortPlacement> effort) {
+  return text_prompt(messages, image_token_counts, thinking, effort, false);
+}
+
 namespace {
 
 constexpr std::string_view kToolsOpen = kQwenToolsOpen;
@@ -256,6 +265,92 @@ std::string message_body(const ChatMessage& message) {
   return body;
 }
 
+// A round with a call, a name for each, and one result per call.
+bool valid_round(const ToolRound& round) {
+  if (round.calls.empty() || round.results.size() != round.calls.size()) return false;
+  return std::none_of(round.calls.begin(), round.calls.end(), [](const ToolCall& call) { return call.name.empty(); });
+}
+
+// An earlier answer's words, call names and results come from the client (chat_schema reads them so): UTF-8 without
+// a control byte. They are plain, so a special literal in them is text.
+bool plain_client_text(const std::string_view text) {
+  if (text.size() > kMaximumMessageBytes || !valid_utf8(text)) return false;
+  return std::none_of(text.begin(), text.end(), [](const char c) {
+    const auto byte = static_cast<unsigned char>(c);
+    return byte < 0x20U && byte != '\n' && byte != '\r' && byte != '\t';
+  });
+}
+
+bool valid_history_round(const ToolRound& round) {
+  if (!valid_round(round) || !plain_client_text(round.content)) return false;
+  for (const auto& call : round.calls) {
+    if (!plain_client_text(call.name)) return false;
+  }
+  return std::all_of(round.results.begin(), round.results.end(), [](const std::string& result) { return plain_client_text(result); });
+}
+
+// A round's calls after the assistant's words (`content`, stripped): "\n\n" before the first after words, "\n" before
+// each later one.
+void append_calls(PromptBuilder& out, const std::string_view content, const std::vector<ToolCall>& calls) {
+  for (std::size_t k = 0U; k < calls.size(); ++k) {
+    const ToolCall& call = calls[k];
+    out.text(k > 0U ? "\n" : content.empty() ? "" : "\n\n");
+    out.marker(kCallOpen);
+    out.text("\n<function=");
+    out.plain(call.name);
+    out.text(">\n");
+    for (const auto& argument : call.arguments) {
+      out.text("<parameter=");
+      out.plain(argument.name);
+      out.text(">\n");
+      out.plain(template_argument_text(argument.value));
+      out.text("\n</parameter>\n");
+    }
+    out.text("</function>\n");
+    out.marker(kCallClose);
+  }
+}
+
+// A round's results: one user turn of "\n<tool_response>\n{result}\n</tool_response>" blocks, each result stripped.
+void append_results(PromptBuilder& out, const std::vector<std::string>& results) {
+  out.marker(kStartMarker);
+  out.text("user");
+  for (const auto& result : results) {
+    out.text("\n");
+    out.marker(kResponseOpen);
+    out.text("\n");
+    out.plain(python_strip(result));
+    out.text("\n");
+    out.marker(kResponseClose);
+  }
+  out.marker(kEndMarker);
+  out.text("\n");
+}
+
+// An earlier answer that searched (ChatMessage::rounds) as upstream's page sends it (serve/web/app.js
+// assistantMessages) and the template renders it before the last user turn, so without a think block: per round an
+// assistant turn of its words (stripped) and calls, then the results' user turn; then its text after the last round,
+// stripped, as an assistant turn of its own when it is not empty.
+void append_searched_answer(PromptBuilder& out, const ChatMessage& message) {
+  for (const auto& round : message.rounds) {
+    out.marker(kStartMarker);
+    out.text("assistant\n");
+    const std::string_view content = python_strip(round.content);
+    out.plain(content);
+    append_calls(out, content, round.calls);
+    out.marker(kEndMarker);
+    out.text("\n");
+    append_results(out, round.results);
+  }
+  if (const std::string_view rest = python_strip(message.content); !rest.empty()) {
+    out.marker(kStartMarker);
+    out.text("assistant\n");
+    out.text(rest);
+    out.marker(kEndMarker);
+    out.text("\n");
+  }
+}
+
 }  // namespace
 
 std::optional<std::vector<PromptPiece>> render_qwen_tool_prompt(const std::vector<ChatMessage>& messages,
@@ -265,15 +360,16 @@ std::optional<std::vector<PromptPiece>> render_qwen_tool_prompt(const std::vecto
   if (thinking == QwenThinking::absent || tools.empty()) return std::nullopt;
   for (const auto& message : messages) {
     if (!image_free_parts(message)) return std::nullopt;  // a request with images is served without search
+    if (message.rounds.empty()) continue;
+    // Owner 2026-10-29 ("keep earlier searches in the chat history as upstream's page does"): an earlier answer's
+    // rounds, on an assistant message in the string form.
+    if (message.role != "assistant" || !message.parts.empty()) return std::nullopt;
+    if (!std::all_of(message.rounds.begin(), message.rounds.end(), valid_history_round)) return std::nullopt;
   }
-  // The conversation obeys every rule of the plain prompt (roles, order, markers, sizes).
-  if (!render_qwen_text_prompt(messages, {}, thinking, effort)) return std::nullopt;
-  for (const auto& round : rounds) {
-    if (round.calls.empty() || round.results.size() != round.calls.size()) return std::nullopt;
-    for (const auto& call : round.calls) {
-      if (call.name.empty()) return std::nullopt;
-    }
-  }
+  // The conversation obeys every rule of the plain prompt (roles, order, markers, sizes); an earlier answer that
+  // searched may have no text after its rounds.
+  if (!text_prompt(messages, {}, thinking, effort, true)) return std::nullopt;
+  if (!std::all_of(rounds.begin(), rounds.end(), valid_round)) return std::nullopt;
 
   PromptBuilder out;
   const bool has_system = messages.front().role == "system";
@@ -298,6 +394,10 @@ std::optional<std::vector<PromptPiece>> render_qwen_tool_prompt(const std::vecto
   out.marker(kEndMarker);
   out.text("\n");
   for (std::size_t index = has_system ? 1U : 0U; index < messages.size(); ++index) {
+    if (!messages[index].rounds.empty()) {
+      append_searched_answer(out, messages[index]);
+      continue;
+    }
     out.marker(kStartMarker);
     out.text(messages[index].role);
     out.text("\n");
@@ -317,37 +417,10 @@ std::optional<std::vector<PromptPiece>> render_qwen_tool_prompt(const std::vecto
     out.text("\n\n");
     const std::string_view content = python_strip(round.content);
     out.plain(content);
-    for (std::size_t k = 0U; k < round.calls.size(); ++k) {
-      const ToolCall& call = round.calls[k];
-      out.text(k > 0U ? "\n" : content.empty() ? "" : "\n\n");
-      out.marker(kCallOpen);
-      out.text("\n<function=");
-      out.plain(call.name);
-      out.text(">\n");
-      for (const auto& argument : call.arguments) {
-        out.text("<parameter=");
-        out.plain(argument.name);
-        out.text(">\n");
-        out.plain(template_argument_text(argument.value));
-        out.text("\n</parameter>\n");
-      }
-      out.text("</function>\n");
-      out.marker(kCallClose);
-    }
+    append_calls(out, content, round.calls);
     out.marker(kEndMarker);
     out.text("\n");
-    out.marker(kStartMarker);
-    out.text("user");
-    for (const auto& result : round.results) {
-      out.text("\n");
-      out.marker(kResponseOpen);
-      out.text("\n");
-      out.plain(python_strip(result));
-      out.text("\n");
-      out.marker(kResponseClose);
-    }
-    out.marker(kEndMarker);
-    out.text("\n");
+    append_results(out, round.results);
   }
   if (const std::string_view turn = end_effort_sentence(thinking, effort); !turn.empty()) {
     out.marker(kStartMarker);

@@ -135,4 +135,34 @@ SearchRounds::Next SearchRounds::after(const ToolCallObserver& round, const RunE
   return Next::again;
 }
 
+ChatCompletionRequest with_system_note(ChatCompletionRequest request, const std::string_view note) {
+  if (note.empty()) return request;
+  if (!request.messages.empty() && request.messages.front().role == "system") {
+    ChatMessage& system = request.messages.front();
+    const std::string added = system.content.empty() ? std::string{note} : "\n\n" + std::string{note};
+    system.content += added;
+    if (!system.parts.empty()) system.parts.push_back(ChatMessagePart{added, {}});   // a parts-form system text keeps both
+    return request;
+  }
+  request.messages.insert(request.messages.begin(), ChatMessage{"system", std::string{note}});
+  return request;
+}
+
+ChatCompletionRequest answers_as_text(ChatCompletionRequest request) {
+  for (ChatMessage& message : request.messages) {
+    if (message.rounds.empty()) continue;
+    std::string text;
+    const auto add = [&text](const std::string& piece) {
+      if (piece.empty()) return;
+      if (!text.empty()) text += "\n\n";
+      text += piece;
+    };
+    for (const ToolRound& round : message.rounds) add(round.content);
+    add(message.content);
+    message.content = std::move(text);
+    message.rounds.clear();
+  }
+  return request;
+}
+
 }  // namespace secure_frontend

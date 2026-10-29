@@ -152,6 +152,13 @@ std::optional<ToolOffer> SearchService::offer() {
   return std::nullopt;  // a strata-search without web_search: none
 }
 
+// Owner 2026-10-28: the model knows the world only up to its training; the date tells it how far behind that may be.
+std::string SearchService::system_note() const {
+  return "Today's date is " + settings_.today() +
+         ". What you know may be out of date: for anything recent, or anything that may have changed, search the web with "
+         "web_search before you answer.";
+}
+
 void SearchService::served_without(const std::string_view why) {
   {
     const std::lock_guard lock(said_mutex_);

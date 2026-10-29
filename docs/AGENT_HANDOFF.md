@@ -280,6 +280,48 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z21 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner, after z20's finding: "Yes: when web search is on, add today's date and a short line telling the model its
+knowledge may be out of date and to search for anything recent, for every model family; and keep earlier searches in
+the chat history as upstream's page does." Then, on a follow-up to a long answer refused as request_too_large: "Raise
+the limit" and "review the upstream strata as it does not have this sort of issue"; and "in the monitor section, the
+speed portion does not seem to update in realtime".
+
+- **The date line**: the search service's `system_note()` (`ToolRunner`) - "Today's date is <date>. What you know may
+  be out of date: for anything recent, or anything that may have changed, search the web with web_search before you
+  answer." - goes into a search turn's system message (`with_system_note`: after the chat's own text and a blank line,
+  or a new system message first), every family.
+- **Limits at upstream's scale** (`config_defaults.hpp`): a request of 256 MiB (its body: that, less the header bound),
+  65,536 messages, a message as large as the body, 1,048,576 prompt and completion tokens (the model's context window
+  is the bound); JSON nesting 16 (`kChatMaxJsonDepth`, for the rounds). The body is still read only after the API key
+  checks. Threat model and README updated.
+- **Earlier searches** (`strata_rounds` on an assistant message, `chat_schema.cpp`): per round its text before the
+  calls, 1-16 calls (a name, an arguments object) and one result each; at most 64 rounds; an answer with rounds may
+  have no text of its own; rounds on any other message are refused. The page (`web/app.js`) keeps each call, where the
+  answer's text was then and the result the model read, and sends an answer that searched back as upstream's
+  `assistantMessages` does. Each family's tool prompt writes them as its template writes upstream's normalized messages
+  (`openai_to_messages`), with new fixture cases from each template - Qwen3.6's pack 8, Gemma 4's newer template 11,
+  GLM-5.3 8, raon1 9, flint 8, DeepSeek (Maya v1.1.30's encoder) 11, MiniMax (Maya v1.1.30) 9 - and every existing case
+  byte-identical. A chat served without the tool (turned off, a picture in it) gets each such answer as its text
+  (`answers_as_text`: the rounds' text, then its own, a blank line between).
+- **The Monitor's speed** (`serve_monitor.cpp`): upstream's `_rate_of` - the tokens over the samples of the last 2 s
+  once they span 0.25 s (at most 32 samples), else the mean since the first token. It was always that mean, which
+  barely moves in a long answer.
+- **Differences kept**: GLM-5.3's fixed profile writes an earlier answer's text `<|assistant|>{text}` where Maya's
+  template writes `<|assistant|><think></think>{text}` - as for every earlier answer before this; the GLM fixture
+  records the cut (`history_think`). The Qwen history cases are the Qwen3.6 pack template's; Qwen3.8's writes an empty
+  think block on every earlier turn and ours writes none (as before). A literal `</think>` in an earlier round's text
+  stays text (Qwen, GLM, raon1, flint); MiniMax refuses `</mm:think>` there where it is no special token, as it already
+  did in an earlier answer's text.
+- **Proof**: RED first for each piece (the note, the limits, the schema, the page, the Monitor, the fold; each family's
+  fixture and refusal tests against its old renderer). The whole Windows tree 1366/1369: the two release-only cases,
+  and `failed_start_keeps_the_server_usable` at 31 s while the Linux suite ran beside it (alone 6/6; it passed in the
+  full run before the last two edits, 1367/1369). Linux gcc 1415/1420: the release-only two, and
+  `egress_table_scan_during_lifecycle` and the `net01_*` pair beside the Windows suite (all pass alone). The page
+  script parses in headless Edge, and its `roundsOf` and `requestMessages` give the rounds and the request on sample
+  calls there. Not run against a model here: the owner's next search chats are the live check.
+
 ### Claude Code session, 2026-10-28 z20 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner: "Update our Gemma 4 renderer to the newer chat template (one profile for both GGUFs), with fixtures from the

@@ -4,6 +4,7 @@
 #include "secure_frontend/chat_generation_plan.hpp"
 #include "secure_frontend/chat_stream.hpp"
 #include "secure_frontend/lease_hold.hpp"
+#include "secure_frontend/search_rounds.hpp"
 #include "secure_frontend/shutdown_signal.hpp"
 #include "secure_frontend/token_generator.hpp"
 
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -250,9 +252,18 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
   const std::optional<ToolFormat> tool_format = search_tool_format(config_.profile);
   if (config_.tools != nullptr && tool_format && !vision_request && request.strata_search != false) {
     if (auto offer = config_.tools->offer()) {
-      search = std::make_shared<SearchTurn>(SearchTurn{request, std::move(*offer), thinking, effort, *tool_format, minimax_thinking});
+      // owner 2026-10-28: its system message says today's date and to search for anything recent (every round's prompt)
+      search = std::make_shared<SearchTurn>(SearchTurn{with_system_note(request, config_.tools->system_note()), std::move(*offer), thinking,
+                                                       effort, *tool_format, minimax_thinking});
     }
   }
+
+  // Owner 2026-10-29: a chat served without the tool (turned off, a picture in it, no search now) has no form for an
+  // earlier answer's searches - each is the text the page showed (answers_as_text); a copy only when there is one.
+  const bool searched_history = std::any_of(request.messages.begin(), request.messages.end(),
+                                            [](const ChatMessage& message) { return !message.rounds.empty(); });
+  const std::optional<ChatCompletionRequest> as_text = searched_history ? std::optional{answers_as_text(request)} : std::nullopt;
+  const ChatCompletionRequest& text_request = as_text ? *as_text : request;
 
   // P4 again: a text plan is complete before the gate; an image plan needs the
   // encoder's per-image token counts, so only its budget pre-check waits (T12-e).
@@ -261,14 +272,14 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
   if (!vision_request) {
     // Gemma 4 plan 1 Tasks 3 and 10: an exhaustive switch, so a profile never takes another's plan.
     auto plan_result = search != nullptr ? search_first_plan(config_, *search, tokenizer_)
-                                         : select_chat_generation_plan(config_.profile, request, tokenizer_, config_.max_prompt_tokens,
+                                         : select_chat_generation_plan(config_.profile, text_request, tokenizer_, config_.max_prompt_tokens,
                                                                        config_.sampling_default, {}, thinking, effort, minimax_thinking);
     // A pack without the family's tool tags serves the chat without the tool, and the server log says so.
     if (const auto* refused = std::get_if<ChatGenerationPlanError>(&plan_result);
         search != nullptr && refused != nullptr && refused->code == ChatGenerationPlanErrorCode::tokenization_failed) {
       config_.tools->served_without(refused->message);
       search.reset();
-      plan_result = select_chat_generation_plan(config_.profile, request, tokenizer_, config_.max_prompt_tokens, config_.sampling_default, {},
+      plan_result = select_chat_generation_plan(config_.profile, text_request, tokenizer_, config_.max_prompt_tokens, config_.sampling_default, {},
                                                 thinking, effort, minimax_thinking);
     }
     if (const auto* plan_error = std::get_if<ChatGenerationPlanError>(&plan_result)) {
@@ -328,7 +339,7 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
     image_counts.reserve(encoded.size());
     for (const auto& entry : encoded) image_counts.push_back(entry.image_tokens);
     // Gemma 4 plan 1 Task 10: the image path selects through the same switch (only qwen takes images).
-    const auto plan_result = select_chat_generation_plan(config_.profile, request, tokenizer_, config_.max_prompt_tokens,
+    const auto plan_result = select_chat_generation_plan(config_.profile, text_request, tokenizer_, config_.max_prompt_tokens,
                                                          config_.sampling_default, image_counts, thinking, effort, minimax_thinking);
     if (const auto* plan_error = std::get_if<ChatGenerationPlanError>(&plan_result)) {
       config_.vision->discard(*combined_file);

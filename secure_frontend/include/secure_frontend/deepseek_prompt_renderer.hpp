@@ -45,6 +45,10 @@ namespace secure_frontend {
 // marking); the client's messages follow render_deepseek_text_prompt's rules. Each tool is its function object or the
 // OpenAI form carrying it; it is written as DeepSeek's to_json writes it. nullopt: no tools, a tool that is not an
 // object with a name, a round without calls or with a result missing, an unnamed call, or what the text prompt refuses.
+// An earlier answer that searched (ChatMessage::rounds, owner 2026-10-29: "keep earlier searches in the chat history as
+// upstream's page does") is written as the template writes the messages upstream's page sends for it: per round
+// its text before the calls and the calls, the results; then its own text, which it may lack (the text prompt
+// refuses that; a chat without the tool gets answers_as_text). Its rounds obey the rules of this turn's.
 [[nodiscard]] std::optional<std::vector<PromptPiece>> render_deepseek_tool_prompt(const std::vector<ChatMessage>& messages,
                                                                                   std::span<const std::string> tools,
                                                                                   std::span<const ToolRound> rounds,

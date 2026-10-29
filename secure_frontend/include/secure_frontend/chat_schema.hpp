@@ -3,6 +3,7 @@
 #include "secure_frontend/api_errors.hpp"
 #include "secure_frontend/config_defaults.hpp"
 #include "secure_frontend/sampling_params.hpp"
+#include "secure_frontend/tool_calls.hpp"
 
 #include <cstddef>
 #include <optional>
@@ -29,6 +30,10 @@ struct ChatMessage final {
   std::string role;
   std::string content;           // the text of a string content, or of all text parts (parts form)
   std::vector<ChatMessagePart> parts{};  // empty: the string-content form; else the parts array
+  // An earlier answer's searches (owner 2026-10-29, "keep earlier searches in the chat history as upstream's page
+  // does"): the request's "strata_rounds", assistant messages only - per round the text before its calls, the calls
+  // and one result each (reasoning empty); `content` is then the answer's text after its last round, and may be empty.
+  std::vector<ToolRound> rounds{};
 };
 
 struct ChatCompletionRequest final {

@@ -64,20 +64,34 @@ std::string_view newlines_stripped(std::string_view text) {
   return text;
 }
 
-// Both prompts: the text prompt has no schemas and no rounds.
+// A round the template can write: at least one call, each named, and one result per call.
+bool well_formed(const ToolRound& round) {
+  if (round.calls.empty() || round.results.size() != round.calls.size()) return false;
+  return std::none_of(round.calls.begin(), round.calls.end(), [](const ToolCall& call) { return call.name.empty(); });
+}
+
+// Both prompts: the text prompt has no schemas and no rounds, and renders an earlier answer's final text alone
+// (`history_rounds` false: its searches left out).
 std::optional<std::vector<PromptPiece>> render(const std::vector<ChatMessage>& messages, const MinimaxThinking& thinking,
                                                const std::span<const std::string_view> special,
-                                               const std::span<const std::string> schemas, const std::span<const ToolRound> rounds) {
+                                               const std::span<const std::string> schemas, const std::span<const ToolRound> rounds,
+                                               const bool history_rounds) {
   if (messages.empty() || messages.back().role != "user") return std::nullopt;
   if (thinking.effort && std::find(kEfforts.begin(), kEfforts.end(), *thinking.effort) == kEfforts.end()) return std::nullopt;
   const auto is_special = [special](const std::string_view literal) {
     return std::find(special.begin(), special.end(), literal) != special.end();
   };
+  // where </mm:think> is no special token Maya does not mark it, and the template takes an answer apart at it
+  const auto splits = [&is_special](const std::string_view text) {
+    return !is_special("</mm:think>") && text.find("</mm:think>") != std::string_view::npos;
+  };
   for (const ChatMessage& message : messages) {
     if (message.role != "system" && message.role != "user" && message.role != "assistant") return std::nullopt;
-    // where </mm:think> is no special token Maya does not mark it, and the template takes the answer apart at it
-    if (message.role == "assistant" && !is_special("</mm:think>") && message.content.find("</mm:think>") != std::string::npos) {
-      return std::nullopt;
+    if (message.role == "assistant" && splits(message.content)) return std::nullopt;
+    if (history_rounds && message.role == "assistant") {
+      for (const ToolRound& round : message.rounds) {
+        if (!well_formed(round) || splits(round.content)) return std::nullopt;
+      }
     }
   }
   PromptBuilder out;
@@ -127,53 +141,10 @@ std::optional<std::vector<PromptPiece>> render(const std::vector<ChatMessage>& m
     out.plain(name);
     own(">");
   };
-
-  // The system turn: MiniMax's own text, the thinking instructions and mode, the model id, the effort.
-  literal("]~!b[");
-  literal("]~b]");
-  own("system\n");
-  own(kSystemText);
-  own(kInstructions);
-  own(thinking.off ? kDisabled : kAdaptive);
-  own(kModelId);
-  if (!thinking.off && thinking.effort) own("\n\n<effort>" + *thinking.effort + "</effort>");
-  literal("[e~[");
-  own("\n");
-  // The developer turn: a leading system message, else the identity line; then the tools.
-  const bool leading_system = messages.front().role == "system";
-  developer(leading_system ? &messages.front() : nullptr, !schemas.empty());
-  for (std::size_t i = leading_system ? 1U : 0U; i < messages.size(); ++i) {
-    const ChatMessage& message = messages[i];
-    if (message.role == "system") {  // a later system message keeps its place, as a developer turn
-      developer(&message, false);
-      continue;
-    }
-    literal("]~b]");
-    if (message.role == "assistant") {
-      own("ai\n");
-      literal("</mm:think>");  // no reasoning sent back: the template's prefix of a turn without thinking
-    } else {
-      own("user\n");
-    }
-    out.plain(message.content);
-    literal("[e~[");
-    own("\n");
-  }
-  // The search rounds, as Maya's run_with_mcp appends them (each stripped; the reasoning only when there was some): the
-  // assistant's turn with its calls, then one tool turn with a <response> per result.
-  for (const ToolRound& round : rounds) {
-    std::string_view reasoning = python_strip(round.reasoning);
-    std::string_view content = python_strip(round.content);
-    if (round.reasoning.empty() && !is_special("</mm:think>")) {
-      // no reasoning_content: the template takes the reasoning out of a content that holds </mm:think> as text
-      if (const std::size_t end = content.find("</mm:think>"); end != std::string_view::npos) {
-        reasoning = newlines_stripped(content.substr(0U, end));
-        if (const std::size_t open = reasoning.rfind("<mm:think>"); open != std::string_view::npos) {
-          reasoning = newlines_stripped(reasoning.substr(open + 10U));
-        }
-        content = newlines_stripped(content.substr(content.rfind("</mm:think>") + 11U));
-      }
-    }
+  // A round as the template writes an assistant message with tool_calls and the tool messages after it: the reasoning
+  // when there is some (else the </mm:think> prefix), the text before the calls, the calls, then one tool turn with a
+  // <response> per result.
+  const auto searched = [&](const std::string_view reasoning, const std::string_view content, const ToolRound& round) {
     literal("]~b]");
     own("ai\n");
     if (!reasoning.empty()) {
@@ -208,6 +179,63 @@ std::optional<std::vector<PromptPiece>> render(const std::vector<ChatMessage>& m
     }
     literal("[e~[");
     own("\n");
+  };
+
+  // The system turn: MiniMax's own text, the thinking instructions and mode, the model id, the effort.
+  literal("]~!b[");
+  literal("]~b]");
+  own("system\n");
+  own(kSystemText);
+  own(kInstructions);
+  own(thinking.off ? kDisabled : kAdaptive);
+  own(kModelId);
+  if (!thinking.off && thinking.effort) own("\n\n<effort>" + *thinking.effort + "</effort>");
+  literal("[e~[");
+  own("\n");
+  // The developer turn: a leading system message, else the identity line; then the tools.
+  const bool leading_system = messages.front().role == "system";
+  developer(leading_system ? &messages.front() : nullptr, !schemas.empty());
+  for (std::size_t i = leading_system ? 1U : 0U; i < messages.size(); ++i) {
+    const ChatMessage& message = messages[i];
+    if (message.role == "system") {  // a later system message keeps its place, as a developer turn
+      developer(&message, false);
+      continue;
+    }
+    if (history_rounds && message.role == "assistant" && !message.rounds.empty()) {
+      // An earlier answer that searched (owner 2026-10-29, "keep earlier searches in the chat history as upstream's
+      // page does"), as the page sends it and the template renders it: per round its text before the calls (as it is:
+      // the template strips no earlier answer's text; the page sends no reasoning) and the calls, the results; then the
+      // rest of its text, a turn of its own only when there is some.
+      for (const ToolRound& round : message.rounds) searched({}, round.content, round);
+      if (message.content.empty()) continue;
+    }
+    literal("]~b]");
+    if (message.role == "assistant") {
+      own("ai\n");
+      literal("</mm:think>");  // no reasoning sent back: the template's prefix of a turn without thinking
+    } else {
+      own("user\n");
+    }
+    out.plain(message.content);
+    literal("[e~[");
+    own("\n");
+  }
+  // The search rounds, as Maya's run_with_mcp appends them (each stripped; the reasoning only when there was some): the
+  // assistant's turn with its calls, then one tool turn with a <response> per result.
+  for (const ToolRound& round : rounds) {
+    std::string_view reasoning = python_strip(round.reasoning);
+    std::string_view content = python_strip(round.content);
+    if (round.reasoning.empty() && !is_special("</mm:think>")) {
+      // no reasoning_content: the template takes the reasoning out of a content that holds </mm:think> as text
+      if (const std::size_t end = content.find("</mm:think>"); end != std::string_view::npos) {
+        reasoning = newlines_stripped(content.substr(0U, end));
+        if (const std::size_t open = reasoning.rfind("<mm:think>"); open != std::string_view::npos) {
+          reasoning = newlines_stripped(reasoning.substr(open + 10U));
+        }
+        content = newlines_stripped(content.substr(content.rfind("</mm:think>") + 11U));
+      }
+    }
+    searched(reasoning, content, round);
   }
   // The generation prompt: adaptive thinking leaves it to the model; off closes the block.
   literal("]~b]");
@@ -221,7 +249,7 @@ std::optional<std::vector<PromptPiece>> render(const std::vector<ChatMessage>& m
 std::optional<std::vector<PromptPiece>> render_minimax_text_prompt(const std::vector<ChatMessage>& messages,
                                                                    const MinimaxThinking& thinking,
                                                                    const std::span<const std::string_view> special) {
-  return render(messages, thinking, special, {}, {});
+  return render(messages, thinking, special, {}, {}, false);
 }
 
 std::optional<std::vector<PromptPiece>> render_minimax_tool_prompt(const std::vector<ChatMessage>& messages,
@@ -230,12 +258,7 @@ std::optional<std::vector<PromptPiece>> render_minimax_tool_prompt(const std::ve
                                                                    const MinimaxThinking& thinking,
                                                                    const std::span<const std::string_view> special) {
   if (tools.empty()) return std::nullopt;
-  for (const auto& round : rounds) {
-    if (round.calls.empty() || round.results.size() != round.calls.size()) return std::nullopt;
-    for (const auto& call : round.calls) {
-      if (call.name.empty()) return std::nullopt;
-    }
-  }
+  if (!std::all_of(rounds.begin(), rounds.end(), well_formed)) return std::nullopt;
   // each tool's function object, as the template's tojson(ensure_ascii=False) writes it
   std::vector<std::string> schemas;
   for (const auto& tool : tools) {
@@ -248,7 +271,7 @@ std::optional<std::vector<PromptPiece>> render_minimax_tool_prompt(const std::ve
     if (name == nullptr || name->if_string() == nullptr || name->if_string()->empty()) return std::nullopt;
     schemas.push_back(python_json_text(function));
   }
-  return render(messages, thinking, special, schemas, rounds);
+  return render(messages, thinking, special, schemas, rounds, true);
 }
 
 }  // namespace secure_frontend

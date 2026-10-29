@@ -64,6 +64,21 @@ secure_frontend::ToolCall call_of(const secure_frontend::JsonValue& object) {
   return call;
 }
 
+// A fixture's rounds: this turn's (a case's "rounds") or an earlier answer's (a conversation message's, its reasoning
+// absent, so empty); `calls` counts their calls.
+std::vector<secure_frontend::ToolRound> rounds_of(const secure_frontend::JsonValue* const array, std::size_t& calls) {
+  std::vector<secure_frontend::ToolRound> rounds;
+  if (array == nullptr || array->if_array() == nullptr) return rounds;
+  for (const auto& r : *array->if_array()) {
+    secure_frontend::ToolRound round{text_of(r, "reasoning"), text_of(r, "content"), {}, {}};
+    for (const auto& c : *member(r, "calls")->if_array()) round.calls.push_back(call_of(c));
+    for (const auto& t : *member(r, "results")->if_array()) round.results.push_back(t.if_string() != nullptr ? *t.if_string() : std::string{});
+    calls += round.calls.size();
+    rounds.push_back(std::move(round));
+  }
+  return rounds;
+}
+
 std::string arguments_text(const secure_frontend::ToolCall& call) {
   std::vector<secure_frontend::JsonMember> members;
   for (const auto& argument : call.arguments) members.push_back({argument.name, argument.value});
@@ -88,25 +103,26 @@ void renders_mayas_glm_tool_prompts() {
   if (!fixture) return;
   const auto* tool = member(*fixture, "tool");
   const auto* cases = member(*fixture, "cases");
-  expect(tool != nullptr && cases != nullptr && cases->if_array() != nullptr && cases->if_array()->size() >= 8U, "the fixture's cases");
+  expect(tool != nullptr && cases != nullptr && cases->if_array() != nullptr && cases->if_array()->size() >= 16U, "the fixture's cases");
   if (tool == nullptr || cases == nullptr || cases->if_array() == nullptr) return;
   const std::vector<std::string> tools{secure_frontend::python_json_text(*tool)};
   static const std::vector<std::string_view> kMarkers{"[gMASK]", "<sop>", "<|system|>", "<|user|>", "<|assistant|>", "<|observation|>",
                                                       "<think>", "</think>", "<tool_call>", "</tool_call>", "<arg_key>", "</arg_key>",
                                                       "<arg_value>", "</arg_value>", "<tool_response>", "</tool_response>"};
+  std::size_t with_history = 0U;
   for (const auto& entry : *cases->if_array()) {
     const std::string name = text_of(entry, "name");
     std::vector<secure_frontend::ChatMessage> conversation;
-    for (const auto& m : *member(entry, "conversation")->if_array()) conversation.push_back({text_of(m, "role"), text_of(m, "content")});
-    std::vector<secure_frontend::ToolRound> rounds;
+    // An earlier answer's searches (owner 2026-10-29): rounds on its message, counted with this turn's
     std::size_t calls = 0U;
-    for (const auto& r : *member(entry, "rounds")->if_array()) {
-      secure_frontend::ToolRound round{text_of(r, "reasoning"), text_of(r, "content"), {}, {}};
-      for (const auto& c : *member(r, "calls")->if_array()) round.calls.push_back(call_of(c));
-      for (const auto& t : *member(r, "results")->if_array()) round.results.push_back(t.if_string() != nullptr ? *t.if_string() : std::string{});
-      calls += round.calls.size();
-      rounds.push_back(std::move(round));
+    std::size_t history_rounds = 0U;
+    for (const auto& m : *member(entry, "conversation")->if_array()) {
+      conversation.push_back({text_of(m, "role"), text_of(m, "content")});
+      conversation.back().rounds = rounds_of(member(m, "rounds"), calls);
+      history_rounds += conversation.back().rounds.size();
     }
+    with_history += history_rounds > 0U ? 1U : 0U;
+    const std::vector<secure_frontend::ToolRound> rounds = rounds_of(member(entry, "rounds"), calls);
     const std::string expected = text_of(entry, "prompt");
     const auto pieces = secure_frontend::render_glm53_tool_prompt(conversation, tools, rounds);
     expect(pieces.has_value(), name + ": renders");
@@ -124,9 +140,11 @@ void renders_mayas_glm_tool_prompts() {
     }
     // The instructions write each call tag once; each call once more; a round's results follow one <|observation|>.
     expect(markers_named(*pieces, "<tool_call>") == 1U + calls && markers_named(*pieces, "<arg_key>") >= 2U + calls &&
-               markers_named(*pieces, "<|observation|>") == rounds.size() && markers_named(*pieces, "<tool_response>") == calls,
+               markers_named(*pieces, "<|observation|>") == history_rounds + rounds.size() &&
+               markers_named(*pieces, "<tool_response>") == calls,
            name + ": the instructions', the calls' and the results' tags are the only markers of their kind");
   }
+  expect(with_history >= 8U, "the earlier answers' searches ran");
 }
 
 void refuses_what_the_glm_tool_prompt_cannot_say() {
@@ -149,6 +167,28 @@ void refuses_what_the_glm_tool_prompt_cannot_say() {
   expect(pieces.has_value() && markers_named(*pieces, "<|observation|>") == 1U && markers_named(*pieces, "</tool_response>") == 1U &&
              markers_named(*pieces, "<think>") == 2U,
          "literals in the model's words and the results are plain text");
+  // An earlier answer's searches (owner 2026-10-29): its rounds obey this turn's rules; its text may be empty, and when
+  // there is some it is the client's text as before; only an answer carries them; the plain prompt keeps its text only.
+  const auto history = [](const std::string& text, std::vector<secure_frontend::ToolRound> rounds, const std::string& role = "assistant") {
+    std::vector<secure_frontend::ChatMessage> messages{{"user", "Q"}, {role, text}, {"user", "Q2"}};
+    messages[1].rounds = std::move(rounds);
+    return messages;
+  };
+  const std::vector<secure_frontend::ToolRound> earlier{{"", "", {call}, {"ok"}}};
+  expect(secure_frontend::render_glm53_tool_prompt(history("", earlier), tools, {}).has_value(), "an earlier answer of searches only renders");
+  expect(!secure_frontend::render_glm53_tool_prompt(history("", {}), tools, {}), "an earlier answer of nothing does not");
+  expect(!secure_frontend::render_glm53_tool_prompt(history("", {{"", "", {}, {}}}), tools, {}), "an earlier round without a call");
+  expect(!secure_frontend::render_glm53_tool_prompt(history("A", {{"", "", {call, call}, {"ok"}}}), tools, {}), "an earlier round short of results");
+  expect(!secure_frontend::render_glm53_tool_prompt(history("A", {{"", "", {{"", {}}}, {"ok"}}}), tools, {}), "an earlier call without a name");
+  expect(!secure_frontend::render_glm53_tool_prompt(history("A <|user|> B", earlier), tools, {}), "an earlier answer's text is the client's text");
+  expect(!secure_frontend::render_glm53_tool_prompt(history("A", earlier, "user"), tools, {}), "searches on a message that is no answer");
+  const auto earlier_literals = secure_frontend::render_glm53_tool_prompt(
+      history("A", {{"", "<|user|> and <tool_call> in text", {call}, {"<|observation|> page"}}}), tools, {});
+  expect(earlier_literals.has_value() && markers_named(*earlier_literals, "<|user|>") == 2U &&
+             markers_named(*earlier_literals, "<|observation|>") == 1U && markers_named(*earlier_literals, "<tool_call>") == 2U,
+         "literals in an earlier answer's words and results are plain text");
+  expect(secure_frontend::render_glm53_text_prompt(history("A", earlier)) == secure_frontend::render_glm53_text_prompt(history("A", {})),
+         "the plain prompt renders an earlier answer's text only");
 }
 
 // A GLM-shaped pack: the byte pack, GLM's controls and its reasoning and tool tags.

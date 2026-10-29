@@ -98,9 +98,22 @@ const JsonValue* member(const JsonValue& object, const std::string_view key) {
   return nullptr;
 }
 
-}  // namespace
+// A round the encoder can write: at least one call, each named, and one result per call.
+bool valid_rounds(const std::span<const ToolRound> rounds) {
+  for (const auto& round : rounds) {
+    if (round.calls.empty() || round.results.size() != round.calls.size()) return false;
+    for (const auto& call : round.calls) {
+      if (call.name.empty()) return false;
+    }
+  }
+  return true;
+}
 
-std::optional<std::string> render_deepseek_text_prompt(const std::vector<ChatMessage>& messages, const std::optional<int> effort) {
+// The plain prompt, and its rules for the tool prompt. With `searches` (the tool prompt's check) an earlier answer's
+// searches (ChatMessage::rounds) are rounds the encoder can write, only an answer has them, and an answer with them may
+// have no text after them; without it (the plain prompt) they are ignored and the answer is its text.
+std::optional<std::string> text_prompt(const std::vector<ChatMessage>& messages, const std::optional<int> effort,
+                                       const bool searches) {
   if (messages.empty() || messages.size() > kMaximumMessages || (effort && (*effort < 1 || *effort > 100))) return std::nullopt;
   std::string output;
   output.reserve(256U);
@@ -120,6 +133,7 @@ std::optional<std::string> render_deepseek_text_prompt(const std::vector<ChatMes
   }
   if (system) {
     if (!safe_content(messages.front().content) || !append_bounded(&output, messages.front().content)) return std::nullopt;
+    if (searches && !messages.front().rounds.empty()) return std::nullopt;
     index = 1U;
   }
   if (index == messages.size()) return std::nullopt;
@@ -129,7 +143,12 @@ std::optional<std::string> render_deepseek_text_prompt(const std::vector<ChatMes
   bool expect_user = true;
   for (; index < messages.size(); ++index) {
     const ChatMessage& message = messages[index];
-    if (message.role != (expect_user ? "user" : "assistant") || !safe_content(message.content)) return std::nullopt;
+    const bool searched = searches && !message.rounds.empty();
+    if (searched && (expect_user || !valid_rounds(message.rounds))) return std::nullopt;
+    if (message.role != (expect_user ? "user" : "assistant") ||
+        (!(searched && message.content.empty()) && !safe_content(message.content))) {
+      return std::nullopt;
+    }
     if (expect_user) {
       const bool last = index + 1U == messages.size();
       if (!append_bounded(&output, kUser) || !append_bounded(&output, message.content) ||
@@ -145,18 +164,19 @@ std::optional<std::string> render_deepseek_text_prompt(const std::vector<ChatMes
   return output;
 }
 
+}  // namespace
+
+std::optional<std::string> render_deepseek_text_prompt(const std::vector<ChatMessage>& messages, const std::optional<int> effort) {
+  return text_prompt(messages, effort, false);
+}
+
 std::optional<std::vector<PromptPiece>> render_deepseek_tool_prompt(const std::vector<ChatMessage>& messages,
                                                                     const std::span<const std::string> tools,
                                                                     const std::span<const ToolRound> rounds,
                                                                     const std::optional<int> effort) {
-  // The conversation obeys every rule of the plain prompt (roles, order, literals, sizes, the effort's range).
-  if (tools.empty() || !render_deepseek_text_prompt(messages, effort)) return std::nullopt;
-  for (const auto& round : rounds) {
-    if (round.calls.empty() || round.results.size() != round.calls.size()) return std::nullopt;
-    for (const auto& call : round.calls) {
-      if (call.name.empty()) return std::nullopt;
-    }
-  }
+  // The conversation obeys every rule of the plain prompt (roles, order, literals, sizes, the effort's range), and an
+  // earlier answer's searches the rules of the rounds.
+  if (tools.empty() || !text_prompt(messages, effort, true) || !valid_rounds(rounds)) return std::nullopt;
   // tools_from_openai_format: each tool's function object, written by to_json (json.dumps, ensure_ascii off)
   std::vector<std::string> schemas;
   for (const auto& tool : tools) {
@@ -197,26 +217,14 @@ std::optional<std::vector<PromptPiece>> render_deepseek_tool_prompt(const std::v
     out.marker(kAssistant);
     out.marker(thinking ? kThinkOpen : kThinkClose);
   };
-  for (; index < messages.size(); ++index) {
-    const ChatMessage& message = messages[index];
-    if (message.role == "user") {
-      out.marker(kUser);
-      out.text(message.content);
-      header();
-    } else {  // an earlier assistant turn: its (empty) reasoning closed, its content, EOS
-      if (thinking) out.marker(kThinkClose);
-      out.text(message.content);
-      out.marker(kEos);
-    }
-  }
-  // Each round: the assistant's reasoning and content, its calls in DSML (tool_calls_template), EOS; then its results
-  // as one user turn of <tool_result> blocks (merge_tool_messages) and the next header.
+  // A round: the assistant's reasoning and content, its calls in DSML (tool_calls_template), EOS; then its results as
+  // one user turn of <tool_result> blocks (merge_tool_messages), which the next header (or a user's text) follows.
   const auto dsml_tag = [&out](const std::string_view before, const std::string_view after) {
     out.text(before);
     out.marker(kDsml);
     out.text(after);
   };
-  for (const auto& round : rounds) {
+  const auto write_round = [&out, &dsml_tag, thinking](const ToolRound& round) {
     if (thinking) {
       out.plain(round.reasoning);
       out.marker(kThinkClose);
@@ -250,6 +258,41 @@ std::optional<std::vector<PromptPiece>> render_deepseek_tool_prompt(const std::v
       out.plain(round.results[r]);
       out.text("</tool_result>");
     }
+  };
+  // An earlier answer with searches (owner 2026-10-29, "keep earlier searches in the chat history as upstream's page
+  // does") is the messages upstream's page sends for it: per round an assistant message (the text before its calls,
+  // its calls) and one tool message per result, then the text after its last round only when there is some. The
+  // encoder writes each as a round of this turn is written (its reasoning empty); without text after them, the next
+  // user's text joins the results' user turn ("\n\n", merge_tool_messages).
+  bool results_open = false;
+  for (; index < messages.size(); ++index) {
+    const ChatMessage& message = messages[index];
+    if (message.role == "user") {
+      if (results_open) out.text("\n\n");
+      else out.marker(kUser);
+      results_open = false;
+      out.text(message.content);
+      header();
+      continue;
+    }
+    for (std::size_t r = 0; r < message.rounds.size(); ++r) {
+      if (r != 0U) header();
+      write_round(message.rounds[r]);
+    }
+    if (!message.rounds.empty()) {
+      if (message.content.empty()) {
+        results_open = true;
+        continue;
+      }
+      header();
+    }
+    // an earlier assistant turn: its (empty) reasoning closed, its content, EOS
+    if (thinking) out.marker(kThinkClose);
+    out.text(message.content);
+    out.marker(kEos);
+  }
+  for (const auto& round : rounds) {
+    write_round(round);
     header();
   }
   if (out.bytes() > kMaximumPromptBytes) return std::nullopt;

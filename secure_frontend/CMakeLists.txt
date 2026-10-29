@@ -1486,7 +1486,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_serve_monitor_tests tests/serve_monitor_test.cpp secure_frontend_serve_monitor)
     secure_frontend_test_paths(secure_frontend_serve_monitor_tests)
     secure_frontend_add_cases(secure_frontend_serve_monitor_tests
-        parses_nvidia_smi_lines nvidia_smi_command_is_fixed nvidia_smi_environment_is_program_files_only
+        parses_nvidia_smi_lines nvidia_smi_command_is_fixed nvidia_smi_environment_is_program_files_only the_live_speed_is_the_last_two_seconds
         monitor_records_generations monitor_reports_live_states a_stopped_engine_reads_stopped_and_requests_name_their_model
         engine_readings_reach_the_engine_block
         monitor_keeps_a_bounded_history engine_change_drops_the_old_engines_readings
@@ -1613,7 +1613,9 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
 
     secure_frontend_add_test_executable(secure_frontend_chat_schema_tests tests/chat_schema_test.cpp secure_frontend_chat_schema)
     secure_frontend_add_cases(secure_frontend_chat_schema_tests
-        parses_minimal_text_request image_url_parts_accepted_only_for_vision_models reasoning_effort_per_request
+        parses_minimal_text_request default_limits_take_a_long_conversation earlier_searches_ride_on_an_assistant_message
+        image_url_parts_accepted_only_for_vision_models
+        reasoning_effort_per_request
         strata_search_per_request remote_looking_text_is_text
         image_part_caps_and_shape_are_checked_before_decode
         rejects_unsupported_and_unsafe_features rejects_duplicate_and_malformed_json
@@ -1851,7 +1853,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_search_rounds_tests
         a_rounds_calls_never_reach_the_client finish_releases_what_the_parser_held a_round_that_calls_runs_them_and_is_kept
         a_round_without_calls_is_the_answer calls_not_run_are_skipped the_round_limit_leaves_one_answer_round
-        a_cancel_while_a_search_runs_ends_the_answer events_escape_what_they_carry)
+        a_cancel_while_a_search_runs_ends_the_answer events_escape_what_they_carry the_system_turn_carries_the_search_note
+        an_answer_without_the_tool_is_its_text)
 
     # Web search, phase 5: GLM-5.3's tool calls - the prompt against Maya's ChatTemplate, the tags, the plan, and the
     # reply's calls against Maya's OutputParser (fixtures from tools/generate_glm_tool_*_fixture.py).

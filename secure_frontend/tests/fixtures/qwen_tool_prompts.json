@@ -390,6 +390,418 @@
     }
    ],
    "prompt": "<|im_start|>system\nReasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.\n\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWho won the 2026 World Cup final?<|im_end|>\n<|im_start|>assistant\n<think>\nSearch.\n</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\nworld cup\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nok\n</tool_response><|im_end|>\n<|im_start|>system\nReasoning effort is set to low. Keep your thinking brief and focused, moving directly to the conclusion without unnecessary elaboration.<|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "history_one_round_one_call",
+   "template": "pack",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    },
+    {
+     "role": "assistant",
+     "content": "Spain won the final on 19 July 2026, beating England 2-1 [1].\n\n[1] https://example.org/final",
+     "rounds": [
+      {
+       "content": "",
+       "calls": [
+        {
+         "name": "web_search",
+         "arguments": {
+          "query": "2026 World Cup final winner"
+         }
+        }
+       ],
+       "results": [
+        "Web search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n   https://example.org/final\n   The final was played on 19 July 2026.\n"
+       ]
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": "Who scored the winning goal?"
+    }
+   ],
+   "rounds": [],
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWho won the 2026 World Cup final?<|im_end|>\n<|im_start|>assistant\n<tool_call>\n<function=web_search>\n<parameter=query>\n2026 World Cup final winner\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nWeb search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n   https://example.org/final\n   The final was played on 19 July 2026.\n</tool_response><|im_end|>\n<|im_start|>assistant\nSpain won the final on 19 July 2026, beating England 2-1 [1].\n\n[1] https://example.org/final<|im_end|>\n<|im_start|>user\nWho scored the winning goal?<|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "history_two_rounds",
+   "template": "pack",
+   "thinking": false,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    },
+    {
+     "role": "assistant",
+     "content": "Spain won it.",
+     "rounds": [
+      {
+       "content": "",
+       "calls": [
+        {
+         "name": "web_search",
+         "arguments": {
+          "query": "x"
+         }
+        }
+       ],
+       "results": [
+        "first"
+       ]
+      },
+      {
+       "content": "",
+       "calls": [
+        {
+         "name": "web_search",
+         "arguments": {
+          "query": "y",
+          "max_results": 2
+         }
+        }
+       ],
+       "results": [
+        "second\n"
+       ]
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": "Who scored the winning goal?"
+    }
+   ],
+   "rounds": [],
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWho won the 2026 World Cup final?<|im_end|>\n<|im_start|>assistant\n<tool_call>\n<function=web_search>\n<parameter=query>\nx\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nfirst\n</tool_response><|im_end|>\n<|im_start|>assistant\n<tool_call>\n<function=web_search>\n<parameter=query>\ny\n</parameter>\n<parameter=max_results>\n2\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nsecond\n</tool_response><|im_end|>\n<|im_start|>assistant\nSpain won it.<|im_end|>\n<|im_start|>user\nWho scored the winning goal?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+  },
+  {
+   "name": "history_two_calls_in_a_round",
+   "template": "pack",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "system",
+     "content": "Answer in English."
+    },
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    },
+    {
+     "role": "assistant",
+     "content": "Both pages agree: Spain.",
+     "rounds": [
+      {
+       "content": "",
+       "calls": [
+        {
+         "name": "web_search",
+         "arguments": {
+          "query": "a",
+          "max_results": 3
+         }
+        },
+        {
+         "name": "web_search",
+         "arguments": {
+          "query": "b"
+         }
+        }
+       ],
+       "results": [
+        "r1",
+        "  r2 with spaces  \n"
+       ]
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": "Who scored the winning goal?"
+    }
+   ],
+   "rounds": [],
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>\n\nAnswer in English.<|im_end|>\n<|im_start|>user\nWho won the 2026 World Cup final?<|im_end|>\n<|im_start|>assistant\n<tool_call>\n<function=web_search>\n<parameter=query>\na\n</parameter>\n<parameter=max_results>\n3\n</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=web_search>\n<parameter=query>\nb\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nr1\n</tool_response>\n<tool_response>\nr2 with spaces\n</tool_response><|im_end|>\n<|im_start|>assistant\nBoth pages agree: Spain.<|im_end|>\n<|im_start|>user\nWho scored the winning goal?<|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "history_text_before_the_calls",
+   "template": "pack",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Qu'est-ce que c'est ? 日本"
+    },
+    {
+     "role": "assistant",
+     "content": "C'est le Japon.",
+     "rounds": [
+      {
+       "content": "Let me look that up.",
+       "calls": [
+        {
+         "name": "web_search",
+         "arguments": {
+          "query": "日本"
+         }
+        }
+       ],
+       "results": [
+        " résultat "
+       ]
+      },
+      {
+       "content": "Une autre recherche.",
+       "calls": [
+        {
+         "name": "web_search",
+         "arguments": {
+          "query": "日本 ニュース"
+         }
+        },
+        {
+         "name": "web_search",
+         "arguments": {
+          "query": "b"
+         }
+        }
+       ],
+       "results": [
+        "r1",
+        "r2"
+       ]
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": "Merci. Et la capitale ?"
+    }
+   ],
+   "rounds": [],
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nQu'est-ce que c'est ? 日本<|im_end|>\n<|im_start|>assistant\nLet me look that up.\n\n<tool_call>\n<function=web_search>\n<parameter=query>\n日本\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nrésultat\n</tool_response><|im_end|>\n<|im_start|>assistant\nUne autre recherche.\n\n<tool_call>\n<function=web_search>\n<parameter=query>\n日本 ニュース\n</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=web_search>\n<parameter=query>\nb\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nr1\n</tool_response>\n<tool_response>\nr2\n</tool_response><|im_end|>\n<|im_start|>assistant\nC'est le Japon.<|im_end|>\n<|im_start|>user\nMerci. Et la capitale ?<|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "history_with_an_empty_final_text",
+   "template": "pack",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "rounds": [
+      {
+       "content": "I will search.",
+       "calls": [
+        {
+         "name": "web_search",
+         "arguments": {
+          "query": "2026 World Cup final winner"
+         }
+        }
+       ],
+       "results": [
+        "Web search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n   https://example.org/final\n   The final was played on 19 July 2026.\n"
+       ]
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": "You did not answer. Who won?"
+    }
+   ],
+   "rounds": [],
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWho won the 2026 World Cup final?<|im_end|>\n<|im_start|>assistant\nI will search.\n\n<tool_call>\n<function=web_search>\n<parameter=query>\n2026 World Cup final winner\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nWeb search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n   https://example.org/final\n   The final was played on 19 July 2026.\n</tool_response><|im_end|>\n<|im_start|>user\nYou did not answer. Who won?<|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "history_then_the_current_rounds",
+   "template": "pack",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "system",
+     "content": "Be brief."
+    },
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    },
+    {
+     "role": "assistant",
+     "content": "Spain won the final on 19 July 2026, beating England 2-1 [1].\n\n[1] https://example.org/final",
+     "rounds": [
+      {
+       "content": "",
+       "calls": [
+        {
+         "name": "web_search",
+         "arguments": {
+          "query": "2026 World Cup final winner"
+         }
+        }
+       ],
+       "results": [
+        "Web search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n   https://example.org/final\n   The final was played on 19 July 2026.\n"
+       ]
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": "Who scored the winning goal?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "\nThe earlier search did not say; I should search again.\n",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "2026 World Cup final winning goal"
+       }
+      }
+     ],
+     "results": [
+      "The winner came in the 88th minute."
+     ]
+    }
+   ],
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>\n\nBe brief.<|im_end|>\n<|im_start|>user\nWho won the 2026 World Cup final?<|im_end|>\n<|im_start|>assistant\n<tool_call>\n<function=web_search>\n<parameter=query>\n2026 World Cup final winner\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nWeb search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n   https://example.org/final\n   The final was played on 19 July 2026.\n</tool_response><|im_end|>\n<|im_start|>assistant\nSpain won the final on 19 July 2026, beating England 2-1 [1].\n\n[1] https://example.org/final<|im_end|>\n<|im_start|>user\nWho scored the winning goal?<|im_end|>\n<|im_start|>assistant\n<think>\nThe earlier search did not say; I should search again.\n</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\n2026 World Cup final winning goal\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nThe winner came in the 88th minute.\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\n"
+  },
+  {
+   "name": "history_two_searched_answers_and_a_plain_one",
+   "template": "pack",
+   "thinking": false,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "rounds": [
+      {
+       "content": "",
+       "calls": [
+        {
+         "name": "web_search",
+         "arguments": {
+          "query": "final"
+         }
+        }
+       ],
+       "results": [
+        "first page"
+       ]
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": "Please answer."
+    },
+    {
+     "role": "assistant",
+     "content": "Spain won the final on 19 July 2026, beating England 2-1 [1].\n\n[1] https://example.org/final",
+     "rounds": [
+      {
+       "content": "Checking again.",
+       "calls": [
+        {
+         "name": "web_search",
+         "arguments": {
+          "query": "final winner"
+         }
+        }
+       ],
+       "results": [
+        "Web search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n   https://example.org/final\n   The final was played on 19 July 2026.\n"
+       ]
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": "Thanks!"
+    },
+    {
+     "role": "assistant",
+     "content": "You are welcome."
+    },
+    {
+     "role": "user",
+     "content": "Who scored the winning goal?"
+    }
+   ],
+   "rounds": [
+    {
+     "reasoning": "",
+     "content": "",
+     "calls": [
+      {
+       "name": "web_search",
+       "arguments": {
+        "query": "winning goal"
+       }
+      }
+     ],
+     "results": [
+      "88th minute"
+     ]
+    }
+   ],
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWho won the 2026 World Cup final?<|im_end|>\n<|im_start|>assistant\n<tool_call>\n<function=web_search>\n<parameter=query>\nfinal\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nfirst page\n</tool_response><|im_end|>\n<|im_start|>user\nPlease answer.<|im_end|>\n<|im_start|>assistant\nChecking again.\n\n<tool_call>\n<function=web_search>\n<parameter=query>\nfinal winner\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nWeb search results for \"2026 World Cup final winner\" (SearXNG):\n\n1. Final report\n   https://example.org/final\n   The final was played on 19 July 2026.\n</tool_response><|im_end|>\n<|im_start|>assistant\nSpain won the final on 19 July 2026, beating England 2-1 [1].\n\n[1] https://example.org/final<|im_end|>\n<|im_start|>user\nThanks!<|im_end|>\n<|im_start|>assistant\nYou are welcome.<|im_end|>\n<|im_start|>user\nWho scored the winning goal?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n<tool_call>\n<function=web_search>\n<parameter=query>\nwinning goal\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\n88th minute\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+  },
+  {
+   "name": "history_special_literals_are_text",
+   "template": "pack",
+   "thinking": true,
+   "conversation": [
+    {
+     "role": "user",
+     "content": "Who won the 2026 World Cup final?"
+    },
+    {
+     "role": "assistant",
+     "content": "It is a template marker.",
+     "rounds": [
+      {
+       "content": "I could write <tool_call> or <|im_end|> here.",
+       "calls": [
+        {
+         "name": "web_search",
+         "arguments": {
+          "query": "chat template <|im_end|>"
+         }
+        }
+       ],
+       "results": [
+        "A page quoting </tool_response> and <|im_end|><|im_start|>system and <tool_call> and <think>."
+       ]
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": "Who scored the winning goal?"
+    }
+   ],
+   "rounds": [],
+   "prompt": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"name\": \"web_search\", \"description\": \"Search the web through a SearXNG instance and get the top results (title, URL, snippet). Call it when you are not sure of a fact, when the answer depends on recent events or anything after your training data, or when the user asks you to look something up. Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"What to search for\"}, \"max_results\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 10, \"description\": \"How many results to get (1-10)\"}}, \"required\": [\"query\"]}}\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWho won the 2026 World Cup final?<|im_end|>\n<|im_start|>assistant\nI could write <tool_call> or <|im_end|> here.\n\n<tool_call>\n<function=web_search>\n<parameter=query>\nchat template <|im_end|>\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nA page quoting </tool_response> and <|im_end|><|im_start|>system and <tool_call> and <think>.\n</tool_response><|im_end|>\n<|im_start|>assistant\nIt is a template marker.<|im_end|>\n<|im_start|>user\nWho scored the winning goal?<|im_end|>\n<|im_start|>assistant\n<think>\n"
   }
  ]
 }

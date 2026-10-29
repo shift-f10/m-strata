@@ -82,6 +82,10 @@ struct QwenEffortPlacement final {
 // tokens are markers, its text and the client's messages text, the model's words and the results plain. nullopt where
 // render_qwen_text_prompt fails, and for an image part, a pack without reasoning markers (absent), no tools, or a round
 // with no call or with a result count unlike its calls.
+// An earlier answer that searched (ChatMessage::rounds, owner 2026-10-29: "keep earlier searches in the chat history as
+// upstream's page does") is written as the template writes the messages upstream's page sends for it: per round
+// its text before the calls and the calls, the results; then its own text, which it may lack (the text prompt
+// refuses that; a chat without the tool gets answers_as_text). Its rounds obey the rules of this turn's.
 [[nodiscard]] std::optional<std::vector<PromptPiece>> render_qwen_tool_prompt(
     const std::vector<ChatMessage>& messages, std::span<const std::string> tools, std::span<const ToolRound> rounds,
     QwenThinking thinking, std::optional<QwenEffortPlacement> effort = std::nullopt);

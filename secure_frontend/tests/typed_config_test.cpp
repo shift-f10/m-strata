@@ -119,11 +119,12 @@ void typed_config_accepts_minimal_file_and_applies_defaults() {
   const auto& c = validated->get();
   expect(c.listener.host.canonical_text() == "127.0.0.1" && c.listener.port == 8080U && !c.listener.allow_remote &&
              !c.listener.allow_wildcard_bind && c.listener.backlog == 16U, "listener defaults");
-  expect(c.limits.http.request_deadline == std::chrono::milliseconds(30000) && c.limits.http.max_request_bytes == 65536U &&
+  expect(c.limits.http.request_deadline == std::chrono::milliseconds(30000) && c.limits.http.max_request_bytes == 268435456U &&
              c.limits.http.max_header_bytes == 16384U && c.limits.http.max_headers == 64U &&
              c.limits.http.max_request_line_bytes == 4096U, "http limit defaults");
-  expect(c.limits.chat.max_body_bytes == 49152U && c.limits.chat.max_messages == 128U &&
-             c.limits.chat.max_completion_tokens == 4096U && c.limits.chat.default_max_tokens == 0U, "chat defaults");
+  // upstream's scale since 2026-10-29 (owner: a follow-up to a long answer was refused at the old 48 KiB body)
+  expect(c.limits.chat.max_body_bytes == 268419072U && c.limits.chat.max_messages == 65536U &&
+             c.limits.chat.max_completion_tokens == 1048576U && c.limits.chat.default_max_tokens == 0U, "chat defaults");
   expect(c.limits.engine.ready_timeout == std::chrono::seconds(900), "ready_timeout defaults to 900 s");
   expect(c.limits.concurrency.max_concurrent_requests == 8U, "eight workers (SP3 B11)");
   // owner 2026-10-27 ("it does not seem to be doing the multi threaded downloading"): upstream's downloader's 16
@@ -315,10 +316,10 @@ void typed_config_cross_field_rules() {
                    "limits.http.max_header_bytes", ConfigIssueCode::conflicting_values), "header > request");
   expect(has_issue(with({{"limits.http.max_header_bytes", "2048"}, {"limits.http.max_request_line_bytes", "4096"}}),
                    "limits.http.max_request_line_bytes", ConfigIssueCode::conflicting_values), "line > header");
-  expect(has_issue(with({{"limits.chat.max_body_bytes", "262144"}}), "limits.chat.max_body_bytes",
-                   ConfigIssueCode::conflicting_values), "body > request - header");
-  expect(has_issue(with({{"limits.chat.default_max_tokens", "5000"}}), "limits.chat.default_max_tokens",
-                   ConfigIssueCode::conflicting_values), "default_max_tokens > max_completion_tokens");
+  expect(has_issue(with({{"limits.http.max_request_bytes", "65536"}, {"limits.chat.max_body_bytes", "262144"}}),
+                   "limits.chat.max_body_bytes", ConfigIssueCode::conflicting_values), "body > request - header");
+  expect(has_issue(with({{"limits.chat.max_completion_tokens", "4096"}, {"limits.chat.default_max_tokens", "5000"}}),
+                   "limits.chat.default_max_tokens", ConfigIssueCode::conflicting_values), "default_max_tokens > max_completion_tokens");
   expect(has_issue(with({{"engine.profile", "\"glm53\""}, {"engine.args", "[\"--native\",\"x\"]"}}), "engine.args",
                    ConfigIssueCode::invalid_value),
          "glm53 refuses engine.args outright (SP5 M2 Task 7 D-8: the launch is composed; the SP1 "

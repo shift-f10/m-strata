@@ -51,6 +51,7 @@ class SearchService final : public ToolRunner {
   [[nodiscard]] ToolResult run(const ToolCall& call, const std::function<bool()>& cancelled) override;
   // One log line per reason a model's chats are served without the tool (each reason said once while the server runs).
   void served_without(std::string_view why) override;
+  [[nodiscard]] std::string system_note() const override;
 
  private:
   [[nodiscard]] bool ensure_started();  // the mutex is held

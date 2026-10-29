@@ -5,6 +5,7 @@
 // that wrote calls the server runs them, keeps the round for the next prompt and generates again - at most
 // max_rounds times. Shared by the streamed and the complete chat.
 
+#include "secure_frontend/chat_schema.hpp"
 #include "secure_frontend/generation_run.hpp"
 #include "secure_frontend/tool_calls.hpp"
 #include "secure_frontend/tool_runner.hpp"
@@ -84,5 +85,14 @@ class SearchRounds final {
   std::vector<ToolRound> rounds_;
   bool answer_round_{false};  // the limit was reached and the model has had its answer round
 };
+
+// Owner 2026-10-28: a search turn's conversation with the tool's note (ToolRunner::system_note) in its system message:
+// a new one first, or after the chat's own system text and a blank line; an empty note leaves it as it was.
+[[nodiscard]] ChatCompletionRequest with_system_note(ChatCompletionRequest request, std::string_view note);
+
+// Owner 2026-10-29 ("keep earlier searches in the chat history as upstream's page does"): a chat served without the
+// tool writes an earlier answer that searched (ChatMessage::rounds) as the text the page showed - its rounds' text, then
+// its own, a blank line between the pieces there are - without the rounds; every other message as it was.
+[[nodiscard]] ChatCompletionRequest answers_as_text(ChatCompletionRequest request);
 
 }  // namespace secure_frontend

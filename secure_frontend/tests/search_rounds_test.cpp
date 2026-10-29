@@ -188,6 +188,55 @@ void the_round_limit_leaves_one_answer_round() {
          "that call closed as skipped, the limit said once: " + (events.empty() ? std::string{"none"} : events.front()));
 }
 
+// Owner 2026-10-28 ("when web search is on, add today's date and a short line telling the model its knowledge may be
+// out of date and to search for anything recent, for every model family"): a search turn's conversation carries the
+// tool's note in its system message - a new one first, or after the chat's own system text and a blank line - before
+// any family renders it; no note leaves the conversation as it was.
+void the_system_turn_carries_the_search_note() {
+  secure_frontend::ChatCompletionRequest bare;
+  bare.model = "m";
+  bare.messages = {{"user", "Q"}};
+  const auto noted = secure_frontend::with_system_note(bare, "NOTE.");
+  expect(noted.messages.size() == 2U && noted.messages[0].role == "system" && noted.messages[0].content == "NOTE." &&
+             noted.messages[1].role == "user" && noted.messages[1].content == "Q" && noted.model == "m",
+         "no system message: the note is a new one, first");
+  secure_frontend::ChatCompletionRequest own = bare;
+  own.messages = {{"system", "Be brief."}, {"user", "Q"}};
+  const auto appended = secure_frontend::with_system_note(own, "NOTE.");
+  expect(appended.messages.size() == 2U && appended.messages[0].content == "Be brief.\n\nNOTE.", "the chat's own system text, then the note");
+  expect(secure_frontend::with_system_note(own, "").messages[0].content == "Be brief." &&
+             secure_frontend::with_system_note(bare, "").messages.size() == 1U,
+         "no note: the conversation as it was");
+}
+
+// Owner 2026-10-29 ("keep earlier searches in the chat history as upstream's page does"): the page sends an answer that
+// searched with its rounds (strata_rounds) and only its text after them as its content. A chat served without the
+// tool (turned off, a picture in it, no search now) has no form for calls, so each such answer is the text the page
+// showed: its rounds' text, then its own, a blank line between, the rounds gone; every other message as it was.
+void an_answer_without_the_tool_is_its_text() {
+  using secure_frontend::ChatMessage;
+  using secure_frontend::ToolCall;
+  using secure_frontend::ToolRound;
+  secure_frontend::ChatCompletionRequest request;
+  request.model = "m";
+  ChatMessage searched{"assistant", "It was Spain, 2-1."};
+  searched.rounds = {ToolRound{{}, "Let me look that up.", {ToolCall{"web_search", {}}}, {"Spain beat England 2-1."}},
+                     ToolRound{{}, "", {ToolCall{"web_search", {}}}, {"The final was on 19 July."}}};
+  ChatMessage all_before{"assistant", ""};
+  all_before.rounds = {ToolRound{{}, "Found it: Seoul.", {ToolCall{"web_search", {}}}, {"Seoul."}}};
+  request.messages = {{"system", "Be brief."}, {"user", "Who won?"}, searched, {"user", "Where?"}, all_before, {"user", "And then?"}};
+  const auto text = secure_frontend::answers_as_text(request);
+  expect(text.model == "m" && text.messages.size() == 6U, "the same conversation");
+  expect(text.messages.size() == 6U && text.messages[2].content == "Let me look that up.\n\nIt was Spain, 2-1." &&
+             text.messages[2].rounds.empty() && text.messages[2].role == "assistant",
+         "an answer that searched: its rounds' text, then its own");
+  expect(text.messages.size() == 6U && text.messages[4].content == "Found it: Seoul." && text.messages[4].rounds.empty(),
+         "an answer whose text all came before its searches: that text");
+  expect(text.messages.size() == 6U && text.messages[0].content == "Be brief." && text.messages[1].content == "Who won?" &&
+             text.messages[3].content == "Where?" && text.messages[5].content == "And then?",
+         "every other message as it was");
+}
+
 void a_cancel_while_a_search_runs_ends_the_answer() {
   Client client;
   secure_frontend::ToolCallObserver round(client, {web_search().declaration});
@@ -239,6 +288,8 @@ int main(int argc, char** argv) {
       {"a_round_without_calls_is_the_answer", a_round_without_calls_is_the_answer},
       {"calls_not_run_are_skipped", calls_not_run_are_skipped},
       {"the_round_limit_leaves_one_answer_round", the_round_limit_leaves_one_answer_round},
+      {"the_system_turn_carries_the_search_note", the_system_turn_carries_the_search_note},
+      {"an_answer_without_the_tool_is_its_text", an_answer_without_the_tool_is_its_text},
       {"a_cancel_while_a_search_runs_ends_the_answer", a_cancel_while_a_search_runs_ends_the_answer},
       {"events_escape_what_they_carry", events_escape_what_they_carry},
   }, failures);

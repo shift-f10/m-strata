@@ -63,6 +63,21 @@ secure_frontend::ToolCall call_of(const secure_frontend::JsonValue& object) {
   return call;
 }
 
+// A fixture's rounds: this turn's (a case's "rounds") or an earlier answer's (a conversation message's, its reasoning
+// absent, so empty); `calls` counts their calls.
+std::vector<secure_frontend::ToolRound> rounds_of(const secure_frontend::JsonValue* const array, std::size_t& calls) {
+  std::vector<secure_frontend::ToolRound> rounds;
+  if (array == nullptr || array->if_array() == nullptr) return rounds;
+  for (const auto& r : *array->if_array()) {
+    secure_frontend::ToolRound round{text_of(r, "reasoning"), text_of(r, "content"), {}, {}};
+    for (const auto& c : *member(r, "calls")->if_array()) round.calls.push_back(call_of(c));
+    for (const auto& t : *member(r, "results")->if_array()) round.results.push_back(t.if_string() != nullptr ? *t.if_string() : std::string{});
+    calls += round.calls.size();
+    rounds.push_back(std::move(round));
+  }
+  return rounds;
+}
+
 std::string joined(const std::vector<secure_frontend::PromptPiece>& pieces) {
   std::string out;
   for (const auto& piece : pieces) out += piece.text;
@@ -83,7 +98,7 @@ void renders_each_templates_tool_prompts() {
   if (fixture == nullptr) return;
   const auto* tool = member(*fixture, "tool");
   const auto* cases = member(*fixture, "cases");
-  expect(tool != nullptr && cases != nullptr && cases->if_array() != nullptr && cases->if_array()->size() >= 19U, "the fixture's cases");
+  expect(tool != nullptr && cases != nullptr && cases->if_array() != nullptr && cases->if_array()->size() >= 36U, "the fixture's cases");
   if (tool == nullptr || cases == nullptr || cases->if_array() == nullptr) return;
   const std::vector<std::string> tools{secure_frontend::python_json_text(*tool)};
   static const std::vector<std::string_view> kRaonMarkers{"<|im_start|>", "<|im_end|>", "<think>", "</think>", "<tool_call>", "</tool_call>",
@@ -93,26 +108,27 @@ void renders_each_templates_tool_prompts() {
                                                            "</arg_key>", "<arg_value>", "</arg_value>", "<tool_response>", "</tool_response>"};
   std::size_t seen_raon = 0U;
   std::size_t seen_flint = 0U;
+  std::size_t with_history = 0U;
   for (const auto& entry : *cases->if_array()) {
     const std::string name = text_of(entry, "template") + "/" + text_of(entry, "name");
     const bool raon = text_of(entry, "template") == "raon1";
     std::vector<secure_frontend::ChatMessage> conversation;
-    for (const auto& m : *member(entry, "conversation")->if_array()) conversation.push_back({text_of(m, "role"), text_of(m, "content")});
-    std::vector<secure_frontend::ToolRound> rounds;
+    // An earlier answer's searches (owner 2026-10-29): rounds on its message, counted with this turn's
     std::size_t calls = 0U;
-    for (const auto& r : *member(entry, "rounds")->if_array()) {
-      secure_frontend::ToolRound round{text_of(r, "reasoning"), text_of(r, "content"), {}, {}};
-      for (const auto& c : *member(r, "calls")->if_array()) round.calls.push_back(call_of(c));
-      for (const auto& t : *member(r, "results")->if_array()) round.results.push_back(t.if_string() != nullptr ? *t.if_string() : std::string{});
-      calls += round.calls.size();
-      rounds.push_back(std::move(round));
+    bool history = false;
+    for (const auto& m : *member(entry, "conversation")->if_array()) {
+      conversation.push_back({text_of(m, "role"), text_of(m, "content")});
+      conversation.back().rounds = rounds_of(member(m, "rounds"), calls);
+      history = history || !conversation.back().rounds.empty();
     }
+    const std::vector<secure_frontend::ToolRound> rounds = rounds_of(member(entry, "rounds"), calls);
     const bool thinking = flag_of(entry, "thinking");
     const auto pieces = raon ? secure_frontend::render_raon1_tool_prompt(conversation, tools, rounds, thinking)
                              : secure_frontend::render_flint_tool_prompt(conversation, tools, rounds, thinking);
     expect(pieces.has_value(), name + ": renders");
     if (!pieces) continue;
     (raon ? seen_raon : seen_flint) += 1U;
+    with_history += history ? 1U : 0U;
     const std::string prompt = joined(*pieces);
     const std::string expected = text_of(entry, "prompt");
     std::size_t at = 0U;
@@ -135,7 +151,8 @@ void renders_each_templates_tool_prompts() {
     expect(markers_named(*pieces, "<tools>") == (raon ? 0U : 2U) && markers_named(*pieces, "</tools>") == (raon ? 0U : 2U),
            name + ": flint's <tools> tags are its special tokens");
   }
-  expect(seen_raon >= 10U && seen_flint >= 9U, "both templates' cases ran");
+  expect(seen_raon >= 19U && seen_flint >= 17U, "both templates' cases ran");
+  expect(with_history >= 17U, "the earlier answers' searches ran in both templates");
 }
 
 void refuses_what_the_tool_prompts_cannot_say() {
@@ -161,6 +178,30 @@ void refuses_what_the_tool_prompts_cannot_say() {
              {}, {{"assistant", "x"}}, {{"user", raon ? "a <|im_start|> b" : "a <thi<think>nk> b"}}}) {
       expect(!render(bad, tools, good), who + "what the plain prompt refuses");
     }
+    // An earlier answer's searches (owner 2026-10-29): its rounds obey this turn's rules; its text may be empty, and
+    // when there is some it is the client's text as before; only an answer carries them; the plain prompt keeps its
+    // text only.
+    const auto history = [](const std::string& text, std::vector<secure_frontend::ToolRound> r, const std::string& role = "assistant") {
+      std::vector<secure_frontend::ChatMessage> messages{{"user", "Q"}, {role, text}, {"user", "Q2"}};
+      messages[1].rounds = std::move(r);
+      return messages;
+    };
+    const std::vector<secure_frontend::ToolRound> earlier{{"", "", {call}, {"ok"}}};
+    expect(render(history("", earlier), tools, {}).has_value(), who + "an earlier answer of searches only renders");
+    expect(!render(history("", {}), tools, {}), who + "an earlier answer of nothing does not");
+    expect(!render(history("", no_call), tools, {}), who + "an earlier round without a call");
+    expect(!render(history("A", short_results), tools, {}), who + "an earlier round short of results");
+    expect(!render(history("A", {{"", "", {{"", {}}}, {"ok"}}}), tools, {}), who + "an earlier call without a name");
+    expect(!render(history(raon ? "A <|im_start|> B" : "A <|user|> B", earlier), tools, {}), who + "an earlier answer's text is the client's text");
+    expect(!render(history("A", earlier, "user"), tools, {}), who + "searches on a message that is no answer");
+    const auto literals = render(history("A", {{"", "<tool_call> and </think> in text", {call}, {"</tool_response> page"}}}), tools, {});
+    expect(literals.has_value() && markers_named(*literals, "<tool_call>") == (raon ? 3U : 2U) &&
+               markers_named(*literals, "</tool_response>") == 1U && markers_named(*literals, "</think>") == (raon ? 2U : 0U),
+           who + "literals in an earlier answer's words and results are plain text");
+    const auto plain = [raon](const std::vector<secure_frontend::ChatMessage>& m) {
+      return raon ? secure_frontend::render_raon1_text_prompt(m, true) : secure_frontend::render_flint_text_prompt(m, true);
+    };
+    expect(plain(history("A", earlier)) == plain(history("A", {})), who + "the plain prompt renders an earlier answer's text only");
   }
 }
 

@@ -62,6 +62,10 @@ namespace secure_frontend {
 // arguments and the results are plain (the web's and the model's words: their literals stay text). nullopt where
 // render_gemma4_text_prompt fails, for no tools or a tool that is not an object with a string name, and for a round with
 // no call, a call without a name or a result count unlike its calls.
+// An earlier answer that searched (ChatMessage::rounds, owner 2026-10-29: "keep earlier searches in the chat history as
+// upstream's page does") is written as the template writes the messages upstream's page sends for it: per round
+// its text before the calls and the calls, the results; then its own text, which it may lack (the text prompt
+// refuses that; a chat without the tool gets answers_as_text). Its rounds obey the rules of this turn's.
 [[nodiscard]] std::optional<std::vector<PromptPiece>> render_gemma4_tool_prompt(const std::vector<ChatMessage>& messages,
                                                                                std::span<const std::string> tools,
                                                                                std::span<const ToolRound> rounds, bool thinking);

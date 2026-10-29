@@ -95,13 +95,10 @@ struct PromptCase final {
   std::string prompt;
 };
 
-PromptCase prompt_case(const secure_frontend::JsonValue& entry) {
-  PromptCase out;
-  out.name = text_of(entry, "name");
-  if (const auto* conversation = member(entry, "conversation"); conversation != nullptr && conversation->if_array() != nullptr) {
-    for (const auto& m : *conversation->if_array()) out.conversation.push_back({text_of(m, "role"), text_of(m, "content")});
-  }
-  if (const auto* rounds = member(entry, "rounds"); rounds != nullptr && rounds->if_array() != nullptr) {
+// A case's rounds, or an earlier answer's (a conversation message's "rounds", ChatMessage::rounds; no reasoning).
+std::vector<secure_frontend::ToolRound> rounds_of(const secure_frontend::JsonValue& object) {
+  std::vector<secure_frontend::ToolRound> out;
+  if (const auto* rounds = member(object, "rounds"); rounds != nullptr && rounds->if_array() != nullptr) {
     for (const auto& r : *rounds->if_array()) {
       secure_frontend::ToolRound round{text_of(r, "reasoning"), text_of(r, "content"), {}, {}};
       if (const auto* calls = member(r, "calls"); calls != nullptr && calls->if_array() != nullptr) {
@@ -110,9 +107,23 @@ PromptCase prompt_case(const secure_frontend::JsonValue& entry) {
       if (const auto* results = member(r, "results"); results != nullptr && results->if_array() != nullptr) {
         for (const auto& t : *results->if_array()) round.results.push_back(t.if_string() != nullptr ? *t.if_string() : std::string{});
       }
-      out.rounds.push_back(std::move(round));
+      out.push_back(std::move(round));
     }
   }
+  return out;
+}
+
+PromptCase prompt_case(const secure_frontend::JsonValue& entry) {
+  PromptCase out;
+  out.name = text_of(entry, "name");
+  if (const auto* conversation = member(entry, "conversation"); conversation != nullptr && conversation->if_array() != nullptr) {
+    for (const auto& m : *conversation->if_array()) {
+      secure_frontend::ChatMessage message{text_of(m, "role"), text_of(m, "content")};
+      message.rounds = rounds_of(m);
+      out.conversation.push_back(std::move(message));
+    }
+  }
+  out.rounds = rounds_of(entry);
   out.thinking = flag_of(entry, "thinking") ? secure_frontend::QwenThinking::on : secure_frontend::QwenThinking::off;
   const std::string effort = text_of(entry, "effort");
   if (!effort.empty()) {
@@ -131,12 +142,18 @@ void renders_upstreams_tool_prompts() {
   if (!fixture) return;
   const auto* tool = member(*fixture, "tool");
   const auto* cases = member(*fixture, "cases");
-  expect(tool != nullptr && cases != nullptr && cases->if_array() != nullptr && cases->if_array()->size() >= 12U,
+  expect(tool != nullptr && cases != nullptr && cases->if_array() != nullptr && cases->if_array()->size() >= 20U,
          "the fixture holds the tool and its cases");
   if (tool == nullptr || cases == nullptr || cases->if_array() == nullptr) return;
   const std::vector<std::string> tools{secure_frontend::python_json_text(*tool)};
+  std::size_t history_cases = 0U;
   for (const auto& entry : *cases->if_array()) {
     const PromptCase c = prompt_case(entry);
+    // Every round in the prompt: the earlier answers' (history), then the current turn's.
+    std::vector<secure_frontend::ToolRound> all_rounds;
+    for (const auto& message : c.conversation) all_rounds.insert(all_rounds.end(), message.rounds.begin(), message.rounds.end());
+    if (!all_rounds.empty()) ++history_cases;
+    all_rounds.insert(all_rounds.end(), c.rounds.begin(), c.rounds.end());
     const auto pieces = secure_frontend::render_qwen_tool_prompt(c.conversation, tools, c.rounds, c.thinking, c.effort);
     expect(pieces.has_value(), c.name + ": renders");
     if (!pieces) continue;
@@ -155,14 +172,15 @@ void renders_upstreams_tool_prompts() {
     }
     // The template writes <tool_call> and </tool_call> twice in its instructions, once more per call.
     std::size_t calls = 0U;
-    for (const auto& round : c.rounds) calls += round.calls.size();
+    for (const auto& round : all_rounds) calls += round.calls.size();
     expect(markers_named(*pieces, "<tool_call>") == 2U + calls && markers_named(*pieces, "</tool_call>") == 2U + calls,
            c.name + ": the instructions' and the calls' tags are the only call markers");
     std::size_t results = 0U;
-    for (const auto& round : c.rounds) results += round.results.size();
+    for (const auto& round : all_rounds) results += round.results.size();
     expect(markers_named(*pieces, "<tool_response>") == results && markers_named(*pieces, "</tool_response>") == results,
            c.name + ": one result marker pair per result");
   }
+  expect(history_cases >= 8U, "the fixture holds the earlier answers that searched: " + std::to_string(history_cases));
 }
 
 void the_models_words_and_the_results_are_plain() {
@@ -212,6 +230,35 @@ void refuses_what_the_tool_prompt_cannot_say() {
   }
   // No round at all is the first prompt of a search: the conversation with the tools.
   expect(secure_frontend::render_qwen_tool_prompt(question, tools, {}, QwenThinking::off).has_value(), "the first prompt renders");
+
+  // An earlier answer that searched (ChatMessage::rounds): its rounds obey the same rules, on an assistant message only,
+  // and its words and results are the client's text (UTF-8, no control byte); with rounds its final text may be empty.
+  const auto earlier = [](std::vector<secure_frontend::ToolRound> history, std::string text) {
+    std::vector<secure_frontend::ChatMessage> messages{{"user", "Q"}, {"assistant", std::move(text)}, {"user", "Q2"}};
+    messages[1].rounds = std::move(history);
+    return messages;
+  };
+  expect(secure_frontend::render_qwen_tool_prompt(earlier(good, ""), tools, {}, QwenThinking::on).has_value(),
+         "an earlier answer with rounds and no final text renders");
+  expect(secure_frontend::render_qwen_tool_prompt(earlier(good, "A"), tools, good, QwenThinking::on).has_value(),
+         "an earlier answer with rounds, then the current turn's");
+  expect(!secure_frontend::render_qwen_tool_prompt(earlier({}, ""), tools, {}, QwenThinking::on), "no rounds and no text");
+  expect(!secure_frontend::render_qwen_tool_prompt(earlier(no_call, "A"), tools, {}, QwenThinking::on), "an earlier round without a call");
+  expect(!secure_frontend::render_qwen_tool_prompt(earlier(short_results, "A"), tools, {}, QwenThinking::on),
+         "an earlier round with fewer results than calls");
+  expect(!secure_frontend::render_qwen_tool_prompt(earlier(nameless, "A"), tools, {}, QwenThinking::on), "an earlier call without a name");
+  const std::vector<secure_frontend::ToolRound> bad_text{{"", "\xff", {call}, {"ok"}}};
+  expect(!secure_frontend::render_qwen_tool_prompt(earlier(bad_text, "A"), tools, {}, QwenThinking::on), "earlier words not UTF-8");
+  const std::vector<secure_frontend::ToolRound> control{{"", "", {call}, {"a\x01" "b"}}};
+  expect(!secure_frontend::render_qwen_tool_prompt(earlier(control, "A"), tools, {}, QwenThinking::on), "an earlier result with a control byte");
+  std::vector<secure_frontend::ChatMessage> on_user{{"user", "Q"}, {"assistant", "A"}, {"user", "Q2"}};
+  on_user[0].rounds = good;
+  expect(!secure_frontend::render_qwen_tool_prompt(on_user, tools, {}, QwenThinking::on), "rounds on a user message");
+  // The plain prompt keeps ignoring them: the final text only.
+  const std::vector<secure_frontend::ChatMessage> plain_history{{"user", "Q"}, {"assistant", "A"}, {"user", "Q2"}};
+  expect(secure_frontend::render_qwen_text_prompt(earlier(good, "A"), {}, QwenThinking::on) ==
+             secure_frontend::render_qwen_text_prompt(plain_history, {}, QwenThinking::on),
+         "the plain prompt renders an earlier answer's final text alone");
 }
 
 // ---- the encoder ----

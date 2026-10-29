@@ -16,7 +16,9 @@ inline constexpr std::chrono::milliseconds kLingerBudget{100};
 // content array -> part object -> image_url object = 6). 6 is exactly that depth; every
 // entry/size bound is unchanged. The pre-C-9 value was 4 (spec §3.1); the C-9 carve-out
 // supersedes it, and the server keeps its 400-before-anything property at the schema.
-inline constexpr std::size_t kChatMaxJsonDepth = 6U;
+// 16 since 2026-10-29: an earlier answer's searches nest request -> messages -> message -> strata_rounds -> round ->
+// calls -> call -> arguments -> the arguments' own values (6 before, since C-9's parts grammar; upstream sets none).
+inline constexpr std::size_t kChatMaxJsonDepth = 16U;
 inline constexpr std::size_t kMaxDeltaTextBytes = 16U * 1024U;     // M2
 inline constexpr std::size_t kMaxSseEventBytes = 128U * 1024U;     // M2
 inline constexpr std::size_t kMaxSendChunk = 64U * 1024U;

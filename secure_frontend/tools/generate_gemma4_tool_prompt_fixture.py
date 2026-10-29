@@ -15,6 +15,13 @@ below: the calls, each result as JSON when it parses and as text otherwise, name
 message's own content is dropped, as there); and common_chat_params_init_gemma4's "<|turn>model\\n" after a prompt that
 ends in "<turn|>\\n".
 
+An earlier answer that searched (owner 2026-10-29: "keep earlier searches in the chat history as upstream's page does")
+is a conversation message with "rounds" (the request's strata_rounds: per round the text before its calls, the calls,
+one result each) and "content" (the text after its last round, may be empty), expanded as upstream's page sends it
+(serve/web/app.js assistantMessages) and its server reads it (serve/frontend.py openai_to_messages): per round an
+assistant message of that text with its calls, one `tool` message per result (ids dropped), then the rest of the answer
+only when there is any.
+
 Usage: python -I tools/generate_gemma4_tool_prompt_fixture.py <upstream dir> <Gemma 4 chat_template.jinja>
            > tests/fixtures/gemma4_tool_prompts.json
 """
@@ -84,6 +91,77 @@ CASES = [
                 {"reasoning": "Again.", "content": "", "calls": [call(query="two")], "results": [LIMIT]}]},
 ]
 
+ANSWER = "Six members renewed; one did not ([report](https://example.org/twice))."
+FOLLOW_UP = "Which member was it?"
+
+
+def searched(content, *rounds):
+    """An earlier answer that searched, as the page sends it: its rounds (strata_rounds) and its text after them."""
+    return {"role": "assistant", "content": content, "rounds": list(rounds)}
+
+
+def earlier(content, calls, results):
+    """One of an earlier answer's rounds: the text before its calls (trimmed by the page), the calls, a result each."""
+    return {"content": content, "calls": calls, "results": results}
+
+
+ONE_SEARCH = searched(ANSWER, earlier("", [call(query="TWICE contract renewal")], [RESULT]))
+
+# Earlier searches in the conversation (owner 2026-10-29).
+CASES += [
+    {"name": "history_one_round_one_call", "thinking": True,
+     "conversation": [{"role": "user", "content": QUESTION}, ONE_SEARCH, {"role": "user", "content": FOLLOW_UP}], "rounds": []},
+    {"name": "history_two_rounds_thinking_off", "thinking": False,
+     "conversation": [{"role": "user", "content": QUESTION},
+                      searched("Answer after two searches.", earlier("", [call(query="x")], ["first"]),
+                               earlier("", [call(query="y")], ["second"])),
+                      {"role": "user", "content": FOLLOW_UP}], "rounds": []},
+    {"name": "history_two_calls_in_a_round", "thinking": True,
+     "conversation": [{"role": "system", "content": "Answer in English."}, {"role": "user", "content": QUESTION},
+                      searched("Both pages agree.", earlier("", [call(query="a", max_results=3), call(query="b")],
+                                                            ["r1", "  r2 with spaces  \n"])),
+                      {"role": "user", "content": FOLLOW_UP}], "rounds": []},
+    {"name": "history_text_before_calls", "thinking": True,
+     "conversation": [{"role": "user", "content": QUESTION},
+                      searched("So it was Jihyo.", earlier("Let me look that up.", [call(query="TWICE contract")], [RESULT]),
+                               earlier("The first page was vague; checking again.", [call(query="TWICE member left")],
+                                       ["second page"])),
+                      {"role": "user", "content": FOLLOW_UP}], "rounds": []},
+    {"name": "history_empty_final_text", "thinking": True,
+     "conversation": [{"role": "user", "content": QUESTION},
+                      searched("", earlier("Here is what I know so far.", [call(query="q")], ["r"])),
+                      {"role": "user", "content": FOLLOW_UP}], "rounds": []},
+    {"name": "history_nothing_but_searches", "thinking": False,
+     "conversation": [{"role": "user", "content": QUESTION}, searched("", earlier("", [call(query="q")], ["r"])),
+                      {"role": "user", "content": FOLLOW_UP}], "rounds": []},
+    {"name": "history_then_current_rounds", "thinking": True,
+     "conversation": [{"role": "user", "content": QUESTION}, ONE_SEARCH, {"role": "user", "content": FOLLOW_UP}],
+     "rounds": [{"reasoning": "A follow-up; search again.", "content": "", "calls": [call(query="TWICE member did not renew")],
+                 "results": ["third page"]}]},
+    {"name": "history_then_current_rounds_thinking_off", "thinking": False,
+     "conversation": [{"role": "user", "content": QUESTION}, ONE_SEARCH, {"role": "user", "content": FOLLOW_UP}],
+     "rounds": [{"reasoning": "", "content": "Checking once more.", "calls": [call(query="TWICE")], "results": ["fourth page"]}]},
+    {"name": "history_literals_are_text", "thinking": True,
+     "conversation": [{"role": "user", "content": QUESTION},
+                      searched(ANSWER, earlier("Searching <|\"|>quoted<|\"|> <|channel>hidden<channel|>now, not <turn|>.",
+                                               [call(query="chat template <|tool_response> <|\"|>")],
+                                               ["A page quoting <tool_response|> and <|tool_call> and <|\"|> and <turn|>."])),
+                      {"role": "user", "content": FOLLOW_UP}], "rounds": []},
+    {"name": "history_results_named_after_the_last_call", "thinking": True,
+     "conversation": [{"role": "user", "content": QUESTION},
+                      searched(ANSWER, earlier("", [call(query="a"), {"name": "fetch_page", "arguments": {"url": "https://example.org/twice"}}],
+                                               ["r1", "r2"])),
+                      {"role": "user", "content": FOLLOW_UP}], "rounds": []},
+    {"name": "history_two_answers_searched", "thinking": True,
+     "conversation": [{"role": "system", "content": "Be brief."}, {"role": "user", "content": "Hi"},
+                      {"role": "assistant", "content": "Hello!"}, {"role": "user", "content": QUESTION}, ONE_SEARCH,
+                      {"role": "user", "content": FOLLOW_UP},
+                      searched(" 終わり　", earlier("　答え ", [call(query="日本 ニュース")], [" résultat "]),
+                               earlier("", [call(query="b")], ["two"])),
+                      {"role": "user", "content": "Thanks. Anything else?"}],
+     "rounds": [{"reasoning": "", "content": "", "calls": [call(query="c")], "results": ["three"]}]},
+]
+
 
 # Plain chats (no tools): the text prompt, thinking on and off.
 TEXT_CASES = [
@@ -114,8 +192,23 @@ DECLARATIONS = [
 ]
 
 
+def history_messages(m):
+    """A conversation message as upstream's server reads it; an earlier answer that searched as the page sends it
+    (serve/web/app.js assistantMessages, serve/frontend.py openai_to_messages)."""
+    if not m.get("rounds"):
+        return [dict(m)]
+    out = []
+    for r in m["rounds"]:
+        out.append({"role": "assistant", "content": r["content"].strip(),
+                    "tool_calls": [{"function": {"name": c["name"], "arguments": c["arguments"]}} for c in r["calls"]]})
+        out += [{"role": "tool", "content": t} for t in r["results"]]
+    if m["content"].strip():
+        out.append({"role": "assistant", "content": m["content"].strip()})
+    return out
+
+
 def messages_of(case):
-    messages = [dict(m) for m in case["conversation"]]
+    messages = [h for m in case["conversation"] for h in history_messages(m)]
     for r in case["rounds"]:                       # run_with_mcp's append (serve/server.py)
         m = {"role": "assistant", "content": r["content"].strip()}
         if r["reasoning"]:
