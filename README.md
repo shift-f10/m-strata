@@ -82,7 +82,8 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   (it came from this download) or **Locally provided** (the same model file added from a folder, matched by its first
   file's name and, where the catalog pins it, its size), with its card's name. A file of that name with another size (a
   different revision of it) shows **Other version on this PC** and its card, and keeps its Download (the catalog's
-  version).
+  version). A download whose files are installed but whose card was never made offers **Set up**, which makes the card
+  (nothing is downloaded again).
 - The catalog is grouped by model family, each group a section that opens on a click and sums up what it holds; a
   group with a download under way, paused or failed opens by itself.
 - **16 connections at once** for a large file (`pull.connections`, 1-32), a progress line with speed and time left,
@@ -623,7 +624,7 @@ opens on the Monitor:
 | Up, Down, PageUp, PageDown | Move in a list; the mouse wheel scrolls the Log |
 | Models: Enter, `s`, `c`, `x`, `a`, Del | Start the card, stop the model, calibrate, cancel the calibration, recalibrate when settings change, remove the card (asked first; its model files stay, a running model is stopped first) |
 | Models: `o`, then Up/Down, Left/Right, Esc | The card's options: pick one, change it (a switch flips, a choice or number steps), back to the cards; `r` undoes the changes |
-| Downloads: Enter, `p`, `x` | Download (or resume), pause, cancel the selected one (a model already on this PC shows Downloaded or Locally provided, and its card, and is not downloaded again; Other version: another revision of its file is here, and Enter downloads the catalog's) |
+| Downloads: Enter, `p`, `x` | Download (or resume), pause, cancel the selected one (a model already on this PC shows Downloaded or Locally provided, and its card, and is not downloaded again; Other version: another revision of its file is here, and Enter downloads the catalog's; installed without its card: Enter makes the card) |
 | Settings: Enter, `w`, `u`, `k`, `R` | Edit the setting (a switch flips; empty means its default), save the changes, undo them, show the API key, rotate it (type `ROTATE`) |
 | `q` or Ctrl-C | Quit: it asks, then stops the model and the server in order and gives the terminal back |
 

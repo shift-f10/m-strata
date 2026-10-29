@@ -280,6 +280,23 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-28 z18 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner: "Make the Gemma 4 card now through the download route, then fix the page so an installed download without
+its card offers the step."
+
+- **His Gemma 4 card**: after the swap to 009b831d his Gemma 4 download read installed (its store holds it) with no card -
+  the earlier server misread the downloader and never ran the card step - and the page offered nothing. One
+  `POST /v1/strata/downloads/start {"id":"gemma-4-26b-a4b-it-q8_0"}` on his word: the downloader answered "already
+  installed" (nothing downloaded), and `gemma-4-26B-A4B-it-Q8_0` was added (MTP on, spec 4, spec_min_p 0.6).
+- **The fix**: an installed download whose step makes a card (or builds a pack: `runnable`) and that has no card from it
+  is no longer counted as on this PC in the list (`have` null), so the page shows "Its files are on this PC, but its
+  card was not made: Set up makes it (nothing is downloaded again)" with a **Set up** button (a start; `lacksRoom` asks no
+  room of an installed one), and strata-tui says the same and Enter starts it. The page's fallback for a server without
+  `have` no longer overrides a `have` the server sent. A download-only entry installed stays Downloaded.
+- **Proof**: RED shown (`an_installed_download_without_its_card_offers_its_step`, the page's and the TUI's checks), then
+  94/94 on MSVC and 94/94 on Linux gcc over the download manager, TUI and router suites.
+
 ### Claude Code session, 2026-10-28 z17 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner, testing the ab29ee2a build: "fix the issues while I test this version out"; then "also add an ability to

@@ -1446,12 +1446,14 @@ void App::draw_downloads(Screen& screen, const Rect area) const {
   if (!entries.empty()) {
     const auto& selected = entries[std::min(download_, entries.size() - 1U)];
     const auto* error = member(&selected, "error");
-    // a model already here says so (an earlier attempt's failure no longer matters), else its error, another version of
-    // its file here, or its note
+    // a model already here says so (an earlier attempt's failure no longer matters), else its error, its files installed
+    // with their card not made yet (Enter makes it), another version of its file here, or its note
     const bool here = !on_this_pc(selected).empty();
     const bool failed = !here && error != nullptr && error->if_string() != nullptr;
     const std::string note = here     ? "Already on this PC" + its_card(selected)
                              : failed ? *error->if_string()
+                             : text(member(&selected, "state")) == "installed"
+                                 ? "Its files are on this PC, but its card was not made: Enter makes it (nothing is downloaded again)"
                              : other_version(selected)
                                  ? "Another version of this file is on this PC" + its_card(selected) + "; a download brings the catalog's"
                                  : text(member(&selected, "note"));

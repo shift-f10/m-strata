@@ -1661,8 +1661,10 @@
     if (downloads.folder) { payload.folder = downloads.folder; }
     return payload;
   }
-  // A card that cannot start for lack of room: the chosen folder's free space, else the server's own check.
+  // A card that cannot start for lack of room: the chosen folder's free space, else the server's own check. An installed
+  // one needs none (its Set up downloads nothing).
   function lacksRoom(card) {
+    if (card.state === "installed") { return false; }
     if (!downloads.folder) { return card.fits === false; }
     var free = freeBytes();
     return free !== null && typeof card.needed_bytes === "number" && card.needed_bytes > free;
@@ -1672,6 +1674,7 @@
   // server without "have" still names a download that is set up or installed.
   function haveOf(card) {
     if (card.have === "downloaded" || card.have === "local") { return card.have; }
+    if (card.have !== undefined) { return null; }
     return card.state === "ready" || card.state === "installed" ? "downloaded" : null;
   }
   // What an entry shows as on this PC: its have, unless a download of it is under way or paused (its state says how that
@@ -1906,6 +1909,8 @@
     var have = onThisPc(card);
     var onPc = have !== null;
     var other = !onPc && otherVersion(card);
+    // installed, but the server does not count it as on this PC: its card step never ran (owner 2026-10-28); Set up runs it
+    var setUp = !onPc && card.state === "installed";
     var box = el("div", "dl-card");
     box.setAttribute("data-state", String(card.state));
     if (onPc) { box.setAttribute("data-have", have); }
@@ -1937,6 +1942,9 @@
     } else if (card.vision === true) {
       box.appendChild(el("p", "muted small", "With its vision files: the model reads pictures"));
     }
+    if (setUp) {
+      box.appendChild(el("p", "dl-card__here", "Its files are on this PC, but its card was not made: Set up makes it (nothing is downloaded again)"));
+    }
     if (other) {
       box.appendChild(el("p", "dl-card__here", "Another version of this file is on this PC" +
                          (card.have_card ? " (its card: " + String(card.have_card) + ")" : "") + "; a download brings the catalog's"));
@@ -1950,7 +1958,7 @@
     } else if (card.note) {
       box.appendChild(el("p", "muted small", String(card.note)));
     }
-    var startable = !onPc && oneOf(DL_STARTABLE, card.state);
+    var startable = !onPc && (oneOf(DL_STARTABLE, card.state) || setUp);
     var noRoom = startable && lacksRoom(card);
     if (noRoom) { box.appendChild(el("p", "msg-warn", noRoomText(card.needed_bytes))); }
     if (card.state === "paused" && lacksRoom(card)) { box.appendChild(el("p", "msg-warn", noRoomText(card.needed_bytes))); }
@@ -1982,7 +1990,7 @@
     if (refused) { box.appendChild(el("p", "msg-error", refused)); }
     var actions = el("div", "dl-card__actions");
     if (startable) {
-      var download = el("button", "st-btn st-btn--primary st-btn--sm", "Download");
+      var download = el("button", "st-btn st-btn--primary st-btn--sm", setUp ? "Set up" : "Download");
       download.type = "button";
       download.disabled = noRoom || downloads.acting;
       if (noRoom) { download.title = "Not enough free space on the downloads drive"; }

@@ -768,7 +768,8 @@ void downloads_say_what_is_on_this_pc() {
              R"({"id":"a","name":"Mine","state":"failed","size_bytes":100,"bytes":0,"total":100,"error":"an earlier try failed","note":"after the download","have":"local","have_card":"my-card"},)"
              R"({"id":"b","name":"Fetched","state":"ready","size_bytes":100,"bytes":100,"total":100,"error":null,"note":"after the download","have":"downloaded","have_card":"b-card"},)"
              R"({"id":"c","name":"Fresh","state":"available","size_bytes":100,"bytes":0,"total":100,"error":null,"note":"after the download","have":null,"have_card":null},)"
-             R"({"id":"d","name":"Older","state":"available","size_bytes":100,"bytes":0,"total":100,"error":null,"note":"after the download","have":"other","have_card":"d-card"}]})");
+             R"({"id":"d","name":"Older","state":"available","size_bytes":100,"bytes":0,"total":100,"error":null,"note":"after the download","have":"other","have_card":"d-card"},)"
+             R"({"id":"e","name":"Unset","state":"installed","size_bytes":100,"bytes":100,"total":100,"error":null,"note":"after the download","have":null,"have_card":null}]})");
   t::Screen list(120, 30);
   app.draw(list, 0);
   const auto row_of = [&list](const std::string& name) {
@@ -801,6 +802,14 @@ void downloads_say_what_is_on_this_pc() {
          "an other version is said, with its card: " + row_of("Older"));
   out = app.key(plain(t::Key::Kind::enter));
   expect(out.requests.size() == 1U && out.requests[0].body == R"({"id":"d"})", "and Enter downloads the catalog's version");
+  // installed, but its card was never made (owner 2026-10-28): said, and Enter runs the step (nothing is downloaded again)
+  (void)app.key(plain(t::Key::Kind::down));
+  app.draw(list, 0);
+  expect(row_of("Unset").find("installed") != std::string::npos &&
+             all_text(list).find("Its files are on this PC, but its card was not made: Enter makes it") != std::string::npos,
+         "an installed download without its card says so: " + row_of("Unset"));
+  out = app.key(plain(t::Key::Kind::enter));
+  expect(out.requests.size() == 1U && out.requests[0].body == R"({"id":"e"})", "and Enter makes its card");
 }
 
 void settings_are_edited_then_saved() {

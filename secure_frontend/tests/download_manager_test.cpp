@@ -447,6 +447,46 @@ void a_pull_that_said_ok_is_checked_in_the_store() {
   expect(has(no_result, "\"state\":\"failed\"") && has(no_result, "exit code 9"), "an end without a result names its exit code: " + no_result);
 }
 
+// Owner 2026-10-28 ("fix the page so an installed download without its card offers the step"): his Gemma 4 download was
+// installed in its store but its card was never made (the downloader's word was misread), and after a restart the list
+// said Downloaded with no way to make the card. An installed download whose step makes a card (or a pack) and that has
+// no card from it is not on this PC: "have" is null, so the page offers Set up and strata-tui Enter; that start finds
+// it installed (nothing is downloaded again) and makes the card. A download-only entry installed stays Downloaded.
+void an_installed_download_without_its_card_offers_its_step() {
+  const auto installed_store = [](const std::filesystem::path& dir) {
+    const auto installed = dir / "installed";
+    secure_frontend_test::make_private_directory(installed);
+    secure_frontend_test::make_private_directory(installed / "MTP");
+    secure_frontend_test::write_file(installed / "gemma-small-Q8_0.gguf",
+                                     test_support::gguf_with_tokenizer(test_support::spm_tokenizer(), "gemma4", "gemma4")
+                                         .u32("gemma4.context_length", 262144U)
+                                         .bytes());
+    secure_frontend_test::write_file(installed / "MTP" / "mtp-gemma-small-Q8_0.gguf", "GGUF");
+    return installed;
+  };
+  const auto entry_of = [](const std::string& listed) {
+    const auto at = listed.find("{\"id\":\"gemma-small\"");
+    return at == std::string::npos ? std::string{} : listed.substr(at, listed.find("{\"id\":", at + 1U) - at);
+  };
+  Fixture f;
+  f.with_gguf_engine = true;
+  f.spawner.installed = installed_store(f.dir);   // in the store before the server starts: installed, no card
+  f.start(1U << 30U);
+  const std::string before = entry_of(f.manager->list_json());
+  expect(has(before, "\"state\":\"installed\"") && has(before, ",\"have\":null,\"have_card\":null}"),
+         "installed without its card: not on this PC, so its step is offered: " + before);
+  f.spawner.pulls.push_back(Script{{"MANIFEST gemma-small:download " + std::string(64, 'c'), "RESULT ok"}});   // already installed
+  expect(!f.manager->start("gemma-small").has_value() && f.manager->wait_idle(std::chrono::seconds(10)), "the step runs");
+  const std::string after = entry_of(f.manager->list_json());
+  expect(has(after, "\"state\":\"ready\"") && has(after, "\"have\":\"downloaded\"") && f.carded.size() == 1U,
+         "the start made its card: " + after);
+  Fixture g;   // no engine for new cards: a Gemma 4 download is download only, and installed is all it becomes
+  g.spawner.installed = installed_store(g.dir);
+  g.start(1U << 30U);
+  const std::string only = entry_of(g.manager->list_json());
+  expect(has(only, "\"state\":\"installed\"") && has(only, "\"have\":\"downloaded\""), "a download-only entry installed is Downloaded: " + only);
+}
+
 void pasted_links() {
   Fixture f;
   f.spawner.hf.push_back(Script{{"{\"repo\":\"someone/Model-GGUF\",\"commit\":\"" + std::string{kCommit} +
@@ -1612,6 +1652,7 @@ int main(int argc, char** argv) {
       {"pull_runs_strata_and_tracks_progress", pull_runs_strata_and_tracks_progress},
       {"failures_and_cancel", failures_and_cancel},
       {"a_pull_that_said_ok_is_checked_in_the_store", a_pull_that_said_ok_is_checked_in_the_store},
+      {"an_installed_download_without_its_card_offers_its_step", an_installed_download_without_its_card_offers_its_step},
       {"maya_main_is_resolved_and_checked", maya_main_is_resolved_and_checked},
       {"pasted_links", pasted_links},
       {"a_resume_counts_its_rate_from_the_kept_bytes", a_resume_counts_its_rate_from_the_kept_bytes},

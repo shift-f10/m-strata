@@ -867,7 +867,7 @@ void web_ui_downloads_go_to_a_chosen_folder() {
              js.find("jsonPost(withFolder({ url: offer.url, confirm: true }))") != std::string::npos &&
              js.find("jsonPost(withFolder(body))") != std::string::npos,
          "a start, a link's start and a link check name the folder");
-  expect(js.find("var startable = !onPc && oneOf(DL_STARTABLE, card.state);") != std::string::npos,
+  expect(js.find("var startable = !onPc && (oneOf(DL_STARTABLE, card.state) || setUp);") != std::string::npos,
          "a download whose model is already on this PC is not offered for download");
   expect(js.find("$(\"models-subtab-download\").hidden = !on && !launcher.enabled;") != std::string::npos,
          "the Download sub-tab stays for model files on this PC even with downloads off");
@@ -903,8 +903,16 @@ void web_ui_downloads_say_what_is_on_this_pc() {
              js.find("other: [\"st-badge--queued\", \"Other version on this PC\"]") != std::string::npos &&
              js.find("\"Another version of this file is on this PC\"") != std::string::npos,
          "a same-named file of another size is an other version, shown with its card");
-  expect(js.find("var startable = !onPc && oneOf(DL_STARTABLE, card.state);") != std::string::npos,
+  expect(js.find("var startable = !onPc && (oneOf(DL_STARTABLE, card.state) || setUp);") != std::string::npos,
          "and its download is still offered (an other version is not onPc)");
+  // owner 2026-10-28: an installed download the server does not count as on this PC (its card step never ran) offers
+  // that step, Set up, which downloads nothing again; the old fallback (a server without "have") does not hide it
+  expect(js.find("if (card.have !== undefined) { return null; }") != std::string::npos &&
+             js.find("var setUp = !onPc && card.state === \"installed\";") != std::string::npos &&
+             js.find("el(\"button\", \"st-btn st-btn--primary st-btn--sm\", setUp ? \"Set up\" : \"Download\")") != std::string::npos &&
+             js.find("\"Its files are on this PC, but its card was not made: Set up makes it (nothing is downloaded again)\"") !=
+                 std::string::npos,
+         "an installed download without its card offers Set up");
   expect(css.find(".dl-card[data-have=") != std::string::npos, "an entry on this PC is styled");
 }
 
