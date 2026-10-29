@@ -10,6 +10,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <ctime>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -115,6 +117,43 @@ class RotatingLog final {
   std::uintmax_t size_{0};
   std::ofstream out_;
 };
+
+// --------------------------------------------------------------------------- the window's Log
+// The server's console lines the window's Log shows (the owner: "in the window app version we need to add a log
+// capability, the console have it but this one do not so we can troubleshoot"): the newest last, in memory, at most
+// `max_lines` lines of `max_bytes` bytes in all. Each line is kept as text any view can show: valid UTF-8 (a broken
+// sequence becomes U+FFFD), its control characters spaces (a tab stays), at most `max_bytes` long. A line holding a
+// sign-in link is never kept (loggable()). A full log drops its oldest tenth at once, so a view shows every line again
+// only now and then; the newest line always stays.
+class LogLines final {
+ public:
+  LogLines(std::size_t max_lines, std::size_t max_bytes);
+  void add(std::string_view line);
+  [[nodiscard]] const std::deque<std::string>& lines() const noexcept { return lines_; }
+  [[nodiscard]] std::size_t bytes() const noexcept { return bytes_; }
+  // Every line kept has a number, one more than the line before it: lines()[0] is first(), the newest end() - 1.
+  [[nodiscard]] std::uint64_t first() const noexcept { return first_; }
+  [[nodiscard]] std::uint64_t end() const noexcept { return first_ + lines_.size(); }
+  // What a view showing the lines [shown_first, shown_end) lacks: the index in lines() from which it adds the newer
+  // ones, or nullopt when it shows every line again (lines it shows were dropped).
+  [[nodiscard]] std::optional<std::size_t> newer_than(std::uint64_t shown_first, std::uint64_t shown_end) const;
+  // Every line, each ending with `newline` (a Windows edit control and its clipboard take "\r\n"): what Copy copies.
+  [[nodiscard]] std::string text(std::string_view newline = "\n") const;
+  // The last `count` lines, the newest last (the page shown when the server ends).
+  [[nodiscard]] std::vector<std::string> last(std::size_t count) const;
+  // text() into `file` (replaced; a new one owner-only, as server.log); a message naming the problem (never the path)
+  // when it could not be written.
+  [[nodiscard]] std::optional<std::string> save(const std::filesystem::path& file) const;
+
+ private:
+  std::size_t max_lines_;
+  std::size_t max_bytes_;
+  std::size_t bytes_{0};
+  std::uint64_t first_{0};
+  std::deque<std::string> lines_;
+};
+// The file name Save offers, at the local time given: "m-strata-log-2026-10-29-140312.txt".
+[[nodiscard]] std::string saved_log_name(const std::tm& when);
 
 // --------------------------------------------------------------------------- the server child
 // strata-unified-server run as the window's child: no console window, its stdout and stderr read as lines on a thread

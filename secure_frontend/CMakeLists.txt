@@ -837,13 +837,14 @@ secure_frontend_add_library(secure_frontend_config_routes SOURCES src/config_rou
     LINKS secure_frontend_server_cli secure_frontend_config_writer secure_frontend_model_cards secure_frontend_token_reader
           secure_frontend_api_core secure_frontend_paths)
 
-# strata-window's portable half (spec 2026-10-28-server-window-design, Part 2): the server's console lines, the web
-# view's navigation rule, the tray's model list and requests, the server it starts and its key, the server child.
-# Built and tested in every configuration; only the native windows wait for SECURE_FRONTEND_WINDOW. Windows starts
-# the server through the engine's launch_in_job (src/win_child_launch.cpp, in the stdio process library).
+# strata-window's portable half (spec 2026-10-28-server-window-design, Part 2): the server's console lines and the
+# Log's lines (UTF-8 made valid by the stream decoder), the web view's navigation rule, the tray's model list and
+# requests, the server it starts and its key, the server child. Built and tested in every configuration; only the
+# native windows wait for SECURE_FRONTEND_WINDOW. Windows starts the server through the engine's launch_in_job
+# (src/win_child_launch.cpp, in the stdio process library).
 secure_frontend_add_library(secure_frontend_window_shell SOURCES src/window_shell.cpp
     LINKS secure_frontend_first_start secure_frontend_server_cli secure_frontend_model_cards secure_frontend_token_reader
-          secure_frontend_api_client secure_frontend_json)
+          secure_frontend_api_client secure_frontend_json secure_frontend_utf8_stream)
 if(WIN32)
     target_link_libraries(secure_frontend_window_shell PUBLIC secure_frontend_engine_stdio_process)
 endif()
@@ -970,7 +971,7 @@ if(SECURE_FRONTEND_WINDOW)
         target_include_directories(strata-window SYSTEM PRIVATE "${SECURE_FRONTEND_WEBVIEW2_DIR}/build/native/include")
         target_link_libraries(strata-window PRIVATE secure_frontend_window_shell
             "${SECURE_FRONTEND_WEBVIEW2_DIR}/build/native/${_webview2_arch}/WebView2LoaderStatic.lib"
-            ole32 shell32 user32 gdi32 advapi32 version shlwapi)
+            ole32 shell32 user32 gdi32 advapi32 version shlwapi comdlg32)
     else()
         find_package(PkgConfig REQUIRED)
         pkg_check_modules(STRATA_WINDOW_GTK REQUIRED gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1)
@@ -2243,7 +2244,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_window_shell_tests
         the_sign_in_link_is_read_and_never_logged the_listening_line_names_the_pages_origin
         the_window_opens_on_the_monitor_first navigation_stays_on_the_pages_origin the_tray_lists_the_launchers_cards requests_carry_the_key_only_in_its_header
-        the_log_rotates_at_its_bound the_window_starts_the_server_beside_it)
+        the_log_rotates_at_its_bound the_log_view_keeps_the_newest_lines_in_its_bound the_log_view_holds_text_a_view_can_show
+        the_log_view_saves_what_it_shows the_window_starts_the_server_beside_it)
     secure_frontend_add_cases(secure_frontend_window_shell_tests
         the_servers_key_is_read_as_key_show_reads_it LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_cases(secure_frontend_window_shell_tests

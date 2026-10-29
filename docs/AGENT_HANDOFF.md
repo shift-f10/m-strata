@@ -280,6 +280,49 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z29 (Windows box; owner-directed; a worker session's change, committed with this entry, not pushed)
+
+The owner: "in the window app version we need to add a log capability, the console have it but this one do not so we
+can troubleshoot". strata-window wrote the server's lines to `<data>/logs/server.log` and kept 40 for the page shown
+when the server ends, but nothing showed them.
+
+- **Portable half** (`window_shell.hpp/.cpp`): `LogLines`, the Log's lines in memory. The newest come last; at most
+  `max_lines` lines and `max_bytes` bytes (the window: 2000 lines, as strata-tui's Log, and 1 MiB). A full log drops its
+  oldest tenth at once, so a view redraws only now and then. Each line is made valid UTF-8 by `Utf8StreamDecoder`
+  (GTK needs it), with control characters as spaces, and cut at a character boundary. A line with a login code is never
+  kept. `newer_than()` tells a view which lines to add, or that it must redraw; `text()` and `save()` give what Copy and
+  Save write. `saved_log_name()` gives `m-strata-log-<date>-<time>.txt`. `secure_frontend_window_shell` now links
+  `secure_frontend_utf8_stream`.
+- **The Log window** (Windows `window_main_win32.cpp`; Linux twin `window_main_gtk.cpp`):
+  - Opened from the tray's new **Server log** entry or Ctrl+Shift+L. On Windows the title bar's menu has it too, and
+    the page's own keys reach it through WebView2's `AcceleratorKeyPressed`.
+  - The text is read-only and monospace, newest last. It follows new lines unless the user scrolled up. While the window
+    is hidden it catches up when shown again, and a burst of lines is drawn once (100 ms timer).
+  - **Copy all** puts the text on the clipboard. **Save as...** writes it to a file the user picks (a new one 0600 on
+    POSIX). **Open the logs folder** opens the folder (greyed with `--config`). Closing the window hides it; the lines
+    stay.
+  - The window adds its own notes to the Log and `server.log`: `[strata-window] starting the server`, `restarting the
+    server`, `stopping the server (Exit)`, `the server ended (exit code N)`, and a start failure. The page shown when the
+    server ends takes its last 40 lines from `LogLines` and points at Server log.
+  - Windows links `comdlg32` (`GetSaveFileNameW`).
+- **Proof**:
+  - RED: three new cases against stubs, 17 expectations failed (`the_log_view_keeps_the_newest_lines_in_its_bound`,
+    `the_log_view_holds_text_a_view_can_show`, `the_log_view_saves_what_it_shows`).
+  - GREEN: `secure_frontend_window_shell_tests` 17/17 with MSVC (`/WX`), Linux gcc 13.3 and clang 18.1 (`-Werror`,
+    WSL `mstrata-linux`). `strata-window.exe` builds with MSVC under `/WX`.
+  - Live on this PC: the build-tree window ran on scratch port 18093 with a scratch data folder, the dev key and the
+    supervision fake engine. Each of these opened the Log: the tray's Server log, the title bar's menu
+    (`WM_SYSCOMMAND`), and the tray again after it was closed and the server restarted while it was hidden (it caught
+    up). The Log showed the console's lines and the notes. Restarts appended live; it stayed put when scrolled to the
+    top and followed at the bottom. Save as wrote the Log's text exactly (driven through the real dialog). No login code
+    was in the Log or `server.log`. Exit stopped everything.
+- **Not verified**:
+  - Copy all live: the user's clipboard held browser data, so it was not overwritten.
+  - Ctrl+Shift+L by real keys, and Open the logs folder.
+  - The GTK window was not run. It **compiles** (the main session put GTK 3.24, WebKitGTK 4.1 2.52 and Ayatana
+    AppIndicator dev packages into the `mstrata-linux` toolchain distro): `strata-window` with `-Werror` on gcc 13.3 and
+    clang 18.1 (`~/win-gcc`, `~/win-clang`, `SECURE_FRONTEND_WINDOW=ON`), `secure_frontend_window_shell_tests` 17/17 there.
+
 ### Claude Code session, 2026-10-29 z28 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner, pointing a Qwen3.8 card at its MTP draft layer: "when I select the mtp I get the error that the folder was

@@ -8,10 +8,13 @@
 #include "secure_frontend/model_cards.hpp"
 #include "secure_frontend/server_cli.hpp"
 #include "secure_frontend/token_reader.hpp"
+#include "secure_frontend/utf8_stream_decoder.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <condition_variable>
+#include <cstddef>
+#include <ctime>
 #include <cwchar>
 #include <mutex>
 #include <system_error>
@@ -156,6 +159,24 @@ class LineSplitter final {
   ServerChild::LineHandler& on_line_;
   std::string pending_;
 };
+
+// A line as the window's Log keeps it: valid UTF-8 (a broken sequence becomes U+FFFD), its control characters spaces
+// (a tab stays), at most `max_bytes` long and never cut inside a character.
+std::string shown_line(const std::string_view line, const std::size_t max_bytes) {
+  Utf8StreamDecoder decoder;
+  std::string out = decoder.push(line);
+  out += decoder.finish(false);  // an incomplete sequence at the end: one U+FFFD
+  for (char& c : out) {
+    const auto byte = static_cast<unsigned char>(c);
+    if ((byte < 0x20U && c != '\t') || byte == 0x7FU) c = ' ';
+  }
+  if (out.size() > max_bytes) {
+    std::size_t cut = max_bytes;
+    while (cut > 0U && (static_cast<unsigned char>(out[cut]) & 0xC0U) == 0x80U) --cut;
+    out.resize(cut);
+  }
+  return out;
+}
 
 }  // namespace
 
@@ -376,6 +397,65 @@ void RotatingLog::write(const std::string_view line) {
   out_.put('\n');
   out_.flush();
   size_ += bytes;
+}
+
+// --------------------------------------------------------------------------- the window's Log
+LogLines::LogLines(const std::size_t max_lines, const std::size_t max_bytes)
+    : max_lines_(std::max<std::size_t>(max_lines, 1U)), max_bytes_(std::max<std::size_t>(max_bytes, 1U)) {}
+
+void LogLines::add(const std::string_view line) {
+  if (!loggable(line)) return;
+  lines_.push_back(shown_line(line, max_bytes_));
+  bytes_ += lines_.back().size();
+  if (lines_.size() <= max_lines_ && bytes_ <= max_bytes_) return;
+  // full: the oldest tenth goes at once (so a view shows every line again only now and then); the newest stays
+  const std::size_t keep_lines = max_lines_ - max_lines_ / 10U;
+  const std::size_t keep_bytes = max_bytes_ - max_bytes_ / 10U;
+  while (lines_.size() > 1U && (lines_.size() > keep_lines || bytes_ > keep_bytes)) {
+    bytes_ -= lines_.front().size();
+    lines_.pop_front();
+    ++first_;
+  }
+}
+
+std::optional<std::size_t> LogLines::newer_than(const std::uint64_t shown_first, const std::uint64_t shown_end) const {
+  if (shown_first != first_ || shown_end < first_ || shown_end > end()) return std::nullopt;
+  return static_cast<std::size_t>(shown_end - first_);
+}
+
+std::string LogLines::text(const std::string_view newline) const {
+  std::string out;
+  out.reserve(bytes_ + lines_.size() * newline.size());
+  for (const auto& line : lines_) {
+    out += line;
+    out += newline;
+  }
+  return out;
+}
+
+std::vector<std::string> LogLines::last(const std::size_t count) const {
+  const std::size_t from = lines_.size() > count ? lines_.size() - count : 0U;
+  return {lines_.begin() + static_cast<std::ptrdiff_t>(from), lines_.end()};
+}
+
+std::optional<std::string> LogLines::save(const std::filesystem::path& file) const {
+#if !defined(_WIN32)
+  // a new file owner-only from its creation, as server.log (one the user chose to replace keeps its own mode)
+  const int fd = ::open(file.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, 0600);
+  if (fd >= 0) (void)::close(fd);
+#endif
+  std::ofstream out(file, std::ios::binary | std::ios::trunc);
+  const std::string all = text();
+  out.write(all.data(), static_cast<std::streamsize>(all.size()));
+  out.flush();
+  if (!out) return std::string{"the log could not be written there"};
+  return std::nullopt;
+}
+
+std::string saved_log_name(const std::tm& when) {
+  char name[64] = {};
+  if (std::strftime(name, sizeof name, "m-strata-log-%Y-%m-%d-%H%M%S.txt", &when) == 0U) return "m-strata-log.txt";
+  return name;
 }
 
 // --------------------------------------------------------------------------- the server child
