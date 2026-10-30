@@ -296,6 +296,97 @@ Written for developers and agents, as a blueprint:
 
 The skeleton family is its worked example.
 
+### 10. Tool and notifier plugins: settings, secrets, running (the owner, 2026-10-30)
+
+The owner's decisions 6-8 (below): their settings move into the plugins (`plugins.<id>.*`), third-party tool and
+notifier plugins run in this step, and key-signed trust follows it. This section is the contract for both kinds, and for
+search and email made from today's code.
+
+**Settings.** A `tool` or `notifier` block declares its `settings`, at most 16. Each has:
+- `name`: a lowercase letter, then lowercase letters, digits or `_`, at most 32 characters;
+- `kind`: `text`, `url`, `secret`, `integer`, `boolean`, `choice` or `text_list`;
+- `label` and `help` (printable text), and `required` (true or false);
+- `default` (of its kind; never for a secret), `min` and `max` (an integer's), `choices` (a choice's, or the allowed
+  items of a text list), and `max_items` (a text list's, at most 16).
+
+Where the values live:
+- Every value but a secret is in `config.json` as `plugins.<id>.<name>`. The config reader takes `plugins.<id>` objects
+  of scalars and lists of strings, bounded, and the server checks each value against the manifest when it starts.
+- A secret is in `roots.secret` as `plugin-<id>-<name>`, kept as the API key is (DPAPI on Windows, 0600 elsewhere). It
+  is never in `config.json`, never in an answer (the tab sees only "set" or "not set"), and goes only to that plugin's
+  own process.
+- A plugin whose required setting is missing, or whose value its manifest refuses, is refused with the setting's name and
+  the rule, and the tab shows it.
+
+The routes:
+- `POST /v1/strata/plugins` lists each plugin's settings with their values (a secret's as set or not).
+- `POST /v1/strata/plugins/settings {"id", "values": {name: value or null}}` saves them, checked against the manifest. A
+  null puts a setting back to its default, or removes a secret. A change applies when the server restarts.
+- The Plugins tab draws each plugin's settings and saves them; the TUI's Plugins view lists them and edits them.
+
+**Running.** A `tool` or `notifier` block says how its program runs:
+- `program`: one of its files;
+- `arguments`: each a fixed text or one `{setting}`; never a secret's;
+- `environment`: variable name to `{setting}`, at most 16. A secret goes only here. The names `PATH`, `SYSTEMROOT`,
+  `TEMP`, `TMP`, `HOME` and any name starting with `STRATA_` are refused;
+- `network`: in words, what it connects to (`{setting}` allowed), shown in the approval question.
+
+The server runs it as it runs strata-search today:
+- a child in the server's job object (Windows) or process group (Linux), with no new privileges;
+- the closed environment the downloads' children get, plus the declared variables;
+- stdio only, its working folder `<roots.state>/plugins/<id>`;
+- its stderr in the server's log, one line each, `[plugin <id>] ...`, cut at 400 characters (Debugging on only).
+
+**Tools.** A tool plugin is an MCP server on stdio: JSON-RPC, one message a line, `initialize`, `tools/list` and
+`tools/call`, as strata-search speaks it today.
+- The tool hub starts each tool plugin that is on at the first chat that needs a tool, and lists its tools.
+- A chat is offered every listed tool, at most 16 in all. A name a second plugin also lists is left out and logged.
+- The model's calls are routed by name.
+- The search loop becomes the tool loop. `tools.max_rounds` (1-8, default 8; `search.max_rounds` moves there) bounds an
+  answer's rounds.
+- A result is cut at 64 KiB, and the page shows each call, as it shows searches today.
+- A tool block may carry a `note` (one paragraph, `{today}` filled in). It joins the chat's system message while that
+  plugin's tools are offered: search's says today's date and to search for anything recent.
+- A program that fails is started again by a later chat, after a minute, as today.
+- The tab's "Try" sends one call with the arguments typed and shows the result. The page's test search becomes this.
+
+**Notifiers.** A notifier plugin's program reads one JSON line per event on stdin:
+- events: `{"event": "<name>", "subject": "...", "body": "...", "server": "<this PC's name>", "time": "<RFC 3339>"}`,
+  for the alert events of today (`server_started`, `download_finished`, `download_failed`, `calibration_finished`,
+  `calibration_failed`, `engine_stopped`);
+- the tab's "Send a test": `{"test": true, "server": "..."}`, answered by one line on stdout, `{"ok": bool, "reply":
+  "<text>"}`, within 60 seconds;
+- the host starts each notifier plugin that is on when the server starts, and starts one that ended again after a minute;
+- events wait in a queue of at most 16, and an event raised while the program is down is dropped and logged;
+- a notifier with an `events` setting (a text list of event names) gets only those; one without gets all.
+
+**Search, made a tool plugin.**
+- `plugins/search/`: `plugin.json` and `strata-search(.exe)`.
+- Settings: `url` (url, required), `results` (1-10, default 5), `timeout_s` (5-120, default 30).
+- Arguments: `--url {url} --results {results} --timeout {timeout_s}`. Network: "the SearXNG instance at {url}".
+- `make --with search` builds it there and records it in `build.json`.
+- Search is no longer a build option (`SECURE_FRONTEND_WEB_SEARCH` goes): every server has the tool host. Settings'
+  Web search section moves into the Plugins tab.
+
+**Email, made a notifier plugin.**
+- `strata-email(.exe)` is the SMTP client over TLS (Schannel on Windows, OpenSSL elsewhere), the per-kind limit and the
+  test, moved out of the server: the server holds no SMTP client any more (`SECURE_FRONTEND_EMAIL_ALERTS` goes).
+- Settings: `host`, `port` (default 465), `security` (`ssl` or `starttls`), `username`, `from`, `to` (1-5 addresses),
+  `events`, and `password` (a secret, given to the program as `SMTP_PASSWORD`).
+- Network: "the mail server {host}:{port}".
+- The page's IONOS fill-in becomes the manifest's `presets` (a label and values the tab fills in).
+
+**Moving the old rows.** At the first start after the change:
+- `search.url`, `.results` and `.timeout_s` become `plugins.search.*`, `search.max_rounds` becomes `tools.max_rounds`,
+  and `search.enabled` becomes the search plugin's on or off;
+- `alerts.email.*` becomes `plugins.email.*`, `alerts.email.enabled` the email plugin's on or off, and `smtp-password`
+  in `roots.secret` becomes `plugin-email-password`;
+- `config.json` is rewritten owner-only with the rows moved, and the server says so once in its log. `--check` names the
+  rows it would move and writes nothing.
+
+**Third-party tools and notifiers** run like these two once approved. The approval question says that the code runs on
+this PC with the server's rights, and what network it says it uses.
+
 ## Proof (decision 3)
 
 - **(a) Recommended: re-package flint as a plugin.** flint is the smallest family: GGUF in, no pack, the strata_0143
@@ -326,10 +417,13 @@ Either way, the tests are:
 4. **Downloads.** Plugin entries in Download models, `prepare: plugin`, and the MTP and picture files.
 5. **Trust and the Plugins tab.** Discovery of every kind, approval and pinning, first-party trust through the build
    record, the Plugins tab and the TUI's view, and the threat model.
-5b. **Feature plugins.**
-   - The plugin host for `tool` and `notifier` children, and plugin settings and secrets.
-   - Then debugging as a diagnostics plugin, search as a tool plugin, and email as a notifier plugin, one commit each.
-   - make and the installers build them as plugins.
+5b. **Feature plugins** (section 10).
+   - Done: debugging as a diagnostics plugin (b7892340), the TUI's Plugins view (c64018f8).
+   - Plugin settings and secrets.
+   - The tool host, and search as a tool plugin, its rows moved.
+   - The notifier host, and email as a notifier plugin (strata-email), its rows moved.
+   - make and the installers build them as plugins; third-party tools and notifiers run once approved.
+5c. **Key-signed trust** (decision 8): after 5b.
 6. **The SDK and the guide.**
    - `strata_family_runtime` and the skeleton family.
    - `make.py --sdk` / `--plugin`.
@@ -345,6 +439,16 @@ Either way, the tests are:
 4. First-party plugins: **trusted through the build record** ("Trusted by build"). Third-party ones need approval.
 5. Order: **the platform and the Plugins tab first** ("Platform + tab first"), proven with debugging as a manifest-only
    plugin; then search and email; then the engine-family phases, ending with flint.
+
+6. Settings: **moved into the plugins** ("Move to plugins.<id>.*"): each manifest declares them, the Plugins tab
+   draws them, and `config.json` keeps them as `plugins.<id>.*`; the old rows are moved once (section 10).
+7. Third-party tool and notifier plugins: **run in this step** ("Now"), once approved.
+8. Trust by key (the owner's proposal, then "let's do that and implement it after you finish the current task"): the
+   install makes a key pair; make signs the plugins it builds (a signature over the manifest and each file's SHA-256);
+   the server trusts plugins signed by a key it lists (the install's own, and any publisher the owner adds); later
+   plugins are signed with the private key, which stays out of the install and the data folder (DPAPI or 0600,
+   optionally a passphrase). Ed25519 through Monocypher (vendored, recorded in PROVENANCE). Unsigned plugins keep
+   approval with SHA-256 pinning. Built after 5b.
 
 **One folder for every kind** (2026-10-30, with decisions 4 and 5). Every plugin is `<install>/plugins/<id>/` with
 `plugin.json` (schema `m-strata.plugin/1`, its `kind` one of engine, tool, notifier, diagnostics). An engine plugin's

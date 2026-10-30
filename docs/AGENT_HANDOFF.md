@@ -280,6 +280,23 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z52 (Windows box; owner-directed)
+
+Design only: search and email as plugins (the owner: "Search and email next"). The plugin design spec
+(`docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md`) gains section 10 and decisions 6-8:
+- **Decisions** (the owner, 2026-10-30): settings move into the plugins (`plugins.<id>.*`, the old `search.*` and
+  `alerts.email.*` rows moved once); third-party tool and notifier plugins run in this step once approved; then
+  key-signed trust (the install's key pair, make signs, Ed25519 through a vendored Monocypher), after this step.
+- **Section 10** is the contract: manifest-declared settings (kinds, bounds, secrets in `roots.secret` as
+  `plugin-<id>-<name>`), the settings routes, how a program runs (`program`, templated `arguments` and `environment`,
+  `network` in words), the tool hub (MCP over stdio, several plugins' tools in one chat, `tools.max_rounds`, a `note`),
+  the notifier protocol (one JSON line per event, a test answered by one line), search and email made from today's
+  code (`SECURE_FRONTEND_WEB_SEARCH` and `SECURE_FRONTEND_EMAIL_ALERTS` go; `strata-email` holds the SMTP client), and
+  the one-time move of the old rows.
+- **Phases**: 5b lists the remaining commits (settings and secrets; tool host and search; notifier host and email);
+  5c is key-signed trust.
+- **Not built yet.** Nothing in the code changed.
+
 ### Claude Code session, 2026-10-30 z51 (Windows box; owner-directed)
 
 The plugin platform, step 4: the TUI's Plugins view (the owner: "TUI Plugins view next"; spec section 8, "The same in
