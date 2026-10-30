@@ -280,6 +280,25 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z40 (Windows box; owner-directed)
+
+The owner: "add some screenshots on the readme for the system tray version and tui". Five PNGs in `docs/images/`,
+shown in README.md's "The window" and "The terminal" sections:
+- `strata-window`: the chat, the Monitor, and the tray menu with "Stop" for the running model.
+- `strata-tui`: the Monitor while it answers, and the Models view.
+
+How they were taken:
+- **Build and model:** release x26 (3cb32db7, with the z39 tray fix), Gemma 4 26B-A4B Q8_0 on the RTX 4080 SUPER,
+  a real answer each time (78 tok/s in the chat, 86 tok/s on the TUI's Monitor).
+- **Data:** a demo data folder inside the x25 release folder (owner-only, as a data folder must be), port 18091, the
+  development key.
+- **Window:** captured with PrintWindow; its page was driven over the WebView2 DevTools port. The tray menu was opened
+  by a posted message and only its rectangle was copied.
+- **TUI:** its console shown without activation, with Cascadia Mono, in colour. The session's shell sets `NO_COLOR`,
+  which the TUI honours: unset it for a colour picture.
+- **What is in them:** no keys, login links, user-profile paths or LAN addresses. The page's one-time "Your API key"
+  dialog (a new WebView profile) was dismissed before the chat shot.
+
 ### Claude Code session, 2026-10-29 z39 (Windows box; found while taking the README's screenshots, owner-requested)
 
 The owner: "add some screenshots on the readme for the system tray version and tui". The first tray menu captured
