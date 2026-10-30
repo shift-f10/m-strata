@@ -280,6 +280,31 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z61 (Windows box; owner-directed)
+
+Phase 2's first step, its second half (the owner: "Yes, go on"): the cards' and options' knobs move onto the family
+descriptors.
+- **`model_option_spec.hpp`**: `ModelOptionKind` and `ModelOptionSpec` moved there unchanged (plain data), so a
+  descriptor can hold a family's option table under the config layer; `model_options.hpp` includes it.
+- **The option tables** (the spec builders, choice and value lists, the seven tables and their owned-flag lists) moved
+  from model_options.cpp into family_descriptor.cpp, beside the descriptors that list them - the built-in families'
+  data in one place, as a plugin's manifest will hold its own. The engine's kv-resident floor stayed in model_options.
+- **New descriptor fields**: `options`, `option_controlled_flags`, `sampling` (`RecommendedSampling`), `kv_flag`,
+  `yarn_trained_context` (qwen 262144), `thinking_write` (`ThinkingWrite`: verbatim, on/off, verbatim with "auto"
+  unset), `mtp_off` (`MtpOff`: engine row, or drop the card's --mtp), `spec_min_p_places` (gemma4 3), `draft_layer`
+  (`DraftLayerKind`: none, in the model, a file), `draft_spec`/`draft_spec_min_p`, `maya_pack_model_file`.
+- **Read from them**: model_options (the table, the recommended sampling, every family's option names, the owned
+  flags, option_flags, and write_option's typed rows, YaRN, kv flag, mtp, spec_min_p rounding, thinking and GPU row),
+  card_builder (the draft-layer slot, a draft layer's defaults, the model file through a pack). The card templates
+  (card_for_gguf, card_for_pack) stay code, keyed by GGUF architecture or pack family.
+- **Proof**: three new descriptor cases pin every family's options (count, first and last, owned flags), how they are
+  written and the recommended sampling, and the card fields - RED against the fields' neutral defaults (33 failures),
+  then GREEN once the test's own guess was corrected (each table ends with gpus, not answer_minutes); every existing
+  suite unchanged. MSVC: the whole tree built, no warnings; 1478/1480 (the two release-only cases). Linux gcc 13.3 and
+  clang 18.1: both trees built, no warnings; 1528/1531 each - the two release-only cases and the connection-scan case,
+  which passed alone.
+- **Next**: plugin descriptors from a manifest's engine block (phase 2's second step).
+
 ### Claude Code session, 2026-10-30 z60 (Windows box; owner-directed)
 
 The engine-family phases begin (decision 5's order; the owner's "continue"): phase 2's first step, the built-in

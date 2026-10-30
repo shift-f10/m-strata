@@ -7,7 +7,9 @@
 // A plugin's descriptor will come from its manifest (phase 2's next step).
 
 #include "secure_frontend/engine_family_kinds.hpp"
+#include "secure_frontend/model_option_spec.hpp"
 
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -18,6 +20,26 @@ namespace secure_frontend {
 // Where a launch's tokenizer comes from: the tokenizer pack; the GGUF itself; the GGUF for a card's launch, the pack
 // otherwise (qwen: the operator's single-model --expert keeps its pack).
 enum class TokenizerSource { pack, gguf, gguf_for_cards };
+
+// How the card's thinking option becomes reasoning.effort: its value as it is; on/off as high/none (gemma4, flint);
+// its value as it is, but "auto" names no level (minimax: MiniMax's adaptive default).
+enum class ThinkingWrite { verbatim, on_off, verbatim_auto_unset };
+
+// What the card's mtp option off does: engine.mtp false, so the launch strips the draft-layer flags (qwen); the card's
+// --mtp <file> taken out of the start's arguments (gemma4: its engine has no engine.mtp row).
+enum class MtpOff { engine_row, drop_card_flag };
+
+// Where a card's draft layer (MTP) is: none; in the model - inside its GGUF (no --pack), or its pack's folder (qwen); a
+// file of its own (gemma4's drafter).
+enum class DraftLayerKind { none, in_model, file };
+
+// A family's recommended sampling (model_options.hpp, recommended_sampling: upstream's MODEL_CARD_SAMPLING and the cards).
+struct RecommendedSampling final {
+  double temperature{1.0};
+  double top_p{0.95};
+  std::optional<std::int64_t> top_k{};
+  std::optional<double> min_p{};
+};
 
 struct FamilyDescriptor final {
   EngineProfile profile{EngineProfile::qwen};
@@ -50,6 +72,21 @@ struct FamilyDescriptor final {
   double sweep_keep_margin{0.03};         // a candidate is kept only this much (a fraction) faster than the best
   bool calibrates_before_first_start{false};
   bool prefill_calibration{false};        // a prefill run at the first start, kept in the card's calibration
+  // its card's options, in the page's order, the engine flags they own (a card's engine.args may not fix one), and how
+  // they are written
+  std::span<const ModelOptionSpec> options{};
+  std::span<const std::string_view> option_controlled_flags{};
+  RecommendedSampling sampling{};
+  std::string_view kv_flag{"--kv"};
+  std::optional<std::int64_t> yarn_trained_context{};  // past it, max_context adds YaRN (--rope-scaling yarn --rope-scale)
+  ThinkingWrite thinking_write{ThinkingWrite::verbatim};
+  MtpOff mtp_off{MtpOff::engine_row};
+  std::optional<int> spec_min_p_places{};  // spec_min_p rounded to this many places (its engine's allowlist takes no more)
+  // its cards
+  DraftLayerKind draft_layer{DraftLayerKind::none};
+  std::optional<std::int64_t> draft_spec{};  // a draft layer added to a card brings these defaults with it
+  double draft_spec_min_p{0.5};
+  bool maya_pack_model_file{false};  // its model file is found through the pack beside it (native_experts.txt, sources.json)
 };
 
 // Every family, in EngineProfile's order.

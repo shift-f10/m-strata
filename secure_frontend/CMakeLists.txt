@@ -1129,7 +1129,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_family_descriptor_tests tests/family_descriptor_test.cpp secure_frontend_families)
     secure_frontend_add_cases(secure_frontend_family_descriptor_tests
         every_family_has_one_descriptor_in_order each_family_talks_to_its_engine each_family_takes_its_config_rows
-        each_family_launches_as_before each_family_calibrates_as_before)
+        each_family_launches_as_before each_family_calibrates_as_before each_family_lists_its_options
+        each_family_writes_its_options each_family_makes_its_cards)
 
     secure_frontend_add_test_executable(secure_frontend_config_tests tests/config_test.cpp secure_frontend_config)
     secure_frontend_add_cases(secure_frontend_config_tests

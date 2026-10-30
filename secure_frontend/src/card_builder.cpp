@@ -1,5 +1,6 @@
 #include "secure_frontend/card_builder.hpp"
 
+#include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/canonical_path.hpp"
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/local_folders.hpp"
@@ -374,12 +375,13 @@ std::optional<DraftLayerSlot> draft_layer_slot(const ModelCard& card) {
   const bool switch_listed = std::any_of(card.options.begin(), card.options.end(), [](const ModelOptionLimits& limit) {
     return limit.spec != nullptr && limit.spec->name == "mtp";
   });
-  if (card.profile == EngineProfile::qwen && !has("--pack") && switch_listed) {
+  const auto draft_layer = family_descriptor(card.profile).draft_layer;
+  if (draft_layer == DraftLayerKind::in_model && !has("--pack") && switch_listed) {
     return DraftLayerSlot{.folder = false, .path = std::nullopt, .inside = true, .in_file = has("--mtp")};
   }
   // a Qwen3.8 pack's card runs --pack
-  if (!(card.profile == EngineProfile::qwen && has("--pack")) && card.profile != EngineProfile::gemma4) return std::nullopt;
-  DraftLayerSlot slot{.folder = card.profile == EngineProfile::qwen, .path = std::nullopt};
+  if (!(draft_layer == DraftLayerKind::in_model && has("--pack")) && draft_layer != DraftLayerKind::file) return std::nullopt;
+  DraftLayerSlot slot{.folder = draft_layer == DraftLayerKind::in_model, .path = std::nullopt};
   if (args != nullptr) {
     const auto mtp = std::find(args->begin(), args->end(), "--mtp");
     if (mtp != args->end() && mtp + 1 != args->end()) slot.path = *(mtp + 1);
@@ -434,8 +436,9 @@ std::variant<std::string, CardError> card_with_draft_layer(const std::string_vie
     options = with_member(options, key, JsonValue::make_object({JsonMember{"default", std::move(value)}}));
   };
   with_default("mtp", JsonValue::make_boolean(true), true);
-  if (profile == EngineProfile::gemma4) with_default("spec", JsonValue::make_integer(4), false);
-  with_default("spec_min_p", JsonValue::make_decimal(profile == EngineProfile::gemma4 ? 0.6 : 0.5), false);
+  const auto& family = family_descriptor(profile);
+  if (family.draft_spec) with_default("spec", JsonValue::make_integer(*family.draft_spec), false);
+  with_default("spec_min_p", JsonValue::make_decimal(family.draft_spec_min_p), false);
   return python_json_text(with_member(out, "options", std::move(options))) + "\n";
 }
 
@@ -509,9 +512,7 @@ std::optional<std::filesystem::path> card_model_file(const ModelCard& card) {
   const auto* model = row("engine.model_id");
   if (folder == nullptr || model == nullptr || folder->empty() || model->empty()) return std::nullopt;
   const auto models = path_from_utf8(*folder);
-  const bool maya_pack = card.profile == EngineProfile::glm53 || card.profile == EngineProfile::raon1 ||
-                         card.profile == EngineProfile::deepseek || card.profile == EngineProfile::minimax;
-  if (!maya_pack) return models / path_from_utf8(*model + ".gguf");
+  if (!family_descriptor(card.profile).maya_pack_model_file) return models / path_from_utf8(*model + ".gguf");
   // a model file's name beside the pack: a GGUF, a whole model or a split model's first shard, never a path
   const auto usable = [](const std::string& name) {
     constexpr std::string_view kIndexers = "-maya-indexers.gguf";

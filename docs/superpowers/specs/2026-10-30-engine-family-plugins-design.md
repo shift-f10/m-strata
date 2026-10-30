@@ -464,9 +464,9 @@ Either way, the tests are:
      what a descriptor holds, so it follows phase 2's first step.
    - The fake plugin and its tests.
 2. **The descriptors.**
-   - `FamilyDescriptor` for the built-ins, with no behaviour change (every existing suite stays green). Begun: the
-     engine each family talks to, its config rows, launching and calibration (`family_descriptor.hpp`); the cards' and
-     options' knobs next.
+   - `FamilyDescriptor` for the built-ins, with no behaviour change (every existing suite stays green). Done: the
+     engine each family talks to, its config rows, launching and calibration (`family_descriptor.hpp`), then its card
+     options (the tables moved beside the descriptors), how they are written, and its cards' draft layer.
    - Then manifest-driven descriptors for plugins: cards, options, arguments, calibration, Monitor, capabilities.
 3. **Prompt format.** The declarative template renderer, if decision 1 is (a), with its refusal tests.
 4. **Downloads.** Plugin entries in Download models, `prepare: plugin`, and the MTP and picture files.

@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 int failures = 0;
@@ -20,6 +21,7 @@ void expect(const bool condition, const std::string& message) {
   }
 }
 
+using secure_frontend::DraftLayerKind;
 using secure_frontend::EngineArgumentsProfile;
 using secure_frontend::EngineFamily;
 using secure_frontend::EngineProfile;
@@ -27,7 +29,9 @@ using secure_frontend::EngineProtocolFlavor;
 using secure_frontend::family_descriptor;
 using secure_frontend::family_descriptors;
 using secure_frontend::family_named;
+using secure_frontend::MtpOff;
 using secure_frontend::NativeChatProfile;
+using secure_frontend::ThinkingWrite;
 using secure_frontend::TokenizerMode;
 using secure_frontend::TokenizerSource;
 
@@ -146,6 +150,79 @@ void each_family_calibrates_as_before() {
     expect(family.prefill_calibration == (profile == EngineProfile::minimax), id + ": the prefill calibration");
   }
 }
+// Each family's card options: how many, the first and last in the page's order, and the flags they own.
+void each_family_lists_its_options() {
+  struct Row final {
+    EngineProfile profile;
+    std::size_t count;
+    std::string_view first;
+    std::string_view last;
+    std::vector<std::string_view> flags;
+  };
+  const std::array<Row, 7> rows{{
+      {EngineProfile::qwen, 18U, "max_context", "gpus",
+       {"--max-context", "--rope-scaling", "--rope-scale", "--kv", "--kv-resident", "--kv-grow", "--spec", "--spec-min-p", "--expert-cache", "--prefill"}},
+      {EngineProfile::glm53, 10U, "max_context", "gpus", {}},
+      {EngineProfile::gemma4, 14U, "max_context", "gpus", {"--max-context", "--chunk", "--expert-vram", "--spec", "--spec-min-p"}},
+      {EngineProfile::deepseek, 9U, "max_context", "gpus", {"--max-context"}},
+      {EngineProfile::raon1, 10U, "max_context", "gpus", {}},
+      {EngineProfile::flint, 11U, "max_context", "gpus", {"--max-context", "--chunk", "--expert-vram"}},
+      {EngineProfile::minimax, 8U, "max_context", "gpus", {"--max-context", "--kv-cache"}},
+  }};
+  for (const auto& row : rows) {
+    const auto& family = family_descriptor(row.profile);
+    const std::string id = id_of(row.profile);
+    expect(family.options.size() == row.count, id + ": its options, " + std::to_string(family.options.size()));
+    if (!family.options.empty()) {
+      expect(family.options.front().name == row.first && family.options.back().name == row.last,
+             id + ": first and last " + std::string{family.options.front().name} + ", " + std::string{family.options.back().name});
+    }
+    expect(std::vector<std::string_view>(family.option_controlled_flags.begin(), family.option_controlled_flags.end()) == row.flags,
+           id + ": the flags its options own");
+  }
+}
+
+// How each family's options are written, and its recommended sampling.
+void each_family_writes_its_options() {
+  for (const auto profile : kProfiles) {
+    const auto& family = family_descriptor(profile);
+    const std::string id = id_of(profile);
+    expect(family.kv_flag == (profile == EngineProfile::minimax ? "--kv-cache" : "--kv"), id + ": its kv flag");
+    expect(family.yarn_trained_context == (profile == EngineProfile::qwen ? std::optional<std::int64_t>{262144} : std::nullopt),
+           id + ": YaRN past its trained context");
+    const auto thinking = profile == EngineProfile::gemma4 || profile == EngineProfile::flint ? ThinkingWrite::on_off
+                          : profile == EngineProfile::minimax                                 ? ThinkingWrite::verbatim_auto_unset
+                                                                                              : ThinkingWrite::verbatim;
+    expect(family.thinking_write == thinking, id + ": how thinking is written");
+    expect(family.mtp_off == (profile == EngineProfile::gemma4 ? MtpOff::drop_card_flag : MtpOff::engine_row), id + ": mtp off");
+    expect(family.spec_min_p_places == (profile == EngineProfile::gemma4 ? std::optional<int>{3} : std::nullopt), id + ": spec_min_p's places");
+    const auto& sampling = family.sampling;
+    const bool top_k_20 = profile == EngineProfile::qwen || profile == EngineProfile::flint || profile == EngineProfile::raon1;
+    expect(sampling.temperature == 1.0 && sampling.top_p == (profile == EngineProfile::deepseek ? 1.0 : 0.95), id + ": temperature, top-p");
+    expect(sampling.top_k == (top_k_20 ? std::optional<std::int64_t>{20}
+                              : profile == EngineProfile::gemma4 ? std::optional<std::int64_t>{64}
+                                                                 : std::nullopt),
+           id + ": top-k");
+    expect(sampling.min_p == (profile == EngineProfile::gemma4 ? std::optional<double>{0.05} : std::nullopt), id + ": min-p");
+  }
+}
+
+// Each family's cards: the draft layer and what adding one brings, and whether the model file is found through a pack.
+void each_family_makes_its_cards() {
+  for (const auto profile : kProfiles) {
+    const auto& family = family_descriptor(profile);
+    const std::string id = id_of(profile);
+    const auto draft = profile == EngineProfile::qwen     ? DraftLayerKind::in_model
+                       : profile == EngineProfile::gemma4 ? DraftLayerKind::file
+                                                          : DraftLayerKind::none;
+    expect(family.draft_layer == draft, id + ": its draft layer");
+    expect(family.draft_spec == (profile == EngineProfile::gemma4 ? std::optional<std::int64_t>{4} : std::nullopt), id + ": a draft's spec");
+    expect(family.draft_spec_min_p == (profile == EngineProfile::gemma4 ? 0.6 : 0.5), id + ": a draft's spec_min_p");
+    const bool maya_pack = profile == EngineProfile::glm53 || profile == EngineProfile::raon1 || profile == EngineProfile::deepseek ||
+                           profile == EngineProfile::minimax;
+    expect(family.maya_pack_model_file == maya_pack, id + ": its model file through the pack");
+  }
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -155,5 +232,8 @@ int main(int argc, char** argv) {
       {"each_family_takes_its_config_rows", each_family_takes_its_config_rows},
       {"each_family_launches_as_before", each_family_launches_as_before},
       {"each_family_calibrates_as_before", each_family_calibrates_as_before},
+      {"each_family_lists_its_options", each_family_lists_its_options},
+      {"each_family_writes_its_options", each_family_writes_its_options},
+      {"each_family_makes_its_cards", each_family_makes_its_cards},
   }, failures);
 }
