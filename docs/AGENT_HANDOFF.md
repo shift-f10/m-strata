@@ -280,6 +280,43 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z43 (second Windows PC, RTX 5090; owner-directed)
+
+The owner, on a second PC: "pull the latest from origin, then work on the compatibility table of the readme for this
+PC". `main` fast-forwarded to `2a658cb`. This PC: Windows 11 Pro build 26300, AMD Ryzen 9 9950X (16 cores / 32
+threads), NVIDIA GeForce RTX 5090 (32 GB, compute capability 12.0, driver 616.64, PCIe gen 5 x16), 48 GB DDR5. The
+Compatibility table gains a row for each family run on it. The figures come from the server log and calibration
+files of the owner's 2026-10-29 session there; nothing was run again in this session.
+
+- **Qwen3.8-Flash-Next (Swift IQ3_XXS), Pass:**
+  - Speed: calibration 174.85 tok/s at the engine's defaults (21 trials, MTP draft layer on). Chats ran at 168.4
+    tok/s (20,608 tokens), 122.1 (1,372 tokens after a 7,478-token prompt read at 2,818 tok/s) and 132.0 (45,363
+    tokens).
+  - RAM: the 39.97 GiB expert arena was 0.7-1.2 GiB short of free RAM at every start. `cudaHostRegister` of the whole
+    arena failed (out of memory); 35 slices were pinned (27 GiB) and 12.2 GiB locked by `VirtualLock`; large pages
+    were refused (error 1314). The conversation cache and the CPU prefill share stayed off for lack of free RAM.
+  - VRAM: with everything loaded the automatic expert cache left 0-660 MiB of VRAM free, and requests warned below
+    1024 MiB. The chats' speeds show no paging.
+- **Qwen3.6-35B-A3B (Q8_0), Pass:**
+  - Speed: calibration 88.13 tok/s at the engine's defaults. Chats at temperature 1 ran at 65.2 tok/s (294 tokens)
+    and 45.9 (10,800 tokens).
+  - Placement: 68 of 256 experts per layer in VRAM (8.68 GiB), all 32.67 GiB in pageable host memory.
+  - Open question: those two chats report "drafts accepted 0 of 0" with `mtp=true`, while the calibration's runs
+    drafted (309 of 408). Not looked into.
+- **Not explained:** the first calibration of the Qwen3.8 card ended before ready (`error_exit`, exit code 1). The
+  engine's output was not logged yet, so its cause is not known. Every later start worked: 21 trials and the card's
+  start, after a server restart with `logging.engine_output` on. That session's build predates z42's calibration
+  report.
+- **README:**
+  - The intro now says the GPU numbers come from the development system except the second PC's Compatibility rows.
+  - The Compatibility intro names both PCs.
+  - "Other NVIDIA generations" now says Blackwell has run on the RTX 5090 (two Qwen families) and moves the RAM floor
+    to 48 GB.
+- **Not run on this PC:** GLM-5.3, DeepSeek-V4.1, MiniMax-M3.1, Raon-1-mini, Gemma 4 and flint. None of their
+  models is in its model folders. Its current build (`out/make-build`, `--cuda-arch auto` = `120-real`, made before
+  this pull) also has no Maya, Raon-1-mini or vision engines. Not checked here: Qwen3.8's other quants on this PC
+  (IQ3_S, Swift IQ3_S, UD-IQ4_XS) and pictures.
+
 ### Claude Code session, 2026-10-30 z42 (Windows box; owner-directed)
 
 The owner: "When calibrating a model and an error occurs, it should create a detailed message of the errors

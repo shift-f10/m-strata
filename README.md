@@ -7,7 +7,8 @@ described by Strata (Niko1221). It is built from Strata's and Project Maya's sou
 kernels, extended for the model families below. Nothing here is released yet.
 
 The project's live status is [`docs/AGENT_HANDOFF.md`](docs/AGENT_HANDOFF.md) (newest change first); this page
-summarizes it as of 2026-10-28. All GPU numbers are from the development system below.
+summarizes it as of 2026-10-28. All GPU numbers are from the development system below, except the
+[Compatibility](#compatibility) rows of a second PC.
 
 - [Features](#features)
 - [What is in the repository](#what-is-in-the-repository)
@@ -227,10 +228,11 @@ slowly, when the drive is fast NVMe.
 ## Compatibility
 
 What has been run, on which PC (status 2026-10-30). Each row is one PC and one model family: **Pass** when it
-loads, answers and its checks hold, **Fail** when it does not. So far every row is the development system above;
-the CUDA engines have not been run on Linux, on another GPU or with less memory yet (see
-[What this system could not test](#what-this-system-could-not-test)). Results from other PCs are welcome: a
-calibration with an error writes a report with the hardware lines this table needs.
+loads, answers and its checks hold, **Fail** when it does not. Two PCs so far: the development system above, and a
+second Windows desktop with an RTX 5090 (Blackwell) and 48 GB of RAM, which has run the two Qwen families. The CUDA
+engines have not been run on Linux yet (see [What this system could not test](#what-this-system-could-not-test)).
+Results from other PCs are welcome: a calibration with an error writes a report with the hardware lines this table
+needs.
 
 | OS | CPU | GPU Type | VRAM | RAM | Model Family | Pass | Fail | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -242,6 +244,8 @@ calibration with an error writes a report with the hardware lines this table nee
 | Windows 11 Pro (build 26200) | AMD Ryzen 9 3900X, 12 cores / 24 threads | NVIDIA RTX 4080 SUPER (Ada, 8.9) | 16 GB | 96 GB | Raon-1-mini (Q8_0) | ✅ | | Verified against KRAFTON's llama.cpp (mean KL 0.0009); 74 tok/s short, 52 tok/s at 9K context. |
 | Windows 11 Pro (build 26200) | AMD Ryzen 9 3900X, 12 cores / 24 threads | NVIDIA RTX 4080 SUPER (Ada, 8.9) | 16 GB | 96 GB | Gemma 4 26B-A4B (UD-Q8_K_XL) | ✅ | | 73-78 tok/s after calibration (2026-10-29); KL 0.040 against llama.cpp. |
 | Windows 11 Pro (build 26200) | AMD Ryzen 9 3900X, 12 cores / 24 threads | NVIDIA RTX 4080 SUPER (Ada, 8.9) | 16 GB | 96 GB | flint (Q8_0) | ✅ | | 49-53 tok/s; checked against llama.cpp's flint. |
+| Windows 11 Pro (build 26300) | AMD Ryzen 9 9950X, 16 cores / 32 threads | NVIDIA RTX 5090 (Blackwell, 12.0) | 32 GB | 48 GB | Qwen3.8-Flash-Next (Swift IQ3_XXS) | ✅ | | 175 tok/s at calibration with its MTP draft layer; 122-168 tok/s in chats (a 45K-token answer at 132), a 7.5K-token prompt read at 2,800 tok/s. Its 40 GB expert arena is about 1 GB more than the free RAM: 27 GB of it is pinned, the rest pageable (2026-10-29). |
+| Windows 11 Pro (build 26300) | AMD Ryzen 9 9950X, 16 cores / 32 threads | NVIDIA RTX 5090 (Blackwell, 12.0) | 32 GB | 48 GB | Qwen3.6-35B-A3B (Q8_0) | ✅ | | 88 tok/s at calibration; 46-65 tok/s in chats (a 10,800-token answer at 46). 68 of its 256 experts per layer in VRAM, the rest in RAM (2026-10-29). |
 
 ## What this system could not test
 
@@ -254,7 +258,7 @@ by the server's tests (with fake engines where a GPU would be needed), but have 
 | **Pictures (vision)** | Checked on Qwen3.8-Flash-Next IQ3_S with its encoder on the GPU (a red square and a blue circle, named and placed correctly, about 4 s). Not yet run: Qwen3.6, the encoder on the CPU, several pictures in one question, and pictures through the page's attach button (the check used the API). |
 | **DeepSeek-V4.1 and MiniMax-M3.1** | Run here once each (Maya-XS and Maya-S, 2026-10-29), at Maya's own engine's speed. Their GGUFs are large (DeepSeek's 277-508 GB, MiniMax's from 93 GB): with 96 GB of RAM most of their experts come from disk, so these runs show that they work, not how fast they can be on a PC with more RAM. |
 | **Other GPU makers** | Only NVIDIA CUDA builds are made and run. Upstream's AMD (HIP) and Intel (SYCL) paths are in the tree but neither built nor tested here. |
-| **Other NVIDIA generations** | Every speed and every run is from one RTX 4080 SUPER (compute capability 8.9). Every engine compiles for Turing, Ampere, Ada, Hopper and Blackwell (`--cuda-arch compatible`, built here 2026-10-29), but no other generation has been run here; nor have GPUs with less than 16 GB, or PCs with less than 96 GB of RAM. |
+| **Other NVIDIA generations** | Every speed in the Models table is from one RTX 4080 SUPER (compute capability 8.9). Every engine compiles for Turing, Ampere, Ada, Hopper and Blackwell (`--cuda-arch compatible`, built here 2026-10-29). Blackwell has run on a second PC, an RTX 5090 (12.0) with 48 GB of RAM, but only the two Qwen families (see [Compatibility](#compatibility)). No other generation has been run, nor GPUs with less than 16 GB, or PCs with less than 48 GB of RAM. |
 | **Linux** | Every change is written for Linux and Windows. Since 2026-10-28 the frontend is built and tested here on Linux too: GCC 13.3 and Clang 18.1 (CI's compilers) in a WSL 2 Ubuntu 24.04, with the whole test suite (1401 of 1402 pass with GCC on 2026-10-28, the one left only when run in parallel; tests that need a second user, real model packs or SearXNG skip). The CUDA engines have not been built or run on Linux here, so neither have the models. |
 | **The window app on Linux** | `strata-window`'s Linux window (GTK 3, WebKitGTK 4.1, Ayatana AppIndicator) was built and run in that WSL Ubuntu under WSLg, Windows 11's display for Linux apps. Checked there: the page signed in on the Monitor, closing to the tray, one window per data folder, an orderly stop, and the tray menu (start, stop, open, exit) driven over D-Bus. Not checked: a real Linux desktop, the tray icon itself (WSLg has no tray to show it in) and its notifications. |
 | **The terminal app** | `strata-tui` was run here in a real Windows console and, on Linux, under tmux with GCC's build: every view, editing and saving, resizes, quitting, and a terminal hangup (the server and its model stop in order). It runs with the test suite's fake engine, not a real model, and has not been tried over a real SSH connection or in other terminal programs. |
