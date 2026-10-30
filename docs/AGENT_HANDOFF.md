@@ -280,6 +280,34 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z37 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner: "clicking calibrate does not stop the current running model and empty the vram before running the
+calibration". Checked on a scratch server (port 18090, the fake engine started 2.5 s slow, two Gemma 4 cards), with
+every engine process logged every 100 ms. Three paths: calibrate card B while A runs, calibrate A itself, and
+calibrate-then-start B while A runs.
+
+- **The stop is there.** On each path A's engine had ended by the first sample after the request. The log has
+  "stopped A" before "calibration trial 1". Never more than one engine ran at once, and the model list showed A
+  stopped from the first sample. `retire_running` waits for the engine to exit (`stop_engine`).
+- **Memory comes back at the exit.** A probe on this PC (RTX 4080 SUPER, driver 610.88) held 12 GiB of VRAM and
+  16 GiB of pinned RAM. Both were free by the time its process had ended: nvidia-smi read 925 MiB at the next 50 ms
+  sample, and RAM was back at once. The exit itself took 1.15 s, and the server waits for it. So each trial starts at
+  once on memory already free. The 5090's "the expert arena needs 39.97 GiB of RAM but 38.79 GiB is available" fits
+  its 48 GB of RAM, not an engine still exiting.
+- **What was wrong is what the Monitor said.** For the whole calibration it reported an engine "starting" with no
+  model, while each trial's engine filled the GPU again. That reads as the old model never left. Now `/metrics` says
+  `calibrating` with the card being calibrated (`ModelLauncher::metrics_json`; `live.state` `calibrating` in
+  `ServeMonitor`), and the Monitor tab shows a Calibrating badge, "Calibrating <card>" and "each trial starts the
+  model, so the GPU memory in use is the calibration's". `/health` is unchanged (still `starting`).
+- **Proof**:
+  - RED first: `the_monitor_names_a_calibration_while_it_runs` (launcher; the calibration fixture now reports to a
+    `ServeMonitor`), `monitor_reports_live_states`, and the page checks.
+  - GREEN: the launcher, Monitor and router suites with MSVC (`switch_waits_for_the_generation_then_swaps` failed once
+    under a parallel run, then passed alone four times), Linux gcc 13.3 and clang 18.1 (112/112 each).
+  - Live: `/metrics` during a calibration named the calibrating card, with nothing loaded.
+- **Not verified**: a real engine's calibration (only the fake and the probe), and the owner's 5090.
+
 ### Claude Code session, 2026-10-29 z34 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner: "starting an uncalibrated server recommend calibrating first and when answered yes, it will calibrate.

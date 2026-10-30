@@ -252,6 +252,11 @@ void monitor_reports_live_states() {
   expect(text(at(at(&starting, "live"), "state")) == "starting", "the engine is starting");
   const auto failed = c.json("failed");
   expect(text(at(at(&failed, "live"), "state")) == "error", "the engine failed");
+  // owner 2026-10-29: a calibration's trials, as the launcher reports them (the GPU memory in use is theirs)
+  const auto calibrating = c.json("calibrating");
+  expect(text(at(at(&calibrating, "live"), "state")) == "calibrating" && at(at(&calibrating, "engine"), "loaded") != nullptr &&
+             at(at(&calibrating, "engine"), "loaded")->if_boolean() != nullptr && !*at(at(&calibrating, "engine"), "loaded")->if_boolean(),
+         "a calibration runs, nothing is loaded for requests");
   c.monitor.generation_started(12, 64, 8192);
   const auto reading = c.json("generating", 2);
   const auto* live = at(&reading, "live");
