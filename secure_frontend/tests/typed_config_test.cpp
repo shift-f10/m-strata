@@ -766,7 +766,8 @@ void cfg01_sp3_rows_type_and_range() {
     expect(c.limits.http.header_deadline == std::chrono::milliseconds(10000) && c.limits.http.write_stall == std::chrono::milliseconds(10000) &&
            c.limits.http.response_write_deadline == std::chrono::milliseconds(60000) &&
            c.limits.http.stream_keepalive == std::chrono::milliseconds(15000), "HTTP deadline defaults");
-    expect(c.logging.requests == secure_frontend::debugging_build(), "request logging is off by default (on in a debugging build)");
+    expect(!c.logging.requests.has_value() && !c.logging.logs_requests(),
+           "request logging is unset, so off, by default (on while the Debugging plugin is on)");
     const std::string text = secure_frontend::describe(c);
     for (const auto& row : kSp3RowsA1) expect(text.find(row.path) != std::string::npos, std::string{"--check prints "} + row.path);
   }
@@ -787,19 +788,30 @@ void logging_engine_output_is_off_unless_asked() {
   ConfigFixture f;
   const auto* key = secure_frontend::find_config_key("logging.engine_output");
   expect(key != nullptr && key->type == ConfigValueType::boolean, "the row exists, a boolean");
-  // make --debugging (owner 2026-10-29): a debugging build logs both unless the config turns them off
+  // The Debugging plugin (owner 2026-10-30; it replaced make --debugging): a row the config leaves unset is on while it
+  // is on, which the server sets when it starts; until then, and with the config's own false, off
   const auto defaults = with_literals(f, {});
   const auto* off = std::get_if<secure_frontend::ValidatedConfig>(&defaults);
-  expect(off != nullptr && off->get().logging.engine_output == secure_frontend::debugging_build() &&
-             off->get().logging.requests == secure_frontend::debugging_build(),
-         "off by default, on in a debugging build: " + issues_of(defaults));
+  expect(off != nullptr && !off->get().logging.engine_output.has_value() && !off->get().logging.requests.has_value() &&
+             !off->get().logging.logs_engine_output() && !off->get().logging.logs_requests(),
+         "unset, so off: " + issues_of(defaults));
   const auto refused = with_literals(f, {{"logging.engine_output", "false"}, {"logging.requests", "false"}});
   const auto* turned_off = std::get_if<secure_frontend::ValidatedConfig>(&refused);
-  expect(turned_off != nullptr && !turned_off->get().logging.engine_output && !turned_off->get().logging.requests,
-         "the config turns either off, a debugging build too");
+  secure_frontend::set_debugging_logs({.requests = true, .engine_output = true});
+  expect(off != nullptr && off->get().logging.logs_engine_output() && off->get().logging.logs_requests(),
+         "unset, while the Debugging plugin is on: on");
+  expect(turned_off != nullptr && !turned_off->get().logging.logs_engine_output() && !turned_off->get().logging.logs_requests(),
+         "the config turns either off, while the Debugging plugin is on too");
+  secure_frontend::set_debugging_logs({});
+  expect(off != nullptr && !off->get().logging.logs_engine_output() && !off->get().logging.logs_requests(), "off again");
+  if (off != nullptr) {
+    expect(secure_frontend::describe(off->get()).find("\nlogging.engine_output = (unset)\n") != std::string::npos,
+           "--check prints an unset row as unset");
+  }
   const auto asked = with_literals(f, {{"logging.engine_output", "true"}});
   const auto* on = std::get_if<secure_frontend::ValidatedConfig>(&asked);
-  expect(on != nullptr && on->get().logging.engine_output, "on when asked: " + issues_of(asked));
+  expect(on != nullptr && on->get().logging.engine_output == true && on->get().logging.logs_engine_output(),
+         "on when asked: " + issues_of(asked));
   if (on != nullptr) {
     expect(secure_frontend::describe(on->get()).find("\nlogging.engine_output = true\n") != std::string::npos, "--check prints it");
   }

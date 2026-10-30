@@ -5,6 +5,7 @@ real build is checked by running make.py itself (docs/superpowers/specs/2026-10-
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -291,7 +292,8 @@ def stage(tmp_path: Path, platform: str, extra: tuple[str, ...] = (), skip: tupl
     lib = (lambda n: n + ".dll") if platform == "windows" else (lambda n: "lib" + n + ".so")
     files = [f"strata-unified-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
              f"engine/strata-vision{exe}", "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin",
-             "engine/data/draft_vocab.bin", "engine/build.json", "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + ["engine/profiles/" + p for p in MAYA_PROFILES] + \
+             "engine/data/draft_vocab.bin", "engine/build.json", "README.txt", "config.example.json", "LICENSE", "NOTICE.md",
+             "plugins/debugging/plugin.json"] + ["engine/profiles/" + p for p in MAYA_PROFILES] + \
         list(MINIMAX_FILES)
     files += ["engine/" + lib(n) for n in ("multiengine_strata", "multiengine_gemma4", "multiengine_flint",
                                            "multiengine_raon1", "multiengine_maya", "multiengine_maya_ds4",
@@ -447,21 +449,32 @@ def test_owner_only_commands():
     assert posix == [["chmod", "-R", "go-w", "/opt/secure-strata"]]
 
 
-def test_debugging_is_off_unless_asked_for_and_says_what_it_means(tmp_path, capsys):
+def test_debugging_is_a_plugin_off_unless_asked_for_and_says_what_it_means(tmp_path, capsys):
     """The owner (2026-10-29): "have an option in the installer/builder to have --debugging on so that it is verbose on
     the logs and can pinpoint issues like what's crashing the calibration ... when set on, it will tell the user the
-    implications of having this on and precautions to take"."""
+    implications of having this on and precautions to take"; then (2026-10-30) "we should make the email, websearch,
+    debugging all plugins as well". Every folder has the Debugging plugin (this repository's plugins/debugging), recorded
+    in engine/build.json as a first-party plugin: --debugging ships it on, and the Plugins tab turns it on or off later,
+    with no new build."""
     plain = options()
-    assert not plain.debugging and "-DSECURE_FRONTEND_DEBUGGING=OFF" in make.frontend_configure_args(plain, "windows")
     asked = options("--debugging")
-    assert asked.debugging and "-DSECURE_FRONTEND_DEBUGGING=ON" in make.frontend_configure_args(asked, "linux")
-    # the About tab names it, from the folder's build record
-    assert "debugging" in make.build_record(asked, "windows", tmp_path, commit="c", built="b")["features"]
-    assert "debugging" not in make.build_record(plain, "windows", tmp_path, commit="c", built="b")["features"]
+    assert asked.debugging and not plain.debugging
+    shipped = (ROOT / "plugins" / "debugging" / "plugin.json").read_bytes()
+    for opts in (plain, asked):
+        # no compile-time switch: the server reads the plugin when it starts
+        assert not any("SECURE_FRONTEND_DEBUGGING" in arg for arg in make.frontend_configure_args(opts, "windows"))
+        assert "plugins/debugging/plugin.json" in make.required_files(opts, "linux")
+    folder = tmp_path / "folder"
+    make.stage_plugins(folder)
+    assert (folder / "plugins" / "debugging" / "plugin.json").read_bytes() == shipped, "the shipped manifest, as it is"
+    for opts, on in ((plain, False), (asked, True)):
+        record = make.build_record(opts, "windows", folder, commit="c", built="b")
+        assert record["plugins"] == [{"id": "debugging", "manifest": hashlib.sha256(shipped).hexdigest(), "files": {}, "on": on}]
+        assert "debugging" not in record["features"], "a plugin, not a feature of the build"
     # what it logs, what that can hold, and what to do about it: before the build starts and in the folder's README
     for words in ("one line per request", "the engine's own output", "your prompts", "the paths of your model files",
-                  "keep the server's log private", "before you share it", "without --debugging",
-                  "Settings > Troubleshooting", "only when you accept"):
+                  "keep the server's log private", "before you share it", "the Plugins tab", "Settings > Troubleshooting",
+                  "only when you accept"):
         assert words in make.DEBUGGING_NOTICE, words
     make.announce(asked)
     assert make.DEBUGGING_NOTICE in capsys.readouterr().out
@@ -469,3 +482,4 @@ def test_debugging_is_off_unless_asked_for_and_says_what_it_means(tmp_path, caps
     assert "--debugging" not in capsys.readouterr().out
     assert make.DEBUGGING_NOTICE in make.readme_text(asked, "windows")
     assert "--debugging" not in make.readme_text(plain, "linux")
+    assert "plugins/debugging: the Debugging plugin" in make.readme_text(plain, "linux")

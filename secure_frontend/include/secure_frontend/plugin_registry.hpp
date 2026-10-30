@@ -42,6 +42,9 @@ struct PluginChoices final {
 [[nodiscard]] std::string render_plugin_choices(const PluginChoices& choices);
 // Strict, bounded: nullopt for anything that is not such a file.
 [[nodiscard]] std::optional<PluginChoices> parse_plugin_choices(std::string_view text);
+inline constexpr std::string_view kPluginChoicesFile = "plugins.json";
+// The owner's choices in `state_dir` (no file yet: none); nullopt when the file is there but is not one.
+[[nodiscard]] std::optional<PluginChoices> read_plugin_choices(const std::filesystem::path& state_dir);
 
 // A first-party plugin as `make` recorded it in engine/build.json: what it built, and whether it starts on.
 struct FirstPartyPlugin final {
@@ -66,5 +69,15 @@ struct PluginEntry final {
 [[nodiscard]] std::vector<PluginEntry> discover_plugins(const std::filesystem::path& plugins_dir,
                                                         const std::vector<FirstPartyPlugin>& first_party,
                                                         const PluginChoices& choices);
+
+// What the diagnostics plugins that are on switch on, together (the owner, 2026-10-30: "we should make the email,
+// websearch, debugging all plugins as well"; the Debugging plugin has each switch a make --debugging build had).
+struct Diagnostics final {
+  bool log_requests{false};
+  bool log_engine_output{false};
+  bool troubleshooting{false};
+  [[nodiscard]] bool any() const noexcept { return log_requests || log_engine_output || troubleshooting; }
+};
+[[nodiscard]] Diagnostics diagnostics_on(const std::vector<PluginEntry>& plugins);
 
 }  // namespace secure_frontend

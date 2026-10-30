@@ -22,9 +22,6 @@ option(SECURE_FRONTEND_TEST_HOOKS "Compile test-only hooks; never for shipped bi
 # name. `make --with email` turns it on; the repository's dev presets do.
 option(SECURE_FRONTEND_EMAIL_ALERTS "Build the optional email alerts (an SMTP client over TLS)" OFF)
 option(SECURE_FRONTEND_WEB_SEARCH "Build the optional web search (strata-search: an MCP server over a SearXNG instance)" OFF)
-# make --debugging (owner 2026-10-29): logging.requests and logging.engine_output on unless the config sets them, and a
-# warning at every start. Never for everyday use; the tests run without it.
-option(SECURE_FRONTEND_DEBUGGING "A server that logs verbosely, to find out why a model does not start or calibrate" OFF)
 # strata-window (spec 2026-10-28-server-window-design, Part 2): the server in a window with a tray icon. `make --with
 # window` turns it on; Windows needs the WebView2 SDK (SECURE_FRONTEND_WEBVIEW2_DIR), Linux GTK 3 and WebKitGTK 4.1.
 option(SECURE_FRONTEND_WINDOW "Build strata-window: the server in a window with a tray icon (WebView2 / WebKitGTK)" OFF)
@@ -410,10 +407,6 @@ target_link_libraries(secure_frontend_tokenizer_pack PUBLIC secure_frontend_json
 if(SECURE_FRONTEND_EMAIL_ALERTS)
     # every target that reads the config sees the build's choice (alerts.* rows refused without it)
     target_compile_definitions(secure_frontend_typed_config PUBLIC SECURE_FRONTEND_EMAIL_ALERTS=1)
-endif()
-if(SECURE_FRONTEND_DEBUGGING)
-    # ... and of a debugging build (its logging defaults)
-    target_compile_definitions(secure_frontend_typed_config PUBLIC SECURE_FRONTEND_DEBUGGING=1)
 endif()
 if(SECURE_FRONTEND_WEB_SEARCH)
     # ... and of web search (search.* rows refused without it)
@@ -838,6 +831,10 @@ secure_frontend_add_library(secure_frontend_plugins SOURCES src/plugin_manifest.
 # The Plugins tab's server half (plugin_routes.hpp): the list, an approval, on/off, in <roots.state>/plugins.json.
 secure_frontend_add_library(secure_frontend_plugin_routes SOURCES src/plugin_routes.cpp
     LINKS secure_frontend_plugins secure_frontend_token_store secure_frontend_api_core secure_frontend_paths)
+# An install's plugins as its server finds them when it starts (install_plugins.hpp): make's record beside the engine
+# and the owner's choices; the server, strata-window and strata-tui read them.
+secure_frontend_add_library(secure_frontend_install_plugins SOURCES src/install_plugins.cpp
+    LINKS secure_frontend_plugins secure_frontend_about_info)
 # A calibration's report for a bug report (owner 2026-10-30): its trials, this PC's hardware and the build, as Markdown.
 secure_frontend_add_library(secure_frontend_calibration_report SOURCES src/calibration_report.cpp
     LINKS secure_frontend_about_info secure_frontend_serve_monitor)
@@ -861,7 +858,7 @@ secure_frontend_add_library(secure_frontend_config_routes SOURCES src/config_rou
 # (src/win_child_launch.cpp, in the stdio process library).
 secure_frontend_add_library(secure_frontend_window_shell SOURCES src/window_shell.cpp
     LINKS secure_frontend_first_start secure_frontend_server_cli secure_frontend_model_cards secure_frontend_token_reader
-          secure_frontend_api_client secure_frontend_json secure_frontend_utf8_stream)
+          secure_frontend_api_client secure_frontend_json secure_frontend_utf8_stream secure_frontend_install_plugins)
 if(WIN32)
     target_link_libraries(secure_frontend_window_shell PUBLIC secure_frontend_engine_stdio_process)
 endif()
@@ -882,7 +879,8 @@ secure_frontend_add_library(secure_frontend_server_bootstrap
           secure_frontend_socket_io secure_frontend_api_core secure_frontend_connection_pool
           secure_frontend_chat_route secure_frontend_request_log secure_frontend_launch secure_frontend_model_runtime
           secure_frontend_model_launcher secure_frontend_downloads secure_frontend_first_start secure_frontend_card_routes
-          secure_frontend_about_info secure_frontend_config_routes secure_frontend_plugin_routes)
+          secure_frontend_about_info secure_frontend_config_routes secure_frontend_plugin_routes
+          secure_frontend_install_plugins)
 if(SECURE_FRONTEND_EMAIL_ALERTS)
     target_link_libraries(secure_frontend_server_bootstrap PUBLIC secure_frontend_alert_routes secure_frontend_email_alerts)
 endif()
@@ -1236,6 +1234,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     target_link_libraries(secure_frontend_test_support PUBLIC secure_frontend_tokenizer_pack)
     # SP3 Task 9 (pre-flight P36): §7.2 bodies (api_errors) and the --config file renderer (config_json.hpp).
     target_link_libraries(secure_frontend_test_support PUBLIC secure_frontend_api_core secure_frontend_typed_config)
+    # Plugins (owner 2026-10-30): a first-party plugin's SHA-256 in make's record beside the engine.
+    target_link_libraries(secure_frontend_test_support PUBLIC secure_frontend_sha256)
     # SP5 M1 Task 12: the managed-vision harness branch installs an fx model in-process
     # (publish_staged), so the store/manifest libraries join the support closure.
     target_link_libraries(secure_frontend_test_support PUBLIC secure_frontend_acquire secure_frontend_model_store
@@ -1315,7 +1315,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         dos02_resources_return_to_idle shutdown_errors_never_report_fatal
         dos01_service_healthy_after_each_attack
         ext01_upstream_control_routes_are_404_after_auth ext02_http_headers_cannot_enable_extensions
-        log_line_format_and_rate_limit engine_output_reaches_the_log_only_when_asked network_shares_warn_at_every_start
+        log_line_format_and_rate_limit engine_output_reaches_the_log_only_when_asked the_debugging_plugin_turns_the_logs_on
+        network_shares_warn_at_every_start
         err_no_token_prompt_or_path_in_any_body_or_log
         undecodable_output_logs_its_own_code web_ui_page_is_served_and_the_api_keeps_its_key
         keyless_loopback_server_answers_without_a_key monitor_reports_generations_without_their_text)
@@ -2249,7 +2250,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_config_routes secure_frontend_first_start secure_frontend_http_request_handler)
     secure_frontend_add_cases(secure_frontend_config_routes_tests
         the_settings_are_listed_with_their_rules a_save_is_held_to_the_start_up_rules the_key_is_rotated_in_its_store
-        troubleshooting_is_offered_only_in_a_debugging_build
+        troubleshooting_is_offered_only_while_the_debugging_plugin_is_on
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # strata-window's portable half (spec 2026-10-28-server-window-design, Part 2), the server child driven with a fake
@@ -2264,13 +2265,13 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_tui_tests
         the_screen_draws_text_boxes_and_gauges charts_are_braille_or_blocks only_the_changes_are_written
         keys_decode_from_vt_sequences the_monitor_draws_the_servers_readings the_views_switch_and_keys_become_requests
-        settings_are_edited_then_saved quitting_asks_first downloads_say_what_is_on_this_pc a_debugging_build_waits_for_y
+        settings_are_edited_then_saved quitting_asks_first downloads_say_what_is_on_this_pc the_debugging_notice_waits_for_y
         an_uncalibrated_start_asks_to_calibrate_first)
 
     secure_frontend_add_test_executable(secure_frontend_window_shell_tests tests/window_shell_test.cpp
-        secure_frontend_window_shell secure_frontend_first_start secure_frontend_token_reader)
+        secure_frontend_window_shell secure_frontend_first_start secure_frontend_token_reader secure_frontend_sha256)
     secure_frontend_add_cases(secure_frontend_window_shell_tests
-        the_sign_in_link_is_read_and_never_logged a_debugging_build_says_what_it_logs_before_it_starts
+        the_sign_in_link_is_read_and_never_logged the_debugging_plugin_says_what_it_logs_before_it_starts
         the_listening_line_names_the_pages_origin
         the_window_opens_on_the_monitor_first navigation_stays_on_the_pages_origin the_tray_lists_the_launchers_cards requests_carry_the_key_only_in_its_header
         the_log_rotates_at_its_bound the_log_view_keeps_the_newest_lines_in_its_bound the_log_view_holds_text_a_view_can_show
@@ -2291,12 +2292,15 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
 
     # Plugins (owner 2026-10-30): plugin.json read and checked.
     secure_frontend_add_test_executable(secure_frontend_plugin_manifest_tests tests/plugin_manifest_test.cpp secure_frontend_plugins)
+    # the plugins this repository ships (plugins/<id>/plugin.json; make copies them into every install)
+    target_compile_definitions(secure_frontend_plugin_manifest_tests PRIVATE
+        SECURE_FRONTEND_REPO_PLUGINS="${CMAKE_CURRENT_SOURCE_DIR}/../plugins")
     secure_frontend_add_cases(secure_frontend_plugin_manifest_tests
-        a_diagnostics_manifest_is_read a_code_plugin_names_this_platforms_files a_wrong_manifest_is_refused_by_name
+        the_shipped_debugging_plugin_is_one a_diagnostics_manifest_is_read a_code_plugin_names_this_platforms_files a_wrong_manifest_is_refused_by_name
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_test_executable(secure_frontend_plugin_registry_tests tests/plugin_registry_test.cpp secure_frontend_plugins)
     secure_frontend_add_cases(secure_frontend_plugin_registry_tests
-        a_new_plugin_waits_then_runs_once_approved a_changed_plugin_waits_again a_first_party_plugin_is_trusted_by_its_build_record
+        the_diagnostics_that_are_on_are_combined a_new_plugin_waits_then_runs_once_approved a_changed_plugin_waits_again a_first_party_plugin_is_trusted_by_its_build_record
         refusals_say_why the_choices_round_trip
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # The Plugins tab's routes (owner 2026-10-30): the list, an approval, on/off.

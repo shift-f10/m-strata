@@ -35,6 +35,7 @@
 #include "secure_frontend/engine_supervisor.hpp"
 #include "secure_frontend/frontend_config.hpp"
 #include "secure_frontend/generation_gate.hpp"
+#include "secure_frontend/install_plugins.hpp"
 #include "secure_frontend/host_readings.hpp"
 #include "secure_frontend/http_policy.hpp"
 #include "secure_frontend/http_socket_server.hpp"
@@ -264,16 +265,46 @@ void warn_of_network_shares(const FrontendConfig& config) {
                "off in Settings > Model folders when you do not need it.\n";
 }
 
-void warn_of_engine_output(const FrontendConfig& config) {
-  if (secure_frontend::debugging_build()) {
-    std::cerr << "strata: warning: this is a debugging build (make --debugging): it logs every request and the engine's own "
-                 "output unless the config turns them off. Build again without --debugging for everyday use.\n";
+// What runs is decided when the server starts (owner 2026-10-30; install_plugins.hpp): the install's plugins beside the
+// engine, each with its state, and from here on what the Debugging plugin turns on (the logging rows a config leaves
+// unset).
+secure_frontend::InstallPlugins start_plugins(const FrontendConfig& config) {
+  const auto engine = config.models.default_engine.value_or(config.engine.executable.path());
+  auto plugins = secure_frontend::install_plugins(engine.parent_path(), config.roots.state);
+  const auto on = secure_frontend::diagnostics_on(plugins.entries);
+  secure_frontend::set_debugging_logs({.requests = on.log_requests, .engine_output = on.log_engine_output});
+  return plugins;
+}
+
+// Owner 2026-10-29, then 2026-10-30 as a plugin: while the Debugging plugin is on, every start says what it logs and where
+// to turn it off.
+void warn_of_engine_output(const FrontendConfig& config, const secure_frontend::InstallPlugins& plugins) {
+  const auto on = secure_frontend::diagnostics_on(plugins.entries);
+  if (on.any()) {
+    std::string names;
+    std::size_t count = 0;
+    for (const auto& entry : plugins.entries) {
+      if (entry.state != secure_frontend::PluginState::on || !entry.manifest ||
+          entry.manifest->kind != secure_frontend::PluginKind::diagnostics) {
+        continue;
+      }
+      names += (count++ == 0U ? "" : ", ") + entry.manifest->name;
+    }
+    std::string what = on.log_requests && on.log_engine_output ? "one line per request and the engine's own output"
+                       : on.log_requests                       ? "one line per request"
+                       : on.log_engine_output                  ? "the engine's own output"
+                                                               : std::string{};
+    std::cerr << "strata: warning: the " << names << (count == 1U ? " plugin is on: " : " plugins are on: ")
+              << (what.empty() ? std::string{"it shows Settings > Troubleshooting"}
+                               : "it logs " + what + " unless the config turns " +
+                                     (on.log_requests && on.log_engine_output ? "them" : "it") + " off")
+              << ". Turn it off in the Plugins tab when you are done.\n";
   }
-  if (!config.logging.engine_output) return;
-  // Settings > Troubleshooting is a debugging build's only (owner 2026-10-29); any other build names the config row
+  if (!config.logging.logs_engine_output()) return;
+  // Settings > Troubleshooting only while the Debugging plugin shows it (owner 2026-10-29); otherwise the config row
   std::cerr << "strata: warning: logging.engine_output is true: the engine's own output goes to this log, and it can hold "
                "what the engine prints of your prompts and the paths of your model files. Turn it off when you are done "
-            << (secure_frontend::debugging_build() ? "(Settings > Troubleshooting)" : "(logging.engine_output in the config file)")
+            << (on.troubleshooting ? "(Settings > Troubleshooting)" : "(logging.engine_output in the config file)")
             << ", keep this log private, and look through it before you share it.\n";
 }
 
@@ -282,6 +313,7 @@ int server_run_impl(const FrontendConfig& config, const bool expert) {
   // through the strata CLI (install_process_defaults is idempotent).
   secure_frontend::install_process_defaults();
   if (!state_dir_is_usable(config)) return EXIT_FAILURE;
+  const secure_frontend::InstallPlugins plugins = start_plugins(config);
   // roots.logs / roots.cache: validate() only checked them, so --check stays
   // side-effect free; serve creates a missing one here, before bind or spawn.
   if (const auto issues = secure_frontend::create_runtime_roots(config); !issues.empty()) {
@@ -442,7 +474,7 @@ int server_run_impl(const FrontendConfig& config, const bool expert) {
     std::cerr << "strata: warning: listener.loopback_without_key is true: the API and the page answer without a key on "
               << authority << " (loopback only; Host and Origin are still checked)\n";
   }
-  warn_of_engine_output(config);
+  warn_of_engine_output(config, plugins);
   warn_of_network_shares(config);
   std::cout << "Secure server listening on http://" << authority
             << (keyless ? " (no API key: loopback only; Ctrl-C to stop)\n" : " (authenticated; Ctrl-C to stop)\n");
@@ -451,7 +483,7 @@ int server_run_impl(const FrontendConfig& config, const bool expert) {
   // thread; the workers exist for the life of the pool, which is constructed
   // after supervisor.start() and destroyed (already joined) before the
   // supervisor shutdown below.
-  secure_frontend::RequestLogger request_log(config.logging.requests, secure_frontend::stderr_sink());
+  secure_frontend::RequestLogger request_log(config.logging.logs_requests(), secure_frontend::stderr_sink());
   secure_frontend::ConnectionPool pool(
       *server,
       secure_frontend::PoolLimits{.workers = config.limits.concurrency.max_concurrent_requests,
@@ -755,6 +787,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
   const std::shared_ptr<const FrontendConfig> server_config = usable->server;
   const FrontendConfig& config = *server_config;
   if (!state_dir_is_usable(config)) return EXIT_FAILURE;
+  const secure_frontend::InstallPlugins plugins = start_plugins(config);
   if (const auto issues = secure_frontend::create_runtime_roots(config); !issues.empty()) {
     for (const auto& issue : issues) std::cerr << "Configuration error: " << secure_frontend::format_issue(issue) << '\n';
     return EXIT_FAILURE;
@@ -1068,7 +1101,9 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
   secure_frontend::ModelCardRoutes settings_route_handler;
   std::optional<secure_frontend::ConfigRoutes> config_routes;
   if (config.models.control) {
-    secure_frontend::ConfigRouteSettings settings{.config_file = config_file, .client_allowed = files_allowed};
+    secure_frontend::ConfigRouteSettings settings{.config_file = config_file,
+                                                  .troubleshooting = secure_frontend::diagnostics_on(plugins.entries).troubleshooting,
+                                                  .client_allowed = files_allowed};
     if (config.token.kind() == secure_frontend::SecretSourceKind::protected_file && config.roots.secret.has_value()) {
       settings.secret_dir = config.roots.secret->path();
       settings.token_file = config.token.location();
@@ -1081,23 +1116,15 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
     };
   }
   // The Plugins tab (owner 2026-10-30; plugin_routes.hpp): <install>/plugins, beside the engine folder, with the owner's
-  // choices in <roots.state>/plugins.json; with model control (files_allowed's clients). What runs is decided here, at
-  // the start: the plugins on now are the ones the tab shows as running.
+  // choices in <roots.state>/plugins.json; with model control (files_allowed's clients). What runs was decided at the
+  // start (start_plugins): the plugins on then are the ones the tab shows as running.
   secure_frontend::ModelCardRoutes plugin_route_handler;
   std::optional<secure_frontend::PluginRoutes> plugin_routes;
   if (config.models.control) {
-    const auto engine = config.models.default_engine.value_or(config.engine.executable.path());
-    secure_frontend::PluginRouteSettings settings{.plugins_dir = engine.parent_path().parent_path() / "plugins",
-                                                  .state_dir = config.roots.state, .client_allowed = files_allowed};
-    if (const auto build = secure_frontend::read_engine_build(engine.parent_path())) {
-      for (const auto& plugin : build->plugins) {
-        settings.first_party.push_back({.id = plugin.id, .pin = {.manifest = plugin.manifest, .files = plugin.files}, .on = plugin.on});
-      }
-    }
-    if (const auto choices = secure_frontend::read_plugin_choices(*config.roots.state)) {
-      for (const auto& entry : secure_frontend::discover_plugins(settings.plugins_dir, settings.first_party, *choices)) {
-        if (entry.state == secure_frontend::PluginState::on) settings.running.insert(entry.id);
-      }
+    secure_frontend::PluginRouteSettings settings{.plugins_dir = plugins.folder, .state_dir = config.roots.state,
+                                                  .first_party = plugins.first_party, .client_allowed = files_allowed};
+    for (const auto& entry : plugins.entries) {
+      if (entry.state == secure_frontend::PluginState::on) settings.running.insert(entry.id);
     }
     settings.log = [](const std::string_view line) { std::cerr << line << '\n'; };
     plugin_routes.emplace(std::move(settings));
@@ -1182,7 +1209,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
     std::cerr << "strata: warning: listener.loopback_without_key is true: the API and the page answer without a key on "
               << authority << " (loopback only; Host and Origin are still checked)\n";
   }
-  warn_of_engine_output(config);
+  warn_of_engine_output(config, plugins);
   warn_of_network_shares(config);
   // D5: models.start names the card started at boot (after bind, like every spawn).
   if (config.models.start.has_value()) {
@@ -1210,7 +1237,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
     }
   }
   std::cout.flush();
-  secure_frontend::RequestLogger request_log(config.logging.requests, secure_frontend::stderr_sink());
+  secure_frontend::RequestLogger request_log(config.logging.logs_requests(), secure_frontend::stderr_sink());
   secure_frontend::PoolExit pool_exit = secure_frontend::PoolExit::stopped;
   {
     secure_frontend::ConnectionPool pool(

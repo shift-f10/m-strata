@@ -870,11 +870,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     CloseHandle(single);
     return 0;
   }
-  // make --debugging (owner 2026-10-29): a debugging build says what it logs and starts the server only on Yes (No, the
-  // default, ends it before anything starts)
-  if (w::asks_before_starting()) {
+  // The Debugging plugin (owner 2026-10-29, 2026-10-30): while it is on, the window says what it logs and starts the
+  // server only on Yes (No, the default, ends it before anything starts)
+  if (w::asks_before_starting(app.setup, secure_frontend::executable_directory())) {
     const std::wstring notice = wide(std::string{w::kDebuggingNotice} + "\n\nStart the server?");
-    if (MessageBoxW(nullptr, notice.c_str(), L"M-Strata - debugging build", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
+    if (MessageBoxW(nullptr, notice.c_str(), L"M-Strata - debugging is on", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
       if (single != nullptr) CloseHandle(single);
       return 0;
     }

@@ -1,16 +1,17 @@
 #!/bin/sh
 # install.sh - from a fresh Ubuntu 24.04 (or newer) / Debian PC to a built M-Strata in one step (install.bat's twin).
 #
-#   ./install.sh                                    ask what to build (Enter takes each default: everything but a
-#                                                   debugging build, and without a display - DISPLAY, WAYLAND_DISPLAY -
-#                                                   no window), then build into ../M-Strata-app
+#   ./install.sh                                    ask what to build (Enter takes each default: everything, the
+#                                                   Debugging plugin off, and without a display - DISPLAY,
+#                                                   WAYLAND_DISPLAY - no window), then build into ../M-Strata-app
 #   ./install.sh --out /opt/m-strata --with email,search,tui
 #   ./install.sh --without maya,raon1,vision        leave the GLM/DeepSeek/MiniMax engines, raon1 or pictures out
 #   ./install.sh --plan                             only say what it would install, fetch and run
 #   ./install.sh --yes                              ask nothing: build everything (no debugging; no window without a
 #                                                   display), install without asking
-#   ./install.sh --debugging                        a server that logs verbosely, to find out why a model does not
-#                                                   start or calibrate (the plan says what to take care of)
+#   ./install.sh --debugging                        the Debugging plugin on: a server that logs verbosely, to find
+#                                                   out why a model does not start or calibrate (the plan says what
+#                                                   to take care of)
 #
 # What it does, each step only when needed:
 #   1. finds what the build needs: git, Python 3.10+ with venv, GCC 13+ (build-essential), pkg-config, the CUDA
@@ -120,7 +121,7 @@ if [ "$yes" = 0 ] && { [ "$with_given" = 0 ] || [ "$without_given" = 0 ] || [ "$
     without=${without#,}
   fi
   if [ "$debugging_given" = 0 ]; then
-    if ask 'A debugging build: verbose logs, to find out why a model does not start or calibrate (the plan says what it logs)?' n; then debugging=1; fi
+    if ask 'The Debugging plugin turned on: verbose logs, to find out why a model does not start or calibrate (the plan says what it logs)?' n; then debugging=1; fi
   fi
 fi
 
@@ -183,11 +184,11 @@ if [ -n "$without" ]; then make_flags="--without $without${make_flags:+ $make_fl
 say "  make.sh --out $out --with $with${make_flags:+ $make_flags}"
 if [ "$debugging" = 1 ]; then
   say ''
-  say "  --debugging: the server will log verbosely, to find out why a model does not start or calibrate. It logs"
-  say "  one line per request (never its text) and the engine's own output, which can hold what the engine prints of"
-  say "  your prompts and the paths of your model files. Run it on your own PC, keep the server's log private,"
-  say "  look through a log before you share it, and build again without the debugging option for everyday use."
-  say "  The engine's output can be turned off without a new build: Settings > Troubleshooting."
+  say "  --debugging: the Debugging plugin ships on, so the server logs verbosely, to find out why a model does not"
+  say "  start or calibrate. It logs one line per request (never its text) and the engine's own output, which can"
+  say "  hold what the engine prints of your prompts and the paths of your model files. Run it on your own PC,"
+  say "  keep the server's log private, look through a log before you share it, and turn the plugin off in the"
+  say "  Plugins tab for everyday use. The engine's output alone can be turned off in Settings > Troubleshooting."
 fi
 if [ "${no_display:-0}" = 1 ]; then say "  (no display here: the TUI only; --with email,search,window,tui adds the window)"; fi
 if [ "$plan" = 1 ]; then say ''; say 'install: --plan given - nothing was installed or changed.'; exit 0; fi

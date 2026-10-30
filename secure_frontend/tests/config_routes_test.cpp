@@ -41,13 +41,13 @@ struct Fixture final {
   secure_frontend::DataFolder data = secure_frontend::data_folder_layout(root / "data");
   std::unique_ptr<secure_frontend::ConfigRoutes> routes;
   std::vector<std::string> logged;
-  explicit Fixture(const bool key_in_store = true) {
+  explicit Fixture(const bool key_in_store = true, const bool troubleshooting = false) {
     const auto bin = root / "bin";
     secure_frontend_test::make_private_directory(bin);
     const auto engine = bin / "multiengine.exe";
     secure_frontend_test::write_file(engine, "engine", 0700);
     (void)secure_frontend::ensure_data_folder(data, engine);
-    secure_frontend::ConfigRouteSettings settings{.config_file = data.config_file};
+    secure_frontend::ConfigRouteSettings settings{.config_file = data.config_file, .troubleshooting = troubleshooting};
     if (key_in_store) {
       settings.secret_dir = data.secret;
       settings.token_file = "token";
@@ -152,26 +152,27 @@ void the_key_is_rotated_in_its_store() {
 }
 
 // The owner (2026-10-29): "when the "--debugging on" was not provided in the install/builder, I want the settings to
-// hide the Troubleshooting section". The answer says which build this is, and only a debugging build (make --debugging)
-// lists and saves logging.engine_output, the Troubleshooting row; any other build refuses it by name, as a row the tab
-// does not manage (the config file still takes it).
-void troubleshooting_is_offered_only_in_a_debugging_build() {
-  Fixture f;
-  const bool debugging = secure_frontend::debugging_build();
-  const auto listed = f.post(secure_frontend::RouteId::strata_config, "{}");
-  expect(listed.status == 200 && has(listed, std::string{"\"debugging\":"} + (debugging ? "true" : "false")),
-         "the answer says whether this is a debugging build: " + shown(listed));
-  expect(has(listed, "{\"key\":\"logging.engine_output\"") == debugging,
-         std::string{"the Troubleshooting row is listed only in a debugging build (this one: "} + (debugging ? "yes" : "no") +
-             "): " + listed.body);
-  const std::string before = f.file();
-  const auto saved = f.post(secure_frontend::RouteId::strata_config_settings, R"({"values":{"logging.engine_output":true}})");
-  if (debugging) {
-    expect(saved.status == 200 && has(saved, "\"saved\":true"), "a debugging build saves it: " + shown(saved));
-  } else {
-    expect(saved.status == 422 && has(saved, "\"code\":\"settings_refused\"") && has(saved, "logging.engine_output"),
-           "any other build refuses it by name: " + shown(saved));
-    expect(f.file() == before, "and writes nothing");
+// hide the Troubleshooting section"; then (2026-10-30) "we should make the email, websearch, debugging all plugins as
+// well". The answer says whether the Debugging plugin's Troubleshooting is on, and only then are logging.engine_output,
+// the Troubleshooting row, listed and saved; otherwise it is refused by name, as a row the tab does not manage (the
+// config file still takes it).
+void troubleshooting_is_offered_only_while_the_debugging_plugin_is_on() {
+  for (const bool on : {false, true}) {
+    Fixture f(true, on);
+    const auto listed = f.post(secure_frontend::RouteId::strata_config, "{}");
+    expect(listed.status == 200 && has(listed, std::string{"\"debugging\":"} + (on ? "true" : "false")),
+           "the answer says whether the Debugging plugin's Troubleshooting is on: " + shown(listed));
+    expect(has(listed, "{\"key\":\"logging.engine_output\"") == on,
+           std::string{"the Troubleshooting row is listed only while it is on ("} + (on ? "on" : "off") + "): " + listed.body);
+    const std::string before = f.file();
+    const auto saved = f.post(secure_frontend::RouteId::strata_config_settings, R"({"values":{"logging.engine_output":true}})");
+    if (on) {
+      expect(saved.status == 200 && has(saved, "\"saved\":true"), "while it is on, it is saved: " + shown(saved));
+    } else {
+      expect(saved.status == 422 && has(saved, "\"code\":\"settings_refused\"") && has(saved, "logging.engine_output"),
+             "otherwise it is refused by name: " + shown(saved));
+      expect(f.file() == before, "and nothing is written");
+    }
   }
 }
 
@@ -182,6 +183,6 @@ int main(int argc, char** argv) {
       {"the_settings_are_listed_with_their_rules", the_settings_are_listed_with_their_rules},
       {"a_save_is_held_to_the_start_up_rules", a_save_is_held_to_the_start_up_rules},
       {"the_key_is_rotated_in_its_store", the_key_is_rotated_in_its_store},
-      {"troubleshooting_is_offered_only_in_a_debugging_build", troubleshooting_is_offered_only_in_a_debugging_build},
+      {"troubleshooting_is_offered_only_while_the_debugging_plugin_is_on", troubleshooting_is_offered_only_while_the_debugging_plugin_is_on},
   }, failures);
 }

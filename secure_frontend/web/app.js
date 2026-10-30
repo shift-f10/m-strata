@@ -3281,7 +3281,7 @@
     try { serverConfig.data = JSON.parse(text); } catch (e) { return; }
     serverConfig.built = true;
     ["key-settings", "server-settings", "limits-settings", "paths-settings"].forEach(function (id) { $(id).hidden = false; });
-    // Troubleshooting only in a make --debugging build (owner 2026-10-29), as the server says
+    // Troubleshooting only while the Debugging plugin shows it (owner 2026-10-29, 2026-10-30), as the server says
     $("logs-settings").hidden = serverConfig.data.debugging !== true;
     renderServerConfig();
     renderKey();
@@ -3347,8 +3347,20 @@
     showPluginsError("");
     renderPlugins();
   }
+  // The owner (2026-10-29: "when set on, it will tell the user the implications of having this on and precautions to
+  // take"): what a diagnostics plugin (the Debugging plugin) logs while it is on, said before it is turned on.
+  function diagnosticsNotice(p) {
+    var switches = p.switches || [];
+    var logs = [];
+    if (switches.indexOf("logging.requests") >= 0) { logs.push("one line per request (never its text)"); }
+    if (switches.indexOf("logging.engine_output") >= 0) {
+      logs.push("the engine's own output, which can hold what the engine prints of your prompts and the paths of your model files");
+    }
+    return (logs.length ? "While it is on, the server logs " + logs.join(" and ") + ". " : "") +
+           "Keep the server's log private, look through a log before you share it, and turn it off when you are done.";
+  }
   function approvalQuestion(p) {
-    var what = p.kind === "diagnostics" ? "It changes what this server logs and shows; it runs no code of its own."
+    var what = p.kind === "diagnostics" ? "It changes what this server logs and shows; it runs no code of its own. " + diagnosticsNotice(p)
                                         : "Its code then runs on this PC, with this server's rights.";
     return "Approve " + (p.name || p.id) + (p.version ? " " + p.version : "") + " from " + (p.publisher || "an unnamed publisher") + "? " +
            what + " Only the files there now are approved: their SHA-256s are kept, and a changed file waits for approval again.";
@@ -3431,6 +3443,7 @@
   }
   async function switchPlugin(p, on) {
     if (plugins.acting) { return; }
+    if (on && p.kind === "diagnostics" && !window.confirm("Turn " + (p.name || p.id) + " on? " + diagnosticsNotice(p))) { return; }
     await pluginChange(api("/v1/strata/plugins/switch", jsonPost({ id: p.id, on: on })));
   }
 

@@ -701,6 +701,14 @@ void web_ui_has_a_plugins_tab() {
   expect(js.find("p.state === \"waiting\" || p.state === \"changed\"") != std::string::npos &&
              js.find("p.state === \"on\" || p.state === \"off\"") != std::string::npos,
          "Approve for one that waits, on/off for a trusted one");
+  // the owner (2026-10-29: "when set on, it will tell the user the implications of having this on and precautions to
+  // take"): turning the Debugging plugin on (or approving it, which turns it on) says what it logs first
+  expect(js.find("if (on && p.kind === \"diagnostics\" && !window.confirm(\"Turn \" + (p.name || p.id) + \" on? \" + diagnosticsNotice(p))) { return; }") !=
+                 std::string::npos &&
+             js.find("\"It changes what this server logs and shows; it runs no code of its own. \" + diagnosticsNotice(p)") != std::string::npos &&
+             js.find("the engine's own output, which can hold what the engine prints of your prompts and the paths of your model files") !=
+                 std::string::npos,
+         "a diagnostics plugin says what it logs before it is turned on");
 }
 
 // The Settings tab (spec 2026-10-28-server-window-design, Part 1; the owner: "a configuration tab ... api key, etc"): the
@@ -746,11 +754,11 @@ void web_ui_has_server_settings() {
   expect(js.find("\"listener.port\"") != std::string::npos && js.find("\"limits.engine.generation_timeout_s\"") != std::string::npos &&
              js.find("\"models.downloads_root\"") != std::string::npos && js.find("logs: [\"logging.engine_output\"]") != std::string::npos,
          "the four groups name their settings");
-  // the owner (2026-10-29): a build without make --debugging hides the Troubleshooting section (the server says which)
+  // the owner (2026-10-29): without the Debugging plugin on, the Troubleshooting section is hidden (the server says which)
   expect(js.find("$(\"logs-settings\").hidden = serverConfig.data.debugging !== true;") != std::string::npos &&
              js.find("[\"key-settings\", \"server-settings\", \"limits-settings\", \"paths-settings\"].forEach(function (id) { $(id).hidden = false; });") !=
                  std::string::npos,
-         "Troubleshooting shows only in a debugging build");
+         "Troubleshooting shows only while the Debugging plugin is on");
   // the two folders are chosen with the page's folder picker (spec Part 1, Folders), or typed
   expect(js.find("var CONFIG_FOLDERS = [\"models.downloads_root\", \"models.default_root\"];") != std::string::npos &&
              js.find("var picked = await pickFolder(label, ") != std::string::npos &&

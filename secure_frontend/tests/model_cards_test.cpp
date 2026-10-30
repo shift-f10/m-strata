@@ -336,7 +336,7 @@ void a_cards_config_keeps_the_servers_engine_output_logging() {
                                                                       : std::map<std::string, std::string>{}),
                                                      *card, {});
     const auto* validated = std::get_if<secure_frontend::ValidatedConfig>(&result);
-    expect(validated != nullptr && validated->get().logging.engine_output == on,
+    expect(validated != nullptr && validated->get().logging.logs_engine_output() == on,
            std::string{"the card's config has the server's row: "} + (on ? "on" : "off") +
                (validated ? std::string{} : ": " + issues_text(std::get<ConfigErrors>(result))));
   }

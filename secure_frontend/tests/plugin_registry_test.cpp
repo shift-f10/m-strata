@@ -193,10 +193,35 @@ void the_choices_round_trip() {
   }
 }
 
+// The owner (2026-10-30): "we should make the email, websearch, debugging all plugins as well". What the diagnostics
+// plugins that are on switch on, together; one that waits or is turned off switches nothing on.
+void the_diagnostics_that_are_on_are_combined() {
+  Plugins plugins;
+  expect(!secure_frontend::diagnostics_on(plugins.find({}, {})).any(), "no plugin: nothing is on");
+  plugins.add("debugging", kDebugging);
+  expect(!secure_frontend::diagnostics_on(plugins.find({}, {})).any(), "a waiting plugin switches nothing on");
+  const secure_frontend::FirstPartyPlugin built{.id = "debugging", .pin = {.manifest = hex_sha256(kDebugging), .files = {}}, .on = true};
+  const auto on = secure_frontend::diagnostics_on(plugins.find({built}, {}));
+  expect(on.log_requests && on.log_engine_output && on.troubleshooting && on.any(), "on: each of its switches");
+  secure_frontend::PluginChoices choices;
+  choices.enabled["debugging"] = false;
+  expect(!secure_frontend::diagnostics_on(plugins.find({built}, choices)).any(), "turned off: nothing");
+  const std::string quiet = R"({"schema": "m-strata.plugin/1", "id": "quiet", "kind": "diagnostics", "name": "Quiet",
+    "version": "1", "publisher": "x", "license": "x", "about": "", "diagnostics": {"switches": ["logging.requests"]}})";
+  plugins.add("quiet", quiet);
+  choices.approved["quiet"] = {.manifest = hex_sha256(quiet), .files = {}};
+  const auto one = secure_frontend::diagnostics_on(plugins.find({built}, choices));
+  expect(one.log_requests && !one.log_engine_output && !one.troubleshooting, "another one on: only its own switch");
+  choices.enabled.erase("debugging");
+  const auto both = secure_frontend::diagnostics_on(plugins.find({built}, choices));
+  expect(both.log_requests && both.log_engine_output && both.troubleshooting, "both on: what either switches on");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
+      {"the_diagnostics_that_are_on_are_combined", the_diagnostics_that_are_on_are_combined},
       {"a_new_plugin_waits_then_runs_once_approved", a_new_plugin_waits_then_runs_once_approved},
       {"a_changed_plugin_waits_again", a_changed_plugin_waits_again},
       {"a_first_party_plugin_is_trusted_by_its_build_record", a_first_party_plugin_is_trusted_by_its_build_record},

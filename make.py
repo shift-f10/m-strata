@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import importlib.util
 import json
 import os
@@ -154,8 +155,8 @@ def parse_args(argv: list[str], platform: str | None = None) -> Options:
     ap.add_argument("--cmake", default=os.environ.get("CMAKE", ""), help="the cmake executable (default: on PATH)")
     ap.add_argument("--plan", action="store_true", help="print the commands and stop")
     ap.add_argument("--debugging", action="store_true",
-                    help="a server that logs verbosely, to find out why a model does not start or calibrate "
-                         "(it says what that logs and what to take care of)")
+                    help="ship the Debugging plugin turned on: a server that logs verbosely, to find out why a model "
+                         "does not start or calibrate (it says what that logs and what to take care of)")
     args = ap.parse_args(argv)
     without = tuple(sorted({w.strip() for w in args.without.split(",") if w.strip()}))
     unknown = [w for w in without if w not in LEAVE_OUT]
@@ -221,8 +222,7 @@ def frontend_configure_args(opts: Options, platform: str) -> list[str]:
             "-DSECURE_FRONTEND_EMAIL_ALERTS=" + _on_off("email" in opts.with_features),
             "-DSECURE_FRONTEND_WEB_SEARCH=" + _on_off("search" in opts.with_features),
             "-DSECURE_FRONTEND_WINDOW=" + _on_off("window" in opts.with_features),
-            "-DSECURE_FRONTEND_TUI=" + _on_off("tui" in opts.with_features),
-            "-DSECURE_FRONTEND_DEBUGGING=" + _on_off(opts.debugging)]
+            "-DSECURE_FRONTEND_TUI=" + _on_off("tui" in opts.with_features)]
 
 
 def frontend_build_targets(opts: Options) -> list[str]:
@@ -261,11 +261,34 @@ def required_files(opts: Options, platform: str) -> list[str]:
     # the picture encoder beside the launcher, where the server looks for it (spec 2026-10-28)
     vision = [] if "vision" in opts.without else [f"engine/strata-vision{exe}"]
     # engine/build.json: the build record the server's About shows (build_record)
+    # plugins/<id>/plugin.json: the first-party plugins (stage_plugins), the Debugging plugin in every folder
     return ([f"strata-unified-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
              "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin", "engine/data/draft_vocab.bin",
              "engine/build.json",
              "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + search + window + vision + maya +
-            ["engine/" + lib(n) for n in _families(opts)])
+            ["engine/" + lib(n) for n in _families(opts)] +
+            [f"plugins/{plugin}/plugin.json" for plugin in FIRST_PARTY_PLUGINS])
+
+
+# ---- the first-party plugins (owner 2026-10-30: "we should make the email, websearch, debugging all plugins as well") --
+
+# This repository's plugins/<id>/, copied into every folder and recorded in engine/build.json (trusted through that
+# record, decision 4): the Debugging plugin, off unless --debugging ships it on.
+FIRST_PARTY_PLUGINS = ("debugging",)
+
+
+def stage_plugins(stage: Path) -> None:
+    """Copy each first-party plugin's manifest into the folder, byte for byte (its SHA-256 is the record's)."""
+    for plugin in FIRST_PARTY_PLUGINS:
+        target = stage / "plugins" / plugin
+        target.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / "plugins" / plugin / "plugin.json", target / "plugin.json")
+
+
+def plugin_records(opts: Options, stage: Path) -> list[dict]:
+    """engine/build.json's plugins: each first-party plugin's manifest SHA-256 (as staged) and whether it starts on."""
+    return [{"id": plugin, "manifest": hashlib.sha256((stage / "plugins" / plugin / "plugin.json").read_bytes()).hexdigest(),
+             "files": {}, "on": plugin == "debugging" and opts.debugging} for plugin in FIRST_PARTY_PLUGINS]
 
 
 # ---- the build record (engine/build.json; owner 2026-10-27: the About lists the build of our engines) -------------
@@ -322,8 +345,8 @@ def build_record(opts: Options, platform: str, stage: Path, commit: str | None =
                         "bytes": path.stat().st_size if path.is_file() else 0})
     return {"schema_version": 1, "built": built, "commit": commit,
             "ggml": (_tree_text("engine/third_party/ggml/VERSION.txt").split() or ["?"])[0][:12],
-            "cuda_arch": opts.cuda_arch, "features": list(opts.with_features) + (["debugging"] if opts.debugging else []),
-            "engines": engines}
+            "cuda_arch": opts.cuda_arch, "features": list(opts.with_features),
+            "engines": engines, "plugins": plugin_records(opts, stage)}
 
 
 def _cuda_runtime_patterns(platform: str) -> list[str]:
@@ -418,6 +441,8 @@ Key:        {strata} --config data/config.json key show   (or key rotate)
 Contents:   strata-unified-server and strata, the frontend{search}{window_contents}
             engine/: multiengine (the launcher), one library per model family, strata-prepare{vision}, the expert
             profiles{templates}{cuda}
+            plugins/debugging: the Debugging plugin, verbose logs to find out why a model does not start or
+            calibrate ({debugging}; the Plugins tab turns it on and off)
             LICENSE and NOTICE.md
             Nothing else is needed; move or copy the whole folder.
 
@@ -425,16 +450,18 @@ License:    AGPL-3.0-only (LICENSE). NOTICE.md holds the copyright, the MIT noti
 {nvidia}"""
 
 # make --debugging (owner 2026-10-29: "when set on, it will tell the user the implications of having this on and
-# precautions to take"): printed before the build starts and after it, and kept in the folder's README.txt.
-DEBUGGING_NOTICE = """Debugging:  this is a debugging build (make --debugging): the server logs verbosely, to find
+# precautions to take"; 2026-10-30, the Debugging plugin turned on): printed before the build starts and after it, and
+# kept in the folder's README.txt.
+DEBUGGING_NOTICE = """Debugging:  the Debugging plugin is on (make --debugging): the server logs verbosely, to find
             out why a model does not start or calibrate. It logs one line per request (route, status, time; never
             its text) and the engine's own output, which can hold what the engine prints of your prompts and
             the paths of your model files. Take care: run it on your own PC, keep the server's log private (its
             console, the window app's Server log, logs/), look through a log before you share it and take out
-            prompts, paths and names, and build again without --debugging for everyday use. The engine's
-            output can be turned off without a new build: Settings > Troubleshooting (logging.engine_output;
-            logging.requests for the request lines). strata-window and strata-tui say this before they start
-            the server and start it only when you accept (Yes in the window, y in the TUI)."""
+            prompts, paths and names, and turn the plugin off in the Plugins tab for everyday use (it applies
+            when the server restarts). The engine's output alone can be turned off in
+            Settings > Troubleshooting (logging.engine_output; logging.requests for the request lines).
+            strata-window and strata-tui say this before they start the server and start it
+            only when you accept (Yes in the window, y in the TUI)."""
 
 
 def announce(opts: Options) -> None:
@@ -480,7 +507,8 @@ def readme_text(opts: Options, platform: str) -> str:
     vision = "" if "vision" in opts.without else ",\n            strata-vision (a Qwen model's picture encoder)"
     return README_TEXT.format(server=server, shell=shell, strata=".\\strata.exe" if windows else "./strata", cuda=cuda,
                               search=search, settings=settings, templates=templates, minimax=minimax, nvidia=nvidia,
-                              vision=vision, window=window, window_contents=window_contents) + \
+                              vision=vision, window=window, window_contents=window_contents,
+                              debugging="on in this folder" if opts.debugging else "off") + \
            ("\n" + DEBUGGING_NOTICE + "\n" if opts.debugging else "")
 
 
@@ -631,6 +659,7 @@ def main(argv: list[str] | None = None) -> int:
     # the program's license (AGPL-3.0, owner 2026-10-28) and its notices, as the repository's root holds them
     for name in ("LICENSE", "NOTICE.md"):
         shutil.copyfile(ROOT / name, stage / name)
+    stage_plugins(stage)
     (stage / "engine" / "build.json").write_text(json.dumps(build_record(opts, platform, stage), indent=2) + "\n",
                                                  encoding="utf-8", newline="\n")
     problems = layout_problems(stage, opts, platform)

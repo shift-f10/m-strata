@@ -115,13 +115,15 @@ def test_batch_and_powershell_line_endings():
 
 
 def test_debugging_is_passed_to_make_and_explained_first():
-    """The owner (2026-10-29): --debugging from the installer too, telling the user what it means before the build."""
+    """The owner (2026-10-29): --debugging from the installer too, telling the user what it means before the build
+    (2026-10-30: it ships the Debugging plugin on, which the Plugins tab turns off)."""
     ps, sh = text("install.ps1"), text("install.sh")
     assert "[switch]$Debugging" in ps and "if ($Debugging) { $makeArgs += '--debugging' }" in ps
     assert "--debugging) debugging=1; debugging_given=1; shift ;;" in sh and '[ "$debugging" = 1 ] && make_flags="--debugging"' in sh
     assert '--with "$with" $make_flags' in sh
     for script in (ps, sh):
-        for words in ("your prompts", "keep the server's log private", "before you share it", "without the debugging option"):
+        for words in ("your prompts", "keep the server's log private", "before you share it", "the Debugging plugin ships on",
+                      "turn the plugin off in the"):
             assert words in script, words
 
 
@@ -136,7 +138,7 @@ def make_lists() -> tuple[tuple[str, ...], tuple[str, ...]]:
 def test_the_installers_ask_what_to_build():
     """The owner (2026-10-29): "In the install section, we should ask these questions, if they want email alerts,
     search, etc so that they can build exactly what they want". One question for each of make's choices - every
-    optional feature, every family it can leave out, a debugging build - asked before the PC is looked at (what it
+    optional feature, every family it can leave out, the Debugging plugin on - asked before the PC is looked at (what it
     installs depends on them). An answer the command line gave (-With, -Without, -Debugging) is not asked again;
     -Yes / --yes asks nothing and takes every default: everything, no debugging."""
     features, leave_out = make_lists()
@@ -152,9 +154,9 @@ def test_the_installers_ask_what_to_build():
     for family in leave_out:
         assert f"?' $true)) {{ $leaveOut += '{family}' }}" in ps, family
         assert re.search(r"if ! ask ['\"][^\n]*\?['\"] y; then without=\"\$without," + family + r"\"; fi", sh), family
-    # ... but a debugging build
-    assert "$Debugging = [switch](Ask 'A debugging build" in ps and "?' $false)\n" in ps.replace("\r\n", "\n")
-    assert "if ask 'A debugging build" in sh and "?' n; then debugging=1; fi" in sh
+    # ... but the Debugging plugin (off unless asked for; owner 2026-10-30, a plugin)
+    assert "$Debugging = [switch](Ask 'The Debugging plugin turned on" in ps and "?' $false)\n" in ps.replace("\r\n", "\n")
+    assert "if ask 'The Debugging plugin turned on" in sh and "?' n; then debugging=1; fi" in sh
     # asked only when the command line did not say, and never with -Yes / --yes
     for option in ("With", "Without", "Debugging"):
         assert f"-not $Yes -and -not $PSBoundParameters.ContainsKey('{option}')" in ps, option

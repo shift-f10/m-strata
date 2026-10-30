@@ -224,7 +224,7 @@ std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& 
   // Owner 2026-10-29 (logging.engine_output): every engine's own stderr in this server's log, to see why an engine fails
   // (a calibration's starts too: they launch through this plan). Each line whole in one write, so a line from another
   // thread never lands inside it.
-  if (config.logging.engine_output) {
+  if (config.logging.logs_engine_output()) {
     plan.command.stderr_lines = [](const std::string_view line) {
       std::string text = "[engine] ";
       text.append(line);

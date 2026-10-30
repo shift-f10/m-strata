@@ -199,9 +199,9 @@ int main(int argc, char** argv) {
     return 1;
   }
   const t::Capabilities capabilities = terminal.capabilities();
-  // make --debugging (owner 2026-10-29): a debugging build says what it logs and starts the server only on y; any other
-  // key (or a quit signal, or a closed terminal) ends it before anything starts
-  if (w::asks_before_starting()) {
+  // The Debugging plugin (owner 2026-10-29, 2026-10-30): while it is on, the TUI says what it logs and starts the
+  // server only on y; any other key (or a quit signal, or a closed terminal) ends it before anything starts
+  if (w::asks_before_starting(setup, secure_frontend::executable_directory())) {
     t::KeyDecoder decoder;
     std::optional<t::TerminalSize> drawn;
     t::GateAnswer answer = t::GateAnswer::waiting;
@@ -229,7 +229,7 @@ int main(int argc, char** argv) {
     }
     if (answer != t::GateAnswer::accepted) {
       terminal.close();
-      std::cout << "strata-tui: not started (a debugging build starts the server only on y).\n";
+      std::cout << "strata-tui: not started (while the Debugging plugin is on, the server starts only on y).\n";
 #if defined(_WIN32)
       if (g_stopped != nullptr) (void)SetEvent(g_stopped);
 #endif

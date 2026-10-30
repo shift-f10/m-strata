@@ -32,12 +32,12 @@ constexpr std::array<std::string_view, 15> kManaged{
     "limits.engine.ready_timeout_s", "limits.chat.max_prompt_tokens", "limits.chat.max_completion_tokens", "pull.connections",
     "models.downloads_root", "models.default_root", "logging.engine_output"};
 
-// The Troubleshooting row only in a debugging build (make --debugging; the owner 2026-10-29: "when the "--debugging on"
-// was not provided in the install/builder, I want the settings to hide the Troubleshooting section"): any other build
-// neither lists nor saves it here (its config file still takes it).
-bool managed(const std::string_view path) {
+// The Troubleshooting row only while the Debugging plugin's Troubleshooting is on (the owner 2026-10-29: "when the
+// "--debugging on" was not provided in the install/builder, I want the settings to hide the Troubleshooting section";
+// 2026-10-30, a plugin): otherwise it is neither listed nor saved here (the config file still takes it).
+bool managed(const std::string_view path, const bool troubleshooting) {
   return std::find(kManaged.begin(), kManaged.end(), path) != kManaged.end() &&
-         (debugging_build() || path != "logging.engine_output");
+         (troubleshooting || path != "logging.engine_output");
 }
 
 std::string json_text(const std::string_view text) {
@@ -150,10 +150,10 @@ HttpResponse ConfigRoutes::settings_json() const {
     draft = std::get<FrontendConfigDraft>(std::move(read));
   }
   std::string out = std::string{"{\"editable\":"} + (settings_.config_file ? "true" : "false") +
-                    ",\"debugging\":" + (debugging_build() ? "true" : "false") + ",\"settings\":[";
+                    ",\"debugging\":" + (settings_.troubleshooting ? "true" : "false") + ",\"settings\":[";
   bool first = true;
   for (const auto path : kManaged) {
-    const auto* key = managed(path) ? find_config_key(path) : nullptr;
+    const auto* key = managed(path, settings_.troubleshooting) ? find_config_key(path) : nullptr;
     if (key == nullptr) continue;
     const auto row = draft.entries.find(path);
     out += (first ? "" : ",") + std::string{"{\"key\":"} + json_text(path) + ",\"type\":" + json_text(type_name(key->type)) +
@@ -178,7 +178,7 @@ HttpResponse ConfigRoutes::save(const std::string_view body) {
   // Each value checked for its key's type here; every other rule by the whole file's check below.
   std::vector<std::pair<std::string, std::optional<ConfigDraftValue>>> changes;
   for (const auto& member : *(*members)[0].value.if_object()) {
-    const auto* key = managed(member.key) ? find_config_key(member.key) : nullptr;
+    const auto* key = managed(member.key, settings_.troubleshooting) ? find_config_key(member.key) : nullptr;
     if (key == nullptr) return refused(member.key.substr(0, 64) + " is not a setting this page manages");
     if (member.value.kind() == JsonKind::null) {
       changes.emplace_back(member.key, std::nullopt);

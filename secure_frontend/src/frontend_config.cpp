@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <charconv>
 #include <limits>
@@ -156,10 +157,10 @@ constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 
     {"update.source", T::string_array, false, 0, 0, 0, false, "", "",
      "HTTPS release-mirror URLs that 'strata update' fetches the signed release envelope from."},
     {"logging.requests", T::boolean, false, 0, 0, 0, false, "", "",
-     "One line per request to stderr: route, status, code, time, bytes, loopback or remote; never paths, headers, tokens or text. In a make --debugging build it is on unless the config sets it."},
+     "One line per request to stderr: route, status, code, time, bytes, loopback or remote; never paths, headers, tokens or text. Unset, it is on while the Debugging plugin is on (the Plugins tab; make --debugging ships it on)."},
     // Owner 2026-10-29: to see why an engine fails on a new GPU (a calibration that never starts).
     {"logging.engine_output", T::boolean, false, 0, 0, 0, false, "", "",
-     "The engine's own output (its stderr) in this server's log, one '[engine] ' line each, for finding out why a model does not start or calibrate. It can hold what the engine prints of the prompts it is given and the paths of model files: turn it off when done, and look through a log before sharing it. In a make --debugging build it is on unless the config sets it."},
+     "The engine's own output (its stderr) in this server's log, one '[engine] ' line each, for finding out why a model does not start or calibrate. It can hold what the engine prints of the prompts it is given and the paths of model files: turn it off when done, and look through a log before sharing it. Unset, it is on while the Debugging plugin is on (the Plugins tab; make --debugging ships it on)."},
     // SP5 M1 Task 4 (parity row `sampling`): bounds copied from the pin —
     // clean_shared_defaults (serve/server.py:7331-7367) and the wire conditions
     // (serve/server.py:1360-1394). Unset rows are never sent. The 2.0 caps,
@@ -470,10 +471,11 @@ class DraftReader final {
     }
     return *value;
   }
-  // A boolean whose unset default is `unset` rather than the schema's (a build-time default: make --debugging).
-  bool boolean_or(const std::string_view path, const bool unset) {
+  // A boolean as the file has it: nullopt when unset (the logging rows: the Debugging plugin decides those).
+  std::optional<bool> optional_boolean(const std::string_view path) {
     const ConfigKey& key = *find_config_key(path);
-    return lookup(key) == nullptr ? unset : boolean(path);
+    if (lookup(key) == nullptr) return std::nullopt;
+    return boolean(path);
   }
   bool boolean(const std::string_view path) {
     const ConfigKey& key = *find_config_key(path);
@@ -986,6 +988,22 @@ std::optional<ModelId> make_model_id(const std::string_view text) {
   return ModelId{std::string{text}};
 }
 
+namespace {
+// The Debugging plugin's logs in this process (set_debugging_logs): set once when the server starts, read by every config.
+std::atomic<bool> g_debugging_requests{false};
+std::atomic<bool> g_debugging_engine_output{false};
+}  // namespace
+
+void set_debugging_logs(const DebuggingLogs logs) noexcept {
+  g_debugging_requests.store(logs.requests);
+  g_debugging_engine_output.store(logs.engine_output);
+}
+DebuggingLogs debugging_logs() noexcept {
+  return {.requests = g_debugging_requests.load(), .engine_output = g_debugging_engine_output.load()};
+}
+bool LoggingConfig::logs_requests() const noexcept { return requests.value_or(debugging_logs().requests); }
+bool LoggingConfig::logs_engine_output() const noexcept { return engine_output.value_or(debugging_logs().engine_output); }
+
 ConfigValidationResult validate(const FrontendConfigDraft& draft) {
   ConfigErrors errors;
   for (const auto& [path, entry] : draft.entries) {
@@ -1056,9 +1074,9 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
   const auto write_stall_ms = read.integer("limits.http.write_stall_ms");
   const auto response_deadline_ms = read.integer("limits.http.response_write_deadline_ms");
   const auto keepalive_ms = read.integer("limits.http.stream_keepalive_ms");
-  // make --debugging (owner 2026-10-29): a debugging build logs both unless the config turns them off
-  const bool log_requests = read.boolean_or("logging.requests", debugging_build());
-  const bool log_engine_output = read.boolean_or("logging.engine_output", debugging_build());
+  // unset, each follows the Debugging plugin (owner 2026-10-30; LoggingConfig)
+  const std::optional<bool> log_requests = read.optional_boolean("logging.requests");
+  const std::optional<bool> log_engine_output = read.optional_boolean("logging.engine_output");
   // SP5 M1 Task 4: defaults.sampling.* (unset rows stay unset).
   SamplingDefaults sampling_defaults{
       read.decimal("defaults.sampling.temperature"), read.decimal("defaults.sampling.top_p"),
@@ -1761,8 +1779,11 @@ std::string describe(const FrontendConfig& c) {
   line("pull.stall_timeout_s", std::to_string(c.pull.stall_timeout.count()));
   line("pull.connect_timeout_s", std::to_string(c.pull.connect_timeout.count()));
   line("pull.connections", std::to_string(c.pull.connections));
-  line("logging.requests", c.logging.requests ? "true" : "false");
-  line("logging.engine_output", c.logging.engine_output ? "true" : "false");
+  const auto flag_or_unset = [](const std::optional<bool>& value) {
+    return value.has_value() ? std::string{*value ? "true" : "false"} : std::string{"(unset)"};
+  };
+  line("logging.requests", flag_or_unset(c.logging.requests));
+  line("logging.engine_output", flag_or_unset(c.logging.engine_output));
   // SP5 M1 Task 4: the defaults.sampling.* rows; an unset row stays unset and
   // is never sent (the engine keeps its own default).
   const auto decimal_or_unset = [](const std::optional<double>& value) {

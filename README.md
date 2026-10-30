@@ -149,19 +149,21 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   `/v1/models`, `/health` and `/metrics`.
 - **Settings tab:** the API key (show, copy, rotate), where the server listens and which PCs may use it, limits and
   timeouts, the download folders, and the model folders (as they are, or on network shares - experimental), email
-  alerts, web search, and - in a debugging build - **Troubleshooting** (the engine's own output in the server log).
-- **Plugins tab** (being built; nothing ships as a plugin yet): every plugin in the install's `plugins` folder, with
+  alerts, web search, and - while the Debugging plugin is on - **Troubleshooting** (the engine's own output in the
+  server log).
+- **Plugins tab** (being built; Debugging is the first plugin): every plugin in the install's `plugins` folder, with
   what it is, its state and its SHA-256s. A plugin runs only when this install was built with it or you approved it,
   and only with the files you approved: a changed file waits for your approval again. Approve, and turn on or off, from
   the tab; a change applies when the server restarts.
 - **Model folders on network shares - experimental, off by default:** a model folder may be on an SMB/CIFS share
   or an NFS mount once Settings turns it on; see
   [Model folders on network shares](#model-folders-on-network-shares-experimental) for what it means and its status.
-- **A debugging build** (`make --debugging`, `install.bat -Debugging`): verbose logs to find out why a model does not
-  start or calibrate, said before the build, at every start of the server, and in the window and terminal apps,
-  which ask before they start it. Only a debugging build has Settings > Troubleshooting.
+- **The Debugging plugin** (in every install; `make --debugging` and `install.bat -Debugging` ship it on, the Plugins
+  tab turns it on or off): verbose logs to find out why a model does not start or calibrate, said before the build, at
+  every start of the server, and in the window and terminal apps, which ask before they start it. Settings >
+  Troubleshooting shows only while it is on.
 - **The install scripts ask what to build:** email alerts, web search, the window app, the terminal app, the
-  GLM/DeepSeek/MiniMax engines, raon1, pictures, and a debugging build - one question each, Enter for the default.
+  GLM/DeepSeek/MiniMax engines, raon1, pictures, and the Debugging plugin - one question each, Enter for the default.
 
 **The window app**
 
@@ -301,8 +303,8 @@ model does not.
 
 `install.bat` first asks what to build, one question each - email alerts, web search, the window app
 (`strata-window`), the terminal app (`strata-tui`), the GLM-5.3/DeepSeek-V4.1/MiniMax-M3.1 engines (Project Maya's,
-the largest part of the build), Raon-1-mini, pictures in Qwen chats (`strata-vision`), and a debugging build. Enter
-takes the default: everything but a debugging build. Qwen, Gemma 4 and flint are always built. Then it looks at what
+the largest part of the build), Raon-1-mini, pictures in Qwen chats (`strata-vision`), and the Debugging plugin turned
+on. Enter takes the default: everything, the Debugging plugin off. Qwen, Gemma 4 and flint are always built. Then it looks at what
 the PC has and lists what is missing and what it will do. After you answer `y` it:
 - installs what is missing with winget, Microsoft's package manager that comes with Windows: Git, Python 3.12,
   Visual Studio Build Tools 2022 with the C++ workload, and the CUDA Toolkit 13.0. If Build Tools are already
@@ -343,8 +345,8 @@ To see first what it would do, without changing anything, run `.\install.bat -Pl
 | `-Without maya,raon1,vision` | Answers the three engine questions: leave the GLM/DeepSeek/MiniMax engines (`maya`), Raon-1-mini (`raon1`) or the picture encoder (`vision`) out (`make --without`). |
 | `-GgmlDir D:\llama.cpp` | Use this llama.cpp checkout (at the pinned commit) instead of fetching one. |
 | `-Plan` | Only list what it would install, fetch and build; nothing changes. |
-| `-Yes` | Ask nothing: build the defaults (everything but a debugging build) and install without asking. |
-| `-Debugging` | Answers the debugging question with yes: a server that logs verbosely, to find out why a model does not start or calibrate (`make --debugging`, below). The plan says what that logs and what to take care of before anything is installed. |
+| `-Yes` | Ask nothing: build the defaults (everything, the Debugging plugin off) and install without asking. |
+| `-Debugging` | Answers the debugging question with yes: the Debugging plugin ships on, a server that logs verbosely, to find out why a model does not start or calibrate (`make --debugging`, below). The plan says what that logs and what to take care of before anything is installed. |
 
 Running it again is safe: it skips what is there and builds into a new folder.
 
@@ -463,7 +465,7 @@ python3 -m venv .venv-dev && .venv-dev/bin/python -m pip install cmake ninja
 | `--jobs N` | Parallel compile jobs (default: the CPU count). |
 | `--build-dir DIR` | Where the builds are kept (default `out/make-build`). |
 | `--plan` | Print the commands only. |
-| `--debugging` | A debugging build, to find out why a model does not start or calibrate: the server logs one line per request (never its text) and the engine's own output (`logging.requests`, `logging.engine_output`) unless the config turns them off, warns of it at every start, and the About tab lists `debugging` among the features. `strata-window` opens with a pop-up saying so and starts the server only on **Yes** (No, the default, exits); `strata-tui` shows the same on a screen of its own and starts the server only on **y** (any other key quits). The engine's output can hold what the engine prints of your prompts and the paths of your model files: run it on your own PC, keep the server's log private, look through a log before you share it, and build again without `--debugging` for everyday use. make prints this before and after the build and puts it in the folder's README.txt; `install.sh --debugging` and `install.bat -Debugging` pass it on, and their questions ask for it. Only a debugging build has Settings > Troubleshooting, which turns the engine's output off without a new build; another build turns it on alone with `logging.engine_output` in its config file. |
+| `--debugging` | Ships the Debugging plugin turned on (every folder has it, `plugins/debugging`, off otherwise; the Plugins tab turns it on or off later, with no new build), to find out why a model does not start or calibrate: while it is on, the server logs one line per request (never its text) and the engine's own output (`logging.requests`, `logging.engine_output`) unless the config turns them off, and warns of it at every start. `strata-window` opens with a pop-up saying so and starts the server only on **Yes** (No, the default, exits); `strata-tui` shows the same on a screen of its own and starts the server only on **y** (any other key quits). The engine's output can hold what the engine prints of your prompts and the paths of your model files: run it on your own PC, keep the server's log private, look through a log before you share it, and turn the plugin off for everyday use. make prints this before and after the build and puts it in the folder's README.txt; `install.sh --debugging` and `install.bat -Debugging` pass it on, and their questions ask for it. Settings > Troubleshooting shows only while the plugin is on and turns the engine's output off alone; without it, `logging.engine_output` in the config file does that. |
 
 The first build compiles the CUDA engine and takes a while; later builds are incremental (`out/make-build`). The out
 folder holds only what runs:
@@ -586,11 +588,12 @@ is left as it was. An empty box puts the setting back to its default.
   use shared folders without changing their permissions (then other users of the PC can read or change those files).
   "Use model folders on network shares (SMB/CIFS, NFS)" - **experimental** - lets a model folder be on a share; see
   [Model folders on network shares](#model-folders-on-network-shares-experimental).
-- **Troubleshooting** (a `--debugging` build only): "Write the engine's own output to the server log"
-  (`logging.engine_output`; another build takes it in the config file only), to find out why a
+- **Troubleshooting** (only while the Debugging plugin is on): "Write the engine's own output to the server log"
+  (`logging.engine_output`; otherwise the config file takes it), to find out why a
   model does not start or calibrate: each line the engine prints reaches the log as `[engine] ...`. That output can
   hold what the engine prints of your prompts and the paths of your model files, so the server warns of it at every
-  start: turn it off when you are done, and look through a log before you share it. A `--debugging` build has it on.
+  start: turn it off when you are done, and look through a log before you share it. Unset, it is on while the
+  Debugging plugin is on.
 - **Email alerts** (a build with `email`): the SMTP server, port and security (SSL/TLS on 465 or STARTTLS on 587),
   user name, From and To, and which events to send (downloads, calibrations, engine stops, server start). "Fill in
   IONOS" presets one provider; the password is stored on its own and never shown again; "Send a test email" checks it.
@@ -733,8 +736,8 @@ tray icon's menu (right-click; on Linux, its menu) opens the window, starts or s
 **Server log** (the tray menu, Ctrl+Shift+L, or on Windows the title bar's menu) shows the server's lines live, newest
 last (the last 2000), with **Copy all**, **Save as...** and **Open the logs folder**; the window adds a line when it
 starts, restarts or stops the server and when the server ends (with its exit code).
-A `--debugging` build opens with a pop-up saying what it logs and starts the server only on **Yes**; `strata-tui`
-shows the same and starts it only on **y**.
+While the Debugging plugin is on, it opens with a pop-up saying what it logs and starts the server only on **Yes**;
+`strata-tui` shows the same and starts it only on **y**.
 
 <img src="docs/images/strata-window-chat.png" width="49%" alt="strata-window: a chat with Gemma 4 26B-A4B (Q8) on an RTX 4080 SUPER, 78 tok/s">
 <img src="docs/images/strata-window-monitor.png" width="49%" alt="strata-window's Monitor: decode and prefill speed, GPU load, VRAM, temperature, power, PCIe, CPU and disk">
@@ -857,7 +860,7 @@ for a real install, which makes its own key at the first start.
 
 | What you see | Why, and what to do |
 | --- | --- |
-| No Settings, email or web search on the page | Those sections answer this PC and the machines `models.control_remote_networks` lists; open the page from one of them. A build without `--with email,search` has no email or search sections at all, and one without `--debugging` no Troubleshooting. |
+| No Settings, email or web search on the page | Those sections answer this PC and the machines `models.control_remote_networks` lists; open the page from one of them. A build without `--with email,search` has no email or search sections at all, and Troubleshooting shows only while the Debugging plugin is on (the Plugins tab). |
 | A new model family, download or setting is missing | The running server is an older build: rebuild the out folder and restart from it. |
 | "Other users of this PC can change files in this folder" | Make the folder private when the page asks, or turn on Settings > Model folders. |
 | A GLM download shows its size as "read from Hugging Face at the start" | Project Maya's catalog pins each file's SHA-256 but not its size; the server reads the size when the download starts. |
@@ -865,7 +868,7 @@ for a real install, which makes its own key at the first start.
 | An answer stops early, marked "Max tokens" (`length`), with room left in the context | It reached the longest answer the server allows (`limits.engine.generation_timeout_s`, half an hour by default; servers built before 2026-10-29 stopped at 120 s). Raise **Longest answer (minutes)** on the model's card, or **Longest answer (seconds)** in Settings → Limits and timeouts for every model, and restart the model or the server. |
 | The engine takes long to stop with a big model | Freeing tens of GB of pinned RAM takes time; the server waits, then reports it. |
 | A calibration fails, or some of its trials do | The card says **A report for a bug report was made**: **Show the report** reads, copies or saves it (it is also in `data/logs/calibration-reports/`). It says how each failed trial's engine ended and what it printed last, with this PC's hardware; look it over, then attach it to a bug report. |
-| A model does not start, or its calibration stops ("the engine did not start") | Build with `--debugging` (or set `logging.engine_output` to `true` in the config file), restart, try again, and read the `[engine]` lines in the log (the console, or the window app's Server log): the engine says why. After `engine generation N ended: crashed` the next line gives its exit code (`0xC0000005` an access violation, `0xC0000409` an abort). Turn it off afterwards. |
+| A model does not start, or its calibration stops ("the engine did not start") | Turn the Debugging plugin on in the Plugins tab (or set `logging.engine_output` to `true` in the config file), restart, try again, and read the `[engine]` lines in the log (the console, or the window app's Server log): the engine says why. After `engine generation N ended: crashed` the next line gives its exit code (`0xC0000005` an access violation, `0xC0000409` an abort). Turn it off afterwards. |
 | The Monitor shows no GPU load, memory, temperature or power | Its readings come from `nvidia-smi`. A field it cannot read only blanks that reading; when there is no reading at all, the GPU card's grey line quotes what `nvidia-smi` answered (for example `Failed to initialize NVML: ...`, usually a driver that needs a restart or reinstall). |
 | A Qwen3.6 card has no MTP draft layer to choose | Its draft layer is part of the model file: the card says whether the file has one. A file without one runs without MTP; an Unsloth Qwen3.6 GGUF carries it. |
 | A model folder on a network share is refused | Turn on Settings > Model folders > Use model folders on network shares (experimental) and restart; a mapped drive must be mapped for the account the server runs as. |

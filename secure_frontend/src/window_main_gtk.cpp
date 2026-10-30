@@ -521,12 +521,12 @@ void activate(GtkApplication* application, gpointer) {
     show_window();
     return;
   }
-  // make --debugging (owner 2026-10-29): a debugging build says what it logs and starts the server only on Yes (No, the
-  // default, returns before the application is held, so it ends before anything starts)
-  if (w::asks_before_starting()) {
+  // The Debugging plugin (owner 2026-10-29, 2026-10-30): while it is on, the window says what it logs and starts the
+  // server only on Yes (No, the default, returns before the application is held, so it ends before anything starts)
+  if (w::asks_before_starting(app.setup, secure_frontend::executable_directory())) {
     const std::string notice = std::string{w::kDebuggingNotice} + "\n\nStart the server?";
     GtkWidget* ask = gtk_message_dialog_new(nullptr, GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_YES_NO, "%s", notice.c_str());
-    gtk_window_set_title(GTK_WINDOW(ask), "M-Strata - debugging build");
+    gtk_window_set_title(GTK_WINDOW(ask), "M-Strata - debugging is on");
     gtk_dialog_set_default_response(GTK_DIALOG(ask), GTK_RESPONSE_NO);
     const gint answer = gtk_dialog_run(GTK_DIALOG(ask));
     gtk_widget_destroy(ask);

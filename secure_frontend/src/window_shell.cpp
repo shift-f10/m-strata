@@ -3,6 +3,7 @@
 #include "secure_frontend/api_client.hpp"
 #include "secure_frontend/config.hpp"
 #include "secure_frontend/frontend_config.hpp"
+#include "secure_frontend/install_plugins.hpp"
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/loopback_address.hpp"
 #include "secure_frontend/model_cards.hpp"
@@ -775,6 +776,10 @@ bool ServerChild::stop(const std::chrono::milliseconds grace) {
   return orderly;
 }
 
-bool asks_before_starting() noexcept { return debugging_build(); }
+bool asks_before_starting(const ServerSetup& setup, const std::filesystem::path& install_dir) {
+  const auto plugins = install_plugins(bundled_engine(install_dir).parent_path(),
+                                       setup.data ? std::optional<std::filesystem::path>{setup.data->state} : std::nullopt);
+  return diagnostics_on(plugins.entries).any();
+}
 
 }  // namespace secure_frontend::window

@@ -175,6 +175,21 @@ std::optional<PluginChoices> parse_plugin_choices(const std::string_view text) {
   return choices;
 }
 
+std::optional<PluginChoices> read_plugin_choices(const std::filesystem::path& state_dir) {
+  constexpr std::uintmax_t kMaxChoicesBytes = 1U << 20U;  // parse_plugin_choices' own bound
+  const auto file = state_dir / path_from_utf8(kPluginChoicesFile);
+  std::error_code ec;
+  const auto status = std::filesystem::symlink_status(file, ec);
+  if (status.type() == std::filesystem::file_type::not_found) return PluginChoices{};
+  if (ec || !std::filesystem::is_regular_file(status)) return std::nullopt;
+  const auto size = std::filesystem::file_size(file, ec);
+  if (ec || size > kMaxChoicesBytes) return std::nullopt;
+  std::ifstream in(file, std::ios::binary);
+  std::string text(static_cast<std::size_t>(size), '\0');
+  if (!in || (size > 0U && !in.read(text.data(), static_cast<std::streamsize>(size)))) return std::nullopt;
+  return parse_plugin_choices(text);
+}
+
 std::vector<PluginEntry> discover_plugins(const std::filesystem::path& plugins_dir, const std::vector<FirstPartyPlugin>& first_party,
                                           const PluginChoices& choices) {
   std::vector<std::filesystem::path> folders;
@@ -247,6 +262,19 @@ std::vector<PluginEntry> discover_plugins(const std::filesystem::path& plugins_d
     entries.push_back(std::move(entry));
   }
   return entries;
+}
+
+Diagnostics diagnostics_on(const std::vector<PluginEntry>& plugins) {
+  Diagnostics on;
+  for (const auto& plugin : plugins) {
+    if (plugin.state != PluginState::on || !plugin.manifest || plugin.manifest->kind != PluginKind::diagnostics) continue;
+    for (const auto value : plugin.manifest->switches) {
+      on.log_requests = on.log_requests || value == DiagnosticSwitch::log_requests;
+      on.log_engine_output = on.log_engine_output || value == DiagnosticSwitch::log_engine_output;
+      on.troubleshooting = on.troubleshooting || value == DiagnosticSwitch::troubleshooting;
+    }
+  }
+  return on;
 }
 
 }  // namespace secure_frontend

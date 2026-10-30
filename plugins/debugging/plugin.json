@@ -1,0 +1,11 @@
+{
+  "schema": "m-strata.plugin/1",
+  "id": "debugging",
+  "kind": "diagnostics",
+  "name": "Debugging",
+  "version": "1.0.0",
+  "publisher": "M-Strata",
+  "license": "AGPL-3.0-only",
+  "about": "Verbose logs, to find out why a model does not start or calibrate. While it is on, the server logs one line per request (route, status, time; never its text) and the engine's own output, which can hold what the engine prints of your prompts and the paths of your model files, and Settings > Troubleshooting turns the engine's output off or on. Keep the server's log private, look through a log before you share it, and turn this plugin off when you are done. A change applies when the server restarts.",
+  "diagnostics": {"switches": ["logging.requests", "logging.engine_output", "troubleshooting"]}
+}

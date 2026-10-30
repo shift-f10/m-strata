@@ -1,14 +1,15 @@
 ﻿<#
 install.ps1 - from a fresh Windows 10/11 PC to a built M-Strata in one step (run it through install.bat).
 
-  .\install.bat                                        ask what to build (Enter takes each default: everything but
-                                                       a debugging build), then build into ..\M-Strata-app
+  .\install.bat                                        ask what to build (Enter takes each default: everything, the
+                                                       Debugging plugin off), then build into ..\M-Strata-app
   .\install.bat -Out D:\Apps\M-Strata -With email,search,tui      (no window: only the terminal one)
   .\install.bat -Without maya,raon1,vision              leave the GLM/DeepSeek/MiniMax engines, raon1 or pictures out
   .\install.bat -Plan                                  only say what it would install, fetch and run
   .\install.bat -Yes                                   ask nothing: build everything (no debugging), install without asking
-  .\install.bat -Debugging                             a server that logs verbosely, to find out why a model does not
-                                                       start or calibrate (the plan says what to take care of)
+  .\install.bat -Debugging                             the Debugging plugin on: a server that logs verbosely, to find
+                                                       out why a model does not start or calibrate (the plan says what
+                                                       to take care of)
 
 What it does, each step only when needed:
   1. finds what the build needs: Git, Python 3.10+, Visual Studio 2022 Build Tools WITH the C++ workload, the CUDA
@@ -173,7 +174,7 @@ if ($askFeatures -or $askLeaveOut -or $askDebugging) {
     if (-not (Ask 'Pictures in Qwen chats (the picture encoder, strata-vision)?' $true)) { $leaveOut += 'vision' }
   }
   if ($askDebugging) {
-    $Debugging = [switch](Ask 'A debugging build: verbose logs, to find out why a model does not start or calibrate (the plan says what it logs)?' $false)
+    $Debugging = [switch](Ask 'The Debugging plugin turned on: verbose logs, to find out why a model does not start or calibrate (the plan says what it logs)?' $false)
   }
 }
 $makeArgs = @()
@@ -252,11 +253,11 @@ if ($features -contains 'window') {
 Say "  make.bat --out $Out $($makeArgs -join ' ')"
 if ($Debugging) {
   Say ''
-  Say "  -Debugging: the server will log verbosely, to find out why a model does not start or calibrate. It logs"
-  Say "  one line per request (never its text) and the engine's own output, which can hold what the engine prints of"
-  Say "  your prompts and the paths of your model files. Run it on your own PC, keep the server's log private,"
-  Say "  look through a log before you share it, and build again without the debugging option for everyday use."
-  Say "  The engine's output can be turned off without a new build: Settings > Troubleshooting."
+  Say "  -Debugging: the Debugging plugin ships on, so the server logs verbosely, to find out why a model does not"
+  Say "  start or calibrate. It logs one line per request (never its text) and the engine's own output, which can"
+  Say "  hold what the engine prints of your prompts and the paths of your model files. Run it on your own PC,"
+  Say "  keep the server's log private, look through a log before you share it, and turn the plugin off in the"
+  Say "  Plugins tab for everyday use. The engine's output alone can be turned off in Settings > Troubleshooting."
 }
 if ($Plan) { Say ""; Say 'install: -Plan given - nothing was installed or changed.'; exit 0 }
 if (-not $Yes) {

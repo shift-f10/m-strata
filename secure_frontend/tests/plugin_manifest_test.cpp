@@ -4,7 +4,9 @@
 #include "secure_frontend/plugin_manifest.hpp"
 #include "support/test_support.hpp"
 
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <variant>
 
@@ -119,10 +121,32 @@ void a_wrong_manifest_is_refused_by_name() {
          "ids as the launcher takes them");
 }
 
+// The debugging plugin this repository ships (plugins/debugging/plugin.json; the owner, 2026-10-30: "we should make
+// the email, websearch, debugging all plugins as well"): make puts it in every install, on with --debugging. It is a
+// diagnostics plugin with each switch a make --debugging build had.
+void the_shipped_debugging_plugin_is_one() {
+  std::ifstream in(std::string{SECURE_FRONTEND_REPO_PLUGINS} + "/debugging/plugin.json", std::ios::binary);
+  const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+  expect(!text.empty(), "plugins/debugging/plugin.json is there");
+  const auto parsed = secure_frontend::parse_plugin_manifest(text, "debugging");
+  const auto* manifest = std::get_if<secure_frontend::PluginManifest>(&parsed);
+  expect(manifest != nullptr, "read: " + why(parsed));
+  if (manifest == nullptr) return;
+  using S = secure_frontend::DiagnosticSwitch;
+  expect(manifest->kind == secure_frontend::PluginKind::diagnostics && manifest->name == "Debugging" &&
+             manifest->publisher == "M-Strata" && manifest->license == "AGPL-3.0-only" &&
+             manifest->switches == std::vector<S>{S::log_requests, S::log_engine_output, S::troubleshooting},
+         "a diagnostics plugin with each switch");
+  for (const char* words : {"one line per request", "the engine's own output", "your prompts", "Settings > Troubleshooting"}) {
+    expect(manifest->about.find(words) != std::string::npos, std::string{"its about says: "} + words);
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
+      {"the_shipped_debugging_plugin_is_one", the_shipped_debugging_plugin_is_one},
       {"a_diagnostics_manifest_is_read", a_diagnostics_manifest_is_read},
       {"a_code_plugin_names_this_platforms_files", a_code_plugin_names_this_platforms_files},
       {"a_wrong_manifest_is_refused_by_name", a_wrong_manifest_is_refused_by_name},

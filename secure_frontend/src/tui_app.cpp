@@ -1645,7 +1645,7 @@ void draw_debugging_notice(Screen& screen, const std::string_view notice) {
     if (!line.empty()) lines.push_back(std::move(line));
     start = end + 2U;
   }
-  (void)screen.text(left, 1, "Debugging build", kTitle, width);
+  (void)screen.text(left, 1, "Debugging is on", kTitle, width);
   const int keys_row = std::min(3 + static_cast<int>(lines.size()) + 1, screen.height() - 1);
   for (std::size_t i = 0; i < lines.size() && 3 + static_cast<int>(i) < keys_row; ++i) {
     (void)screen.text(left, 3 + static_cast<int>(i), lines[i], kNormal, width);

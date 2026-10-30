@@ -183,18 +183,21 @@ class ServerChild final {
   std::unique_ptr<State> state_;
 };
 
-// make --debugging (the owner, 2026-10-29: "it will have a pop up on the windows version that this is the debugging
-// version and the tui you will have to accept and press y to start"): what a debugging build's window (a pop-up) and
-// TUI (a screen) say before they start the server. Plain text, its paragraphs split by a blank line.
+// The Debugging plugin (the owner, 2026-10-29: "it will have a pop up on the windows version that this is the debugging
+// version and the tui you will have to accept and press y to start"; 2026-10-30, a plugin): what the window (a pop-up)
+// and the TUI (a screen) say before they start the server while it is on. Plain text, its paragraphs split by a blank
+// line.
 inline constexpr std::string_view kDebuggingNotice =
-    "This is a debugging build of M-Strata (built with --debugging), made to find out why a model does not start or "
-    "calibrate.\n\n"
-    "It logs one line per request (never its text) and the engine's own output, which can hold what the engine prints of "
-    "your prompts and the paths of your model files.\n\n"
+    "The Debugging plugin is on (make --debugging turns it on, the Plugins tab on or off), to find out why a model does "
+    "not start or calibrate.\n\n"
+    "The server logs one line per request (never its text) and the engine's own output, which can hold what the engine "
+    "prints of your prompts and the paths of your model files.\n\n"
     "Take care: run it on your own PC, keep the server's log private, look through a log before you share it and take "
-    "out prompts, paths and names, and build again without --debugging for everyday use. The engine's output can be "
-    "turned off without a new build: Settings > Troubleshooting.";
-// Whether this build asks before it starts the server (a debugging build: debugging_build()).
-[[nodiscard]] bool asks_before_starting() noexcept;
+    "out prompts, paths and names, and turn the plugin off in the Plugins tab for everyday use. The engine's output "
+    "alone can be turned off in Settings > Troubleshooting.";
+// Whether the window and the TUI ask before they start this server: while the install's Debugging plugin is on
+// (install_plugins.hpp: <install_dir>/plugins, make's record in <install_dir>/engine/build.json, the owner's choices in
+// the data folder's state/plugins.json; without a data folder, make's record alone).
+[[nodiscard]] bool asks_before_starting(const ServerSetup& setup, const std::filesystem::path& install_dir);
 
 }  // namespace secure_frontend::window

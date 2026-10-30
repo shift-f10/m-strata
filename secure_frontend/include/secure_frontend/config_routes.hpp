@@ -7,9 +7,9 @@
 //
 //   POST /v1/strata/config           {} -> {"editable", "debugging", "settings": [{"key", "type", "value", "default",
 //                                            "min"?, "max"?, "help"}], "key": {"rotatable"}}   (the config file's values;
-//                                            null: the file leaves it to the default. debugging: a make --debugging
-//                                            build, the only one that lists and saves logging.engine_output, the page's
-//                                            Troubleshooting section)
+//                                            null: the file leaves it to the default. debugging: the Debugging
+//                                            plugin's Troubleshooting is on, the only time logging.engine_output, the
+//                                            page's Troubleshooting section, is listed and saved)
 //   POST /v1/strata/config/settings  {"values": {"<key>": <value or null>, ...}} -> {"saved": true, "restart_needed": true}
 //                                       (only the keys listed above; the whole file is checked after the change by the
 //                                       rules the server starts with, and a value it would refuse is refused by name)
@@ -35,6 +35,9 @@ struct ConfigRouteSettings final {
   // writes there. Unset: the key cannot be rotated here.
   std::optional<std::filesystem::path> secret_dir{};
   std::string token_file{};  // below secret_dir
+  // Whether the Debugging plugin's Troubleshooting is on (the server decides it when it starts): only then is
+  // logging.engine_output, the Troubleshooting section's row, listed and saved here.
+  bool troubleshooting{false};
   std::function<void(std::string_view)> log{};
   // Who may read and save the settings (the server passes model_files_allowed, as for the other settings). Empty:
   // loopback clients only. Rotation answers loopback clients only, whatever this says.

@@ -106,6 +106,14 @@ struct ServerOptions final {
   std::vector<CardOptions> model_cards{};
   // Web search: the expert launch's pack is the byte pack with Qwen's reasoning and tool tags (tool_byte_tokenizer).
   bool tool_tokenizer{false};
+  // Plugins (owner 2026-10-30): each manifest as <root>/plugins/<id>/plugin.json, beside the engine's folder as make
+  // puts them, and recorded in <root>/bin/build.json as a first-party plugin, on or off as given.
+  struct Plugin final {
+    std::string id;
+    std::string manifest;
+    bool on{true};
+  };
+  std::vector<Plugin> first_party_plugins{};
 };
 
 // strata-unified-server as a test child: fixture models (fake-model.gguf, 0600)

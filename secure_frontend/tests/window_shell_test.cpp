@@ -5,6 +5,7 @@
 #include "secure_frontend/first_start.hpp"
 #include "secure_frontend/frontend_config.hpp"
 #include "secure_frontend/secret_source.hpp"
+#include "secure_frontend/sha256.hpp"
 #include "secure_frontend/token_reader.hpp"
 #include "secure_frontend/window_shell.hpp"
 #include "support/test_support.hpp"
@@ -480,27 +481,67 @@ void every_start_gets_the_windows_first_environment() {
   expect(child.stop(std::chrono::seconds(15)), "stopped");
 }
 
-}  // namespace
-
-// The owner (2026-10-29): a build made with --debugging opens with a pop-up (the window) or a screen to accept with y
-// (the TUI) before it starts the server, saying what that build logs and what to take care of; any other build starts
-// as before. One text for both.
-void a_debugging_build_says_what_it_logs_before_it_starts() {
+// The owner (2026-10-29, then 2026-10-30: "we should make the email, websearch, debugging all plugins as well"): while
+// the install's Debugging plugin is on, the window opens with a pop-up and the TUI with a screen to accept with y before
+// either starts the server, saying what it logs and what to take care of; otherwise they start as before. One text for
+// both. The plugin is found as the server finds it: <install>/plugins, make's record in <install>/engine/build.json and
+// the owner's choices in the data folder's state/plugins.json (without a data folder, make's record alone).
+void the_debugging_plugin_says_what_it_logs_before_it_starts() {
   const std::string_view notice = w::kDebuggingNotice;
-  for (const char* words : {"debugging build", "one line per request", "the engine's own output", "your prompts",
+  for (const char* words : {"The Debugging plugin is on", "one line per request", "the engine's own output", "your prompts",
                             "the paths of your model files", "keep the server's log private", "before you share it",
-                            "without --debugging", "Settings > Troubleshooting"}) {
+                            "Plugins tab", "Settings > Troubleshooting"}) {
     expect(notice.find(words) != std::string_view::npos, std::string{"the notice says: "} + words);
   }
   expect(notice.find('\t') == std::string_view::npos && notice.find('\r') == std::string_view::npos,
          "plain text, paragraphs split by blank lines");
-  expect(w::asks_before_starting() == secure_frontend::debugging_build(), "only a debugging build asks");
+  const std::filesystem::path install = secure_frontend_test::make_scratch_directory();
+  const auto setup = std::get<w::ServerSetup>(w::server_setup({}, install));
+  const auto config = std::get<w::ServerSetup>(w::server_setup({"--config", (install / "c.json").string()}, install));
+  expect(!w::asks_before_starting(setup, install), "no plugins: it starts as before");
+  const std::string manifest = R"({"schema": "m-strata.plugin/1", "id": "debugging", "kind": "diagnostics",
+    "name": "Debugging", "version": "1.0.0", "publisher": "M-Strata", "license": "AGPL-3.0-only", "about": "Verbose logs.",
+    "diagnostics": {"switches": ["logging.requests", "logging.engine_output", "troubleshooting"]}})";
+  secure_frontend_test::make_private_directory(install / "plugins");
+  secure_frontend_test::make_private_directory(install / "plugins" / "debugging");
+  secure_frontend_test::write_file(install / "plugins" / "debugging" / "plugin.json", manifest);
+  expect(!w::asks_before_starting(setup, install), "a Debugging plugin nobody approved: as before");
+  secure_frontend::Sha256 hash;
+  hash.update(manifest);
+  std::string sum;
+  for (const auto byte : hash.finish()) {
+    static constexpr char kDigits[] = "0123456789abcdef";
+    sum += kDigits[byte >> 4U];
+    sum += kDigits[byte & 0x0FU];
+  }
+  const auto record = [&](const bool on) {
+    secure_frontend_test::write_file(install / "engine" / "build.json",
+                                     R"({"schema_version": 1, "built": "x", "commit": "c", "ggml": "g", "cuda_arch": "a", )"
+                                     R"("engines": [], "plugins": [{"id": "debugging", "manifest": ")" + sum +
+                                         R"(", "files": {}, "on": )" + (on ? "true" : "false") + "}]}");
+  };
+  secure_frontend_test::make_private_directory(install / "engine");
+  record(false);
+  expect(!w::asks_before_starting(setup, install) && !w::asks_before_starting(config, install), "made off: as before");
+  record(true);
+  expect(w::asks_before_starting(setup, install), "made on (make --debugging): it asks");
+  expect(w::asks_before_starting(config, install), "with --config, make's record alone: it asks");
+  secure_frontend_test::make_private_directory(install / "data");
+  secure_frontend_test::make_private_directory(setup.data->state);
+  secure_frontend_test::write_file(setup.data->state / "plugins.json",
+                                   R"({"schema":"m-strata.plugin-choices/1","approved":{},"enabled":{"debugging":false}})");
+  expect(!w::asks_before_starting(setup, install), "turned off in the Plugins tab: as before");
+  secure_frontend_test::write_file(setup.data->state / "plugins.json",
+                                   R"({"schema":"m-strata.plugin-choices/1","approved":{},"enabled":{"debugging":true}})");
+  expect(w::asks_before_starting(setup, install), "turned on in the Plugins tab: it asks");
 }
+
+}  // namespace
 
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"the_sign_in_link_is_read_and_never_logged", the_sign_in_link_is_read_and_never_logged},
-      {"a_debugging_build_says_what_it_logs_before_it_starts", a_debugging_build_says_what_it_logs_before_it_starts},
+      {"the_debugging_plugin_says_what_it_logs_before_it_starts", the_debugging_plugin_says_what_it_logs_before_it_starts},
       {"the_listening_line_names_the_pages_origin", the_listening_line_names_the_pages_origin},
       {"the_window_opens_on_the_monitor_first", the_window_opens_on_the_monitor_first},
       {"navigation_stays_on_the_pages_origin", navigation_stays_on_the_pages_origin},

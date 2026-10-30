@@ -389,9 +389,10 @@ config rows (`listener.host`, `.port`, `.allow_remote`, `.allow_wildcard_bind`, 
 `POST /v1/strata/config/settings` (`{"values":{key: value or null}}`; null or an empty text is the default). A save is
 held to the server's start-up rules on the whole file: a problem the change brings is refused by name and nothing is
 written. Saved settings apply at the next start; a command-line option (`--port`, `--host`, ...) still overrides the
-file for the start that names it. Troubleshooting is a debugging build's only (`make --debugging`; owner 2026-10-29):
-the answer's `"debugging"` says which build this is, any other build neither lists nor saves `logging.engine_output`
-(it refuses it by name; the config file still takes it), and the page hides the section.
+file for the start that names it. Troubleshooting shows only while the Debugging plugin is on (owner 2026-10-29; a
+plugin since 2026-10-30, see **Plugins**): the answer's `"debugging"` says whether it is, and otherwise the server
+neither lists nor saves `logging.engine_output` (it refuses it by name; the config file still takes it), and the page
+hides the section.
 
 **Model folders** (every build with model control): "Use model folders as they are, even if other
 users of this PC can access them" saves `roots.allow_untrusted_media` to the config file; it applies at the next start.
@@ -410,6 +411,17 @@ test email" reports the mail server's answer. Saved settings are written to the 
 In a build with web search the tab also holds **Web search**: on/off, the SearXNG address, results per search,
 searches per answer and the time limit, Save, and a test search through the saved settings that shows what a model
 reads. A chat reply notes what it searched for.
+
+**Plugins** (every build with model control; owner 2026-10-30, spec
+`docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md`, section 8): the top-level Plugins tab lists each
+folder of `<install>/plugins` that holds a `plugin.json` (`POST /v1/strata/plugins`), with Approve, which pins the
+SHA-256s there now (`/approve`), and Turn on / Turn off (`/switch`). The owner's choices are kept in
+`<roots.state>/plugins.json`; what runs is decided when the server starts. A plugin `make` built is trusted through
+`engine/build.json` and needs no approval. The one plugin so far is **Debugging** (`plugins/debugging`, kind
+`diagnostics`, in every folder `make` builds; `make --debugging` ships it on): while it is on, the logging rows a config
+leaves unset (`logging.requests`, `logging.engine_output`) are on, every start says so, Settings shows
+Troubleshooting, and strata-window and strata-tui say what it logs before they start the server. Turning it on in the
+tab says the same first.
 
 ### strata-window: the server in a window with a tray icon (2026-10-28)
 
@@ -623,8 +635,8 @@ Every key (generated from the schema; `readme_config_table_matches_schema` keeps
 | `pull.connect_timeout_s` | integer | `30` | 1-300 | - | TCP/TLS connect timeout per request. |
 | `pull.connections` | integer | `16` | 1-32 | - | Connections for a large download (parallel ranged, 32 MiB pieces; 1 = one stream). Hugging Face's CDN limits each connection, so several are much faster. |
 | `update.source` | string array | `[]` | - | - | HTTPS release-mirror URLs that 'strata update' fetches the signed release envelope from. |
-| `logging.requests` | boolean | `false` | - | - | One line per request to stderr: route, status, code, time, bytes, loopback or remote; never paths, headers, tokens or text. In a make --debugging build it is on unless the config sets it. |
-| `logging.engine_output` | boolean | `false` | - | - | The engine's own output (its stderr) in this server's log, one '[engine] ' line each, for finding out why a model does not start or calibrate. It can hold what the engine prints of the prompts it is given and the paths of model files: turn it off when done, and look through a log before sharing it. In a make --debugging build it is on unless the config sets it. |
+| `logging.requests` | boolean | `false` | - | - | One line per request to stderr: route, status, code, time, bytes, loopback or remote; never paths, headers, tokens or text. Unset, it is on while the Debugging plugin is on (the Plugins tab; make --debugging ships it on). |
+| `logging.engine_output` | boolean | `false` | - | - | The engine's own output (its stderr) in this server's log, one '[engine] ' line each, for finding out why a model does not start or calibrate. It can hold what the engine prints of the prompts it is given and the paths of model files: turn it off when done, and look through a log before sharing it. Unset, it is on while the Debugging plugin is on (the Plugins tab; make --debugging ships it on). |
 | `defaults.sampling.temperature` | number | unset | 0-2 | - | Request default temperature (pin: 0..2); unset keeps the engine default. |
 | `defaults.sampling.top_p` | number | unset | >0-1 | - | Request default top_p (pin: 0 < top_p <= 1); unset keeps the engine default. |
 | `defaults.sampling.top_k` | integer | unset | 1-64 | - | Request default top_k candidates (pin: an integer 1..64); unset keeps the engine default. |

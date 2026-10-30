@@ -1252,22 +1252,78 @@ void engine_output_reaches_the_log_only_when_asked() {
            "the engine's lines, one per log line: " + log);
     expect(log.find("strata: warning: logging.engine_output is true: the engine's own output goes to this log") != std::string::npos,
            "the start says so, with what it can hold");
-    // and where to turn it off: Settings > Troubleshooting, which only a debugging build has (owner 2026-10-29), else
-    // the config file
-    expect(log.find(secure_frontend::debugging_build() ? "Turn it off when you are done (Settings > Troubleshooting)"
-                                                        : "Turn it off when you are done (logging.engine_output in the config file)") !=
-               std::string::npos,
-           "the notice says where to turn it off in this build: " + log);
+    // and where to turn it off: without the Debugging plugin's Settings > Troubleshooting (owner 2026-10-29), the
+    // config file
+    expect(log.find("Turn it off when you are done (logging.engine_output in the config file)") != std::string::npos,
+           "the notice says where to turn it off: " + log);
   }
-  // off: the default, except in a debugging build (make --debugging), which has it on unless the config turns it off
-  auto server = start_server(secure_frontend::debugging_build() ? std::map<std::string, std::string>{{"logging.engine_output", "false"}}
-                                                               : std::map<std::string, std::string>{},
-                             {"--stderr-cache-lines"});
+  // off: the default (while the Debugging plugin is off: the_debugging_plugin_turns_the_logs_on)
+  auto server = start_server({}, {"--stderr-cache-lines"});
   if (!server) return;
   std::this_thread::sleep_for(1s);
   const std::string log = server->stderr_text();
   expect(log.find("[engine]") == std::string::npos && log.find("logging.engine_output") == std::string::npos,
          "off: no engine line and no notice in the log");
+}
+
+// The owner (2026-10-30): "we should make the email, websearch, debugging all plugins as well". While the Debugging
+// plugin is on (make --debugging ships it on; the Plugins tab turns it on or off), the server logs one line per request
+// and the engine's own output unless the config turns them off, and says so at its start with where to turn each off;
+// off, it logs neither and says nothing.
+void the_debugging_plugin_turns_the_logs_on() {
+  const std::string manifest = R"({"schema": "m-strata.plugin/1", "id": "debugging", "kind": "diagnostics",
+    "name": "Debugging", "version": "1.0.0", "publisher": "M-Strata", "license": "AGPL-3.0-only", "about": "Verbose logs.",
+    "diagnostics": {"switches": ["logging.requests", "logging.engine_output", "troubleshooting"]}})";
+  const auto start = [&](const bool on, std::map<std::string, std::string> literals) {
+    test_support::ServerOptions options;
+    options.config_literals = std::move(literals);
+    options.engine_args = {"--stderr-cache-lines"};
+    options.first_party_plugins = {{.id = "debugging", .manifest = manifest, .on = on}};
+    auto server = test_support::ServerProcess::start(options);
+    const bool ready = server != nullptr && server->wait_until_listening(10s) && server->wait_for_health(test_support::kHealthReady, 15s);
+    expect(ready, "server ready" + (server ? std::string{": "} + server->stderr_text() : std::string{}));
+    return ready ? std::move(server) : nullptr;
+  };
+  const auto request_lines = [](const std::string& log) {
+    std::istringstream in(log);
+    std::size_t lines = 0;
+    for (std::string line; std::getline(in, line);) lines += line.rfind("req ", 0) == 0 ? 1U : 0U;
+    return lines;
+  };
+  {
+    auto server = start(true, {});
+    if (!server) return;
+    const auto r = raw(*server, chat_request(*server, chat_body()));
+    expect(r && r->status == 200, "a chat");
+    for (int i = 0; i < 200 && server->stderr_text().find("\n[engine] ") == std::string::npos; ++i) std::this_thread::sleep_for(50ms);
+    const std::string log = server->stderr_text();
+    expect(log.find("strata: warning: the Debugging plugin is on: it logs one line per request and the engine's own output "
+                    "unless the config turns them off. Turn it off in the Plugins tab when you are done.") != std::string::npos,
+           "the start says the Debugging plugin is on, and where to turn it off: " + log);
+    expect(request_lines(log) >= 1U, "one line per request: " + log);
+    expect(log.find("\n[engine] ") != std::string::npos, "the engine's own output: " + log);
+    expect(log.find("Turn it off when you are done (Settings > Troubleshooting)") != std::string::npos,
+           "the engine's output: Settings > Troubleshooting turns it off: " + log);
+  }
+  {
+    // on, but the config turns both off
+    auto server = start(true, {{"logging.requests", "false"}, {"logging.engine_output", "false"}});
+    if (!server) return;
+    (void)raw(*server, chat_request(*server, chat_body()));
+    std::this_thread::sleep_for(1s);
+    const std::string log = server->stderr_text();
+    expect(log.find("the Debugging plugin is on") != std::string::npos && request_lines(log) == 0U &&
+               log.find("[engine]") == std::string::npos,
+           "the config's own false wins: " + log);
+  }
+  // off in make's record: as without it
+  auto server = start(false, {});
+  if (!server) return;
+  (void)raw(*server, chat_request(*server, chat_body()));
+  std::this_thread::sleep_for(1s);
+  const std::string log = server->stderr_text();
+  expect(log.find("Debugging plugin") == std::string::npos && request_lines(log) == 0U && log.find("[engine]") == std::string::npos,
+         "off: no line, no notice: " + log);
 }
 
 // The owner (2026-10-29): model folders on network shares, "mark that as experimental" - a server with
@@ -2253,6 +2309,7 @@ int main(int argc, char** argv) {
       {"ext02_http_headers_cannot_enable_extensions", ext02_http_headers_cannot_enable_extensions},
       {"log_line_format_and_rate_limit", log_line_format_and_rate_limit},
       {"engine_output_reaches_the_log_only_when_asked", engine_output_reaches_the_log_only_when_asked},
+      {"the_debugging_plugin_turns_the_logs_on", the_debugging_plugin_turns_the_logs_on},
       {"network_shares_warn_at_every_start", network_shares_warn_at_every_start},
       {"undecodable_output_logs_its_own_code", undecodable_output_logs_its_own_code},
       {"web_ui_page_is_served_and_the_api_keeps_its_key", web_ui_page_is_served_and_the_api_keeps_its_key},

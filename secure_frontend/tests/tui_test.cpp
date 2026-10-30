@@ -943,9 +943,10 @@ void quitting_asks_first() {
 
 }  // namespace
 
-// The owner (2026-10-29): a debugging build's TUI shows what that build logs and starts the server only on y; any other
-// key quits without starting it (a wheel turn is no answer). The screen fits a small terminal.
-void a_debugging_build_waits_for_y() {
+// The owner (2026-10-29, then 2026-10-30 as a plugin): while the Debugging plugin is on, the TUI shows what it logs and
+// starts the server only on y; any other key quits without starting it (a wheel turn is no answer). The screen fits a
+// small terminal.
+void the_debugging_notice_waits_for_y() {
   using Kind = t::Key::Kind;
   for (const char* yes : {"y", "Y"}) {
     expect(t::debugging_gate(t::Key{Kind::character, yes}) == t::GateAnswer::accepted, std::string{"accepted: "} + yes);
@@ -955,11 +956,11 @@ void a_debugging_build_waits_for_y() {
     expect(t::debugging_gate(no) == t::GateAnswer::declined, "any other key quits: " + no.text);
   }
   expect(t::debugging_gate(t::Key{Kind::wheel_down}) == t::GateAnswer::waiting, "a wheel turn is no answer");
-  const std::string notice = "This is a debugging build.\n\nIt logs a lot, so keep the log private and read it before you share it.";
+  const std::string notice = "The Debugging plugin is on.\n\nIt logs a lot, so keep the log private and read it before you share it.";
   t::Screen screen(40, 16);
   t::draw_debugging_notice(screen, notice);
   const std::string shown = all_text(screen);
-  expect(shown.find("Debugging build") != std::string::npos && shown.find("This is a debugging build.") != std::string::npos,
+  expect(shown.find("Debugging is on") != std::string::npos && shown.find("The Debugging plugin is on.") != std::string::npos,
          "its title and its text: " + shown);
   expect(row_with(screen, "It logs a lot") >= 0 && row_with(screen, "read it before") > row_with(screen, "It logs a lot"),
          "a long line wraps at the screen's width: " + shown);
@@ -1005,7 +1006,7 @@ void an_uncalibrated_start_asks_to_calibrate_first() {
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"the_screen_draws_text_boxes_and_gauges", the_screen_draws_text_boxes_and_gauges},
-      {"a_debugging_build_waits_for_y", a_debugging_build_waits_for_y},
+      {"the_debugging_notice_waits_for_y", the_debugging_notice_waits_for_y},
       {"an_uncalibrated_start_asks_to_calibrate_first", an_uncalibrated_start_asks_to_calibrate_first},
       {"charts_are_braille_or_blocks", charts_are_braille_or_blocks},
       {"only_the_changes_are_written", only_the_changes_are_written},

@@ -182,10 +182,14 @@ struct Limits final {
   EngineLimits engine;
   ConcurrencyLimits concurrency;
 };
-// SP3 §8: logging.requests (one stderr line per request when true).
+// SP3 §8: logging.requests (one stderr line per request when true); owner 2026-10-29: logging.engine_output (the
+// engine's own output in this log). Each as the config file has it (unset: nullopt). A row it leaves unset is on while
+// the Debugging plugin is on (debugging_logs(); owner 2026-10-30), off otherwise.
 struct LoggingConfig final {
-  bool requests;
-  bool engine_output;
+  std::optional<bool> requests;
+  std::optional<bool> engine_output;
+  [[nodiscard]] bool logs_requests() const noexcept;
+  [[nodiscard]] bool logs_engine_output() const noexcept;
 };
 struct Roots final {
   CanonicalRoot models;
@@ -409,15 +413,16 @@ struct SearchConfig final {
 };
 // The search.* rows of a draft alone, by validate()'s own rules (the page's settings, before they are written).
 [[nodiscard]] std::variant<SearchConfig, ConfigErrors> search_from_draft(const FrontendConfigDraft& draft);
-// Whether this build has web search (SECURE_FRONTEND_WEB_SEARCH).
-// Whether this is a debugging build (make --debugging, SECURE_FRONTEND_DEBUGGING; owner 2026-10-29).
-[[nodiscard]] constexpr bool debugging_build() noexcept {
-#if defined(SECURE_FRONTEND_DEBUGGING)
-  return true;
-#else
-  return false;
-#endif
-}
+// The Debugging plugin (owner 2026-10-30: "we should make the email, websearch, debugging all plugins as well"; it
+// replaced the make --debugging build of 2026-10-29): while it is on, the logging rows a config leaves unset are on.
+// The server says so once, when it starts and knows which plugins are on (plugin_registry.hpp), before it serves; until
+// then both are off.
+struct DebuggingLogs final {
+  bool requests{false};
+  bool engine_output{false};
+};
+void set_debugging_logs(DebuggingLogs logs) noexcept;
+[[nodiscard]] DebuggingLogs debugging_logs() noexcept;
 
 [[nodiscard]] constexpr bool web_search_built() noexcept {
 #if defined(SECURE_FRONTEND_WEB_SEARCH)

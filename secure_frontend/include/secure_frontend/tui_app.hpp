@@ -148,8 +148,9 @@ class App final {
   std::optional<JsonValue> editing_;  // the setting the edit field was opened on (its key, type and range)
 };
 
-// make --debugging (owner 2026-10-29): before a debugging build's TUI starts the server it shows what that build logs
-// (window::kDebuggingNotice) and starts only on y; any other key quits without starting it. A wheel turn is no answer.
+// The Debugging plugin (owner 2026-10-29, 2026-10-30): while it is on, the TUI shows what it logs
+// (window::kDebuggingNotice) before it starts the server, and starts it only on y; any other key quits without starting
+// it. A wheel turn is no answer.
 enum class GateAnswer { waiting, accepted, declined };
 [[nodiscard]] GateAnswer debugging_gate(const Key& key) noexcept;
 // The notice as a screen: its title, its paragraphs wrapped at the screen's width, then the keys (on the last row when

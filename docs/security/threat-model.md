@@ -371,12 +371,15 @@ Trust boundaries:
   text and model paths on stderr (upstream's `session N: prompt:` line), so
   those reach the log. The row's description, the Settings page's
   Troubleshooting card and the server's start-up notice all say so and say
-  to turn it off and to read a log before sharing it. Only a debugging build
-  (`make --debugging`; owner 2026-10-29) offers the row in Settings: any
-  other build neither lists nor saves it through `POST /v1/strata/config*`
-  (refused by name), the page hides the card, and its start-up notice names
-  the config row to turn it off (`troubleshooting_is_offered_only_in_a_
-  debugging_build`). A calibration's report (owner 2026-10-30) is the third
+  to turn it off and to read a log before sharing it. Settings offers the
+  row only while the Debugging plugin is on (owner 2026-10-29; a plugin since
+  2026-10-30, it replaced the `make --debugging` build): otherwise the server
+  neither lists nor saves it through `POST /v1/strata/config*` (refused by
+  name), the page hides the card, and the start-up notice names the config
+  row to turn it off (`troubleshooting_is_offered_only_while_the_debugging_
+  plugin_is_on`). While that plugin is on, the row (and `logging.requests`)
+  is on where the config leaves it unset, never against the config's own
+  `false`; see Plugins below for who can turn it on. A calibration's report (owner 2026-10-30) is the third
   reader, for calibration trials only: each trial's engine stderr goes to
   the same drain whatever the row says, its last 40 lines (each as
   `printable_stderr_line` made it, cut to 400 characters) are kept in memory
@@ -942,6 +945,22 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
 
 ### Extensions and MCP
 
+- Plugins (owner 2026-10-30; spec
+  `docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md`,
+  section 8): the server reads `<install>/plugins/<id>/plugin.json`, but
+  only the `diagnostics` kind runs so far, and it runs no code: a manifest
+  that names which of three fixed switches it turns on (`logging.requests`,
+  `logging.engine_output`, Settings > Troubleshooting), refused if it names
+  anything else. A plugin is on only when it is trusted - make's record in
+  the owner-only engine folder (`engine/build.json`) lists its SHA-256, or
+  the owner approved it in the Plugins tab and its SHA-256s are still the
+  approved ones - and in a plugins folder no other user of this PC can
+  change; the owner's choices are an owner-only file in the state folder,
+  and an unreadable one lets nothing run. What runs is decided once, when
+  the server starts, and the start says when the Debugging plugin is on;
+  strata-window and strata-tui say what it logs and start the server only
+  when the owner accepts (`the_debugging_plugin_turns_the_logs_on`,
+  `the_debugging_plugin_says_what_it_logs_before_it_starts`).
 - MCP, tool execution, arbitrary plugins, and remote command execution are
   disabled and absent from the default build/runtime configuration. The one exception is
   the web search build's own MCP server and tool (above), which no request, model or

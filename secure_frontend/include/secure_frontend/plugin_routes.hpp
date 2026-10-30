@@ -29,8 +29,6 @@
 
 namespace secure_frontend {
 
-inline constexpr std::string_view kPluginChoicesFile = "plugins.json";
-
 struct PluginRouteSettings final {
   std::filesystem::path plugins_dir;                // <install>/plugins
   std::optional<std::filesystem::path> state_dir{}; // <roots.state>: the choices file's folder (unset: read-only)
@@ -41,9 +39,6 @@ struct PluginRouteSettings final {
   // clients only.
   std::function<bool(const RequestContext& context)> client_allowed{};
 };
-
-// The owner's choices in `state_dir` (no file yet: none); nullopt when the file is there but is not one.
-[[nodiscard]] std::optional<PluginChoices> read_plugin_choices(const std::filesystem::path& state_dir);
 
 class PluginRoutes final {
  public:

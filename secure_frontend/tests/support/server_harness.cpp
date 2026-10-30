@@ -7,6 +7,7 @@
 #include "test_paths.hpp"
 #include "test_tokenizer.hpp"
 #include "acquire_fixtures.hpp"
+#include "secure_frontend/sha256.hpp"
 
 #include <algorithm>
 #include <array>
@@ -351,6 +352,29 @@ std::unique_ptr<ServerProcess> ServerProcess::start(const ServerOptions& options
       lines += option + "\n";
     }
     secure_frontend_test::write_file(bin / kFakeEngineOptionsFile, lines, 0600);
+  }
+  // First-party plugins: <root>/plugins/<id>/plugin.json, and make's record of them beside the engine.
+  if (!options.first_party_plugins.empty()) {
+    secure_frontend_test::make_private_directory(server->root_ / "plugins");
+    std::string listed;
+    for (const auto& plugin : options.first_party_plugins) {
+      secure_frontend_test::make_private_directory(server->root_ / "plugins" / plugin.id);
+      secure_frontend_test::write_file(server->root_ / "plugins" / plugin.id / "plugin.json", plugin.manifest, 0600);
+      secure_frontend::Sha256 hash;
+      hash.update(plugin.manifest);
+      std::string sum;
+      for (const auto byte : hash.finish()) {
+        static constexpr char kDigits[] = "0123456789abcdef";
+        sum += kDigits[byte >> 4U];
+        sum += kDigits[byte & 0x0FU];
+      }
+      listed += std::string{listed.empty() ? "" : ","} + R"({"id": ")" + plugin.id + R"(", "manifest": ")" + sum +
+                R"(", "files": {}, "on": )" + (plugin.on ? "true" : "false") + "}";
+    }
+    secure_frontend_test::write_file(bin / "build.json",
+                                     R"({"schema_version": 1, "built": "x", "commit": "c", "ggml": "g", "cuda_arch": "a", )"
+                                     R"("engines": [], "plugins": [)" + listed + "]}",
+                                     0600);
   }
   server->port_ = secure_frontend_test::pick_free_port();  // SP1's helper (support/http_client.hpp)
   // The fake encoder beside the engine under `name` (the server looks there; Windows needs the .exe suffix).

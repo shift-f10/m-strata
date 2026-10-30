@@ -280,6 +280,59 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z50 (Windows box; owner-directed)
+
+The plugin platform, step 3: Debugging is the first plugin (the owner, 2026-10-30: "we should make the email,
+websearch, debugging all plugins as well"; then "Continue").
+- **`plugins/debugging/plugin.json`** (new, at the repository's root): a `diagnostics` plugin with the three switches
+  the `make --debugging` build had (`logging.requests`, `logging.engine_output`, `troubleshooting`). Its `about` says
+  what it logs and what to take care of.
+- **make** copies it into every folder (`stage_plugins`, `FIRST_PARTY_PLUGINS`; `required_files` lists it) and records
+  it in `engine/build.json`'s `plugins`, with its manifest's SHA-256: on with `--debugging`, off otherwise. `debugging`
+  is no longer one of the record's features. The CMake option `SECURE_FRONTEND_DEBUGGING` and the compile-time
+  `debugging_build()` are gone.
+- **The config** keeps whether each logging row is set: `LoggingConfig::requests` and `::engine_output` are
+  `std::optional<bool>`, read through `logs_requests()` / `logs_engine_output()`. A row the config leaves unset follows
+  `debugging_logs()`, which the server sets once at its start (`set_debugging_logs`); the config's own `false` still
+  wins. `--check` prints an unset row as `(unset)`.
+- **`install_plugins.{hpp,cpp}`** (new library `secure_frontend_install_plugins`): an install's plugins as its server
+  finds them (`<install>/plugins`, make's record beside the engine, the owner's choices; an unreadable choices file lets
+  nothing run). `read_plugin_choices` moved to the registry; `diagnostics_on` combines what the diagnostics plugins that
+  are on switch on.
+- **The server** (both run paths) decides the plugins right after the state folder is checked (`start_plugins`). The
+  warning at every start names the plugin and what it logs, and where to turn it off; the Settings routes get
+  `troubleshooting` from it; the Plugins tab's `running` is the same decision.
+- **strata-window and strata-tui** ask before they start the server while the install's Debugging plugin is on
+  (`asks_before_starting(setup, install_dir)`: make's record, and the data folder's choices when there is one). The
+  notice, the pop-up's title ("debugging is on") and the TUI's screen say it is a plugin, turned off in the Plugins tab.
+- **The page**: turning a diagnostics plugin on, or approving one, says what it logs first (`diagnosticsNotice`).
+- **Docs**: the README (features, the install questions, make's `--debugging`, Settings, the window, troubleshooting),
+  the installers' question and notice, the frontend README (a Plugins paragraph, the two rows' descriptions) and the
+  threat model (the engine-output exception, and Plugins under Extensions) say Debugging is a plugin.
+- **Proof**:
+  - RED first, against stubs (declarations with empty bodies): `the_diagnostics_that_are_on_are_combined`,
+    `the_shipped_debugging_plugin_is_one` (no manifest yet), `logging_engine_output_is_off_unless_asked`,
+    `troubleshooting_is_offered_only_while_the_debugging_plugin_is_on`,
+    `the_debugging_plugin_says_what_it_logs_before_it_starts`, `the_debugging_notice_waits_for_y`,
+    `web_ui_has_a_plugins_tab` and the new server case `the_debugging_plugin_turns_the_logs_on` (the harness's
+    `first_party_plugins` puts a plugin beside the fake engine) all failed; `test_make.py` failed 4. Then GREEN.
+  - MSVC: the whole tree built, no warnings; the whole suite 1431/1433 (the two release-only cases a test-hooks tree
+    fails).
+  - Linux gcc 13.3 and clang 18.1: the whole tree built, no warnings; the suites it touches 295/296 each. The one
+    failure, `net01_ipv6_loopback_listener_only`, came once under the mixed `-j 8` run on each; it passes on its own
+    on both, and `api_server_tests` again in parallel passed 84/84 (gcc).
+  - Python: `test_make.py` and `test_install.py` 42/42; `tools/secure` 154 passed, 4 skipped. `test_build_release.py`
+    (8) was left out: its `bash` reaches a WSL relay with no `/bin/bash` on this PC (7 of them fail that way with or
+    without this change).
+  - Live, a shares-tree server on the x25 demo data (port 18091), its install given `plugins/debugging` and a
+    `build.json` record as `make --debugging` writes it: the start warned with the plugin's name and the Plugins tab;
+    requests were logged (`req ` lines); Settings answered `debugging: true` with the Troubleshooting row; the Plugins
+    tab showed Debugging on, built with this install, running. Turned off in the page (no question), the next start
+    said nothing, logged no request and hid Troubleshooting; "Turn on" asked first with the notice. strata-tui from a
+    scratch install showed the notice and quit on `n` without starting a server, and went straight to its dashboard
+    with the record turned off. The demo install's `build.json` was put back and the plugin and choices moved out.
+- **Next:** the TUI's Plugins view, then search (tool) and email (notifier) as plugins, then the engine-family phases.
+
 ### Claude Code session, 2026-10-30 z49 (Windows box; owner-directed)
 
 The plugin platform, step 2: the Plugins tab (the owner, 2026-10-30: "we also need to have a plugin management tab to

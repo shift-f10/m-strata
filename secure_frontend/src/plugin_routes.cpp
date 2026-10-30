@@ -6,8 +6,6 @@
 #include "secure_frontend/token_store.hpp"
 
 #include <algorithm>
-#include <fstream>
-#include <system_error>
 #include <utility>
 #include <variant>
 
@@ -16,7 +14,6 @@ namespace {
 
 constexpr JsonLimits kBodyLimits{.max_bytes = kModelControlBodyLimit, .max_depth = 2U, .max_container_entries = 8U,
                                  .max_string_bytes = 256U};
-constexpr std::uintmax_t kMaxChoicesBytes = 1U << 20U;  // parse_plugin_choices' own bound
 
 std::string json_text(const std::string_view text) {
   std::string out;
@@ -93,20 +90,6 @@ std::string entry_json(const PluginEntry& entry, const bool running) {
 }
 
 }  // namespace
-
-std::optional<PluginChoices> read_plugin_choices(const std::filesystem::path& state_dir) {
-  const auto file = state_dir / path_from_utf8(kPluginChoicesFile);
-  std::error_code ec;
-  const auto status = std::filesystem::symlink_status(file, ec);
-  if (status.type() == std::filesystem::file_type::not_found) return PluginChoices{};
-  if (ec || !std::filesystem::is_regular_file(status)) return std::nullopt;
-  const auto size = std::filesystem::file_size(file, ec);
-  if (ec || size > kMaxChoicesBytes) return std::nullopt;
-  std::ifstream in(file, std::ios::binary);
-  std::string text(static_cast<std::size_t>(size), '\0');
-  if (!in || (size > 0U && !in.read(text.data(), static_cast<std::streamsize>(size)))) return std::nullopt;
-  return parse_plugin_choices(text);
-}
 
 PluginRoutes::PluginRoutes(PluginRouteSettings settings) : settings_(std::move(settings)) {}
 
