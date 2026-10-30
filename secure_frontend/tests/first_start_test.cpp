@@ -113,6 +113,25 @@ void first_start_creates_the_data_folder() {
          "the bundled engine, the default models folder and the downloads folder");
 }
 
+// The installer's SearXNG (owner 2026-10-30: "have the installer make a local searxng if the users choose to", the
+// address set at the first start): named by the build record, it becomes the Web search plugin's address in the first
+// config; with none named the first config has no such row.
+void the_first_start_points_search_at_the_installers_searxng() {
+  Install install;
+  const auto folder = secure_frontend::data_folder_layout(install.root / "data");
+  (void)secure_frontend::ensure_data_folder(folder, install.engine, "http://127.0.0.1:8888");
+  const auto draft = secure_frontend::read_config_file(folder.config_file);
+  const auto* main = std::get_if<FrontendConfigDraft>(&draft);
+  expect(main != nullptr && string_entry(*main, "plugins.search.url") == "http://127.0.0.1:8888",
+         "the installer's SearXNG is the Web search plugin's address");
+  Install plain;
+  const auto other = secure_frontend::data_folder_layout(plain.root / "data");
+  (void)secure_frontend::ensure_data_folder(other, plain.engine);
+  const auto none = secure_frontend::read_config_file(other.config_file);
+  const auto* bare = std::get_if<FrontendConfigDraft>(&none);
+  expect(bare != nullptr && !bare->entries.contains("plugins.search.url"), "none named: no such row");
+}
+
 void a_later_start_keeps_everything() {
   Install install;
   const auto folder = secure_frontend::data_folder_layout(install.root / "data");
@@ -247,6 +266,7 @@ int main(int argc, char** argv) {
       {"options_alone_start_from_the_data_folder", options_alone_start_from_the_data_folder},
       {"first_start_creates_the_data_folder", first_start_creates_the_data_folder},
       {"a_later_start_keeps_everything", a_later_start_keeps_everything},
+      {"the_first_start_points_search_at_the_installers_searxng", the_first_start_points_search_at_the_installers_searxng},
       {"card_less_server_config_comes_from_the_main_config", card_less_server_config_comes_from_the_main_config},
       {"install_folder_is_made_owner_only", install_folder_is_made_owner_only},
       {"login_link_is_used_once", login_link_is_used_once},

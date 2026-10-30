@@ -371,3 +371,149 @@ def test_the_gcc_check_comes_before_any_install():
     assert sh.index("GCC 13 or newer is needed") < sh.index("step 'The plan'")
     assert sh.index("ppa:ubuntu-toolchain-r/test") < sh.index("step 'Installing the CUDA Toolkit 13.0'")
     assert 'os_release=${M_STRATA_OS_RELEASE:-/etc/os-release}' in sh
+
+
+# The local SearXNG the installers set up (the owner, 2026-10-30, on the Azure VM: "add a searxng docker ... configure it
+# for m-strata use", then "have the installer make a local searxng if the users choose to"): what it is, on both systems.
+SEARXNG_ESSENTIALS = ("docker.io/searxng/searxng:latest", '"127.0.0.1:8888:8080"', "GRANIAN_HOST=0.0.0.0",
+                      "formats: [html, json]", "limiter: false", "- name: bing", "- name: mojeek",
+                      "--searxng-url", "http://127.0.0.1:8888")
+
+
+def test_the_installers_set_up_a_local_searxng():
+    """Both installers, asked or told (-SearXNG / --searxng), set up the same SearXNG beside the repository
+    (docker/searxng): loopback only (127.0.0.1:8888 - nothing outside this PC reaches it), its server bound to IPv4 inside
+    the container (GRANIAN_HOST: the image's IPv6 bind fails where Docker has no IPv6), JSON on, the README's extra engines,
+    a secret made on the PC and kept when it is set up again; make gets --searxng-url so the first start makes it the Web
+    search plugin's address. Only with web search; the question only where Docker can run it (Linux's plan installs it)."""
+    ps, sh = text("install.ps1"), text("install.sh")
+    for script, name in ((ps, "install.ps1"), (sh, "install.sh")):
+        for words in SEARXNG_ESSENTIALS:
+            assert words in script, (name, words)
+    assert "[switch]$SearXNG" in ps and "--searxng) searxng=1; searxng_given=1; shift ;;" in sh
+    assert "docker.io docker-compose-v2" in sh, "Ubuntu's Docker and its compose plugin, when missing"
+    assert "if [ ! -f config/settings.yml ]" in sh and "if (-not (Test-Path -LiteralPath $settings))" in ps, "the secret is kept"
+
+
+def test_install_sh_plans_the_local_searxng(tmp_path):
+    """install.sh as a plan on a stand-in Ubuntu 24.04 (see test_install_sh_finds_gcc_13_before_installing_anything):
+    with Docker there, --yes takes the question's yes - the plan sets SearXNG up and make gets its address; with none,
+    --yes takes no, and --searxng plans Docker's packages; without web search it is refused."""
+    if not linux_installer_host():
+        pytest.skip("install.sh runs on Ubuntu or Debian")
+    real_bin = tmp_path / "real"
+    real_bin.mkdir()
+    for folder in ("/usr/local/bin", "/usr/bin", "/bin"):
+        for entry in Path(folder).iterdir():
+            if re.match(r"^(docker.*|gcc|g\+\+)(-[0-9.]+)?$", entry.name) or (real_bin / entry.name).exists():
+                continue
+            (real_bin / entry.name).symlink_to(entry)
+
+    def system(name: str, docker: bool) -> dict[str, str]:
+        root = tmp_path / name
+        (root / "bin").mkdir(parents=True)
+        programs = {"gcc": "#!/bin/sh\n[ \"$1\" = -dumpversion ] && echo 13.3.0\n"}
+        if docker:
+            programs["docker"] = "#!/bin/sh\ncase \"$1\" in compose) echo 'Docker Compose version v2.27.0' ;; info) exit 0 ;; esac\n"
+        for program, body in programs.items():
+            (root / "bin" / program).write_text(body, encoding="utf-8")
+            (root / "bin" / program).chmod(0o755)
+        release = root / "os-release"
+        release.write_text('ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n', encoding="utf-8")
+        return dict(os.environ, PATH=f"{root / 'bin'}:{real_bin}", M_STRATA_OS_RELEASE=str(release),
+                    XDG_CONFIG_HOME=str(root / "config"))
+
+    def run(env: dict[str, str], *options: str) -> subprocess.CompletedProcess:
+        env.pop("DISPLAY", None)
+        env.pop("WAYLAND_DISPLAY", None)
+        return subprocess.run(["sh", str(ROOT / "install.sh"), "--plan", "--out", str(tmp_path / "out"), *options],
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180, env=env, check=False,
+                              start_new_session=True)
+
+    done = run(system("docker", True), "--with", "search,tui", "--yes")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "SearXNG for web search: " in done.stdout and "127.0.0.1:8888" in done.stdout
+    assert "--searxng-url http://127.0.0.1:8888" in make_line(done.stdout)
+    done = run(system("bare", False), "--with", "search,tui", "--yes")
+    assert done.returncode == 0 and "--searxng-url" not in make_line(done.stdout) and "docker.io" not in done.stdout, done.stdout
+    done = run(system("bare2", False), "--with", "search,tui", "--yes", "--searxng")
+    assert done.returncode == 0 and "docker.io docker-compose-v2" in done.stdout and "--searxng-url" in make_line(done.stdout), done.stdout
+    done = run(system("nosearch", True), "--with", "tui", "--yes", "--searxng")
+    assert done.returncode != 0 and "--searxng sets up the Web search plugin's SearXNG" in done.stdout + done.stderr
+
+
+def test_install_ps1_plans_the_local_searxng(tmp_path):
+    """install.ps1 as a plan with Docker off its PATH: -Yes sets nothing up; -SearXNG stops before anything is done,
+    saying Docker Desktop is needed; without web search -SearXNG is refused."""
+    powershell = shutil.which("powershell") if sys.platform == "win32" else None
+    if not powershell:
+        pytest.skip("install.ps1 runs on Windows (Windows PowerShell)")
+    path = os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if "docker" not in p.lower())
+
+    def run(*options: str) -> subprocess.CompletedProcess:
+        env = dict(os.environ, APPDATA=str(tmp_path / "appdata"), PATH=path)
+        return subprocess.run([powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ROOT / "install.ps1"),
+                               "-Plan", "-Out", str(tmp_path / "out"), *options],
+                              input="", capture_output=True, text=True, timeout=180, env=env, check=False)
+
+    done = run("-With", "search,tui", "-Yes")
+    assert done.returncode == 0 and "--searxng-url" not in make_line(done.stdout), done.stdout + done.stderr
+    done = run("-With", "search,tui", "-Yes", "-SearXNG")
+    assert done.returncode != 0 and "Docker Desktop" in done.stdout + done.stderr
+    assert "make.bat --out" not in done.stdout, "stopped before the plan"
+    done = run("-With", "tui", "-Yes", "-SearXNG")
+    assert done.returncode != 0 and "-SearXNG sets up the Web search plugin's SearXNG" in done.stdout + done.stderr
+
+
+def test_the_installers_take_a_searxng_you_already_run(tmp_path):
+    """The owner (2026-10-30): "it should also ask if searxng is already setup, if so they can just provide details".
+    When web search is built, the installers first ask for the address of a SearXNG you already run (Enter: none), and
+    only then offer the local one; --searxng-url / -SearXNGUrl give it on the command line. It is checked by make's own
+    rule before anything is installed, and make gets it, so the Web search plugin uses it from the first start. It and
+    the local one exclude each other."""
+    ps, sh = text("install.ps1"), text("install.sh")
+    assert "[string]$SearXNGUrl" in ps and "--searxng-url) searxng_url=$2; shift 2 ;;" in sh
+    for script in (ps, sh):
+        assert "A SearXNG you already run for web search?" in script
+    if not linux_installer_host():
+        return
+    env = dict(os.environ, XDG_CONFIG_HOME=str(tmp_path / "config"))
+    env.pop("DISPLAY", None)
+    env.pop("WAYLAND_DISPLAY", None)
+
+    def run(*options: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["sh", str(ROOT / "install.sh"), "--plan", "--yes", "--out", str(tmp_path / "out"),
+                               "--with", "search,tui", *options], stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, timeout=180, env=env, check=False, start_new_session=True)
+
+    done = run("--searxng-url", "http://searxng.example.test:8080")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "--searxng-url http://searxng.example.test:8080" in make_line(done.stdout) and "docker/searxng" not in done.stdout
+    for bad in ("ftp://searxng.example.test", "http://user@searxng.example.test", "http://searxng.example.test/?q=1"):
+        done = run("--searxng-url", bad)
+        assert done.returncode != 0 and "not a SearXNG address" in done.stdout + done.stderr, bad
+    done = run("--searxng-url", "http://searxng.example.test:8080", "--searxng")
+    assert done.returncode != 0 and "one or the other" in done.stdout + done.stderr
+
+
+def test_install_ps1_takes_a_searxng_you_already_run(tmp_path):
+    """install.ps1's twin: -SearXNGUrl, and the question answered with an address (piped in)."""
+    powershell = shutil.which("powershell") if sys.platform == "win32" else None
+    if not powershell:
+        pytest.skip("install.ps1 runs on Windows (Windows PowerShell)")
+    path = os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if "docker" not in p.lower())
+
+    def run(*options: str, answers: str = "") -> subprocess.CompletedProcess:
+        env = dict(os.environ, APPDATA=str(tmp_path / "appdata"), PATH=path)
+        return subprocess.run([powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ROOT / "install.ps1"),
+                               "-Plan", "-Out", str(tmp_path / "out"), *options],
+                              input=answers, capture_output=True, text=True, timeout=180, env=env, check=False)
+
+    done = run("-With", "search,tui", "-Yes", "-SearXNGUrl", "http://searxng.example.test:8080")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "--searxng-url http://searxng.example.test:8080" in make_line(done.stdout)
+    done = run("-With", "search,tui", "-Yes", "-SearXNGUrl", "ftp://searxng.example.test")
+    assert done.returncode != 0 and "not a SearXNG address" in done.stdout + done.stderr
+    # asked: the Debugging plugin (Enter), the signing key's passphrase (Enter), then the address
+    done = run("-With", "search,tui", "-Without", "maya", answers="\n\nhttp://searxng.example.test:8080\n")
+    assert done.returncode == 0 and "--searxng-url http://searxng.example.test:8080" in make_line(done.stdout), done.stdout

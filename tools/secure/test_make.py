@@ -703,6 +703,25 @@ def test_make_signs_the_plugins_it_builds(tmp_path):
     assert make.parse_args(["--out", "x", "--ggml-dir", "g", "--cuda-root", "c", "--signing-passphrase"]).signing_passphrase is True
 
 
+def test_make_records_the_installers_searxng(tmp_path):
+    """The owner (2026-10-30: "have the installer make a local searxng if the users choose to", the address set at the
+    first start): make --searxng-url records the SearXNG the installer set up in engine/build.json, and the server's first
+    start makes it the Web search plugin's address. It needs --with search; an address that is not a SearXNG one (the
+    config's own rule: http(s)://host[:port][/path], no user, query or fragment) is refused before anything is built."""
+    opts = options("--with", "search", "--searxng-url", "http://127.0.0.1:8888")
+    assert opts.searxng_url == "http://127.0.0.1:8888"
+    folder = stage(tmp_path, "linux", search=True)
+    assert make.build_record(opts, "linux", folder, commit="c", built="b")["searxng_url"] == "http://127.0.0.1:8888"
+    assert "searxng_url" not in make.build_record(options("--with", "search"), "linux", folder, commit="c", built="b")
+    assert options("--with", "search").searxng_url == ""
+    for bad in ("ftp://127.0.0.1:8888", "http://user@127.0.0.1:8888", "http://127.0.0.1:8888/?q=1",
+                "http://127.0.0.1:8888/#top", "127.0.0.1:8888", "http://", ""):
+        with pytest.raises(SystemExit, match="--searxng-url"):
+            options("--with", "search", "--searxng-url", bad)
+    with pytest.raises(SystemExit, match="--with search"):
+        options("--searxng-url", "http://127.0.0.1:8888")
+
+
 def test_make_asks_for_the_passphrase_only_where_it_is_used(tmp_path, monkeypatch, capsys):
     """--signing-passphrase asks only where the passphrase is used: for the key make is about to make, or one sealed with
     it. A key there without one is used as it is, and make says the option seals only a key it makes (it used to ask for

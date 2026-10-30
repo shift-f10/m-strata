@@ -1,3 +1,4 @@
+#include "secure_frontend/about_info.hpp"
 #include "secure_frontend/api_errors.hpp"
 #include "secure_frontend/api_router.hpp"
 #include "secure_frontend/chat_execution.hpp"
@@ -107,7 +108,10 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
       }
       if (std::get<bool>(secured)) std::cerr << "strata: made the install folder owner-only (the engine runs from it)\n";
-      const auto ensured = secure_frontend::ensure_data_folder(folder, secure_frontend::bundled_engine(install));
+      // (the installer's SearXNG, named by the build record, becomes the Web search plugin's address at the first start)
+      const auto build = secure_frontend::read_engine_build(secure_frontend::bundled_engine(install).parent_path());
+      const auto ensured =
+          secure_frontend::ensure_data_folder(folder, secure_frontend::bundled_engine(install), build ? build->searxng_url : std::string{});
       if (const auto* failure = std::get_if<secure_frontend::FirstStartError>(&ensured)) {
         std::cerr << "Data folder: " << failure->message << '\n';
         return EXIT_FAILURE;

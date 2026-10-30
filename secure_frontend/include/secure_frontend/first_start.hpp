@@ -32,7 +32,9 @@ struct DataFolder final {
 // The first start's config (§3): launcher mode with no card yet, the listener on 127.0.0.1:8080 with the page, the
 // monitor and the one-time login link, the key in secret/token, model control and downloads on, and `engine` as the
 // engine of the cards the page writes.
-[[nodiscard]] FrontendConfigDraft first_start_config(const DataFolder& folder, const std::filesystem::path& engine);
+// `searxng_url` (the installer's SearXNG, from the build record; empty: none) becomes the Web search plugin's address.
+[[nodiscard]] FrontendConfigDraft first_start_config(const DataFolder& folder, const std::filesystem::path& engine,
+                                                     const std::string& searxng_url = {});
 
 struct FirstStartResult final {
   bool created{false};
@@ -46,7 +48,8 @@ struct FirstStartError final {
 // folder is created owner-only, a new API key is written to secret/token and config.json is written (created true).
 // Nothing is ever overwritten.
 [[nodiscard]] std::variant<FirstStartResult, FirstStartError> ensure_data_folder(const DataFolder& folder,
-                                                                                const std::filesystem::path& engine);
+                                                                                const std::filesystem::path& engine,
+                                                                                const std::string& searxng_url = {});
 
 // The install folder made owner-only when it is not (a copied folder keeps its destination's inherited permissions,
 // and the server refuses an engine others may write): Windows, a protected DACL for the current user that everything

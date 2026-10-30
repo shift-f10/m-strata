@@ -1,5 +1,5 @@
 #!/bin/sh
-# install.sh - from a fresh Ubuntu 24.04 (or newer) / Debian PC to a built M-Strata in one step (install.bat's twin).
+# install.sh - from a fresh Ubuntu 22.04 (or newer) / Debian 13 PC to a built M-Strata in one step (install.bat's twin).
 #
 #   ./install.sh                                    ask what to build (Enter takes each default: everything, the
 #                                                   Debugging plugin off, and without a display - DISPLAY,
@@ -14,6 +14,11 @@
 #                                                   to take care of)
 #   ./install.sh --signing-passphrase               seal the plugin signing key the build makes with a passphrase
 #                                                   (make asks for it; asked when this PC has no key yet)
+#   ./install.sh --searxng                          a local SearXNG for web search, in Docker (installed when missing):
+#                                                   127.0.0.1:8888, this PC only; the Web search plugin uses it from
+#                                                   the first start (asked when web search is built)
+#   ./install.sh --searxng-url URL                  a SearXNG you already run, for web search (asked before the local
+#                                                   one); the Web search plugin uses it from the first start
 #
 # What it does, each step only when needed:
 #   1. finds what the build needs: git, Python 3.10+ with venv, GCC 13+ (build-essential; on Ubuntu 22.04 gcc-13 from
@@ -26,10 +31,11 @@
 #   4. puts CMake and Ninja in the repository's own Python environment (.venv-dev, which make.sh uses);
 #   5. fetches the pinned llama.cpp commit the engine builds ggml from (.toolchains/llama.cpp; an existing ../llama.cpp at
 #      that commit is used as it is);
-#   6. runs make.sh into a new folder and says how to start it.
+#   6. with --searxng (or its question's yes), sets up SearXNG in Docker beside the repository (docker/searxng);
+#   7. runs make.sh into a new folder and says how to start it.
 # Downloads: apt packages (your distribution's and NVIDIA's signed repositories, and on Ubuntu 22.04 Ubuntu's
-# toolchain PPA for GCC 13), Python packages from PyPI, the repositories from GitHub. Nothing else is downloaded, and
-# nothing is sent anywhere.
+# toolchain PPA for GCC 13), Python packages from PyPI, the repositories from GitHub, and with --searxng SearXNG's
+# image from Docker Hub. Nothing else is downloaded, and nothing is sent anywhere.
 set -eu
 
 # what the build pins (keep in step with engine/CMakeLists.txt, README.md and install.ps1: tools/secure/test_make.py)
@@ -52,6 +58,9 @@ debugging=0
 debugging_given=0
 signing_passphrase=0
 signing_passphrase_given=0
+searxng=0
+searxng_given=0
+searxng_url=""
 yes=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -62,8 +71,10 @@ while [ $# -gt 0 ]; do
     --plan) plan=1; shift ;;
     --debugging) debugging=1; debugging_given=1; shift ;;
     --signing-passphrase) signing_passphrase=1; signing_passphrase_given=1; shift ;;
+    --searxng) searxng=1; searxng_given=1; shift ;;
+    --searxng-url) searxng_url=$2; shift 2 ;;
     --yes) yes=1; shift ;;
-    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
     *) echo "install: unknown option $1 (see ./install.sh --help)" >&2; exit 2 ;;
   esac
 done
@@ -73,6 +84,18 @@ step() { printf '\n== %s\n' "$*"; }
 fail() { printf '\ninstall: %s\n' "$*" >&2; exit 1; }
 has_feature() { case ",$with," in *",$1,"*) return 0 ;; esac; return 1; }
 installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'; }
+# ask_text QUESTION: a line from the terminal in $reply (Enter, or no terminal: empty)
+ask_text() {
+  printf '  %s ' "$1"
+  reply=""
+  read -r reply </dev/tty || { printf '\n'; reply=""; }
+}
+# a SearXNG address as make and the server take one (make.py's valid_searxng_url; make checks the port's range)
+valid_searxng_url() {
+  [ "${#1}" -le 200 ] &&
+    printf '%s' "$1" | grep -Eq '^[Hh][Tt][Tt][Pp][Ss]?://(\[[0-9A-Fa-f:.]{2,}\]|[A-Za-z0-9][A-Za-z0-9.-]{0,252})(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$' &&
+    ! printf '%s' "${1#*://}" | grep -q '//'
+}
 # ask QUESTION y|n: yes or no from the terminal; Enter (or no terminal) takes the default
 ask() {
   if [ "$2" = y ]; then hint='[Y/n]'; else hint='[y/N]'; fi
@@ -121,7 +144,20 @@ if [ -e "$signing_key_file" ]; then
 fi
 ask_passphrase=0
 if [ "$yes" = 0 ] && [ "$signing_passphrase_given" = 0 ] && [ "$key_exists" = 0 ]; then ask_passphrase=1; fi
-if [ "$yes" = 0 ] && { [ "$with_given" = 0 ] || [ "$without_given" = 0 ] || [ "$debugging_given" = 0 ] || [ "$ask_passphrase" = 1 ]; }; then
+# a local SearXNG for web search (owner 2026-10-30: "ask if the user wants it locally which we will install if yes"):
+# asked whenever web search is built; a yes sets it up in Docker, installing Docker when it is missing. Its default is
+# yes where Docker is already here, no where it would be installed.
+docker_ready=0
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then docker_ready=1; fi
+if [ "$docker_ready" = 1 ]; then searxng_default=y; else searxng_default=n; fi
+# (or a SearXNG you already run: its address, asked first - owner 2026-10-30: "if so they can just provide details")
+if [ -n "$searxng_url" ]; then
+  valid_searxng_url "$searxng_url" || fail "--searxng-url: not a SearXNG address (http(s)://host[:port][/path], with no user, query or fragment): $searxng_url"
+  [ "$searxng" = 0 ] || fail "--searxng sets up a local SearXNG and --searxng-url names one you run: one or the other"
+fi
+ask_searxng=0
+if [ "$yes" = 0 ] && [ "$searxng_given" = 0 ] && [ -z "$searxng_url" ] && { [ "$with_given" = 0 ] || has_feature search; }; then ask_searxng=1; fi
+if [ "$yes" = 0 ] && { [ "$with_given" = 0 ] || [ "$without_given" = 0 ] || [ "$debugging_given" = 0 ] || [ "$ask_passphrase" = 1 ] || [ "$ask_searxng" = 1 ]; }; then
   step 'What to build'
   say '  Answer y or n; Enter takes the capital one. Qwen, Gemma 4 and flint models are always built.'
   if [ "$with_given" = 0 ]; then
@@ -147,6 +183,25 @@ if [ "$yes" = 0 ] && { [ "$with_given" = 0 ] || [ "$without_given" = 0 ] || [ "$
   if [ "$ask_passphrase" = 1 ]; then
     if ask 'Seal the plugin signing key this build makes with a passphrase (make asks for it now, and at every later build or plugin you sign)?' n; then signing_passphrase=1; fi
   fi
+  if [ "$ask_searxng" = 1 ] && has_feature search; then
+    while :; do
+      ask_text 'A SearXNG you already run for web search? Its address (http://host:port), or Enter for none:'
+      [ -z "$reply" ] && break
+      if valid_searxng_url "$reply"; then searxng_url=$reply; break; fi
+      say "  not a SearXNG address: http(s)://host[:port][/path], with no user, query or fragment"
+    done
+    if [ -z "$searxng_url" ]; then
+      if [ "$docker_ready" = 1 ]; then docker_note=""; else docker_note=", installing Docker"; fi
+      if ask "A local SearXNG for web search (in Docker$docker_note; 127.0.0.1:8888, this PC only)?" "$searxng_default"; then searxng=1; fi
+    fi
+  fi
+fi
+if [ "$yes" = 1 ] && [ "$searxng_given" = 0 ] && [ -z "$searxng_url" ] && has_feature search && [ "$docker_ready" = 1 ]; then searxng=1; fi
+if [ "$searxng" = 1 ] && ! has_feature search; then
+  fail "--searxng sets up the Web search plugin's SearXNG: build web search too (--with ...,search)"
+fi
+if [ -n "$searxng_url" ] && ! has_feature search; then
+  fail "--searxng-url is the Web search plugin's SearXNG: build web search too (--with ...,search)"
 fi
 
 # --- 1. what is there ------------------------------------------------------------------------------------------------
@@ -191,6 +246,10 @@ packages="git python3 python3-venv build-essential pkg-config wget ca-certificat
 if [ "$gcc_ppa" = 1 ]; then packages="$packages software-properties-common"; fi  # (add-apt-repository)
 if has_feature email; then packages="$packages libssl-dev"; fi
 if has_feature window; then packages="$packages libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev"; fi
+if [ "$searxng" = 1 ] && [ "$docker_ready" = 0 ]; then
+  # Docker and its compose plugin, as the distribution packages them
+  if [ "$ID" = ubuntu ]; then packages="$packages docker.io docker-compose-v2"; else packages="$packages docker.io docker-compose"; fi
+fi
 missing=""
 for package in $packages; do
   if installed "$package"; then say "  $package: installed"; else say "  $package: missing - will install"; missing="$missing $package"; fi
@@ -238,6 +297,18 @@ if [ "$key_sealed" = 1 ] || { [ "$signing_passphrase" = 1 ] && [ "$key_exists" =
   make_flags="${make_flags:+$make_flags }--signing-passphrase"
 fi
 if [ -n "$without" ]; then make_flags="--without $without${make_flags:+ $make_flags}"; fi
+searxng_dir="$parent/docker/searxng"
+if [ "$searxng" = 1 ]; then
+  # (8888 already taken by something else stops it here; a SearXNG this script set up before is started again)
+  if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ':8888 ' && [ ! -f "$searxng_dir/compose.yaml" ]; then
+    fail "port 8888 on this PC is taken: stop what uses it, or leave the local SearXNG out"
+  fi
+  say "  SearXNG for web search: $searxng_dir (Docker; 127.0.0.1:8888, this PC only) - the Web search plugin's address from the first start"
+  make_flags="${make_flags:+$make_flags }--searxng-url http://127.0.0.1:8888"
+elif [ -n "$searxng_url" ]; then
+  say "  SearXNG for web search: $searxng_url (yours) - the Web search plugin's address from the first start"
+  make_flags="${make_flags:+$make_flags }--searxng-url $searxng_url"
+fi
 if [ "$key_exists" = 0 ]; then
   if [ "$signing_passphrase" = 1 ]; then say "  plugin signing key: $signing_key_file - made by this build, sealed with a passphrase: make asks for it, twice"
   else say "  plugin signing key: $signing_key_file - made by this build (a file only you can read, no passphrase)"; fi
@@ -337,7 +408,61 @@ else
 fi
 say "  $ggml"
 
-# --- 6. the build ----------------------------------------------------------------------------------------------------
+# --- 6. a local SearXNG for web search (the README's "Web search through SearXNG", owner 2026-10-30) -----------------
+# Loopback only (127.0.0.1:8888: nothing outside this PC reaches it); its server bound to IPv4 inside the container (the
+# image binds IPv6 by default, which fails where Docker has no IPv6); JSON on; the README's extra engines; a secret made
+# here, kept when it is set up again.
+if [ "$searxng" = 1 ]; then
+  step "SearXNG for web search, in $searxng_dir"
+  docker_cmd=docker
+  docker info >/dev/null 2>&1 || docker_cmd="sudo docker"  # (the docker group takes a new login to apply)
+  mkdir -p "$searxng_dir/config" "$searxng_dir/cache"
+  (
+    cd "$searxng_dir"
+    cat > compose.yaml <<'EOF'
+services:
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    ports: ["127.0.0.1:8888:8080"]   # this PC only: M-Strata's server reaches it, nothing outside does
+    environment: ["GRANIAN_HOST=0.0.0.0"]   # IPv4 inside the container
+    volumes: ["./config:/etc/searxng", "./cache:/var/cache/searxng"]
+EOF
+    if [ ! -f config/settings.yml ]; then
+      secret=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+      cat > config/settings.yml <<EOF
+use_default_settings: true
+server:
+  secret_key: "$secret"
+  limiter: false
+  base_url: "http://127.0.0.1:8888/"
+search:
+  formats: [html, json]   # M-Strata's Web search plugin reads the JSON
+engines:
+  - name: bing
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: mojeek
+    disabled: false
+    inactive: false
+EOF
+    fi
+    $docker_cmd compose up -d
+  ) || fail 'SearXNG did not start: its message is above'
+  answered=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    if wget -qO- "http://127.0.0.1:8888/search?q=m-strata&format=json" 2>/dev/null | grep -q '"results"'; then answered=1; break; fi
+    sleep 5
+  done
+  if [ "$answered" = 1 ]; then say '  SearXNG answers on http://127.0.0.1:8888'
+  else say '  SearXNG has not answered yet (its first start can take a minute); the Web search plugin uses it once it does'; fi
+fi
+
+# --- 7. the build ----------------------------------------------------------------------------------------------------
 step "Building into $out (the first build compiles the CUDA engine: allow an hour or more)"
 "$repo/make.sh" --out "$out" --ggml-dir "$ggml" --cuda-root "$cuda" --with "$with" $make_flags || fail 'make stopped; its message is above'
 
@@ -346,4 +471,6 @@ say "  M-Strata is in $out. Start it with:"
 if has_feature window; then say "    $out/strata-window          (a window with the page, and a tray icon)"; fi
 if has_feature tui; then say "    $out/strata-tui             (the same server in this terminal, with a dashboard)"; fi
 say "    $out/strata-unified-server  (prints a one-time login link: open it in a browser on this PC)"
+if [ "$searxng" = 1 ]; then say "  Web search: SearXNG on http://127.0.0.1:8888 ($searxng_dir: docker compose there stops and starts it)"
+elif [ -n "$searxng_url" ]; then say "  Web search: your SearXNG at $searxng_url"; fi
 if [ -z "$driver" ]; then say '  No NVIDIA driver was found: install it before starting a model.'; fi

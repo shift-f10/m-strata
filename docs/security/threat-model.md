@@ -1101,6 +1101,14 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`; as a plugin,
   model false or steering text (prompt injection); the model has no tool but the search, so
   the effect is a wrong or slanted answer, not an action. A mistyped URL sends the queries
   elsewhere.
+- **The installers' SearXNG (2026-10-30):** `--searxng` / `-SearXNG` set up SearXNG in
+  Docker beside the repository, published on 127.0.0.1:8888 only - nothing outside this PC
+  reaches it, whatever the PC's firewall says - with its own secret made on the PC and never
+  shown; a Linux yes installs Docker from the distribution, whose daemon runs as root (the
+  operator's choice, asked first). The address it, or `--searxng-url` / `-SearXNGUrl`, names
+  goes into the owner-only `engine/build.json` (`searxng_url`, checked as the config checks
+  a SearXNG address - one that is not refuses the whole record), and the first start, only
+  the first, writes it as the Web search plugin's address; a later config is never touched.
 - **Settings tab residual (2026-10-28):** a client the file routes admit (this PC, or a listed host or subnet with
   `models.control_remote`) can change, for the next start, where the server listens, which PCs may manage it, the
   limits and the two folders; the start-up rules still hold (a wildcard needs both opt-ins and host aliases), and a

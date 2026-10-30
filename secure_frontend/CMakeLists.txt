@@ -818,7 +818,7 @@ endif()
 # The page's About (owner 2026-10-27): the engine folder's build record (make.py's engine/build.json) and this PC's
 # hardware (the CPU as calibration names it, the RAM as the Monitor reads it, the operating system).
 secure_frontend_add_library(secure_frontend_about_info SOURCES src/about_info.cpp
-    LINKS secure_frontend_calibration secure_frontend_serve_monitor secure_frontend_json)
+    LINKS secure_frontend_calibration secure_frontend_serve_monitor secure_frontend_json secure_frontend_search_url)
 if(WIN32)
     target_link_libraries(secure_frontend_about_info PUBLIC advapi32)
 endif()
@@ -2146,7 +2146,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_first_start_tests tests/first_start_test.cpp
         secure_frontend_first_start)
     secure_frontend_add_cases(secure_frontend_first_start_tests
-        config_writer_renders_decimals first_start_creates_the_data_folder a_later_start_keeps_everything
+        config_writer_renders_decimals first_start_creates_the_data_folder a_later_start_keeps_everything the_first_start_points_search_at_the_installers_searxng
         card_less_server_config_comes_from_the_main_config install_folder_is_made_owner_only login_link_is_used_once
         data_dir_flag_is_parsed options_alone_start_from_the_data_folder LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
@@ -2363,7 +2363,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
 
     secure_frontend_add_test_executable(secure_frontend_about_info_tests tests/about_info_test.cpp secure_frontend_about_info)
     secure_frontend_add_cases(secure_frontend_about_info_tests
-        the_build_record_is_read_and_checked the_build_record_lists_first_party_plugins this_pcs_hardware_is_named
+        the_build_record_is_read_and_checked the_build_record_lists_first_party_plugins the_build_record_names_the_installers_searxng this_pcs_hardware_is_named
         the_about_json_has_both this_pcs_gpus_are_listed
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 

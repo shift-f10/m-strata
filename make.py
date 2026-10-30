@@ -23,6 +23,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -61,6 +62,20 @@ class Options:
     debugging: bool = False
     signing_key: Path | None = None   # this PC's plugin signing key (None: the user's own, plugin_signing.default_key_path)
     signing_passphrase: bool = False  # the key is (or, new, will be) sealed with a passphrase, asked for
+    searxng_url: str = ""             # the installer's SearXNG: the Web search plugin's address from the first start
+
+
+# A SearXNG address as the server takes one (secure_frontend/src/search_url.cpp, parse_search_url; and the build record's
+# 200 printable characters): http(s)://host[:port][/path] - a DNS name or IPv4 address, or a bracketed IPv6 one - with no
+# user, query or fragment. make never records one the server would refuse: a refused record trusts no plugin.
+_SEARXNG_URL = re.compile(r"(?i:https?)://(?:\[[0-9A-Fa-f:.]{2,}\]|[A-Za-z0-9][A-Za-z0-9.-]{0,252})(?::([0-9]{1,5}))?(/[A-Za-z0-9._~/-]*)?")
+
+
+def valid_searxng_url(url: str) -> bool:
+    found = _SEARXNG_URL.fullmatch(url)
+    if found is None or len(url) > 200 or "//" in (found.group(2) or ""):
+        return False
+    return found.group(1) is None or 1 <= int(found.group(1)) <= 65535
 
 
 def host_platform() -> str:
@@ -163,6 +178,10 @@ def parse_args(argv: list[str], platform: str | None = None) -> Options:
                          "make creates it when there is none and signs the plugins it builds with it")
     ap.add_argument("--signing-passphrase", action="store_true",
                     help="the signing key is sealed with a passphrase (asked for; a new key is sealed with the one typed)")
+    ap.add_argument("--searxng-url", default=None,
+                    help="the SearXNG the installer set up (its local one: http://127.0.0.1:8888): engine/build.json "
+                         "records it, and the server's first start makes it the Web search plugin's address (needs "
+                         "--with search)")
     ap.add_argument("--debugging", action="store_true",
                     help="ship the Debugging plugin turned on: a server that logs verbosely, to find out why a model "
                          "does not start or calibrate (it says what that logs and what to take care of)")
@@ -176,6 +195,12 @@ def parse_args(argv: list[str], platform: str | None = None) -> Options:
     unknown = [w for w in with_features if w not in OPTIONAL_FEATURES]
     if unknown:
         raise SystemExit("make: --with takes only %s, not %s" % (", ".join(OPTIONAL_FEATURES), ", ".join(unknown)))
+    if args.searxng_url is not None:
+        if not valid_searxng_url(args.searxng_url):
+            raise SystemExit("make: --searxng-url takes http(s)://host[:port][/path], with no user, query or fragment, not %r"
+                             % args.searxng_url)
+        if "search" not in with_features:
+            raise SystemExit("make: --searxng-url is the Web search plugin's address: build with --with search")
     if not args.ggml_dir:
         raise SystemExit("make: --ggml-dir (or STRATA_GGML_DIR) names the llama.cpp checkout the engine builds ggml from")
     if not args.cuda_root:
@@ -187,7 +212,8 @@ def parse_args(argv: list[str], platform: str | None = None) -> Options:
                    build_dir=build_dir,
                    engine_build_dir=(args.engine_build_dir or build_dir / "engine").absolute(), jobs=max(1, args.jobs),
                    cmake=args.cmake, plan=args.plan, debugging=args.debugging,
-                   signing_key=args.signing_key.absolute() if args.signing_key else None, signing_passphrase=args.signing_passphrase)
+                   signing_key=args.signing_key.absolute() if args.signing_key else None, signing_passphrase=args.signing_passphrase,
+                   searxng_url=args.searxng_url or "")
 
 
 def _on_off(flag: bool) -> str:
@@ -400,7 +426,6 @@ def _tree_text(relative: str) -> str:
 
 
 def _cmake_value(relative: str, pattern: str) -> str:
-    import re
     found = re.search(pattern, _tree_text(relative))
     return found.group(1) if found else "?"
 
@@ -450,6 +475,9 @@ def build_record(opts: Options, platform: str, stage: Path, commit: str | None =
     if signing_key:
         # the public half of the key that signed this folder's plugins: the server trusts plugins signed with it
         record["signing_key"] = signing_key
+    if opts.searxng_url:
+        # the installer's SearXNG: the server's first start makes it the Web search plugin's address
+        record["searxng_url"] = opts.searxng_url
     return record
 
 

@@ -40,6 +40,9 @@ struct EngineBuild final {
   std::vector<EngineBuildLibrary> engines;
   std::vector<EngineBuildPlugin> plugins{};
   std::string signing_key{};  // the public key make signed this folder's plugins with (64 hex; empty: none; spec section 11)
+  // the SearXNG the installer set up beside this install (make --searxng-url; empty: none): the first start makes it the
+  // Web search plugin's address (owner 2026-10-30)
+  std::string searxng_url{};
 };
 // <engine_folder>/build.json, read and checked: schema 1, at most 64 KiB, only these fields, each text printable ASCII
 // of at most 200 characters, at most 32 engines and 8 features. nullopt: none there, or not such a record.

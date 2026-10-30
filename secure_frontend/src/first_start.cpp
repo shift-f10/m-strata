@@ -69,7 +69,7 @@ std::filesystem::path bundled_engine(const std::filesystem::path& install_dir) {
 #endif
 }
 
-FrontendConfigDraft first_start_config(const DataFolder& folder, const std::filesystem::path& engine) {
+FrontendConfigDraft first_start_config(const DataFolder& folder, const std::filesystem::path& engine, const std::string& searxng_url) {
   FrontendConfigDraft draft;
   auto& e = draft.entries;
   e["schema_version"] = ConfigDraftEntry{std::int64_t{1}, ConfigSource::file};
@@ -89,11 +89,14 @@ FrontendConfigDraft first_start_config(const DataFolder& folder, const std::file
   e["models.downloads_root"] = path_text(folder.downloads);
   e["models.default_root"] = path_text(folder.models);
   e["models.default_engine"] = path_text(engine);
+  // the installer's SearXNG (owner 2026-10-30): the Web search plugin's address, so search works from the first start
+  if (!searxng_url.empty()) e["plugins.search.url"] = text(searxng_url);
   return draft;
 }
 
 std::variant<FirstStartResult, FirstStartError> ensure_data_folder(const DataFolder& folder,
-                                                                  const std::filesystem::path& engine) {
+                                                                  const std::filesystem::path& engine,
+                                                                  const std::string& searxng_url) {
   std::error_code ec;
   const auto status = std::filesystem::symlink_status(folder.config_file, ec);
   if (std::filesystem::exists(status)) {
@@ -118,7 +121,7 @@ std::variant<FirstStartResult, FirstStartError> ensure_data_folder(const DataFol
       return FirstStartError{"a new API key could not be written: " + failure->message};
     }
   }
-  const std::string config = render_config_document(first_start_config(folder, engine));
+  const std::string config = render_config_document(first_start_config(folder, engine, searxng_url));
   if (auto failure = write_private_file(*root, std::get<RelativePath>(config_name), config, TokenStoreMode::create_new)) {
     return FirstStartError{"data/config.json could not be written: " + failure->message};
   }

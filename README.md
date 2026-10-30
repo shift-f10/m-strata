@@ -359,6 +359,8 @@ To see first what it would do, without changing anything, run `.\install.bat -Pl
 | `-Yes` | Ask nothing: build the defaults (everything, the Debugging plugin off) and install without asking. |
 | `-Debugging` | Answers the debugging question with yes: the Debugging plugin ships on, a server that logs verbosely, to find out why a model does not start or calibrate (`make --debugging`, below). The plan says what that logs and what to take care of before anything is installed. |
 | `-SigningPassphrase` | Answers the signing key question with yes: the plugin signing key the build makes for this PC (`%APPDATA%\M-Strata\plugin-signing-key.json`) is also sealed with a passphrase, which make asks for (twice), as every later build and `make.py --sign-plugin` will (`make --signing-passphrase`, below). It is asked only when this PC has no key yet (no by default). A key already sealed is passed on as sealed, so make asks for its passphrase; one that is not sealed is used as it is. The plan says which. |
+| `-SearXNGUrl http://host:port` | A SearXNG you already run, for web search: the Web search plugin uses it from the first start (`make --searxng-url`). Without it the script asks for one first (Enter: none). |
+| `-SearXNG` | A local SearXNG for web search, in Docker Desktop (installed and running; the script does not install it): beside the repository in `docker\searxng`, on 127.0.0.1:8888 only, so nothing outside this PC reaches it; the Web search plugin uses it from the first start. Asked when web search is built, there is no SearXNG of yours, and Docker Desktop runs (Enter: yes). |
 
 Running it again is safe: it skips what is there and builds into a new folder.
 
@@ -377,7 +379,9 @@ cd m-strata && ./install.sh
 
 It asks the same questions first. Its options are `--out DIR`, `--with email,search,window,tui`,
 `--without maya,raon1,vision`, `--ggml-dir DIR`, `--debugging`, `--signing-passphrase` (the key is
-`~/.config/m-strata/plugin-signing-key.json`, or under `XDG_CONFIG_HOME`), `--plan` and `--yes`, as above. The window's question
+`~/.config/m-strata/plugin-signing-key.json`, or under `XDG_CONFIG_HOME`), `--searxng-url URL`, `--searxng`, `--plan` and
+`--yes`, as above. Here `--searxng` (or the question's yes) also installs Docker and its compose plugin from the
+distribution when they are missing; its question's default is yes where Docker is already there. The window's question
 defaults to yes on a desktop and to no on a machine with no display (no `DISPLAY` or `WAYLAND_DISPLAY`, as over SSH),
 so its GTK packages are not installed there; `--yes` builds both front ends on a desktop and only `strata-tui`
 without a display. On another distribution, install
@@ -482,6 +486,7 @@ python3 -m venv .venv-dev && .venv-dev/bin/python -m pip install cmake ninja
 | `--plan` | Print the commands only. |
 | `--signing-key PATH` | This PC's plugin signing key (default: `%APPDATA%\M-Strata\plugin-signing-key.json` on Windows, `~/.config/m-strata/plugin-signing-key.json` elsewhere - never inside an out or data folder). make creates it at its first build when there is none (the seed protected with DPAPI on Windows, a 0600 file elsewhere), signs each plugin it builds with it (`plugins/<id>/plugin.sig`) and writes its public half into `engine/build.json`, so the server trusts what it signed. Keep it private, and back it up: a new key means plugins signed with the old one need your approval again. |
 | `--signing-passphrase` | The signing key is also sealed with a passphrase, asked for (twice for a new key). A key that exists without one is used as it is (make says so): only a key being made is sealed. |
+| `--searxng-url URL` | The SearXNG the Web search plugin uses from the first start (the installers' local one, or yours): `engine/build.json` records it and the server's first start writes it as the plugin's address. Needs `--with search`; an address the server would not take (`http(s)://host[:port][/path]`, no user, query or fragment) stops make before it builds anything. |
 | `make.py --sign-plugin FOLDER [--platform windows\|linux]` | Signs a plugin folder made later with the same key (its manifest's and each file's SHA-256 for that platform), so an install built here trusts it without approval. |
 | `make.py --signing-key-show` | Prints the key's public half: give it to another install's owner to add under Publisher keys. |
 | `--debugging` | Ships the Debugging plugin turned on (every folder has it, `plugins/debugging`, off otherwise; the Plugins tab turns it on or off later, with no new build), to find out why a model does not start or calibrate: while it is on, the server logs one line per request (never its text) and the engine's own output (`logging.requests`, `logging.engine_output`) unless the config turns them off, and warns of it at every start. `strata-window` opens with a pop-up saying so and starts the server only on **Yes** (No, the default, exits); `strata-tui` shows the same on a screen of its own and starts the server only on **y** (any other key quits). The engine's output can hold what the engine prints of your prompts and the paths of your model files: run it on your own PC, keep the server's log private, look through a log before you share it, and turn the plugin off for everyday use. make prints this before and after the build and puts it in the folder's README.txt; `install.sh --debugging` and `install.bat -Debugging` pass it on, and their questions ask for it. Settings > Troubleshooting shows only while the plugin is on and turns the engine's output off alone; without it, `logging.engine_output` in the config file does that. |
@@ -696,6 +701,7 @@ services:
     container_name: searxng
     restart: unless-stopped
     ports: ["8080:8080"]
+    environment: ["GRANIAN_HOST=0.0.0.0"]   # the image binds IPv6 by default, which fails where Docker has none
     volumes: ["./config:/etc/searxng", "./cache:/var/cache/searxng"]
 ```
 
@@ -710,7 +716,10 @@ search:
   formats: [html, json]   # the server reads the JSON
 ```
 
-Run `docker compose up -d` there, then in the Plugins tab enter `http://<that machine>:8080` as the Web search
+The installers can do this for you: `install.sh --searxng` / `install.bat -SearXNG` (or the question's yes) set up this
+SearXNG beside the repository, on 127.0.0.1:8888 (this PC only), and `--searxng-url` / `-SearXNGUrl` (or the question
+before it) take the address of one you run; either way the Web search plugin uses it from the first start, with nothing
+to enter. Otherwise run `docker compose up -d` there, then in the Plugins tab enter `http://<that machine>:8080` as the Web search
 plugin's SearXNG address (the plugin is on unless you turned it off), save, restart the server, and use **Try**. Every model (Qwen, GLM-5.3, raon1, flint, Gemma 4,
 DeepSeek-V4.1, MiniMax-M3.1) then gets the `web_search` tool on every text chat; what it searches for leaves your PC through that instance. Each such
 card has a **Web search** switch (on by default; off, that model starts without the tool), and while it is on the chat

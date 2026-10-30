@@ -12,6 +12,12 @@ install.ps1 - from a fresh Windows 10/11 PC to a built M-Strata in one step (run
                                                        to take care of)
   .\install.bat -SigningPassphrase                     seal the plugin signing key the build makes with a passphrase
                                                        (make asks for it; asked when this PC has no key yet)
+  .\install.bat -SearXNG                               a local SearXNG for web search, in Docker Desktop (which must be
+                                                       installed and running): 127.0.0.1:8888, this PC only; the Web
+                                                       search plugin uses it from the first start (asked when web search
+                                                       is built and Docker Desktop is there)
+  .\install.bat -SearXNGUrl http://host:port            a SearXNG you already run, for web search (asked before the local
+                                                       one); the Web search plugin uses it from the first start
 
 What it does, each step only when needed:
   1. finds what the build needs: Git, Python 3.10+, Visual Studio 2022 Build Tools WITH the C++ workload, the CUDA
@@ -23,9 +29,11 @@ What it does, each step only when needed:
   4. puts CMake and Ninja in the repository's own Python environment (.venv-dev, which make.bat uses);
   5. fetches the pinned llama.cpp commit the engine builds ggml from (.toolchains\llama.cpp; an existing ..\llama.cpp at
      that commit is used as it is), and for -With ...window the WebView2 SDK (its SHA-256 checked);
-  6. runs make.bat into a new folder and says how to start it.
+  6. with -SearXNG (or its question's yes), sets up SearXNG in Docker Desktop beside the repository (docker\searxng);
+  7. runs make.bat into a new folder and says how to start it.
 Downloads: winget's packages (Microsoft's catalog, hash-checked by winget), Python packages from PyPI, the repositories
-from GitHub, the WebView2 SDK from nuget.org. Nothing else is downloaded, and nothing is sent anywhere.
+from GitHub, the WebView2 SDK from nuget.org, and with -SearXNG SearXNG's image from Docker Hub. Nothing else is
+downloaded, and nothing is sent anywhere.
 #>
 param(
   [string]$Out = "",
@@ -34,6 +42,8 @@ param(
   [string]$GgmlDir = "",
   [switch]$Debugging,
   [switch]$SigningPassphrase,
+  [switch]$SearXNG,
+  [string]$SearXNGUrl = "",
   [switch]$Plan,
   [switch]$Yes
 )
@@ -135,6 +145,12 @@ function Install-WithWinget([string]$id, [string[]]$extra) {
 }
 $restartAfter = $false
 
+# A SearXNG address as make and the server take one (make.py's valid_searxng_url; make checks the port's range).
+function Test-SearXNGUrl([string]$url) {
+  return ($url.Length -le 200 -and $url -cmatch '^(?i:https?)://(\[[0-9A-Fa-f:.]{2,}\]|[A-Za-z0-9][A-Za-z0-9.-]{0,252})(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$' -and
+          ($url -replace '^[^:]*://', '') -notmatch '//')
+}
+
 # y or n; Enter takes the default
 function Ask([string]$question, [bool]$default) {
   $hint = if ($default) { '[Y/n]' } else { '[y/N]' }
@@ -167,7 +183,20 @@ $signingKey = Join-Path $appData 'M-Strata\plugin-signing-key.json'
 $keyExists = Test-Path -LiteralPath $signingKey
 $keySealed = $keyExists -and ((Get-Content -Raw -LiteralPath $signingKey) -match '"passphrase"\s*:\s*true')
 $askPassphrase = -not $Yes -and -not $PSBoundParameters.ContainsKey('SigningPassphrase') -and -not $keyExists
-if ($askFeatures -or $askLeaveOut -or $askDebugging -or $askPassphrase) {
+# a local SearXNG for web search (owner 2026-10-30: "ask if the user wants it locally which we will install if yes"):
+# asked when web search is built and Docker Desktop is installed and running (this script does not install it: its
+# licence can need payment in larger organisations); -Yes takes yes there
+$dockerReady = $false
+$dockerExe = Get-Command docker.exe -ErrorAction SilentlyContinue
+if ($dockerExe) { & $dockerExe.Source info *> $null; $dockerReady = $LASTEXITCODE -eq 0 }
+# (or a SearXNG you already run: its address, asked first - owner 2026-10-30: "if so they can just provide details")
+if ($SearXNGUrl) {
+  if (-not (Test-SearXNGUrl $SearXNGUrl)) { Fail "-SearXNGUrl: not a SearXNG address (http(s)://host[:port][/path], with no user, query or fragment): $SearXNGUrl" }
+  if ($SearXNG) { Fail '-SearXNG sets up a local SearXNG and -SearXNGUrl names one you run: one or the other' }
+}
+$askSearXNGUrl = -not $Yes -and -not $SearXNGUrl -and -not $PSBoundParameters.ContainsKey('SearXNG')
+$askSearXNG = $askSearXNGUrl -and $dockerReady
+if ($askFeatures -or $askLeaveOut -or $askDebugging -or $askPassphrase -or $askSearXNGUrl) {
   Step 'What to build'
   Say '  Answer y or n; Enter takes the capital one. Qwen, Gemma 4 and flint models are always built.'
   if ($askFeatures) {
@@ -189,6 +218,29 @@ if ($askFeatures -or $askLeaveOut -or $askDebugging -or $askPassphrase) {
   if ($askPassphrase) {
     $SigningPassphrase = [switch](Ask 'Seal the plugin signing key this build makes with a passphrase (make asks for it now, and at every later build or plugin you sign)?' $false)
   }
+  if ($askSearXNGUrl -and $features -contains 'search') {
+    while ($true) {
+      $answer = Read-Host '  A SearXNG you already run for web search? Its address (http://host:port), or Enter for none'
+      if (-not $answer) { break }
+      if (Test-SearXNGUrl $answer.Trim()) { $SearXNGUrl = $answer.Trim(); break }
+      Say '  not a SearXNG address: http(s)://host[:port][/path], with no user, query or fragment'
+    }
+  }
+  if ($askSearXNG -and -not $SearXNGUrl -and $features -contains 'search') {
+    $SearXNG = [switch](Ask 'A local SearXNG for web search (in Docker Desktop; 127.0.0.1:8888, this PC only)?' $true)
+  }
+}
+if ($Yes -and -not $PSBoundParameters.ContainsKey('SearXNG') -and -not $SearXNGUrl -and $dockerReady -and $features -contains 'search') {
+  $SearXNG = [switch]$true
+}
+if ($SearXNGUrl -and $features -notcontains 'search') {
+  Fail "-SearXNGUrl is the Web search plugin's SearXNG: build web search too (-With ...,search)"
+}
+if ($SearXNG -and $features -notcontains 'search') {
+  Fail "-SearXNG sets up the Web search plugin's SearXNG: build web search too (-With ...,search)"
+}
+if ($SearXNG -and -not $dockerReady) {
+  Fail '-SearXNG needs Docker Desktop installed and running (docker.com); nothing was installed or changed.'
 }
 $makeArgs = @()
 if ($features.Count -gt 0) { $makeArgs += @('--with', ($features -join ',')) }
@@ -196,6 +248,8 @@ if ($leaveOut.Count -gt 0) { $makeArgs += @('--without', ($leaveOut -join ',')) 
 if ($Debugging) { $makeArgs += '--debugging' }
 # a sealed key goes to make as sealed; one there unsealed is used as it is (make seals only a key it makes)
 if ($keySealed -or ($SigningPassphrase -and -not $keyExists)) { $makeArgs += '--signing-passphrase' }
+if ($SearXNG) { $makeArgs += @('--searxng-url', 'http://127.0.0.1:8888') }
+elseif ($SearXNGUrl) { $makeArgs += @('--searxng-url', $SearXNGUrl) }
 
 # --- 1. what is there ------------------------------------------------------------------------------------------------
 Step 'Looking at what this PC has'
@@ -273,6 +327,17 @@ if (-not $keyExists) {
 } else {
   Say "  plugin signing key: $signingKey, as it is (no passphrase)"
   if ($SigningPassphrase) { Say '  (-SigningPassphrase seals only a key the build makes: this one is used as it is)' }
+}
+$searxngDir = Join-Path $parent 'docker\searxng'
+if ($SearXNG) {
+  # (8888 already taken by something else stops it here; a SearXNG this script set up before is started again)
+  $taken = Get-NetTCPConnection -LocalPort 8888 -State Listen -ErrorAction SilentlyContinue
+  if ($taken -and -not (Test-Path -LiteralPath (Join-Path $searxngDir 'compose.yaml'))) {
+    Fail 'port 8888 on this PC is taken: stop what uses it, or leave the local SearXNG out'
+  }
+  Say "  SearXNG for web search: $searxngDir (Docker Desktop; 127.0.0.1:8888, this PC only) - the Web search plugin's address from the first start"
+} elseif ($SearXNGUrl) {
+  Say "  SearXNG for web search: $SearXNGUrl (yours) - the Web search plugin's address from the first start"
 }
 Say "  make.bat --out $Out $($makeArgs -join ' ')"
 if ($Debugging) {
@@ -389,7 +454,68 @@ if ($features -contains 'window') {
   Say "  $sdk"
 }
 
-# --- 6. the build ----------------------------------------------------------------------------------------------------
+# --- 6. a local SearXNG for web search (the README's "Web search through SearXNG", owner 2026-10-30) -----------------
+# Loopback only (127.0.0.1:8888: nothing outside this PC reaches it); its server bound to IPv4 inside the container (the
+# image binds IPv6 by default, which fails where Docker has no IPv6); JSON on; the README's extra engines; a secret made
+# here, kept when it is set up again.
+if ($SearXNG) {
+  Step "SearXNG for web search, in $searxngDir"
+  New-Item -ItemType Directory -Force -Path (Join-Path $searxngDir 'config'), (Join-Path $searxngDir 'cache') | Out-Null
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  $compose = @'
+services:
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    ports: ["127.0.0.1:8888:8080"]   # this PC only: M-Strata's server reaches it, nothing outside does
+    environment: ["GRANIAN_HOST=0.0.0.0"]   # IPv4 inside the container
+    volumes: ["./config:/etc/searxng", "./cache:/var/cache/searxng"]
+'@
+  [IO.File]::WriteAllText((Join-Path $searxngDir 'compose.yaml'), $compose.Replace("`r`n", "`n"), $utf8)
+  $settings = Join-Path $searxngDir 'config\settings.yml'
+  if (-not (Test-Path -LiteralPath $settings)) {
+    $bytes = New-Object byte[] 32
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    $secret = -join ($bytes | ForEach-Object { $_.ToString('x2') })
+    $text = @"
+use_default_settings: true
+server:
+  secret_key: "$secret"
+  limiter: false
+  base_url: "http://127.0.0.1:8888/"
+search:
+  formats: [html, json]   # M-Strata's Web search plugin reads the JSON
+engines:
+  - name: bing
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: mojeek
+    disabled: false
+    inactive: false
+"@
+    [IO.File]::WriteAllText($settings, $text.Replace("`r`n", "`n"), $utf8)
+  }
+  Push-Location $searxngDir
+  & $dockerExe.Source compose up -d
+  $started = $LASTEXITCODE
+  Pop-Location
+  if ($started -ne 0) { Fail "SearXNG did not start (exit code $started); its message is above" }
+  $answered = $false
+  for ($i = 0; $i -lt 12 -and -not $answered; $i++) {
+    try {
+      $reply = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -Uri 'http://127.0.0.1:8888/search?q=m-strata&format=json'
+      $answered = $reply.Content -match '"results"'
+    } catch { Start-Sleep -Seconds 5 }
+  }
+  if ($answered) { Say '  SearXNG answers on http://127.0.0.1:8888' }
+  else { Say '  SearXNG has not answered yet (its first start can take a minute); the Web search plugin uses it once it does' }
+}
+
+# --- 7. the build ----------------------------------------------------------------------------------------------------
 Step "Building into $Out (the first build compiles the CUDA engine: allow an hour or more)"
 & (Join-Path $repo 'make.bat') --out $Out --ggml-dir $ggml --cuda-root $cuda @makeArgs
 if ($LASTEXITCODE -ne 0) { Fail "make stopped (exit code $LASTEXITCODE); its message is above" }
@@ -399,5 +525,7 @@ Say "  M-Strata is in $Out. Start it with:"
 if ($features -contains 'window') { Say "    $Out\strata-window.exe        (a window with the page, and a tray icon)" }
 if ($features -contains 'tui') { Say "    $Out\strata-tui.exe           (the same server in this terminal, with a dashboard)" }
 Say "    $Out\strata-unified-server.exe  (prints a one-time login link: open it in a browser on this PC)"
+if ($SearXNG) { Say "  Web search: SearXNG on http://127.0.0.1:8888 (${searxngDir}: docker compose there stops and starts it)" }
+elseif ($SearXNGUrl) { Say "  Web search: your SearXNG at $SearXNGUrl" }
 if (-not $driver) { Say '  No NVIDIA driver was found: install it before starting a model.' }
 if ($restartAfter) { Say '  An installer asked for a restart to finish: restart Windows before the first start.' }

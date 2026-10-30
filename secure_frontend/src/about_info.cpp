@@ -3,6 +3,7 @@
 #include "secure_frontend/calibration.hpp"
 #include "secure_frontend/host_readings.hpp"
 #include "secure_frontend/json.hpp"
+#include "secure_frontend/search_url.hpp"
 
 #include <fstream>
 #include <iterator>
@@ -190,6 +191,12 @@ std::optional<EngineBuild> read_engine_build(const std::filesystem::path& engine
       }
       build.engines.push_back(std::move(library));
     }
+  }
+  // the SearXNG the installer set up (make --searxng-url; owner 2026-10-30): an address the config itself would take
+  if (const JsonValue* url = member(*root, "searxng_url")) {
+    const std::string* address = url->if_string();
+    if (address == nullptr || !printable(*address) || !parse_search_url(*address)) return std::nullopt;
+    build.searxng_url = *address;
   }
   // the public half of the key make signed this folder's plugins with (plugin spec section 11)
   if (const JsonValue* key = member(*root, "signing_key")) {

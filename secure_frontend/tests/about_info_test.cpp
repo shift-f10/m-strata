@@ -61,6 +61,25 @@ void the_build_record_is_read_and_checked() {
   }
 }
 
+// The installer's SearXNG (owner 2026-10-30): make --searxng-url records it, and the first start makes it the Web search
+// plugin's address. A record without one has none; one that is not a SearXNG address (the config's own check) refuses
+// the record, as a key that is not one does.
+void the_build_record_names_the_installers_searxng() {
+  const auto folder = secure_frontend_test::make_scratch_directory();
+  const std::string head = R"({"schema_version": 1, "built": "b", "commit": "c", "ggml": "g", "cuda_arch": "a", "engines": [])";
+  secure_frontend_test::write_file(folder / "build.json", head + "}");
+  expect(secure_frontend::read_engine_build(folder).has_value() && secure_frontend::read_engine_build(folder)->searxng_url.empty(),
+         "none named: none");
+  secure_frontend_test::write_file(folder / "build.json", head + R"(, "searxng_url": "http://127.0.0.1:8888"})");
+  const auto build = secure_frontend::read_engine_build(folder);
+  expect(build.has_value() && build->searxng_url == "http://127.0.0.1:8888", "the installer's SearXNG is read");
+  for (const std::string& bad : {std::string{R"("ftp://127.0.0.1:8888")"}, std::string{R"("http://user@127.0.0.1:8888")"},
+                                 std::string{R"("http://127.0.0.1:8888/?q=1")"}, std::string{R"("")"}, std::string{"7"}}) {
+    secure_frontend_test::write_file(folder / "build.json", head + R"(, "searxng_url": )" + bad + "}");
+    expect(!secure_frontend::read_engine_build(folder).has_value(), "refused: " + bad);
+  }
+}
+
 // Plugins (the owner, 2026-10-30, decision 4: plugins `make` built are trusted through the build record): each
 // first-party plugin with the SHA-256s make recorded and whether it starts on; a record without a "plugins" list has
 // none, and a plugin entry that is not one refuses the whole record.
@@ -180,6 +199,7 @@ int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"the_build_record_is_read_and_checked", the_build_record_is_read_and_checked},
       {"the_build_record_lists_first_party_plugins", the_build_record_lists_first_party_plugins},
+      {"the_build_record_names_the_installers_searxng", the_build_record_names_the_installers_searxng},
       {"this_pcs_hardware_is_named", this_pcs_hardware_is_named},
       {"the_about_json_has_both", the_about_json_has_both},
       {"this_pcs_gpus_are_listed", this_pcs_gpus_are_listed},

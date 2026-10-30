@@ -280,6 +280,41 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z65 (Windows box; owner-directed)
+
+Web search's SearXNG from the installers. The owner, setting up the Azure VM: "add a searxng docker in the
+/opt/source/docker folder so that it has search support", "configure it for m-strata use", "have the installer make a
+local searxng if the uses choose to", "ask if the user wants it locally which we will install if yes", "it should also
+ask if searxng is already setup, if so they can just provide details"; his choices: the address set at the first start,
+and on Linux Docker installed when missing (Windows: only with Docker Desktop already there).
+- **The VM first** (noted, not in the repository): /opt/source/docker/searxng (compose + settings), loopback
+  127.0.0.1:8888, JSON on, the README's extra engines; the image's server binds IPv6 by default and failed ("Address
+  family not supported", os error 97) where Docker has no IPv6 - `GRANIAN_HOST=0.0.0.0` fixed it; 47 results for a test
+  query.
+- **The installers**: when web search is built they ask first for a SearXNG you already run (its address; Enter: none),
+  then offer a local one (Linux: always, installing docker.io and its compose plugin from the distribution when missing,
+  default yes where Docker is there; Windows: only when Docker Desktop is installed and running, default yes).
+  `--searxng-url`/`-SearXNGUrl` and `--searxng`/`-SearXNG` say it on the command line (one or the other; each needs web
+  search; an address is checked by make's rule before anything is installed). The local one: beside the repository in
+  docker/searxng, published on 127.0.0.1:8888 only, GRANIAN_HOST, JSON, the extra engines, a secret made on the PC and
+  kept when set up again, 8888 taken by something else stopping the plan; the script waits for it to answer.
+- **make `--searxng-url URL`**: checked as the server checks a SearXNG address (`valid_searxng_url`, mirroring
+  search_url.cpp, and the record's 200 printable characters - a record the server refuses trusts no plugin), needs
+  `--with search`, recorded in engine/build.json as `searxng_url`.
+- **The server**: `read_engine_build` reads `searxng_url` (refusing a record whose address is not one, as a bad signing
+  key does); the first start (`ensure_data_folder` / `first_start_config`, from the server's main) writes it as
+  `plugins.search.url` - only at the first start, never into a later config.
+- **Docs**: README (both installers' options, make's table, the recipe's GRANIAN_HOST, the installers' way), the threat
+  model (the installers' SearXNG: loopback only, Docker's root daemon is the operator's choice, the address from the
+  owner-only record at the first start only).
+- **Proof**: RED first, each: the record (7 failures), the first start (1), make (argparse refused the option), the
+  installers' shared and plan tests on both systems (stand-in systems with fake Docker in WSL; Docker filtered off PATH
+  on Windows), the "already have one" tests; then GREEN: about_info and first_start suites, test_make 38, test_install
+  19 passed on each system; tools/secure 178 passed, 7 skipped. MSVC: the whole tree built, no warnings;
+  1480/1482 (the two release-only cases). Linux gcc and clang: 1530/1533 each (the two release-only cases and the
+  connection-scan case, which passed alone); the gcc Release tree 1486/1488 (the connection-scan and listener cases,
+  which passed alone).
+
 ### Claude Code session, 2026-10-30 z63 (Windows box; owner-directed)
 
 The owner, reviewing on the LAN review server: "in the plugins page for the websearch, it is missing the test portion
