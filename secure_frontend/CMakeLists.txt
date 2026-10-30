@@ -1968,7 +1968,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         cards_offer_their_longest_answer_at_the_servers_value
         a_card_without_sampling_starts_with_the_recommended
         a_qwen36_card_reads_its_tokenizer_from_the_gguf
-        calibration_finds_the_win_and_starts_with_it a_first_start_calibrates_first
+        calibration_finds_the_win_and_starts_with_it a_first_start_calibrates_first a_start_without_calibrating_starts_at_once
+        the_start_route_takes_calibrate_false
         a_minimax_card_measures_its_prompt_reading_first a_glm_card_calibrates a_failed_prefill_calibration_is_not_retried_by_itself
         a_prefill_calibration_falls_back_to_the_default_chunk
         a_calibration_can_be_cancelled
@@ -2246,7 +2247,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_tui_tests
         the_screen_draws_text_boxes_and_gauges charts_are_braille_or_blocks only_the_changes_are_written
         keys_decode_from_vt_sequences the_monitor_draws_the_servers_readings the_views_switch_and_keys_become_requests
-        settings_are_edited_then_saved quitting_asks_first downloads_say_what_is_on_this_pc a_debugging_build_waits_for_y)
+        settings_are_edited_then_saved quitting_asks_first downloads_say_what_is_on_this_pc a_debugging_build_waits_for_y
+        an_uncalibrated_start_asks_to_calibrate_first)
 
     secure_frontend_add_test_executable(secure_frontend_window_shell_tests tests/window_shell_test.cpp
         secure_frontend_window_shell secure_frontend_first_start secure_frontend_token_reader)

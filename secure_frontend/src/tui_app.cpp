@@ -482,6 +482,17 @@ Outcome App::key(const Key& key) {
 Outcome App::prompt_key(const Key& key) {
   Outcome out;
   if (key.kind == Key::Kind::wheel_up || key.kind == Key::Kind::wheel_down) return out;  // (no answer: the question stays)
+  if (prompt_ == Prompt::calibrate_first) {
+    const bool calibrate = key.kind == Key::Kind::character && (key.text == "c" || key.text == "C");
+    const bool start = key.kind == Key::Kind::character && (key.text == "s" || key.text == "S");
+    if (calibrate && calibrate_) out.requests.push_back(std::move(*calibrate_));
+    else if (start && confirm_) out.requests.push_back(std::move(*confirm_));
+    prompt_ = Prompt::none;
+    confirm_.reset();
+    calibrate_.reset();
+    question_.clear();
+    return out;
+  }
   if (prompt_ == Prompt::quit || prompt_ == Prompt::start || prompt_ == Prompt::remove) {
     const bool yes = key.kind == Key::Kind::character && (key.text == "y" || key.text == "Y");
     if (prompt_ == Prompt::quit) out.quit = yes;
@@ -698,7 +709,22 @@ Outcome App::models_key(const Key& key) {
         option_ = -1;
         // while a card runs, asked first as the page asks: restart it with these options, or stop it for this one
         const auto* running = member(models_ ? &*models_ : nullptr, "running");
-        if (running != nullptr && running->if_string() != nullptr && text(member(&*models_, "state")) == "running") {
+        const bool runs = running != nullptr && running->if_string() != nullptr && text(member(&*models_, "state")) == "running";
+        // owner 2026-10-29 ("starting an uncalibrated server recommend calibrating first"): a card never calibrated is
+        // asked about first, as the page asks - c calibrates, then starts; s starts without (calibrate false)
+        const auto* calibration = member(card, "calibration");
+        const auto* calibrating = member(calibration, "running");
+        if (text(member(calibration, "state")) == "missing" && (calibrating == nullptr || calibrating->kind() == JsonKind::null)) {
+          const std::string now = runs ? *running->if_string() : std::string{};
+          question_ = (!runs ? "Start " + name + "?"
+                       : now == name ? "Restart " + name + " with these options?" : "Stop " + now + " and start " + name + "?") +
+                      " It is not calibrated";
+          const std::string body = options_body(*card);
+          confirm_ = Request{"start " + name, "POST", "/v1/strata/models/start", body.substr(0, body.size() - 1U) + ",\"calibrate\":false}"};
+          calibrate_ = Request{"calibrate " + name, "POST", "/v1/strata/models/calibrate",
+                               body.substr(0, body.size() - 1U) + ",\"then_start\":true}"};
+          prompt_ = Prompt::calibrate_first;
+        } else if (runs) {
           const std::string& now = *running->if_string();
           question_ = now == name ? "Restart " + name + " with these options?" : "Stop " + now + " and start " + name + "?";
           confirm_ = std::move(start);
@@ -916,15 +942,22 @@ void App::draw_keys(Screen& screen) const {
 
 void App::draw_prompt(Screen& screen) const {
   const int width = std::min(screen.width() - 4, 72);
-  const Rect box{(screen.width() - width) / 2, screen.height() / 2 - 2, width, 5};
+  const bool calibrate_first = prompt_ == Prompt::calibrate_first;
+  const Rect box{(screen.width() - width) / 2, screen.height() / 2 - 2, width, calibrate_first ? 7 : 5};
   screen.fill(box, U' ', Style{kText, kPanel});
   const char* const title = prompt_ == Prompt::quit     ? "Quit"
                             : prompt_ == Prompt::rotate ? "Rotate the API key"
-                            : prompt_ == Prompt::start  ? "Start"
+                            : prompt_ == Prompt::start || calibrate_first ? "Start"
                             : prompt_ == Prompt::remove ? "Remove card"
                                                         : "Edit";
   screen.box(box, title, Style{kAccent, kPanel}, Style{kAccent, kPanel, true});
   const Rect inner = box.inner();
+  if (calibrate_first) {
+    screen.field(inner.x + 1, inner.y + 1, inner.width - 2, question_, Style{kText, kPanel});
+    screen.field(inner.x + 1, inner.y + 2, inner.width - 2, "c: calibrate, then start (recommended)", Style{kText, kPanel, true});
+    screen.field(inner.x + 1, inner.y + 3, inner.width - 2, "s: start without calibrating   any other key: cancel", Style{kText, kPanel});
+    return;
+  }
   if (prompt_ == Prompt::quit || prompt_ == Prompt::start || prompt_ == Prompt::remove) {
     const std::string question = prompt_ == Prompt::quit ? std::string{"Quit, and stop the server and its model?"} : question_;
     screen.field(inner.x + 1, inner.y + 1, inner.width - 2, question + "  y / n", Style{kText, kPanel});

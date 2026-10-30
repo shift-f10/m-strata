@@ -35,6 +35,7 @@ main { flex: 1; min-height: 0; display: flex; }
 .key-once__value { display: block; padding: 10px 14px; border-radius: var(--st-r-md); background: var(--st-surface-2, rgba(127, 127, 127, .12));
                    font-family: var(--st-font-mono, monospace); word-break: break-all; user-select: all; }
 .key-once__actions { display: flex; gap: var(--st-s-3); justify-content: flex-end; }
+.calibrate-first__actions { flex-wrap: wrap; }
 
 /* ---------------------------------------------------------------- chat */
 .chat-scroll { flex: 1; min-height: 0; overflow-y: auto; }

@@ -385,7 +385,7 @@ std::optional<std::size_t> ModelLauncher::find_card(const std::string_view name)
 }
 
 std::optional<ModelLauncher::Refusal> ModelLauncher::start(const std::string_view name, const JsonValue* options,
-                                                           const bool remote_client) {
+                                                           const bool remote_client, const bool may_calibrate) {
   std::optional<std::size_t> card;
   const ModelCard* chosen_card = nullptr;
   {
@@ -440,9 +440,11 @@ std::optional<ModelLauncher::Refusal> ModelLauncher::start(const std::string_vie
     if (calibration == CalibrationState::fresh && !stored->args.empty()) {
       if (auto with = config_with(chosen, start_values, stored->args)) config = std::move(with);
     }
-    // (only the engines whose sweep is a few short starts calibrate unasked; the others' run from Calibrate)
-    calibrate_first = (calibration == CalibrationState::missing && page && calibrates_before_first_start(chosen.profile)) ||
-                      (calibration == CalibrationState::settings_changed && stored->auto_recalibrate);
+    // (only the engines whose sweep is a few short starts calibrate unasked; the others' run from Calibrate; none when
+    // the start is told not to)
+    calibrate_first = may_calibrate &&
+                      ((calibration == CalibrationState::missing && page && calibrates_before_first_start(chosen.profile)) ||
+                       (calibration == CalibrationState::settings_changed && stored->auto_recalibrate));
   }
   // MiniMax: its prefill calibration once, before the first start on this machine (Maya's needs_prefill_calibration)
   const bool prefill_first = !calibrate_first && needs_prefill_calibration(chosen, std::get<ModelOptionValues>(values));

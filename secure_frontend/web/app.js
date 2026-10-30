@@ -1066,7 +1066,8 @@
     model_not_running: "That model is not running any more. The chat now uses the running model: send again."
   };
   var launcher = { enabled: false, data: null, selected: "", formFor: "", controls: [], limits: [], timer: null,
-                   startedAt: 0, acting: false, vram: "", metricsOff: false, engine: undefined, chatFor: undefined };
+                   startedAt: 0, acting: false, vram: "", metricsOff: false, engine: undefined, chatFor: undefined,
+                   calibrateThenStart: "" };
 
   function launcherStarting(d) {
     if (!d) { return false; }
@@ -1429,7 +1430,10 @@
     $("model-calibration-auto").checked = cal.auto === true;
     $("model-calibration-auto").disabled = launcher.acting;
   }
-  async function calibrateModel() {
+  // `thenStart` true: the calibrate-first question's "Calibrate, then start" (it said a running model stops); a click on
+  // Calibrate passes its event.
+  async function calibrateModel(thenStart) {
+    var start = thenStart === true;
     var d = launcher.data;
     var card = findCard(launcher.selected);
     if (!d || !card || launcher.acting || launcherStarting(d)) { return; }
@@ -1437,22 +1441,64 @@
     var collected = collectOptions();
     if (collected.error) { showStartError(collected.error); return; }
     var running = d.running && d.state === "running" ? d.running : "";
-    if (running && !window.confirm("Calibrating stops " + running + " for a few minutes (each trial is one start of the engine). Go on?")) { return; }
+    if (!start && running && !window.confirm("Calibrating stops " + running + " for a few minutes (each trial is one start of the engine). Go on?")) { return; }
     launcher.acting = true;
     renderDetail(card, false);
-    var answer = await downloadsAnswer(api("/v1/strata/models/calibrate", jsonPost({ name: card.name, options: collected.values })));
+    var answer = await downloadsAnswer(start ? api("/v1/strata/models/calibrate", jsonPost({ name: card.name, options: collected.values, then_start: true }))
+                                             : api("/v1/strata/models/calibrate", jsonPost({ name: card.name, options: collected.values })));
     launcher.acting = false;
     if (answer.signedOut) { return; }
     if (answer.error) { showStartError(answer.error); await refreshLauncher(); return; }
+    launcher.calibrateThenStart = start ? card.name : "";
     launcher.startedAt = Date.now();
     stopLauncherPoll();
     await pollLauncher();
   }
+  // Owner 2026-10-29 ("during calibration, allow users to cancel calibration if they choose to"): Cancel stops it and
+  // keeps nothing; when it was the page's own "calibrate, then start", the start it was for is offered without it once the
+  // calibration has ended (still on that card's page).
   async function cancelCalibration() {
+    var thenStart = launcher.calibrateThenStart;
     var answer = await downloadsAnswer(api("/v1/strata/models/calibrate/cancel", jsonPost({})));
     if (answer.signedOut) { return; }
-    if (answer.error) { showStartError(answer.error); } else { toast("info", "Calibration cancelled", "Nothing was kept."); }
+    if (answer.error) { showStartError(answer.error); await refreshLauncher(); return; }
+    launcher.calibrateThenStart = "";
+    toast("info", "Calibration cancelled", "Nothing was kept.");
     await refreshLauncher();
+    if (!thenStart) { return; }
+    for (var i = 0; i < 120 && launcherStarting(launcher.data); i += 1) {
+      await new Promise(function (resolve) { setTimeout(resolve, 500); });
+      await refreshLauncher();
+    }
+    if (launcher.selected !== thenStart || launcherStarting(launcher.data)) { return; }
+    if (window.confirm(thenStart + ": calibration cancelled, nothing was kept. Start it now without calibrating?")) {
+      await startModel(true);
+    }
+  }
+  // Owner 2026-10-29 ("starting an uncalibrated server recommend calibrating first and when answered yes, it will
+  // calibrate"): Start on a card never calibrated on this PC asks first. Resolves "calibrate", "start" or "" (cancelled,
+  // Esc too).
+  function askCalibrateFirst(card, running) {
+    return new Promise(function (resolve) {
+      var dialog = $("calibrate-first");
+      $("calibrate-first-title").textContent = "Calibrate " + card.name + " first?";
+      $("calibrate-first-text").textContent = card.name + " has not been calibrated on this PC. Calibrating first is " +
+        "recommended: it tries the engine's settings (each trial is one start of the model, a few minutes in all), then " +
+        "starts the model with the fastest. You can cancel it while it runs." +
+        (running ? " " + running + " is stopped first." : "");
+      var answered = false;
+      var done = function (answer) {
+        if (answered) { return; }
+        answered = true;
+        if (dialog.open) { dialog.close(); }
+        resolve(answer);
+      };
+      $("calibrate-first-yes").onclick = function () { done("calibrate"); };
+      $("calibrate-first-no").onclick = function () { done("start"); };
+      $("calibrate-first-cancel").onclick = function () { done(""); };
+      dialog.onclose = function () { done(""); };
+      if (typeof dialog.showModal === "function") { dialog.showModal(); } else { done(""); }
+    });
   }
   async function setAutoRecalibrate() {
     var card = findCard(launcher.selected);
@@ -1648,7 +1694,9 @@
     if (parsed.error.code) { text += " [" + parsed.error.code + "]"; }
     return { text: text, param: param };
   }
-  async function startModel() {
+  // `without` true: start without calibrating, asked already (a cancelled calibrate-then-start); a click on Start passes
+  // its event.
+  async function startModel(without) {
     var d = launcher.data;
     var card = findCard(launcher.selected);
     if (!d || !card || launcher.acting || launcherStarting(d)) { return; }
@@ -1656,17 +1704,28 @@
     var collected = collectOptions();
     if (collected.error) { showStartError(collected.error); return; }
     var running = d.running && d.state === "running" ? d.running : "";
-    var question = running === card.name
-      ? "Restart " + card.name + " with these options? The chat is unavailable while it loads."
-      : "Stop " + running + " and start " + card.name + "? The chat is unavailable while it loads.";
-    if (running && !window.confirm(question)) { return; }
+    var withoutCalibrating = without === true;
+    var cal = card.calibration && typeof card.calibration === "object" ? card.calibration : null;
+    if (!withoutCalibrating && cal && !cal.running && cal.state === "missing") {
+      var choice = await askCalibrateFirst(card, running);
+      if (!choice) { return; }
+      if (choice === "calibrate") { await calibrateModel(true); return; }
+      withoutCalibrating = true;
+    } else if (!withoutCalibrating) {
+      var question = running === card.name
+        ? "Restart " + card.name + " with these options? The chat is unavailable while it loads."
+        : "Stop " + running + " and start " + card.name + "? The chat is unavailable while it loads.";
+      if (running && !window.confirm(question)) { return; }
+    }
+    launcher.calibrateThenStart = "";
     launcher.acting = true;
     renderDetail(card, false);
     var response, text;
     try {
       response = await api("/v1/strata/models/start", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: card.name, options: collected.values })
+        body: withoutCalibrating ? JSON.stringify({ name: card.name, options: collected.values, calibrate: false })
+                                 : JSON.stringify({ name: card.name, options: collected.values })
       });
       text = await response.text();
     } catch (e) {

@@ -280,6 +280,39 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z34 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner: "starting an uncalibrated server recommend calibrating first and when answered yes, it will calibrate.
+However, during calibration, allow users to cancel calibration if they choose to." Until now Start calibrated first
+unasked only for a Gemma 4 or flint page card, and never asked; Cancel already existed (the page's calibration
+panel, the TUI's `x`).
+
+- **Server**: `POST /v1/strata/models/start` takes `"calibrate": false` (a boolean only; anything else is 400
+  `invalid_request`): `ModelLauncher::start(..., may_calibrate = false)` starts the card without the calibration a first
+  start (Gemma 4, flint) or a "recalibrate when settings change" would run first. Without it, starts are as before
+  (the tray, `models.start`).
+- **Page** (browser and strata-window): Start on a card whose `calibration.state` is `missing` (and not calibrating)
+  opens the `calibrate-first` dialog (the key dialog's styling): **Calibrate, then start (recommended)** posts
+  `calibrate` with `then_start: true` (no second question; the dialog says a running model is stopped first),
+  **Start without calibrating** posts the start with `calibrate: false`, **Cancel** or Esc does nothing. A card already
+  calibrated asks as before (restart or stop the running one). Cancel during a calibration keeps nothing; when it was the
+  page's own calibrate-then-start (`launcher.calibrateThenStart`), the page waits for the calibration to end and asks
+  "Start it now without calibrating?".
+- **TUI**: Enter on such a card asks in the Start box ("Stop X and start Y? It is not calibrated", or "Start Y?" /
+  "Restart Y with these options?"): `c` calibrate, then start (recommended); `s` start without calibrating; any other
+  key cancels (`Prompt::calibrate_first`; y/n is avoided, n means "don't" in the other prompts).
+- **Proof**:
+  - RED: `a_start_without_calibrating_starts_at_once`, `the_start_route_takes_calibrate_false` (launcher),
+    `an_uncalibrated_start_asks_to_calibrate_first` (TUI), the page checks in `web_ui_models_tab_starts_stops_and_polls`.
+    The TUI fixture's Qwen3.8 is now calibrated, so the restart flows still test a calibrated card.
+  - GREEN: the launcher, TUI and router suites with MSVC (`failed_start_keeps_the_server_usable` failed once under a
+    parallel run, then passed alone three times), Linux gcc 13.3 and clang 18.1 (101/101 each).
+  - Live, a scratch server on port 18090 with a tiny Gemma 4 card in a browser:
+    - The dialog showed; Cancel started nothing; Start without calibrating started it with the calibration still missing.
+    - Calibrate, then start sent `then_start: true`. Cancel at trial 4 logged "calibration cancelled; nothing was
+      kept", the question came, and yes started it with `calibrate: false`.
+- **Not verified**: strata-window's view of the dialog (the same page in WebView2), and the TUI in a real console.
+
 ### Claude Code session, 2026-10-29 z33 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner: "the windows app has no scrollbar"; "the browser as well, there is not scrollbar in the settings". The page's

@@ -2102,7 +2102,9 @@ One model runs at a time.
   includes the rope flags). The page's last options per card are remembered in
   `<roots.state>/model-options.json` (owner-only) and offered at the next start (D7).
 - **Control:** `models.control = true` serves `GET /v1/strata/models` (the cards, their state
-  and options), `POST /v1/strata/models/start` (`{"name": "...", "options": {...}}`, 202) and
+  and options), `POST /v1/strata/models/start` (`{"name": "...", "options": {...}}`, 202; `"calibrate": false`
+  starts it without the calibration a first start or a settings change would run first: the page's and the TUI's
+  "Start without calibrating", owner 2026-10-29) and
   `POST /v1/strata/models/stop` (202), keyed like every route, for loopback clients; remote
   clients get 403 `control_not_allowed` unless `models.control_remote = true` (D2; the page
   then shows the Models tab with that reason instead of the cards). Each start
