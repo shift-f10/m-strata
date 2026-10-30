@@ -130,7 +130,8 @@ foreach(_t IN LISTS _me_families)
 endforeach()
 
 # ---- the launcher -------------------------------------------------------------------------------------------------
-add_executable(multiengine src/multiengine/launcher.cpp)
+add_executable(multiengine src/multiengine/launcher.cpp src/multiengine/family_plugin.cpp src/prepare/sha256.cpp)
+target_include_directories(multiengine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
 strata_utf8_manifest(multiengine)   # argv, fopen and std::ifstream in UTF-8, for the launcher and every family it loads
 target_compile_definitions(multiengine PRIVATE ${_me_defs})
 target_compile_options(multiengine PRIVATE ${_me_warnings})
@@ -140,6 +141,26 @@ else()
   target_link_libraries(multiengine PRIVATE ${CMAKE_DL_LIBS})
 endif()
 add_dependencies(multiengine ${_me_families} ${_me_external})   # `--target multiengine` builds the whole engine
+
+# ---- engine family plugins: the launcher's --family (docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md)
+if(STRATA_BUILD_TESTS)
+  # a fake plugin, four ways (tests/multiengine/fake_family.cpp), and the test that runs the launcher over them
+  foreach(_fake testfam badabi wrongid nosym)
+    add_library(multiengine_fake_${_fake} SHARED tests/multiengine/fake_family.cpp)
+    target_include_directories(multiengine_fake_${_fake} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
+    target_compile_options(multiengine_fake_${_fake} PRIVATE ${_me_warnings})
+  endforeach()
+  target_compile_definitions(multiengine_fake_testfam PRIVATE FAKE_ID=testfam FAKE_ABI=STRATA_FAMILY_ABI)
+  target_compile_definitions(multiengine_fake_badabi PRIVATE FAKE_ID=badabi FAKE_ABI=200000)
+  target_compile_definitions(multiengine_fake_wrongid PRIVATE FAKE_ID=notit FAKE_ABI=STRATA_FAMILY_ABI)
+  target_compile_definitions(multiengine_fake_nosym PRIVATE FAKE_NO_INFO)
+  add_executable(multiengine_family_test tests/multiengine/family_plugin_test.cpp src/prepare/sha256.cpp)
+  target_compile_options(multiengine_family_test PRIVATE ${_me_warnings})
+  add_test(NAME multiengine_family_test
+           COMMAND multiengine_family_test $<TARGET_FILE:multiengine> $<TARGET_FILE:multiengine_fake_testfam>
+                   $<TARGET_FILE:multiengine_fake_badabi> $<TARGET_FILE:multiengine_fake_wrongid>
+                   $<TARGET_FILE:multiengine_fake_nosym>)
+endif()
 
 # ---- strata-prepare: what a download needs before the engine runs it, with no Python ------------------------------
 # src/prepare (docs/superpowers/specs/2026-10-27-strata-prepare-design.md): upstream's tools/iq_pack.py as a native

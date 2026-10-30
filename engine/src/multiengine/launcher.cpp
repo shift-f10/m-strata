@@ -20,12 +20,18 @@
 // For the others it first takes the process-wide steps upstream Strata's main() takes ahead of its family switch, which
 // the Gemma 4, flint and raon1 entries were written to run after: stdout unbuffered, every CUDA kernel loaded with the
 // context, --gpu as the visible GPUs.
+//
+// An engine family plugin (docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md) is named instead:
+// `--family <id> --family-sha256 <hex>` first loads families/<id>/'s library after its checks (family_plugin.hpp).
+#include "family_plugin.hpp"
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <variant>
 #include <vector>
 
 #if defined(_WIN32)
@@ -98,7 +104,7 @@ std::string first_shard(const std::string& any) {
     if (n < 1 || no < 1 || no > n) return any;
     std::string first;
     for (int i = 1; i <= n; ++i) {
-        char num[8];
+        char num[12];   // any int's digits (gcc -Wformat-truncation cannot see that i <= 99999 here)
         std::snprintf(num, sizeof num, "%05d", i);
         std::string p = any;
         p.replace(at - 5, 5, num);
@@ -466,6 +472,15 @@ int main(int argc, char** argv) {
             std::printf("%s\n", fams.c_str());
             return 0;
         }
+    }
+    // an engine family plugin (families/<id>/, sdk/include/strata/family_abi.h): named, never guessed from the argv
+    const auto plugin = multiengine::parse_plugin_request(argc, argv);
+    if (const auto* why = std::get_if<std::string>(&plugin)) {
+        std::fprintf(stderr, "multiengine: %s\n", why->c_str());
+        return 1;
+    }
+    if (const auto* request = std::get_if<multiengine::PluginRequest>(&plugin)) {
+        return multiengine::run_plugin(*request, argc, argv, strata_process_steps);
     }
     const Family family = family_for(argc, argv);
     if (!family.own_process_steps) strata_process_steps(argc, argv);

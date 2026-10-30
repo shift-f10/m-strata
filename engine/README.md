@@ -23,6 +23,16 @@ its own sources, so no family, and no update of one, changes what another comput
 | `multiengine_gemma4.dll` | gemma4 (Gemma 4 26B-A4B) | `src/gemma4` on its own copy of the Strata core (`src/gemma4/core`, v0.2.4.2 + Gemma's generalisations) |
 | `multiengine_flint.dll` | flint (RecursiveSI's Flint, `--native` of its GGUF, any shard) | `src/flint`, ours, on Gemma 4's pieces (its GGUF reader, its frozen core library `g4core`) |
 
+**Family plugins** (in progress: `docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md`). A family
+can also be a plugin: `families/<id>/multiengine_<id>.dll` (`libmultiengine_<id>.so`) beside the launcher, built
+against `sdk/include/strata/family_abi.h`. Such a family is never guessed from the command line. It is named, as
+`multiengine --family <id> --family-sha256 <hex> <its own arguments>`, and the launcher runs it only after these checks:
+- the library's bytes have that SHA-256, hashed through a handle that keeps the file unchanged until it loads;
+- `strata_family_info()` reports ABI version 1 and the folder's id.
+
+It then takes the same process steps as the built-in families and calls `strata_family_main()` with only the family's
+own arguments. `tests/multiengine/` holds the fake plugins and the test (`multiengine_family_test`).
+
 They share only the pinned ggml (`third_party/ggml/VERSION.txt`) and the CUDA toolkit. Everything under `src`,
 `include`, `tests`, `cmake`, `data` and `third_party/ggml*` that is not one of ours above is upstream's file as
 upstream ships it; the root `CMakeLists.txt` differs only by its last line (`include(cmake/multiengine.cmake)`).

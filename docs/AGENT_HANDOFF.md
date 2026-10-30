@@ -280,6 +280,35 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z46 (Windows box; owner-directed)
+
+Engine family plugins, phase 1, the engine half: the published ABI and the launcher's `--family` (design z45).
+
+- **`engine/sdk/include/strata/family_abi.h`** (C, version 1):
+  - `StrataFamilyInfo {size, abi, id, version}`, with `STRATA_FAMILY_ABI` = major * 100000 + minor, as strata_kq's;
+  - `strata_family_info()` and `strata_family_main(argc, argv)`;
+  - the contract written in its header comment.
+- **The launcher** (`src/multiengine/family_plugin.{hpp,cpp}`). `multiengine --family <id> --family-sha256 <hex> ...`
+  loads only `families/<id>/multiengine_<id>.dll` (`libmultiengine_<id>.so`), and only when:
+  - the id is a plain name (`[a-z][a-z0-9_]{0,31}`) and the SHA-256 is 64 hex digits, compared without regard to case;
+  - the library's bytes have that SHA-256. Windows hashes through a handle with read sharing only, held until
+    `LoadLibraryExW`. Linux loads by path (so `$ORIGIN` is the plugin's folder) and checks that the loaded file is the
+    descriptor hashed, by device and inode;
+  - `strata_family_info` exists, its `size` covers v1, its ABI major is 1 and its id is the folder's;
+  - `strata_family_main` exists.
+
+  The launcher's process steps (`--gpu` and so on) then apply, and the family gets argv[0] plus its own arguments
+  only. Every refusal says why and exits 1. The built-in argv routes are unchanged.
+- **Also fixed:** `first_shard`'s `snprintf` buffer (8 to 12 bytes). gcc's `-Wformat-truncation` refused it under
+  `-Werror`; the engine had never been compiled by gcc here.
+- **Proof**:
+  - RED first: `multiengine_family_test` runs the real launcher over a scratch engine folder holding four fake plugins
+    (`tests/multiengine/fake_family.cpp`: good, ABI 2, another id, no info). It failed while the launcher sent
+    `--family` to upstream's engine.
+  - GREEN, all eleven cases: MSVC in the release engine tree (`out/make-build/engine`, reconfigured with
+    `STRATA_BUILD_TESTS=ON`), and Linux gcc 13.3 and clang 18.1 in WSL. On Linux the launcher, fakes and test were
+    compiled directly with the launcher's own `-Werror` flags, since the engine's CMake needs CUDA.
+
 ### Claude Code session, 2026-10-30 z45 (Windows box; owner-directed)
 
 The owner: "now let's work on making our multiengine plugin capable where for example a new model comes out that is not
