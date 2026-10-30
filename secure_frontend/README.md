@@ -187,8 +187,11 @@ log says so; `--check` says what a start would move.
 **Tool plugins** (plugin spec section 10): each tool plugin that is on - one `make` built, or a third-party one the
 owner approved - and whose settings fit its manifest is run by the server's tool hub when a chat first needs it: its
 program from its folder, with its manifest's arguments (each `{setting}` filled in), in a closed environment (the
-system's own variables and a private temp folder, `<roots.state>/plugins/<id>`) plus only the variables its manifest
-declares; a secret setting is read from the secret folder into its variable and nowhere else. One that is left out
+system's own variables and a private temp folder, `<roots.state>/plugins/<id>`, also its working folder) plus only the
+variables its manifest declares, with no new privileges (Linux); a secret setting is read from the secret folder into
+its variable and nowhere else. Its stderr goes nowhere, except while the server logs its engines' own output
+(`logging.engine_output`, on with the Debugging plugin): then each line reaches the log as `[plugin <id>] ...`,
+printable and cut at 400 characters. One that is left out
 says why in the log at the start (`[strata] plugins: <id> does not run: ...`). A chat is offered every listed tool, at
 most 16 (a name two plugins list goes to the first); its system message gets each plugin's note (`{today}` filled in,
 and those plugins' tool descriptions end with the date). One call may take its manifest's `call_timeout_s` (120 s by

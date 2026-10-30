@@ -992,8 +992,12 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`; as a plugin,
   its manifest declares: its program, one of its own files inside its folder
   (the manifest reader refuses '.', '..' and anything outside); the manifest's
   arguments with its settings filled in; a closed environment (the system's own
-  variables, a private temp folder `<roots.state>/plugins/<id>`) plus only its
-  declared variables, a secret only there. **What it does then is not
+  variables, a private temp folder `<roots.state>/plugins/<id>`, also its working
+  folder) plus only its declared variables, a secret only there; no new
+  privileges on Linux. Its stderr is dropped unless the server logs its engines'
+  own output (the Debugging plugin), and then reaches the log printable, marked
+  `[plugin <id>]` and cut at 400 characters - so a plugin that prints a secret
+  it was given puts it in the log only while that logging is on. **What it does then is not
   confined:** an approved third-party plugin can read what the server's user
   can read and connect anywhere - approving it is trusting its publisher as
   running any program is, and the tab and the TUI say a code plugin runs with

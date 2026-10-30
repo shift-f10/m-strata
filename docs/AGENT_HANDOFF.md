@@ -280,6 +280,21 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z55 (Windows box; owner-directed)
+
+The tool host, finishing the spec's running contract (section 10) that z54 left short, as the old search service did:
+- `ToolPlugin::working_directory`: the server runs each tool plugin in `<roots.state>/plugins/<id>` (its temp folder
+  too), not in the server's own folder; `no_new_privileges` is set for it (Linux).
+- `ToolHubSettings::log_stderr` (the server sets it from `logging.engine_output`, on with the Debugging plugin): each
+  stderr line goes to the log as `[plugin <id>] <line>`, printable and cut at 400 characters; otherwise a plugin's
+  stderr goes nowhere, as before.
+- The fake MCP tool gained `--stderr TEXT` and a `where` tool (its working folder); its JSON helper was renamed
+  (`<filesystem>` made `quoted` ambiguous through ADL).
+- Docs: the frontend README's tool plugins paragraph, the threat model's tool plugins bullet.
+- Proof: `a_plugin_runs_in_its_folder_and_its_stderr_is_logged` RED 3 (it ran in the server's folder; no stderr line
+  arrived; its first run also failed because the test called `run` before `offers()`, which a chat never does - the test
+  was fixed to offer first), then GREEN with the six other hub cases. MSVC: the whole tree built, no warnings; the suites it touches (hub, search, plugins, MCP client, server) 151/151. Linux gcc 13.3 and clang 18.1: the whole tree built, no warnings; the same suites 147/148 each, the one failure a net01 listener-count case under 8 parallel jobs, which passed alone three times out of three on each.
+
 ### Claude Code session, 2026-10-30 z54 (Windows box; owner-directed)
 
 The plugin platform, step 5b-2: the tool host, and web search as a tool plugin (the design's section 10; the owner's

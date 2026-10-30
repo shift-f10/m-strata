@@ -2,11 +2,13 @@
 // one message a line, as strata-search speaks it. It lists one tool per --tool NAME (each with a string parameter
 // "query"), and answers a tools/call with what it was given: the tool's name, its arguments, its own command line and
 // the FAKE_TOOL_TOKEN variable it got (or "none"), so a test sees what reaches a plugin's process. --listing-only makes
-// it list its tools and then answer nothing (a stuck plugin); never installed.
+// it list its tools and then answer nothing (a stuck plugin); --stderr TEXT writes TEXT to stderr when it starts; its
+// tool `where` answers the folder it runs in. Never installed.
 #include "secure_frontend/crt_environment.hpp"
 #include "secure_frontend/json.hpp"
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -31,7 +33,7 @@ const secure_frontend::JsonValue* member(const secure_frontend::JsonValue& objec
   return nullptr;
 }
 
-std::string quoted(const std::string_view text) {
+std::string json_quoted(const std::string_view text) {
   std::string out;
   secure_frontend::append_json_string(&out, text);
   return out;
@@ -51,6 +53,7 @@ int main(int argc, char** argv) {
     command_line += (i > 1 ? " " : "") + std::string{argv[i]};
     if (std::string_view{argv[i]} == "--tool" && i + 1 < argc) tools.emplace_back(argv[i + 1]);
     if (std::string_view{argv[i]} == "--listing-only") listing_only = true;
+    if (std::string_view{argv[i]} == "--stderr" && i + 1 < argc) std::cerr << argv[i + 1] << '\n' << std::flush;
   }
   const char* token = secure_frontend::crt_getenv("FAKE_TOOL_TOKEN");
   std::string line;
@@ -68,8 +71,8 @@ int main(int argc, char** argv) {
     } else if (*method->if_string() == "tools/list") {
       result = "{\"tools\":[";
       for (std::size_t i = 0; i < tools.size(); ++i) {
-        result += (i == 0U ? "" : ",") + std::string{"{\"name\":"} + quoted(tools[i]) + ",\"description\":" +
-                  quoted("Fake tool " + tools[i] + ".") +
+        result += (i == 0U ? "" : ",") + std::string{"{\"name\":"} + json_quoted(tools[i]) + ",\"description\":" +
+                  json_quoted("Fake tool " + tools[i] + ".") +
                   R"(,"inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}})";
       }
       result += "]}";
@@ -78,10 +81,12 @@ int main(int argc, char** argv) {
       const auto* params = member(*message, "params");
       const auto* name = params != nullptr ? member(*params, "name") : nullptr;
       const auto* arguments = params != nullptr ? member(*params, "arguments") : nullptr;
-      const std::string text = (name != nullptr && name->if_string() != nullptr ? *name->if_string() : std::string{"?"}) + " called with " +
-                               (arguments != nullptr ? secure_frontend::python_json_text(*arguments) : std::string{"{}"}) +
-                               "; args: " + command_line + "; token: " + (token != nullptr ? token : "none");
-      result = "{\"content\":[{\"type\":\"text\",\"text\":" + quoted(text) + "}],\"isError\":false}";
+      const std::string called = name != nullptr && name->if_string() != nullptr ? *name->if_string() : std::string{"?"};
+      const std::string text = called == "where" ? std::filesystem::current_path().string()
+                                                 : called + " called with " +
+                                                       (arguments != nullptr ? secure_frontend::python_json_text(*arguments) : std::string{"{}"}) +
+                                                       "; args: " + command_line + "; token: " + (token != nullptr ? token : "none");
+      result = "{\"content\":[{\"type\":\"text\",\"text\":" + json_quoted(text) + "}],\"isError\":false}";
     } else {
       std::cout << "{\"jsonrpc\":\"2.0\",\"id\":" << request_id << ",\"error\":{\"code\":-32601,\"message\":\"no such method\"}}\n" << std::flush;
       continue;

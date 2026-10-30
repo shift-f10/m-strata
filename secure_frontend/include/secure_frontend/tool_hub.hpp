@@ -37,6 +37,7 @@ struct ToolPlugin final {
   std::map<std::string, std::string, std::less<>> environment;  // the closed environment and its declared variables
   std::string note;                                             // its system-message note ({today} as written)
   std::chrono::milliseconds call_timeout{std::chrono::seconds(120)};
+  std::filesystem::path working_directory{};                    // its own folder, <roots.state>/plugins/<id> (empty: inherit)
 };
 
 struct ToolHubSettings final {
@@ -44,6 +45,9 @@ struct ToolHubSettings final {
   std::function<std::string()> today{};          // YYYY-MM-DD (default: this PC's local date)
   std::function<void(std::string_view)> log{};   // one fixed line per start, failure and tool left out (default: none)
   std::chrono::seconds restart_pause{60};        // after a failed start, that plugin's tools are left out this long
+  // Each line a program writes on stderr goes to `log` as "[plugin <id>] <line>", printable and cut at 400 characters
+  // (while the server logs its engines' own output: the Debugging plugin). false: its stderr goes nowhere.
+  bool log_stderr{false};
 };
 
 class ToolHub final : public ToolRunner {

@@ -126,11 +126,21 @@ bool ToolHub::ensure_started(Running& plugin) {
   if (plugin.failed_at.has_value() && now - *plugin.failed_at < settings_.restart_pause) return false;
   const std::string& id = plugin.plugin.id;
   plugin.process = std::make_unique<EngineStdioProcess>();
-  const EngineCommand command{.executable = plugin.plugin.program,
-                              .arguments = plugin.plugin.arguments,
-                              .environment = plugin.plugin.environment,
-                              .insert_serve = false,
-                              .max_read_line_bytes = kMaxReplyLine};
+  // in its own folder, with no new privileges (Linux); its stderr to the log only while the server logs its engines' own
+  // output, each line marked with the plugin and cut at 400 characters (as EngineStdioProcess hands it: printable)
+  EngineCommand command{.executable = plugin.plugin.program,
+                        .arguments = plugin.plugin.arguments,
+                        .environment = plugin.plugin.environment,
+                        .working_directory = plugin.plugin.working_directory,
+                        .no_new_privileges = true,
+                        .insert_serve = false,
+                        .max_read_line_bytes = kMaxReplyLine};
+  if (settings_.log_stderr) {
+    command.stderr_lines = [log = settings_.log, prefix = "[plugin " + id + "] "](const std::string_view line) {
+      constexpr std::size_t kMaxStderrChars = 400U;
+      log(prefix + std::string{line.substr(0, kMaxStderrChars)} + (line.size() > kMaxStderrChars ? " [cut]" : ""));
+    };
+  }
   if (const auto error = plugin.process->start(command)) {
     settings_.log("[strata] plugins: " + id + "'s program did not start; chats are served without its tools for now");
     plugin.process.reset();

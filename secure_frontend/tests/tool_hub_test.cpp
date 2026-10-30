@@ -9,8 +9,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -156,6 +159,48 @@ void a_stuck_call_ends_and_try_calls_one() {
   expect(listed.contains("alpha") && listed.at("alpha").size() == 1U && listed.at("alpha")[0].name == "lookup", "listed: each running plugin's tools");
 }
 
+// A plugin's program runs in its own folder (its working folder under the state root), and, while the server logs its
+// engines' own output (the Debugging plugin), each line it writes on stderr reaches the log marked with the plugin,
+// printable and cut at 400 characters; otherwise its stderr goes nowhere.
+void a_plugin_runs_in_its_folder_and_its_stderr_is_logged() {
+  const auto folder = secure_frontend_test::make_scratch_directory();
+  for (const bool logged_on : {true, false}) {
+    const std::string which = logged_on ? "logged: " : "not logged: ";
+    std::mutex mutex;
+    std::vector<std::string> logged;
+    auto plugin = fake("gamma", {"where"});
+    plugin.working_directory = folder;
+    plugin.arguments.insert(plugin.arguments.end(), {"--stderr", "hello\tfrom gamma " + std::string(500, 'x')});
+    ToolHub hub({.plugins = {plugin},
+                 .log = [&mutex, &logged](const std::string_view line) {
+                   const std::lock_guard lock(mutex);
+                   logged.emplace_back(line);
+                 },
+                 .log_stderr = logged_on});
+    expect(names_of(hub.offers()) == std::vector<std::string>{"where"}, which + "it starts and lists its tool");
+    const auto where = hub.run(call("where", "-"), kNever);
+    std::error_code same;
+    expect(where.ok && std::filesystem::equivalent(std::filesystem::path{where.text}, folder, same), which + "it runs in its folder: " + where.text);
+    std::string line;
+    for (int i = 0; i < 50 && line.empty(); ++i) {
+      {
+        const std::lock_guard lock(mutex);
+        for (const auto& entry : logged) {
+          if (entry.rfind("[plugin gamma] ", 0) == 0U) line = entry;
+        }
+      }
+      if (line.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    if (logged_on) {
+      expect(line.rfind("[plugin gamma] hello from gamma xxx", 0) == 0U && line.size() <= std::string{"[plugin gamma] "}.size() + 400U + 16U &&
+                 line.find("[cut") != std::string::npos,
+             which + "its stderr line, marked, printable and cut: " + line.substr(0, 80) + " (" + std::to_string(line.size()) + ")");
+    } else {
+      expect(line.empty(), which + "nothing of its stderr reaches the log");
+    }
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -166,5 +211,6 @@ int main(int argc, char** argv) {
       {"notes_and_dates", notes_and_dates},
       {"at_most_sixteen_tools", at_most_sixteen_tools},
       {"a_stuck_call_ends_and_try_calls_one", a_stuck_call_ends_and_try_calls_one},
+      {"a_plugin_runs_in_its_folder_and_its_stderr_is_logged", a_plugin_runs_in_its_folder_and_its_stderr_is_logged},
   }, failures);
 }

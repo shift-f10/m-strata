@@ -2188,7 +2188,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     add_dependencies(secure_frontend_tool_hub_tests secure_frontend_fake_mcp_tool)
     secure_frontend_add_cases(secure_frontend_tool_hub_tests
         several_plugins_tools_are_offered_and_routed a_plugin_gets_its_own_arguments_and_environment
-        a_plugin_that_does_not_start_is_left_out notes_and_dates at_most_sixteen_tools a_stuck_call_ends_and_try_calls_one
+        a_plugin_that_does_not_start_is_left_out notes_and_dates at_most_sixteen_tools a_stuck_call_ends_and_try_calls_one a_plugin_runs_in_its_folder_and_its_stderr_is_logged
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # GUI-first start-up (spec 2026-10-27 §5): calibration's sweep, plan, result file and key.

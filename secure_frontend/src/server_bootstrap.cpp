@@ -253,13 +253,19 @@ std::vector<secure_frontend::ToolPlugin> tool_plugins(const FrontendConfig& conf
   for (const auto& program : programs) {
     if (no_folder.contains(program.id)) continue;
     tools.push_back({.id = program.id, .program = program.program, .arguments = program.arguments, .environment = program.environment,
-                     .note = program.run.note, .call_timeout = program.run.call_timeout});
+                     .note = program.run.note, .call_timeout = program.run.call_timeout,
+                     .working_directory = *config.roots.state / "plugins" / secure_frontend::path_from_utf8(program.id)});
   }
   return tools;
 }
 
-secure_frontend::ToolHubSettings hub_settings(std::vector<secure_frontend::ToolPlugin> tools) {
-  return {.plugins = std::move(tools), .today = {}, .log = [](const std::string_view line) { std::cerr << line << '\n' << std::flush; }};
+// The hub's log is the server's; a plugin's stderr reaches it only while the server logs its engines' own output
+// (logging.engine_output: the Debugging plugin).
+secure_frontend::ToolHubSettings hub_settings(const FrontendConfig& config, std::vector<secure_frontend::ToolPlugin> tools) {
+  return {.plugins = std::move(tools),
+          .today = {},
+          .log = [](const std::string_view line) { std::cerr << line << '\n' << std::flush; },
+          .log_stderr = config.logging.logs_engine_output()};
 }
 
 // A config's old search.enabled (move_old_search_rows) becomes the search plugin's on or off, once: a choice the owner
@@ -418,7 +424,7 @@ int server_run_impl(const FrontendConfig& config, const bool expert, const std::
   // Tool plugins (owner 2026-10-30; plugin spec section 10): the tools of each tool plugin that runs, for the model.
   std::optional<secure_frontend::ToolHub> tool_hub;  // outlives the route
   if (auto tools = tool_plugins(config, plugins); !tools.empty()) {
-    tool_hub.emplace(hub_settings(std::move(tools)));
+    tool_hub.emplace(hub_settings(config, std::move(tools)));
     chat_config.tools = &*tool_hub;
     chat_config.tool_rounds = config.tools.max_rounds;
   }
@@ -927,7 +933,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
   std::set<std::string, std::less<>> tool_ids;       // the plugins it runs (the Plugins tab's "running")
   if (auto tools = tool_plugins(config, plugins); !tools.empty()) {
     for (const auto& tool : tools) tool_ids.insert(tool.id);
-    tool_hub.emplace(hub_settings(std::move(tools)));
+    tool_hub.emplace(hub_settings(config, std::move(tools)));
     launcher_settings.tools = &*tool_hub;
     launcher_settings.tool_rounds = config.tools.max_rounds;
   }
