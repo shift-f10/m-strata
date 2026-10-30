@@ -703,6 +703,29 @@ def test_make_signs_the_plugins_it_builds(tmp_path):
     assert make.parse_args(["--out", "x", "--ggml-dir", "g", "--cuda-root", "c", "--signing-passphrase"]).signing_passphrase is True
 
 
+def test_make_asks_for_the_passphrase_only_where_it_is_used(tmp_path, monkeypatch, capsys):
+    """--signing-passphrase asks only where the passphrase is used: for the key make is about to make, or one sealed with
+    it. A key there without one is used as it is, and make says the option seals only a key it makes (it used to ask for
+    a passphrase it then did not use)."""
+    asked = []
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": asked.append(prompt) or "correct horse")
+    signing = _signing()
+    host = make.host_platform()
+    plain = tmp_path / "plain.json"
+    signing.create_key(plain, host)
+    key, created = make.signing_key(options("--signing-key", str(plain), "--signing-passphrase"), host)
+    assert not created and asked == [] and key.public_hex == signing.load_key(plain).public_hex
+    assert "not sealed with a passphrase" in capsys.readouterr().err
+    sealed = tmp_path / "sealed.json"
+    signing.create_key(sealed, host, passphrase="correct horse")
+    key, created = make.signing_key(options("--signing-key", str(sealed), "--signing-passphrase"), host)
+    assert not created and len(asked) == 1
+    asked.clear()
+    made = tmp_path / "made.json"
+    key, created = make.signing_key(options("--signing-key", str(made), "--signing-passphrase"), host)
+    assert created and len(asked) == 2 and signing.load_key(made, "correct horse").public_hex == key.public_hex
+
+
 def test_make_py_signs_a_later_plugin_and_shows_the_key(tmp_path, capsys):
     """decision 8: "they can build new plugins later by specifying the private key". make.py --sign-plugin FOLDER signs a
     plugin folder made later with the same key (needing no build options), and --signing-key-show prints its public

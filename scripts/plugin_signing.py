@@ -214,9 +214,26 @@ def verify_plugin(folder: Path, public_key: bytes) -> bool:
     return _SIGN.verify_envelope((folder / SIGNATURE_FILE).read_bytes(), public_key)
 
 
-def _passphrase(ask: bool, creating: bool) -> str | None:
-    if not ask:
+def is_sealed(path: Path) -> bool:
+    """Whether the key file at `path` is sealed with a passphrase (False too when there is none, or it is not one: load_key
+    says which)."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("passphrase") is True
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def ask_passphrase(path: Path, wanted: bool) -> str | None:
+    """The passphrase for the key at `path`, asked for only where it is used: twice for a key about to be made, once for
+    one sealed with it. A key there without one is used as it is - a passphrase seals only a key being made - and that
+    is said (on stderr)."""
+    if not wanted:
         return None
+    if path.exists() and not is_sealed(path):
+        print(f"{path}: the signing key is not sealed with a passphrase, and a key that exists is not sealed afresh: "
+              "it is used as it is", file=sys.stderr)
+        return None
+    creating = not path.exists()
     first = getpass.getpass("plugin signing key passphrase: ")
     if creating and getpass.getpass("again: ") != first:
         raise SystemExit("the passphrases differ")
@@ -235,11 +252,11 @@ def main(argv: list[str]) -> int:
     path = args.key or default_key_path(platform)
     try:
         if args.show:
-            print(load_key(path, _passphrase(args.passphrase, False)).public_hex if path.exists() else f"no signing key at {path}")
+            print(load_key(path, ask_passphrase(path, args.passphrase)).public_hex if path.exists() else f"no signing key at {path}")
             return 0 if path.exists() else 1
         if args.sign is None:
             parser.error("--show or --sign FOLDER")
-        key, created = load_or_create_key(path, platform, _passphrase(args.passphrase, not path.exists()))
+        key, created = load_or_create_key(path, platform, ask_passphrase(path, args.passphrase))
     except SigningKeyError as error:
         raise SystemExit(str(error)) from None
     if created:

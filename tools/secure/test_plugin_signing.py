@@ -122,6 +122,28 @@ def test_a_passphrase_seals_the_key(tmp_path):
         signing.load_key(path)
 
 
+def test_a_passphrase_is_asked_for_only_where_it_is_used(tmp_path, monkeypatch, capsys):
+    """A passphrase is asked for only where it is used: twice for a key being made, once for a key sealed with one. A
+    key there without one is used as it is, and the option is said to seal only a key being made (it used to ask for a
+    passphrase it then did not use)."""
+    asked = []
+    monkeypatch.setattr(signing.getpass, "getpass", lambda prompt="": asked.append(prompt) or "correct horse")
+    plain = tmp_path / "plain.json"
+    key = signing.create_key(plain, PLATFORM)
+    assert signing.main(["--key", str(plain), "--show", "--passphrase"]) == 0
+    out, err = capsys.readouterr()
+    assert asked == [] and key.public_hex in out and "not sealed with a passphrase" in err
+    sealed = tmp_path / "sealed.json"
+    sealed_key = signing.create_key(sealed, PLATFORM, passphrase="correct horse")
+    assert signing.main(["--key", str(sealed), "--show", "--passphrase"]) == 0
+    assert len(asked) == 1 and sealed_key.public_hex in capsys.readouterr().out
+    asked.clear()
+    made = tmp_path / "made.json"
+    assert signing.main(["--key", str(made), "--sign", str(plugin_folder(tmp_path / "plugin")), "--passphrase"]) == 0
+    assert len(asked) == 2 and signing.is_sealed(made) and not signing.is_sealed(plain)
+    assert signing.load_key(made, "correct horse").public_hex == json.loads(made.read_text(encoding="utf-8"))["public"]
+
+
 def test_a_key_file_that_does_not_match_is_refused(tmp_path):
     path = tmp_path / "plugin-signing-key.json"
     signing.create_key(path, PLATFORM)

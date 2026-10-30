@@ -280,6 +280,19 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z59 (Windows box; owner-directed)
+
+z58's last gap, at the owner's "continue": `make --signing-passphrase` (and `make.py --sign-plugin` /
+`--signing-key-show` with it) asked for a passphrase even when the key there is not sealed, then did not use it.
+`plugin_signing.ask_passphrase(path, wanted)` now asks only where it is used - twice for a key about to be made, once
+for one sealed with it - and for a key there without one says on stderr that it is used as it is (a passphrase seals
+only a key being made); `is_sealed(path)` reads the key file's `passphrase`. make's own prompt (`_ask_passphrase`) is
+gone: its build and its signing commands share the one rule. The README's `--signing-passphrase` row says so.
+- **Proof**: RED first (`test_a_passphrase_is_asked_for_only_where_it_is_used`, `test_make_asks_for_the_passphrase_only_where_it_is_used`:
+  a passphrase asked for an unsealed key), then GREEN; `test_plugin_signing.py`, `test_make.py` and `test_install.py`
+  60 passed, 1 skipped on Windows and in WSL; `tools/secure` 172 passed, 5 skipped.
+- **Known gap**: a key can be revoked only by removing it.
+
 ### Claude Code session, 2026-10-30 z58 (Windows box; owner-directed)
 
 Trust by key's two gaps (z57's known gaps), closed at the owner's word ("Fix the gaps").

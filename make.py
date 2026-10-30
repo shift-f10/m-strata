@@ -338,23 +338,15 @@ def signing_key_path(opts: Options, platform: str) -> Path:
     return opts.signing_key or _plugin_signing().default_key_path(platform)
 
 
-def _ask_passphrase(creating: bool) -> str:
-    import getpass
-    first = getpass.getpass("plugin signing key passphrase: ")
-    if creating and getpass.getpass("again: ") != first:
-        raise SystemExit("make: the passphrases differ")
-    return first
-
-
 def signing_key(opts: Options, platform: str):
     """This PC's plugin signing key, created when there is none (and whether it was). It is kept as the PC running make
     keeps secrets (DPAPI, or a 0600 file), whatever platform the folder is for."""
     del platform  # (the folder's; the key is this PC's)
     signing = _plugin_signing()
     path = signing_key_path(opts, host_platform())
-    passphrase = _ask_passphrase(not path.exists()) if opts.signing_passphrase else None
     try:
-        return signing.load_or_create_key(path, host_platform(), passphrase)
+        # (asked only where it is used: a key about to be made, or one sealed with it)
+        return signing.load_or_create_key(path, host_platform(), signing.ask_passphrase(path, opts.signing_passphrase))
     except signing.SigningKeyError as error:
         raise SystemExit("make: " + str(error)) from None
 
