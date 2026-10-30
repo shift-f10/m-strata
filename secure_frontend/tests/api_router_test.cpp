@@ -609,6 +609,26 @@ void web_ui_models_tab_calibrates() {
 void web_ui_has_server_settings() {
   const std::string html{secure_frontend::find_web_asset("/")->body};
   const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  // The owner (2026-10-29): "the browser as well, there is not scrollbar in the settings". The page's body never scrolls
+  // (overflow: hidden), so each view taller than the window scrolls on its own: a rule naming the view's class sets
+  // overflow-y: auto. Settings had none, so its lower cards (Model folders, Email alerts, Web search) could not be reached.
+  const std::string css{secure_frontend::find_web_asset("/ui/app.css")->body};
+  const auto scrolls = [&css](const std::string& view) {
+    for (auto at = css.find("." + view); at != std::string::npos; at = css.find("." + view, at + 1U)) {
+      const auto open = css.find('{', at);
+      const auto close = css.find('}', open);
+      const auto before = css.rfind('}', at);
+      if (open == std::string::npos || close == std::string::npos) return false;
+      const std::string selectors = css.substr(before == std::string::npos ? 0U : before + 1U, open - (before == std::string::npos ? 0U : before + 1U));
+      const auto end = selectors.find_first_of(" ,:.{", selectors.find("." + view) + 1U);
+      const bool alone = end == std::string::npos || selectors.compare(selectors.find("." + view), end - selectors.find("." + view), "." + view) == 0;
+      if (alone && css.substr(open, close - open).find("overflow-y: auto") != std::string::npos) return true;
+    }
+    return false;
+  };
+  for (const char* view : {"view--monitor", "view--about", "view--models", "view--settings"}) {
+    expect(scrolls(view), std::string{"the "} + view + " view scrolls on its own");
+  }
   for (const char* id : {"id=\"key-settings\"", "id=\"key-value\"", "id=\"key-show\"", "id=\"key-copy\"", "id=\"key-rotate-confirm\"",
                          "id=\"key-rotate\"", "id=\"key-new\"", "id=\"server-settings\"", "id=\"limits-settings\"",
                          "id=\"paths-settings\"", "id=\"logs-settings\"", "id=\"settings-restart-note\""}) {

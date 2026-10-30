@@ -280,6 +280,22 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z33 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner: "the windows app has no scrollbar"; "the browser as well, there is not scrollbar in the settings". The page's
+body never scrolls (`overflow: hidden`); each view taller than the window scrolls itself, and Monitor, About and Models
+did, but **Settings had no such rule**. Its lower cards could not be reached with the mouse or keys: Model folders ("Use
+model folders as they are"), Email alerts and Web search. That is why the owner "did not see" the SearXNG and folder
+settings (z30's reading, a build or a client outside the networks, was not the cause on this PC). An agent's
+`scrollIntoView` reached them, which hid the bug.
+
+- `.view--settings` joins `.view--monitor, .view--about { overflow-y: auto; }` (app.css).
+- **Proof**: RED first (`web_ui_has_server_settings` now requires an `overflow-y: auto` rule for the Monitor, About,
+  Models and Settings views; only Settings failed). The router suite 58/58 with MSVC, Linux gcc and clang. Live: a
+  scratch server's page in a browser scrolled to the bottom of Settings with the mouse wheel (3857 px in a 708 px
+  view); the Web search card showed whole.
+- **Not verified**: strata-window's view of it (the same page in WebView2).
+
 ### Claude Code session, 2026-10-29 z32 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner: "moving forward, we would rather build a version that has --debugging on the installer and it will have a
