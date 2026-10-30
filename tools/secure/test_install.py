@@ -3,6 +3,7 @@ download dependencies, install them then run the build"): what they pin is what 
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import shutil
 import subprocess
@@ -177,3 +178,122 @@ def test_the_window_question_defaults_to_no_without_a_display():
     sh = text("install.sh")
     assert 'if [ "$display" = 1 ]; then window_default=y; window_note=""; else window_default=n; window_note=" (no display here)"; fi' in sh
     assert '?" "$window_default"; then with="$with,window"; fi' in sh
+
+
+def signing_module():
+    spec = importlib.util.spec_from_file_location("strata_plugin_signing_for_install", ROOT / "scripts" / "plugin_signing.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # its dataclass looks its module up there
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_installers_look_for_the_signing_key_where_make_keeps_it():
+    """This PC's plugin signing key is where make keeps it (scripts/plugin_signing.py's default_key_path): the user's
+    APPDATA on Windows, XDG_CONFIG_HOME (else ~/.config) on Linux."""
+    signing = signing_module()
+    assert signing.default_key_path("windows", {"APPDATA": "C:\\A"}) == Path("C:\\A") / "M-Strata" / "plugin-signing-key.json"
+    assert signing.default_key_path("linux", {"XDG_CONFIG_HOME": "/c"}) == Path("/c") / "m-strata" / "plugin-signing-key.json"
+    ps = text("install.ps1")
+    assert "$appData = if ($env:APPDATA) { $env:APPDATA } else { Join-Path $HOME 'AppData\\Roaming' }" in ps
+    assert "$signingKey = Join-Path $appData 'M-Strata\\plugin-signing-key.json'" in ps
+    assert 'signing_key_file="${XDG_CONFIG_HOME:-$HOME/.config}/m-strata/plugin-signing-key.json"' in text("install.sh")
+
+
+# a key file as make writes it (scripts/plugin_signing.py's create_key; the seed is never read here)
+SEALED_KEY = ('{\n  "schema": "m-strata.signing-key/1",\n  "public": "' + "a" * 64 + '",\n  "protection": "file",\n'
+              '  "passphrase": true\n}\n')
+UNSEALED_KEY = SEALED_KEY.replace('"passphrase": true', '"passphrase": false')
+SEAL_QUESTION = "Seal the plugin signing key this build makes with a passphrase"
+
+
+def make_line(output: str) -> str:
+    lines = [line for line in output.splitlines() if line.strip().startswith(("make.bat --out", "make.sh --out"))]
+    assert len(lines) == 1, output
+    return lines[0]
+
+
+def test_install_ps1_offers_the_signing_passphrase(tmp_path):
+    """The owner (2026-10-30, "Fix the gaps"): make's --signing-passphrase from install.bat too. With no key on this PC
+    yet the build makes one, and the installer asks (no by default) whether to seal it with a passphrase;
+    -SigningPassphrase answers yes on the command line and -Yes takes the default. A key already sealed is passed on as
+    sealed, unasked (make would stop without), so make asks for its passphrase; one that is not sealed is used as it is
+    (the option does not seal a key that exists). The plan says which. Run as a plan, with APPDATA in a scratch folder
+    and the answers piped in - which Read-Host then does not echo its question for, so each question is seen by what its
+    answer does."""
+    powershell = shutil.which("powershell") if sys.platform == "win32" else None
+    if not powershell:
+        pytest.skip("install.ps1 runs on Windows (Windows PowerShell)")
+    key = tmp_path / "appdata" / "M-Strata" / "plugin-signing-key.json"
+
+    def run(*options: str, answers: str = "") -> str:
+        env = dict(os.environ, APPDATA=str(tmp_path / "appdata"))
+        result = subprocess.run([powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ROOT / "install.ps1"),
+                                 "-Plan", "-Out", str(tmp_path / "out"), *options],
+                                input=answers, capture_output=True, text=True, timeout=180, env=env, check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+        return result.stdout
+
+    assert re.search(r"\(Ask '" + SEAL_QUESTION + r"[^'\n]*\?' \$false\)", text("install.ps1")), "asked, no by default"
+    # (the features and families given, so the questions left are the Debugging plugin's, then this one)
+    asked = ("-With", "email,tui", "-Without", "maya")
+    out = run(*asked, answers="\n\n")
+    assert "--signing-passphrase" not in make_line(out) and str(key) + " - made by this build" in out
+    out = run(*asked, answers="\ny\n")
+    assert "--signing-passphrase" in make_line(out) and "made by this build, sealed with a passphrase: make asks for it" in out
+    out = run("-Yes", answers="y\ny\n")
+    assert "--signing-passphrase" not in make_line(out) and "--debugging" not in make_line(out)
+    out = run("-Yes", "-SigningPassphrase")
+    assert "--signing-passphrase" in make_line(out) and "made by this build, sealed with a passphrase" in out
+    # a sealed key: not asked, passed on as sealed
+    key.parent.mkdir(parents=True)
+    key.write_text(SEALED_KEY, encoding="utf-8")
+    out = run(*asked, answers="\n")
+    assert "--signing-passphrase" in make_line(out)
+    assert str(key) + ", as it is - sealed with a passphrase: make asks for it" in out
+    # a key that is not sealed: as it is, not asked (a yes would have been said to be of no use), the option too
+    key.write_text(UNSEALED_KEY, encoding="utf-8")
+    out = run(*asked, answers="\ny\n")
+    assert "--signing-passphrase" not in make_line(out) and str(key) + ", as it is" in out and "used as it is" not in out
+    out = run("-Yes", "-SigningPassphrase")
+    assert "--signing-passphrase" not in make_line(out) and str(key) + ", as it is" in out and "used as it is" in out
+
+
+def test_install_sh_offers_the_signing_passphrase(tmp_path):
+    """install.sh's twin of test_install_ps1_offers_the_signing_passphrase, with XDG_CONFIG_HOME in a scratch folder. It
+    reads its answers from the terminal, and run here with none each question takes its default, so the yes is the
+    option's. Run where install.sh runs: Ubuntu or Debian."""
+    os_release = Path("/etc/os-release")
+    known = sys.platform.startswith("linux") and os_release.is_file() and re.search(
+        r"^ID=\"?(ubuntu|debian)\"?$", os_release.read_text(encoding="utf-8"), re.MULTILINE)
+    if not known or not shutil.which("sh") or not shutil.which("dpkg-query"):
+        pytest.skip("install.sh runs on Ubuntu or Debian")
+    key = tmp_path / "config" / "m-strata" / "plugin-signing-key.json"
+
+    def run(*options: str) -> str:
+        env = dict(os.environ, XDG_CONFIG_HOME=str(tmp_path / "config"))
+        env.pop("DISPLAY", None)
+        env.pop("WAYLAND_DISPLAY", None)
+        # (a session of its own: no terminal to read answers from)
+        result = subprocess.run(["sh", str(ROOT / "install.sh"), "--plan", "--out", str(tmp_path / "out"), *options],
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180, env=env,
+                                check=False, start_new_session=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+        return result.stdout
+
+    asked = ("--with", "email,tui", "--without", "maya")
+    out = run(*asked)
+    assert SEAL_QUESTION in out and "[y/N]" in out.split(SEAL_QUESTION)[1].splitlines()[0]
+    assert "--signing-passphrase" not in make_line(out) and str(key) + " - made by this build" in out
+    out = run("--yes")
+    assert SEAL_QUESTION not in out and "--signing-passphrase" not in make_line(out)
+    out = run("--yes", "--signing-passphrase")
+    assert "--signing-passphrase" in make_line(out) and "made by this build, sealed with a passphrase" in out
+    key.parent.mkdir(parents=True)
+    key.write_text(SEALED_KEY, encoding="utf-8")
+    out = run(*asked)
+    assert SEAL_QUESTION not in out and "--signing-passphrase" in make_line(out)
+    assert str(key) + ", as it is - sealed with a passphrase: make asks for it" in out
+    key.write_text(UNSEALED_KEY, encoding="utf-8")
+    out = run("--yes", "--signing-passphrase")
+    assert "--signing-passphrase" not in make_line(out) and str(key) + ", as it is" in out and "used as it is" in out

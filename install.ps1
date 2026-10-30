@@ -10,6 +10,8 @@ install.ps1 - from a fresh Windows 10/11 PC to a built M-Strata in one step (run
   .\install.bat -Debugging                             the Debugging plugin on: a server that logs verbosely, to find
                                                        out why a model does not start or calibrate (the plan says what
                                                        to take care of)
+  .\install.bat -SigningPassphrase                     seal the plugin signing key the build makes with a passphrase
+                                                       (make asks for it; asked when this PC has no key yet)
 
 What it does, each step only when needed:
   1. finds what the build needs: Git, Python 3.10+, Visual Studio 2022 Build Tools WITH the C++ workload, the CUDA
@@ -31,6 +33,7 @@ param(
   [string]$Without = "",
   [string]$GgmlDir = "",
   [switch]$Debugging,
+  [switch]$SigningPassphrase,
   [switch]$Plan,
   [switch]$Yes
 )
@@ -157,7 +160,14 @@ foreach ($name in $leaveOut) { if ($KnownLeaveOut -notcontains $name) { Fail "-W
 $askFeatures = -not $Yes -and -not $PSBoundParameters.ContainsKey('With')
 $askLeaveOut = -not $Yes -and -not $PSBoundParameters.ContainsKey('Without')
 $askDebugging = -not $Yes -and -not $PSBoundParameters.ContainsKey('Debugging')
-if ($askFeatures -or $askLeaveOut -or $askDebugging) {
+# this PC's plugin signing key, where make keeps it (scripts/plugin_signing.py's default_key_path): the build makes one
+# when there is none - sealed with a passphrase if asked - and one already sealed needs its passphrase (make asks)
+$appData = if ($env:APPDATA) { $env:APPDATA } else { Join-Path $HOME 'AppData\Roaming' }
+$signingKey = Join-Path $appData 'M-Strata\plugin-signing-key.json'
+$keyExists = Test-Path -LiteralPath $signingKey
+$keySealed = $keyExists -and ((Get-Content -Raw -LiteralPath $signingKey) -match '"passphrase"\s*:\s*true')
+$askPassphrase = -not $Yes -and -not $PSBoundParameters.ContainsKey('SigningPassphrase') -and -not $keyExists
+if ($askFeatures -or $askLeaveOut -or $askDebugging -or $askPassphrase) {
   Step 'What to build'
   Say '  Answer y or n; Enter takes the capital one. Qwen, Gemma 4 and flint models are always built.'
   if ($askFeatures) {
@@ -176,11 +186,16 @@ if ($askFeatures -or $askLeaveOut -or $askDebugging) {
   if ($askDebugging) {
     $Debugging = [switch](Ask 'The Debugging plugin turned on: verbose logs, to find out why a model does not start or calibrate (the plan says what it logs)?' $false)
   }
+  if ($askPassphrase) {
+    $SigningPassphrase = [switch](Ask 'Seal the plugin signing key this build makes with a passphrase (make asks for it now, and at every later build or plugin you sign)?' $false)
+  }
 }
 $makeArgs = @()
 if ($features.Count -gt 0) { $makeArgs += @('--with', ($features -join ',')) }
 if ($leaveOut.Count -gt 0) { $makeArgs += @('--without', ($leaveOut -join ',')) }
 if ($Debugging) { $makeArgs += '--debugging' }
+# a sealed key goes to make as sealed; one there unsealed is used as it is (make seals only a key it makes)
+if ($keySealed -or ($SigningPassphrase -and -not $keyExists)) { $makeArgs += '--signing-passphrase' }
 
 # --- 1. what is there ------------------------------------------------------------------------------------------------
 Step 'Looking at what this PC has'
@@ -249,6 +264,15 @@ if ($GgmlDir) { Say "  llama.cpp: $ggml, as it is" } else { Say "  llama.cpp at 
 if ($features -contains 'window') {
   if (Test-Path (Join-Path $repo ".toolchains\webview2\$WebView2Version\build\native\include\WebView2.h")) { Say "  the WebView2 SDK ${WebView2Version}: already in $repo\.toolchains\webview2" }
   else { Say "  the WebView2 SDK $WebView2Version into $repo\.toolchains\webview2 (nuget.org, SHA-256 checked)" }
+}
+if (-not $keyExists) {
+  if ($SigningPassphrase) { Say "  plugin signing key: $signingKey - made by this build, sealed with a passphrase: make asks for it, twice" }
+  else { Say "  plugin signing key: $signingKey - made by this build (protected for this Windows user, no passphrase)" }
+} elseif ($keySealed) {
+  Say "  plugin signing key: $signingKey, as it is - sealed with a passphrase: make asks for it"
+} else {
+  Say "  plugin signing key: $signingKey, as it is (no passphrase)"
+  if ($SigningPassphrase) { Say '  (-SigningPassphrase seals only a key the build makes: this one is used as it is)' }
 }
 Say "  make.bat --out $Out $($makeArgs -join ' ')"
 if ($Debugging) {

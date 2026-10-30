@@ -412,8 +412,8 @@ folder; a folder for the other platform is signed again. The server reads at mos
 
 **Keys.** A key is an Ed25519 key pair. The server trusts:
 - the install's own key, whose public half make writes into `engine/build.json` (`signing_key`);
-- each publisher key the owner adds in the Plugins tab (`POST /v1/strata/plugins/keys`), kept in `plugins.json` with a
-  name (at most 16).
+- each publisher key the owner adds in the Plugins tab or the TUI's Plugins view (`k`, or `t` on a plugin signed with a
+  key not yet trusted; `POST /v1/strata/plugins/keys`), kept in `plugins.json` with a name (at most 16).
 A key is trusted only from those two places, never from a plugin or a request.
 
 **The order of trust.** For each plugin: (1) make's build record, if its SHA-256s match; (2) its signature, if it
@@ -427,7 +427,9 @@ Windows, `$XDG_CONFIG_HOME/m-strata/plugin-signing-key.json` (else `~/.config/..
 On Windows the seed is protected with DPAPI for this user; elsewhere the file is 0600 in a 0700 folder. With
 `--signing-passphrase` it is also sealed with a passphrase (scrypt, n=2^14, r=8, p=1; the seed XORed with the first 32
 bytes of the derived key, the last 32 an HMAC-SHA256 key over the salt and the sealed seed, so a wrong passphrase is
-refused). make creates the key at its first build when there is none, signs each first-party plugin it stages, and
+refused); `install.bat -SigningPassphrase` and `install.sh --signing-passphrase` pass it on, they ask whether to when
+this PC has no key yet, and a key already sealed is passed on as sealed. make creates the key at its first build when
+there is none, signs each first-party plugin it stages, and
 writes the public key into the build record; `make.py --sign-plugin FOLDER` signs a plugin made later with the same key,
 and `make.py --signing-key-show` prints its public key for another install's owner to add.
 

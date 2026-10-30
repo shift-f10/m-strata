@@ -982,7 +982,8 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`; as a plugin,
   SHA-256 of its manifest and each file. The server trusts only the keys in
   the owner-only engine folder's `build.json` (`signing_key`, the install's
   own) and in the owner-only `plugins.json` (publisher keys the owner added
-  in the Plugins tab, after a question that says what it means); never one
+  in the Plugins tab or the TUI's Plugins view, each after a question that
+  says what it means; the install's own cannot be removed); never one
   named by a plugin or a request. It verifies with its own RFC 8032
   verifier (no new crypto dependency; it never signs), and takes a
   signature only for the folder it names as it is now - a changed file, or
@@ -993,14 +994,17 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`; as a plugin,
   every install and data folder (`%APPDATA%\M-Strata` with its seed under
   DPAPI on Windows, a 0600 file in a 0700 folder elsewhere, optionally
   sealed with a passphrase: scrypt, an HMAC check, the seed XORed with the
-  derived key), and only `make` and `make.py --sign-plugin` read it.
+  derived key; the installers offer the passphrase when they make the key,
+  and pass a sealed key on as sealed), and only `make` and
+  `make.py --sign-plugin` read it.
   Signing uses the RFC 8032 section 6 reference code, which is not
   constant-time; it signs on the owner's own PC, where no one times it.
   Residual: a stolen private key, or a publisher key the owner trusted
   wrongly, lets such plugins in until the key is removed and the server
   restarts (`a_plugin_signed_with_a_trusted_key_runs`,
   `every_other_signature_says_why`,
-  `a_plugin_signed_with_the_install_key_runs`).
+  `a_plugin_signed_with_the_install_key_runs`,
+  `the_plugins_view_trusts_and_drops_publisher_keys`).
 - Plugin settings (owner 2026-10-30, decision 6; spec section 10): a
   tool's or notifier's manifest declares its settings by kind and bound,
   and every value is checked against it when saved and again when the

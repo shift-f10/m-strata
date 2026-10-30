@@ -2333,7 +2333,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         the_screen_draws_text_boxes_and_gauges charts_are_braille_or_blocks only_the_changes_are_written
         keys_decode_from_vt_sequences the_monitor_draws_the_servers_readings the_views_switch_and_keys_become_requests
         settings_are_edited_then_saved quitting_asks_first downloads_say_what_is_on_this_pc the_debugging_notice_waits_for_y plugins_are_approved_and_switched
-        the_plugins_settings_are_edited_then_saved the_plugins_view_says_who_signed_a_plugin
+        the_plugins_settings_are_edited_then_saved the_plugins_view_says_who_signed_a_plugin the_plugins_view_trusts_and_drops_publisher_keys
         the_plugins_view_fits_and_waits_for_its_changes
         an_uncalibrated_start_asks_to_calibrate_first)
 

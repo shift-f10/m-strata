@@ -79,6 +79,7 @@ class App final {
   void draw_log(Screen& screen, Rect area) const;
   void draw_about(Screen& screen, Rect area) const;
   void draw_plugins(Screen& screen, Rect area) const;
+  void draw_plugin_keys(Screen& screen, Rect area, int top) const;
   void draw_prompt(Screen& screen) const;
   // the keys
   // a view switch (1-7, Tab, Shift-Tab, F1-F7): the option and plugin settings focus off, Settings and Plugins read again
@@ -89,6 +90,9 @@ class App final {
   [[nodiscard]] Outcome log_key(const Key& key);
   [[nodiscard]] Outcome plugins_key(const Key& key);
   [[nodiscard]] Outcome plugin_settings_key(const Key& key);  // the selected plugin's settings in focus
+  [[nodiscard]] Outcome plugin_keys_key(const Key& key);      // the trusted keys in view (plugin spec section 11)
+  [[nodiscard]] const JsonValue* plugin_keys() const;         // the list's "keys" (nullptr: none read)
+  void ask_trust_key(const std::string& name, const std::string& key);  // the question before a key is trusted
   [[nodiscard]] Outcome prompt_key(const Key& key);
   // the selected card and its options as the start body has them
   [[nodiscard]] const JsonValue* cards() const;
@@ -160,10 +164,15 @@ class App final {
   std::string plugin_saving_id_;
   std::map<std::string, std::string> plugin_saving_;
   bool plugin_saved_{false};
-  // a one-line prompt: a text field (a setting's value, a plugin setting's, ROTATE) or a yes/no question (quit; stop one
+  // the keys this server trusts in view (k; plugin spec section 11): the selected one (-1: the plugin list), and the name
+  // typed for a key being added
+  int plugin_key_{-1};
+  std::string key_name_draft_;
+  // a one-line prompt: a text field (a setting's value, a plugin setting's, ROTATE, a publisher key's name and then the
+  // key) or a yes/no question (quit; stop one
   // card and start another, or restart the running one, as the page asks); a plugin's question is wrapped over as many
   // lines as it takes
-  enum class Prompt { none, quit, edit_setting, plugin_setting, rotate, start, remove, calibrate_first, plugin };
+  enum class Prompt { none, quit, edit_setting, plugin_setting, rotate, start, remove, calibrate_first, plugin, key_name, key_value };
   Prompt prompt_{Prompt::none};
   std::string input_;
   std::optional<Request> confirm_;   // the start (or the card removal) a yes sends

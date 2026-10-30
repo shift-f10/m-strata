@@ -358,6 +358,7 @@ To see first what it would do, without changing anything, run `.\install.bat -Pl
 | `-Plan` | Only list what it would install, fetch and build; nothing changes. |
 | `-Yes` | Ask nothing: build the defaults (everything, the Debugging plugin off) and install without asking. |
 | `-Debugging` | Answers the debugging question with yes: the Debugging plugin ships on, a server that logs verbosely, to find out why a model does not start or calibrate (`make --debugging`, below). The plan says what that logs and what to take care of before anything is installed. |
+| `-SigningPassphrase` | Answers the signing key question with yes: the plugin signing key the build makes for this PC (`%APPDATA%\M-Strata\plugin-signing-key.json`) is also sealed with a passphrase, which make asks for (twice), as every later build and `make.py --sign-plugin` will (`make --signing-passphrase`, below). It is asked only when this PC has no key yet (no by default). A key already sealed is passed on as sealed, so make asks for its passphrase; one that is not sealed is used as it is. The plan says which. |
 
 Running it again is safe: it skips what is there and builds into a new folder.
 
@@ -373,7 +374,8 @@ cd m-strata && ./install.sh
 ```
 
 It asks the same questions first. Its options are `--out DIR`, `--with email,search,window,tui`,
-`--without maya,raon1,vision`, `--ggml-dir DIR`, `--debugging`, `--plan` and `--yes`, as above. The window's question
+`--without maya,raon1,vision`, `--ggml-dir DIR`, `--debugging`, `--signing-passphrase` (the key is
+`~/.config/m-strata/plugin-signing-key.json`, or under `XDG_CONFIG_HOME`), `--plan` and `--yes`, as above. The window's question
 defaults to yes on a desktop and to no on a machine with no display (no `DISPLAY` or `WAYLAND_DISPLAY`, as over SSH),
 so its GTK packages are not installed there; `--yes` builds both front ends on a desktop and only `strata-tui`
 without a display. On another distribution, install
@@ -778,6 +780,8 @@ opens on the Monitor:
 | Downloads: Enter, `p`, `x` | Download (or resume), pause, cancel the selected one (a model already on this PC shows Downloaded or Locally provided, and its card, and is not downloaded again; Other version: another revision of its file is here, and Enter downloads the catalog's; installed without its card: Enter makes the card) |
 | Settings: Enter, `w`, `u`, `k`, `R` | Edit the setting (a switch flips; empty means its default), save the changes, undo them, show the API key, rotate it (type `ROTATE`) |
 | Plugins: Enter, `r` | The page's Plugins tab: each plugin with its state, and the selected one's facts, switches and SHA-256s. Enter approves one waiting (asked first: its SHA-256s are pinned, and a code plugin's code runs with the server's rights), or turns one on or off (turning on the Debugging plugin says what it logs first); `r` reads the list again. A change applies when the server starts again. |
+| Plugins: `o`, then Up/Down, Enter, Left/Right, `c`, `p`, `w`, `u`, Esc | The selected tool's or notifier's settings, as on its card: pick one, change it (a switch flips, a choice moves to its next, the others open a field; a secret is typed unseen), put it back to its default, fill in a preset, save the changes, undo them, back to the plugins |
+| Plugins: `t`, `k`, then Up/Down, `a`, `d`, Esc | Trust by key, as the tab's Publisher keys: `t` on a plugin signed with a key this server does not trust offers to trust its publisher's key; `k` lists the trusted keys (the install's own cannot be removed), where `a` adds a publisher's key (a name, then the 64 hex characters `make.py --signing-key-show` prints on the publisher's PC) and `d` stops trusting the selected one. Each asks first; a change applies when the server starts again. |
 | `q` or Ctrl-C | Quit: it asks, then stops the model and the server in order and gives the terminal back |
 
 Saved settings apply when the server starts again, as on the page. The server's output is in the Log view and in

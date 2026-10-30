@@ -543,6 +543,8 @@ void App::answer(const Request& request, const int status, const std::string_vie
         const auto* settings = plugin_settings(selected_plugin());
         plugin_setting_ = settings == nullptr ? -1 : std::min(plugin_setting_, static_cast<int>(settings->size()) - 1);
       }
+      // the keys in view: back to the list when it says none (a server that does not)
+      if (plugin_key_ >= 0 && plugin_keys() == nullptr) plugin_key_ = -1;
     } else {
       settings_ = *value;
       settings_stale_ = false;
@@ -818,6 +820,23 @@ Outcome App::prompt_key(const Key& key) {
         pending_[name] = json_string(input_);
       }
     }
+  } else if (prompt_ == Prompt::key_name) {
+    const std::string name = trimmed(input_);
+    if (name.empty() || name.size() > 64U) {
+      say("A publisher's name is 1-64 characters", true);
+    } else {
+      key_name_draft_ = name;
+      prompt_ = Prompt::key_value;
+      input_.clear();
+      return out;
+    }
+  } else if (prompt_ == Prompt::key_value) {
+    // (the server checks it is one: 64 hex characters, the public half)
+    std::string typed = trimmed(input_);
+    std::transform(typed.begin(), typed.end(), typed.begin(), [](const char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; });
+    input_.clear();
+    ask_trust_key(key_name_draft_, typed);
+    return out;
   } else if (prompt_ == Prompt::plugin_setting) {
     // the plugin's setting the field was opened on (the list may have been read again since), checked as the page and
     // the server check it: a text trimmed (empty: back to its default), a whole number in its range, a list of no more
@@ -1149,6 +1168,7 @@ const JsonValue* App::selected_plugin() const {
 // again.
 Outcome App::plugins_key(const Key& key) {
   if (plugin_setting_ >= 0) return plugin_settings_key(key);
+  if (plugin_key_ >= 0) return plugin_keys_key(key);
   Outcome out;
   const auto* list = member(plugins_ ? &*plugins_ : nullptr, "plugins");
   const std::size_t count = list != nullptr && list->if_array() != nullptr ? list->if_array()->size() : 0U;
@@ -1159,6 +1179,21 @@ Outcome App::plugins_key(const Key& key) {
   if (key.kind == Key::Kind::character && key.text == "o" && plugin_settings(plugin) != nullptr) {
     plugin_setting_ = 0;
     plugin_preset_ = 0;
+  }
+  if (key.kind == Key::Kind::character && key.text == "k" && plugin_keys() != nullptr) plugin_key_ = 0;
+  // t: trust the key a plugin is signed with, when the server does not (the page's "Trust this publisher's key")
+  if (key.kind == Key::Kind::character && key.text == "t" && plugin != nullptr) {
+    const auto* signature = member(plugin, "signature");
+    const std::string signer_key = text(member(signature, "key"));
+    if (signer_key.empty() || text(member(signature, "problem")).find("does not trust") == std::string::npos) return out;
+    if (plugin_change_ != PluginChange::none) return out;  // (the last change first)
+    if (!flag(member(&*plugins_, "editable"))) {
+      say("The plugins cannot be changed here: this server keeps no choices", true);
+      return out;
+    }
+    const std::string publisher = text(member(plugin, "publisher"));
+    ask_trust_key(publisher.empty() ? plugin_name(*plugin) : publisher, signer_key);
+    return out;
   }
   if (key.kind != Key::Kind::enter || plugin == nullptr) return out;
   const std::string name = plugin_name(*plugin);
@@ -1192,6 +1227,69 @@ Outcome App::plugins_key(const Key& key) {
     const std::string reason = text(member(plugin, "reason"));
     say(name + " is refused" + (reason.empty() ? std::string{} : ": " + reason), true);
   }
+  return out;
+}
+
+const JsonValue* App::plugin_keys() const {
+  const auto* keys = member(plugins_ ? &*plugins_ : nullptr, "keys");
+  return keys != nullptr && keys->if_array() != nullptr ? keys : nullptr;
+}
+
+// The question before a key is trusted, and the change a yes sends (the page's trustKeyQuestion).
+void App::ask_trust_key(const std::string& name, const std::string& key) {
+  question_ = "Trust every plugin signed with " + name + "'s key (" + key.substr(0, 16) + "...)? Each one then runs on this PC with the " +
+              "server's rights without being approved one by one, as long as its files are the ones signed. It applies when the " +
+              "server restarts.";
+  question_title_ = "Trust a publisher's key";
+  confirm_ = Request{"trust " + name + "'s key", "POST", "/v1/strata/plugins/keys",
+                     "{\"add\":" + json_string(key) + ",\"name\":" + json_string(name) + "}"};
+  prompt_ = Prompt::plugin;
+}
+
+// The trusted keys (k; plugin spec section 11), as the page's Publisher keys card: Up/Down a key, a adds one (its name,
+// then its key, then the question), d stops trusting the selected one after a question (never the install's own); each
+// is a plugin change that waits for its answer and the list read again. Esc or k goes back to the plugins.
+Outcome App::plugin_keys_key(const Key& key) {
+  Outcome out;
+  const auto* keys = plugin_keys();
+  if (keys == nullptr) {  // (a list that does not say them: the plugins again)
+    plugin_key_ = -1;
+    return out;
+  }
+  const int count = static_cast<int>(keys->if_array()->size());
+  plugin_key_ = count == 0 ? 0 : std::min(plugin_key_, count - 1);
+  if (key.kind == Key::Kind::up) plugin_key_ = std::max(0, plugin_key_ - 1);
+  if (key.kind == Key::Kind::down) plugin_key_ = std::min(std::max(0, count - 1), plugin_key_ + 1);
+  if (key.kind == Key::Kind::escape) plugin_key_ = -1;
+  if (key.kind != Key::Kind::character) return out;
+  if (key.text == "k") {
+    plugin_key_ = -1;
+    return out;
+  }
+  if (key.text != "a" && key.text != "d") return out;
+  if (plugin_change_ != PluginChange::none) return out;  // (the last change first)
+  if (!flag(member(&*plugins_, "editable"))) {
+    say("The plugins cannot be changed here: this server keeps no choices", true);
+    return out;
+  }
+  if (key.text == "a") {
+    prompt_ = Prompt::key_name;
+    input_.clear();
+    key_name_draft_.clear();
+    return out;
+  }
+  if (count == 0) return out;
+  const auto& entry = (*keys->if_array())[static_cast<std::size_t>(plugin_key_)];
+  if (flag(member(&entry, "install"))) {
+    say("The install's own key cannot be removed: it signs the plugins make builds", true);
+    return out;
+  }
+  const std::string name = text(member(&entry, "name"));
+  question_ = "Stop trusting " + name + "'s key? Plugins signed only with it wait for your approval after the server restarts.";
+  question_title_ = "Stop trusting a key";
+  confirm_ = Request{"stop trusting " + name + "'s key", "POST", "/v1/strata/plugins/keys",
+                     "{\"remove\":" + json_string(text(member(&entry, "key"))) + "}"};
+  prompt_ = Prompt::plugin;
   return out;
 }
 
@@ -1406,9 +1504,28 @@ void App::draw_keys(Screen& screen) const {
         keys.emplace_back("Esc", "Back");
         break;
       }
+      const bool editable = plugins_ && flag(member(&*plugins_, "editable"));
+      if (plugin_key_ >= 0) {
+        // the keys in view: add one, and remove the selected one unless it is the install's own
+        const auto* trusted = plugin_keys();
+        const bool under_way = plugin_change_ != PluginChange::none;
+        keys.emplace_back("Up/Down", "Key");
+        if (editable && !under_way) keys.emplace_back("a", "Add");
+        if (trusted != nullptr && !trusted->if_array()->empty() && editable && !under_way) {
+          const auto& entry = (*trusted->if_array())[std::min(static_cast<std::size_t>(plugin_key_), trusted->if_array()->size() - 1U)];
+          if (!flag(member(&entry, "install"))) keys.emplace_back("d", "Remove");
+        }
+        keys.emplace_back("Esc", "Back");
+        break;
+      }
       keys.emplace_back("Up/Down", "Plugin");
       if (const std::string action = can ? plugin_action(*plugin) : std::string{}; !action.empty()) keys.emplace_back("Enter", action);
       if (settings != nullptr) keys.emplace_back("o", "Settings");
+      const auto* signature = member(plugin, "signature");
+      if (can && !text(member(signature, "key")).empty() && text(member(signature, "problem")).find("does not trust") != std::string::npos) {
+        keys.emplace_back("t", "Trust key");
+      }
+      if (plugin_keys() != nullptr) keys.emplace_back("k", "Keys");
       keys.emplace_back("r", "Refresh");
       break;
     }
@@ -1461,6 +1578,7 @@ void App::draw_prompt(Screen& screen) const {
                       : prompt_ == Prompt::rotate ? "Rotate the API key"
                       : prompt_ == Prompt::start || calibrate_first ? "Start"
                       : prompt_ == Prompt::remove ? "Remove card"
+                      : prompt_ == Prompt::key_name || prompt_ == Prompt::key_value ? "Trust a publisher's key"
                                                   : "Edit";
   if (plugin_setting != nullptr && !text(member(plugin_setting, "label")).empty()) title = text(member(plugin_setting, "label"));
   screen.box(box, title, Style{kAccent, kPanel}, Style{kAccent, kPanel, true});
@@ -1478,6 +1596,8 @@ void App::draw_prompt(Screen& screen) const {
   }
   const std::string question = plugin_setting != nullptr      ? plugin_field_question(*plugin_setting)
                                : prompt_ == Prompt::rotate ? "Type ROTATE and Enter (Esc: keep the key)"
+                               : prompt_ == Prompt::key_name ? "The publisher's name (1-64 characters), Enter to go on, Esc to leave it"
+                               : prompt_ == Prompt::key_value ? key_name_draft_ + "'s public key (64 hex characters)"
                                                            : "The new value, Enter to keep it, Esc to leave it";
   screen.field(inner.x + 1, inner.y, inner.width - 2, question, Style{kMuted, kPanel});
   // a secret typed is drawn as one * a character, never itself
@@ -2119,6 +2239,10 @@ void App::draw_plugins(Screen& screen, const Rect area) const {
   const bool editable = flag(member(document, "editable"));
   screen.field(r.x + 1, r.y, r.width - 2,
                "Folder: " + text(member(document, "folder"), "-") + (editable ? "" : " (read only: this server keeps no choices)"), kDim);
+  if (plugin_key_ >= 0) {
+    draw_plugin_keys(screen, r, 2);
+    return;
+  }
   const auto& entries = *list->if_array();
   if (entries.empty()) {
     if (r.height > 2) {
@@ -2252,6 +2376,47 @@ void App::draw_plugins(Screen& screen, const Rect area) const {
     }
   }
   if (r.height - 1 >= first + rows) {
+    screen.field(r.x + 1, r.y + r.height - 1, r.width - 2, "A change applies when the server starts again.",
+                 plugins_changed_ ? Style{kYellow, kDefault} : kDim);
+  }
+}
+
+// The trusted keys (k), as the page's Publisher keys card says them: what trusting a key means, then each key - its
+// name, the key, and for the install's own that it cannot be removed - the selected one marked.
+void App::draw_plugin_keys(Screen& screen, const Rect r, const int top) const {
+  int line = top;
+  const auto put = [&screen, &r, &line](const std::string& words, const Style style) {
+    if (line < r.height - 1) screen.field(r.x + 1, r.y + line, r.width - 2, words, style);
+    ++line;
+  };
+  put("Publisher keys", kTitle);
+  for (const auto& words : wrapped("A plugin signed with one of these keys runs without being approved one by one, as long as its files are "
+                                   "the ones signed. This install's own key signs the plugins make builds. Add a publisher's key only if "
+                                   "you trust everything that publisher signs: its plugins run on this PC with the server's rights. A "
+                                   "publisher's PC prints its public key with make.py --signing-key-show.",
+                                   std::max(1, r.width - 2))) {
+    put(words, kDim);
+  }
+  ++line;
+  const auto* keys = plugin_keys();
+  const std::vector<JsonValue> none;
+  const auto& entries = keys != nullptr ? *keys->if_array() : none;
+  if (entries.empty()) put("No key yet: this install was built before plugins were signed (a adds a publisher's).", kDim);
+  const std::size_t selected = entries.empty() ? 0U : std::min(static_cast<std::size_t>(std::max(0, plugin_key_)), entries.size() - 1U);
+  const int name_width = std::clamp(r.width - 90, 12, 24);
+  for (std::size_t i = 0; i < entries.size() && line < r.height - 1; ++i, ++line) {
+    const auto& entry = entries[i];
+    const int y = r.y + line;
+    const bool chosen = i == selected;
+    const Style base = chosen ? Style{231, kAccent, true} : kNormal;
+    if (chosen) screen.fill(Rect{r.x, y, r.width, 1}, U' ', base);
+    screen.field(r.x + 1, y, name_width, text(member(&entry, "name")), base);
+    if (r.width > name_width + 4) {
+      screen.field(r.x + 2 + name_width, y, r.width - name_width - 3,
+                   text(member(&entry, "key")) + (flag(member(&entry, "install")) ? "  (cannot be removed)" : ""), chosen ? base : kDim);
+    }
+  }
+  if (r.height - 1 > line) {
     screen.field(r.x + 1, r.y + r.height - 1, r.width - 2, "A change applies when the server starts again.",
                  plugins_changed_ ? Style{kYellow, kDefault} : kDim);
   }

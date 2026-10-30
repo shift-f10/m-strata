@@ -1204,6 +1204,101 @@ void the_plugins_view_says_who_signed_a_plugin() {
   }
 }
 
+// Trust by key (plugin spec section 11) in the terminal, as on the page: t on a plugin signed with a key the server does
+// not trust offers to trust its publisher's key; k lists the trusted keys (the install's own marked), where d removes a
+// publisher key (never the install's own) and a adds one - its name, then its key - each asking first, each a plugin
+// change that waits for its answer and the list read again; Esc goes back to the plugins.
+void the_plugins_view_trusts_and_drops_publisher_keys() {
+  const t::Request list{"plugins", "POST", "/v1/strata/plugins", "{}"};
+  const std::string install(64U, 'e');
+  const std::string acme(64U, 'a');
+  const std::string signer(64U, 'c');
+  const std::string signed_mailer = [&signer] {
+    std::string json = kMailer;
+    json.replace(json.find(R"("network":)"), 10, R"("signature":{"key":")" + signer +
+                                                     R"(","signer":null,"problem":"it is signed with a key this server does not trust"},"network":)");
+    return json;
+  }();
+  std::string listed = kPlugins;
+  listed.replace(listed.find(R"("plugins":[)"), 11, R"("plugins":[)" + signed_mailer + ",");
+  listed.replace(listed.rfind('}'), 1, R"(,"keys":[{"key":")" + install + R"(","name":"this install's key","install":true},)" +
+                                         R"({"key":")" + acme + R"(","name":"Acme","install":false}]})");
+  t::App app(t::Capabilities{}, std::nullopt);
+  app.server_state("http://127.0.0.1:8080", true);
+  (void)app.key(character("7"));
+  app.answer(list, 200, listed);
+  const auto screen_of = [&app] {
+    auto screen = std::make_unique<t::Screen>(120, 32);
+    app.draw(*screen, 0);
+    return screen;
+  };
+  const auto type = [&app](const std::string& words) {
+    for (const char c : words) (void)app.key(character(std::string(1U, c)));
+  };
+  const auto settle = [&app, &list, &listed](const t::Request& sent) {
+    app.answer(sent, 200, "{}");
+    app.answer(list, 200, listed);
+  };
+  expect(row_text(*screen_of(), 31).find("t  Trust key") != std::string::npos && row_text(*screen_of(), 31).find("k  Keys") != std::string::npos,
+         "the keys offer t (its signer is not trusted) and k: " + row_text(*screen_of(), 31));
+  // t: trust the signer's key, asked first
+  auto out = app.key(character("t"));
+  expect(out.requests.empty() && box_words(*screen_of(), "Trust a publisher's key").find("Example Labs's key (" + signer.substr(0, 16) + "...)") !=
+                                     std::string::npos,
+         "t asks first: " + box_words(*screen_of(), "Trust a publisher's key"));
+  out = app.key(character("y"));
+  expect(out.requests.size() == 1U && out.requests[0].path == "/v1/strata/plugins/keys" &&
+             out.requests[0].body == R"({"add":")" + signer + R"(","name":"Example Labs"})",
+         "y trusts it: " + (out.requests.empty() ? std::string{"(none)"} : out.requests[0].body));
+  if (!out.requests.empty()) settle(out.requests[0]);
+  // k: the keys
+  (void)app.key(character("k"));
+  auto keys = screen_of();
+  const std::string text = all_text(*keys);
+  const int install_row = row_with(*keys, install);
+  expect(text.find("Publisher keys") != std::string::npos && install_row >= 0 && row_text(*keys, install_row).find("this install's key") != std::string::npos &&
+             row_with(*keys, acme) >= 0 && row_with(*keys, "Acme") >= 0,
+         "k lists the keys, the install's own marked:\n" + text);
+  expect(row_text(*keys, 31).find("a  Add") != std::string::npos && row_text(*keys, 31).find("Esc  Back") != std::string::npos,
+         "and offers a and Esc: " + row_text(*keys, 31));
+  // the install's own cannot be removed
+  expect(app.key(character("d")).requests.empty() && all_text(*screen_of()).find("The install's own key cannot be removed") != std::string::npos,
+         "d on the install's key: said, nothing sent");
+  // d on a publisher key: asked, then removed
+  (void)app.key(plain(t::Key::Kind::down));
+  out = app.key(character("d"));
+  expect(out.requests.empty() && box_words(*screen_of(), "Stop trusting a key").find("Stop trusting Acme's key?") != std::string::npos,
+         "d asks first: " + box_words(*screen_of(), "Stop trusting a key"));
+  out = app.key(character("y"));
+  expect(out.requests.size() == 1U && out.requests[0].body == R"({"remove":")" + acme + R"("})",
+         "y removes it: " + (out.requests.empty() ? std::string{"(none)"} : out.requests[0].body));
+  expect(app.key(character("a")).requests.empty() && row_with(*screen_of(), "Trust a publisher's key") < 0,
+         "nothing more while the change is under way");
+  if (!out.requests.empty()) settle(out.requests[0]);
+  // a: its name, then its key, then the question
+  (void)app.key(character("a"));
+  expect(box_words(*screen_of(), "Trust a publisher's key").find("name") != std::string::npos, "a asks for the name first");
+  type("Beta Labs");
+  (void)app.key(plain(t::Key::Kind::enter));
+  expect(box_words(*screen_of(), "Trust a publisher's key").find("Beta Labs's public key") != std::string::npos, "then for the key");
+  type(std::string(64U, 'B'));
+  (void)app.key(plain(t::Key::Kind::enter));
+  expect(box_words(*screen_of(), "Trust a publisher's key").find("Beta Labs's key (bbbbbbbbbbbbbbbb...)") != std::string::npos,
+         "then asks, the key in lowercase: " + box_words(*screen_of(), "Trust a publisher's key"));
+  out = app.key(character("y"));
+  expect(out.requests.size() == 1U && out.requests[0].body == R"({"add":")" + std::string(64U, 'b') + R"(","name":"Beta Labs"})",
+         "y adds it: " + (out.requests.empty() ? std::string{"(none)"} : out.requests[0].body));
+  if (!out.requests.empty()) settle(out.requests[0]);
+  // Esc: back to the plugins
+  (void)app.key(plain(t::Key::Kind::escape));
+  expect(all_text(*screen_of()).find("Publisher keys") == std::string::npos && row_with(*screen_of(), "Mailer") >= 0, "Esc: the plugins again");
+  // the list read again without keys (a server that does not say them) while they are in view: the plugins again
+  (void)app.key(character("k"));
+  app.answer(list, 200, kPlugins);
+  expect(all_text(*screen_of()).find("Publisher keys") == std::string::npos && row_with(*screen_of(), "Debugging") >= 0,
+         "a list without keys: the plugins again:\n" + all_text(*screen_of()));
+}
+
 // The owner (2026-10-30, decision 6): a tool's or notifier's settings are set in the Plugins view as on the page's card -
 // o focuses them, Enter changes the one in focus (a switch flips, a choice moves on, the others in the text field, a
 // secret typed unseen), c puts it back to its default (a secret: removed), p fills in a preset, w saves them as one plugin
@@ -1473,6 +1568,7 @@ int main(int argc, char** argv) {
       {"the_plugins_view_fits_and_waits_for_its_changes", the_plugins_view_fits_and_waits_for_its_changes},
       {"the_plugins_settings_are_edited_then_saved", the_plugins_settings_are_edited_then_saved},
       {"the_plugins_view_says_who_signed_a_plugin", the_plugins_view_says_who_signed_a_plugin},
+      {"the_plugins_view_trusts_and_drops_publisher_keys", the_plugins_view_trusts_and_drops_publisher_keys},
       {"an_uncalibrated_start_asks_to_calibrate_first", an_uncalibrated_start_asks_to_calibrate_first},
       {"charts_are_braille_or_blocks", charts_are_braille_or_blocks},
       {"only_the_changes_are_written", only_the_changes_are_written},

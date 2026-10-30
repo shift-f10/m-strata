@@ -280,6 +280,55 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z58 (Windows box; owner-directed)
+
+Trust by key's two gaps (z57's known gaps), closed at the owner's word ("Fix the gaps").
+- **The TUI adds and removes publisher keys**, as the page's Publisher keys card: in the Plugins view `t` on a plugin
+  signed with a key the server does not trust offers to trust that key under the plugin's publisher name (the page's
+  question); `k` lists the trusted keys (the install's own marked "cannot be removed"), Up/Down picks one, `d` stops
+  trusting it after a question (the install's own is refused with why), `a` adds one - a name (1-64 characters), then
+  the 64 hex characters, lowercased, then the question - and Esc or `k` goes back. Each is a plugin change through
+  `POST /v1/strata/plugins/keys` that waits for its answer and the list read again, as Enter's do; the key bar offers
+  `t`, `k`, `a` and `d` only when they apply (`tui_app.{hpp,cpp}`: `Prompt::key_name`/`key_value`, `plugin_key_`,
+  `plugin_keys_key`, `ask_trust_key`, `draw_plugin_keys`).
+- **The installers offer the signing key's passphrase**: `install.bat -SigningPassphrase` / `install.sh
+  --signing-passphrase` pass make's `--signing-passphrase` on. They look for this PC's key where make keeps it
+  (`%APPDATA%\M-Strata\plugin-signing-key.json`; `${XDG_CONFIG_HOME:-~/.config}/m-strata/...`): with none yet the
+  build makes one and they ask whether to seal it (no by default; never with `-Yes`/`--yes`); a key already sealed
+  (`"passphrase": true`) is passed on as sealed, unasked, since make would stop without it; one that is not sealed is
+  used as it is (the option says it cannot seal a key that exists). The plan names the key and says which. make's
+  passphrase prompt runs in the installer's own console. `install.sh --help` now prints its whole header (it cut the
+  last line).
+- **Docs**: the README (the Windows options table, the Linux options, the TUI keys table - with the plugin settings'
+  `o` row, which it lacked), spec section 11, the threat model (keys from the TUI; the installers and a sealed key).
+- **Proof**:
+  - RED first: the TUI case `the_plugins_view_trusts_and_drops_publisher_keys` (13 failures); then GREEN, after the
+    test's own key-bar checks were fixed to the bar's two spaces and a missing box checked as no title on screen, and
+    the keys view's wording stopped repeating the box title; then a list read again without keys while they are in
+    view goes back to the plugins (RED, then GREEN). The whole TUI suite passes.
+  - The installers, driven as plans (`-Plan` / `--plan`) with APPDATA / XDG_CONFIG_HOME in scratch folders:
+    `test_install_ps1_offers_the_signing_passphrase` (Windows; the answers piped in, each question seen by what its
+    answer does, since Read-Host does not echo a piped question) and `test_install_sh_offers_the_signing_passphrase`
+    (Ubuntu/Debian; no terminal, so each question takes its default), and the key path checked against
+    `plugin_signing.default_key_path`. RED on each (the Windows test also against the committed install.ps1); then
+    `test_install.py` 14 passed, 1 skipped on Windows and 14 passed, 1 skipped in WSL; `tools/secure` 170 passed, 5
+    skipped.
+  - MSVC: the whole tree built, no warnings; the whole suite 1470/1472 (the two release-only cases a test-hooks tree
+    fails); after the last change (the list without keys) the TUI suite again, all passing. Linux gcc 13.3 and clang 18.1: both whole trees built, no warnings; the TUI, plugin, router, server, egress, release and Ed25519 suites passed but for the parallel-only connection-scan case (232/233 on each), which passed alone three times out of three on each; the installer and signing tests 22 passed, 1 skipped.
+  - Live, the real strata-tui (shares tree) on the x25 demo data, port 18091, the development key: the search plugin
+    signed by a scratch key, a second scratch key as the install's: `t` asked and trusted it ("the publisher key ...
+    (M-Strata) is trusted" in the server's log), `k` listed both keys, `d` on the install's key said why not, `d` and
+    `y` removed the publisher key, `a` added it again as Beta Labs; after a restart the plugin was on and running,
+    "Signed by Beta Labs". The demo's config and build.json were put back byte for byte, the plugin and its choices
+    moved out; no key was made in this user's profile.
+  - **A slip in that check**: the first live run drove an old strata-tui (only the test target had been rebuilt), so
+    the typed name and key fell on screens that read them as keys: the demo card's "recalibrate when settings change"
+    was switched on and back off, and a calibration of its Gemma 4 card started; the TUI's exit cancelled it after
+    its first trial ("the calibration was cancelled; nothing was kept"). Its calibration record still holds its
+    earlier result. The driver now has a `need:` step that ends the TUI when an expected screen is missing.
+- **Known gaps**: a key cannot be revoked other than by removing it; `make --signing-passphrase` with a key that is
+  not sealed still asks for a passphrase it does not use (the installers no longer pass it then).
+
 ### Claude Code session, 2026-10-30 z57 (Windows box; owner-directed)
 
 The plugin platform, step 5c: trust by key (decision 8; the design's new section 11), which the owner asked for after

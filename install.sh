@@ -12,6 +12,8 @@
 #   ./install.sh --debugging                        the Debugging plugin on: a server that logs verbosely, to find
 #                                                   out why a model does not start or calibrate (the plan says what
 #                                                   to take care of)
+#   ./install.sh --signing-passphrase               seal the plugin signing key the build makes with a passphrase
+#                                                   (make asks for it; asked when this PC has no key yet)
 #
 # What it does, each step only when needed:
 #   1. finds what the build needs: git, Python 3.10+ with venv, GCC 13+ (build-essential), pkg-config, the CUDA
@@ -43,6 +45,8 @@ ggml=""
 plan=0
 debugging=0
 debugging_given=0
+signing_passphrase=0
+signing_passphrase_given=0
 yes=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -52,8 +56,9 @@ while [ $# -gt 0 ]; do
     --ggml-dir) ggml=$2; shift 2 ;;
     --plan) plan=1; shift ;;
     --debugging) debugging=1; debugging_given=1; shift ;;
+    --signing-passphrase) signing_passphrase=1; signing_passphrase_given=1; shift ;;
     --yes) yes=1; shift ;;
-    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     *) echo "install: unknown option $1 (see ./install.sh --help)" >&2; exit 2 ;;
   esac
 done
@@ -100,7 +105,18 @@ if [ "$with_given" = 0 ]; then
   if [ "$display" = 1 ]; then with="email,search,window,tui"
   else with="email,search,tui"; no_display=1; fi
 fi
-if [ "$yes" = 0 ] && { [ "$with_given" = 0 ] || [ "$without_given" = 0 ] || [ "$debugging_given" = 0 ]; }; then
+# this PC's plugin signing key, where make keeps it (scripts/plugin_signing.py's default_key_path): the build makes one
+# when there is none - sealed with a passphrase if asked - and one already sealed needs its passphrase (make asks)
+signing_key_file="${XDG_CONFIG_HOME:-$HOME/.config}/m-strata/plugin-signing-key.json"
+key_exists=0
+key_sealed=0
+if [ -e "$signing_key_file" ]; then
+  key_exists=1
+  if grep -Eq '"passphrase"[[:space:]]*:[[:space:]]*true' "$signing_key_file" 2>/dev/null; then key_sealed=1; fi
+fi
+ask_passphrase=0
+if [ "$yes" = 0 ] && [ "$signing_passphrase_given" = 0 ] && [ "$key_exists" = 0 ]; then ask_passphrase=1; fi
+if [ "$yes" = 0 ] && { [ "$with_given" = 0 ] || [ "$without_given" = 0 ] || [ "$debugging_given" = 0 ] || [ "$ask_passphrase" = 1 ]; }; then
   step 'What to build'
   say '  Answer y or n; Enter takes the capital one. Qwen, Gemma 4 and flint models are always built.'
   if [ "$with_given" = 0 ]; then
@@ -122,6 +138,9 @@ if [ "$yes" = 0 ] && { [ "$with_given" = 0 ] || [ "$without_given" = 0 ] || [ "$
   fi
   if [ "$debugging_given" = 0 ]; then
     if ask 'The Debugging plugin turned on: verbose logs, to find out why a model does not start or calibrate (the plan says what it logs)?' n; then debugging=1; fi
+  fi
+  if [ "$ask_passphrase" = 1 ]; then
+    if ask 'Seal the plugin signing key this build makes with a passphrase (make asks for it now, and at every later build or plugin you sign)?' n; then signing_passphrase=1; fi
   fi
 fi
 
@@ -180,7 +199,20 @@ say "  CMake and Ninja into $repo/.venv-dev (pip, from PyPI)"
 if [ "$ggml_given" = 1 ]; then say "  llama.cpp: $ggml, as it is"; else say "  llama.cpp at $LLAMA_PIN in $ggml"; fi
 make_flags=""
 [ "$debugging" = 1 ] && make_flags="--debugging"
+# a sealed key goes to make as sealed; one there unsealed is used as it is (make seals only a key it makes)
+if [ "$key_sealed" = 1 ] || { [ "$signing_passphrase" = 1 ] && [ "$key_exists" = 0 ]; }; then
+  make_flags="${make_flags:+$make_flags }--signing-passphrase"
+fi
 if [ -n "$without" ]; then make_flags="--without $without${make_flags:+ $make_flags}"; fi
+if [ "$key_exists" = 0 ]; then
+  if [ "$signing_passphrase" = 1 ]; then say "  plugin signing key: $signing_key_file - made by this build, sealed with a passphrase: make asks for it, twice"
+  else say "  plugin signing key: $signing_key_file - made by this build (a file only you can read, no passphrase)"; fi
+elif [ "$key_sealed" = 1 ]; then
+  say "  plugin signing key: $signing_key_file, as it is - sealed with a passphrase: make asks for it"
+else
+  say "  plugin signing key: $signing_key_file, as it is (no passphrase)"
+  if [ "$signing_passphrase" = 1 ]; then say '  (--signing-passphrase seals only a key the build makes: this one is used as it is)'; fi
+fi
 say "  make.sh --out $out --with $with${make_flags:+ $make_flags}"
 if [ "$debugging" = 1 ]; then
   say ''
