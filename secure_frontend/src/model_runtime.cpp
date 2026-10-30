@@ -6,6 +6,7 @@
 
 #include "secure_frontend/chat_execution.hpp"
 #include "secure_frontend/chat_schema.hpp"
+#include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/engine_arguments.hpp"
 #include "secure_frontend/engine_environment.hpp"
 #include "secure_frontend/acquire_reason.hpp"
@@ -133,7 +134,7 @@ std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& 
   // (compose refuses that pairing for glm53, so the gate implies the qwen renderer).
   // The request itself can never open it.
   // Gemma 4 plan 1 Task 10: only the qwen profile reads images (gemma4 is text only, D2).
-  if (config.vision.enabled && launch.vision_mmproj.has_value() && launch.profile == EngineProfile::qwen) {
+  if (config.vision.enabled && launch.vision_mmproj.has_value() && family_descriptor(launch.profile).reads_images) {
     schema_limits.vision_capable = true;
   }
   // Session log step 14: per-request reasoning_effort reaches the qwen renderer; Gemma 4
@@ -173,7 +174,7 @@ std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& 
   // Gemma 4 plan 1 Task 3: the tail is the qwen engine's only (the config refuses
   // reasoning.effort_position on an explicit gemma4 profile; glm53's runner has no such flag).
   bool effort_at_end = false;
-  if (launch.profile == EngineProfile::qwen && config.reasoning.effort_position == EffortPosition::end) {
+  if (family_descriptor(launch.profile).effort_end_tail && config.reasoning.effort_position == EffortPosition::end) {
     const auto tail = compose_effort_end_arguments(config.engine.executable.path(), tokenizer);
     std::cerr << "[strata] " << tail.notice << '\n';
     engine_arguments->insert(engine_arguments->end(), tail.arguments.begin(), tail.arguments.end());
@@ -220,7 +221,7 @@ std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& 
   // The Monitor's conversation cache (owner 2026-10-28): upstream's engine (the Qwen profile) prints its park and
   // restore lines on stderr; only their numbers are kept (EngineCommand::read_conversation_cache). Every other
   // family's stderr still goes to NUL.
-  plan.command.read_conversation_cache = launch.profile == EngineProfile::qwen;
+  plan.command.read_conversation_cache = family_descriptor(launch.profile).reads_conversation_cache;
   // Owner 2026-10-29 (logging.engine_output): every engine's own stderr in this server's log, to see why an engine fails
   // (a calibration's starts too: they launch through this plan). Each line whole in one write, so a line from another
   // thread never lands inside it.

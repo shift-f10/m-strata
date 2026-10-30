@@ -1,6 +1,7 @@
 #pragma once
 
 #include "secure_frontend/deadline.hpp"
+#include "secure_frontend/engine_family_kinds.hpp"
 #include "secure_frontend/sampling_params.hpp"
 
 #include <array>
@@ -122,26 +123,6 @@ struct EngineProtocolLimits final {
   std::size_t max_prompt_tokens{1048576};
   std::size_t max_generated_tokens{1048576};
   std::uint32_t max_new_tokens{1048576};
-};
-
-// The original Strata profile has no prefill progress record. The separately
-// built LightTransport GLM-5.3 engine may emit its documented PP progress
-// record while it reads a prompt. The Maya GLM engine (v1.1.8 through
-// v1.1.21) frames the same conversation additionally with NOTE conversation
-// notes and the STAT expert-tier cadence, and prints the five-field PP (D-8).
-// These are three explicit engine-wire contracts, one per flavor, selected at
-// construction — never auto-detected from untrusted output, and each flavor
-// fails closed on the other flavors' records.
-enum class EngineProtocolFlavor {
-  strata_0143,           // upstream Strata v0.2.2 (RESUME/REUSED, 3-5 field PP)
-  lighttransport_glm53,  // the SP6-built LightTransport engine (exact 3- or 5-field PP)
-  maya_118,              // Project Maya's engine, v1.1.8 through v1.1.21 (NOTE, STAT cadence,
-                         // 3-6 field PP; v1.1.21's pre-READY VRAM/NOTE records). The name
-                         // keeps the first pinned version: the v1.1.21 records are additive.
-  unified,               // the merged unified engine (design §3.3, decision 3): one converged
-                         // superset dialect — READY/GEN/T/DONE plus a strict 4-field PP, an
-                         // optional STAT cadence, and ERR. No NOTE, no RESUME/REUSED; every
-                         // other record (including the other flavors' private ones) fails closed.
 };
 
 // Who asked for a STOP (SP3 D-2). The frontend's own deadline

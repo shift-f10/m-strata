@@ -1,6 +1,7 @@
 #pragma once
 
 #include "secure_frontend/canonical_path.hpp"
+#include "secure_frontend/engine_family_kinds.hpp"
 #include "secure_frontend/model_inventory.hpp"
 #include "secure_frontend/tokenizer_pack.hpp"
 
@@ -13,11 +14,6 @@
 #include <vector>
 
 namespace secure_frontend {
-
-// Which engine CLI the argv tail is built for. `unified` is the merged engine (deepseek, raon1):
-// a closed allowlist of the merged engine's own flags, with --native/--gpu frontend-composed.
-// strata_flint is multiengine_flint's own serve flags (engine/src/flint/f_cli.cpp), a closed allowlist like Gemma's.
-enum class EngineArgumentsProfile { strata_0143, lighttransport_glm53, strata_gemma4, unified, strata_flint, maya_ds4, maya_mm3 };
 
 enum class EngineArgumentsErrorCode { owned_flag, unsupported_mode, invalid_value, model_not_found, not_accepted, out_of_range };
 

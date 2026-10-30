@@ -280,6 +280,43 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z60 (Windows box; owner-directed)
+
+The engine-family phases begin (decision 5's order; the owner's "continue"): phase 2's first step, the built-in
+families as descriptors, in two commits - this one (identity, the engine each talks to, config rows, launching,
+calibration), then the cards' and options' knobs.
+- **The survey** (an Explore worker, checked against the code): about 170 switch sites on `EngineProfile` in ten
+  files; two thirds pure data, the rest code (sweep plans, argv composers, card templates, renderers). It also found
+  that MSVC does not flag a switch missing an enumerator (C4062 is off at /W4; gcc and clang's -Wswitch do), and that
+  the two profile parsers list the names in different orders.
+- **`engine_family_kinds.hpp`**: `EngineProfile`, `NativeChatProfile`, `EngineProtocolFlavor`, `TokenizerMode`,
+  `EngineFamily` and `EngineArgumentsProfile` moved there unchanged, with their comments; each header that held one
+  includes it, so the descriptor sits under the config layer with no cycle.
+- **`family_descriptor.{hpp,cpp}`** (`secure_frontend_families`, linked by `secure_frontend_typed_config`): one
+  `FamilyDescriptor` a family, in `EngineProfile`'s order (a static_assert), each built by a constexpr function from
+  the defaults (clang 18's -Wmissing-field-initializers refuses a designated initializer that leaves fields out): its
+  id (the persisted name), renderer, wire dialect, environment family, arguments, tokenizer mode and source
+  (`TokenizerSource`: pack, GGUF, GGUF for a card's launch), per-request reasoning_effort, the glm_pack rows, the
+  refused qwen launch rows and their words, strata's tails, pictures, the effort-end tail, the conversation cache, the
+  download template card, Maya's shipped expert profile, the checked --mtp file, the keep margin, the calibration
+  before the first start, the prefill calibration; `family_named(id)`, `family_choices()`. The switches' per-family
+  reasons moved onto its entries.
+- **Read from it**: subsystem_limits (renderer, dialect, environment, effort, tokenizer), frontend_config (the name in
+  --check, the arguments, the name parser - its "must be ..." list composed from the table, the same text - the
+  engine.gpu, glm.* and idle-window rules, the refused qwen rows in each family's words), model_cards (the name and the
+  card parser, its own wording kept), calibration (margin, before the first start), launch_composition (GPU list,
+  shipped profile, --mtp check, tails, pictures, tokenizer source), model_runtime (pictures, effort tail, conversation
+  cache), model_launcher (prefill), server_bootstrap (the download template). The unset profile still means qwen where
+  it did. Sweep plans, argv composers, card templates, renderers and parsers stay code.
+- **Proof**: `family_descriptor_test` pins every value of every family (RED against a stub, 61 failures; then GREEN;
+  `family_choices` RED against its own stub); MSVC: the whole tree built after the enum move, then after the
+  descriptor, no warnings; the whole suite 1475/1477 (the two release-only cases a test-hooks tree fails). Linux gcc
+  13.3 and clang 18.1: both whole trees built, no warnings (clang first refused the designated initializers, see
+  above); the whole suite 1525/1528 on each - the two release-only cases, and the connection-scan case that fails only
+  under a mixed parallel run, which passed alone.
+- **Next**: the cards' and options' knobs (card_builder, model_options), then plugin descriptors from a manifest's
+  engine block.
+
 ### Claude Code session, 2026-10-30 z59 (Windows box; owner-directed)
 
 z58's last gap, at the owner's "continue": `make --signing-passphrase` (and `make.py --sign-plugin` /

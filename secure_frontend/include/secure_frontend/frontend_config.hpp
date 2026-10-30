@@ -4,6 +4,7 @@
 #include "secure_frontend/canonical_path.hpp"
 #include "secure_frontend/config.hpp"
 #include "secure_frontend/engine_environment.hpp"
+#include "secure_frontend/engine_family_kinds.hpp"
 #include "secure_frontend/sampling_params.hpp"
 #include "secure_frontend/secret_source.hpp"
 
@@ -103,16 +104,9 @@ struct ConfigIssue final {
 using ConfigErrors = std::vector<ConfigIssue>;
 [[nodiscard]] std::string format_issue(const ConfigIssue& issue);
 
-// deepseek and raon1 (unified-engine design §2.5/§3.3) are served by the one merged engine
-// binary over the converged `unified` protocol flavor; qwen/glm53/gemma4 keep their own flavors.
-// flint (multiengine_flint) speaks Gemma 4's strata_0143 serve loop with its own template and tokenizer.
-enum class EngineProfile { qwen, glm53, gemma4, deepseek, raon1, flint, minimax };
-
-enum class EngineArgumentsProfile;  // engine_arguments.hpp
-
 // The engine CLI each profile's argv is built for (qwen: strata_0143, glm53:
-// lighttransport_glm53, gemma4: strata_gemma4) — an exhaustive switch, so a new
-// profile cannot silently take another profile's arguments.
+// lighttransport_glm53, gemma4: strata_gemma4), its descriptor's (family_descriptor.hpp), so a new
+// family states its own arguments.
 [[nodiscard]] EngineArgumentsProfile arguments_profile_for(EngineProfile profile);
 
 class ModelId final {

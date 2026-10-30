@@ -21,9 +21,8 @@ namespace secure_frontend {
 // every other policy value from config_defaults.hpp.
 [[nodiscard]] SupervisorConfig supervisor_config(const FrontendConfig& config);
 
-// Gemma 4 plan 1 Task 3 (spec §6.1): what each engine profile selects, as exhaustive
-// switches shared by supervisor_config() and the bootstrap (server_bootstrap.cpp), so a new
-// profile cannot silently take another profile's branch.
+// Gemma 4 plan 1 Task 3 (spec §6.1): what each engine profile selects, shared by supervisor_config() and the bootstrap
+// (server_bootstrap.cpp), each read from the family's descriptor (family_descriptor.hpp), which states every value.
 [[nodiscard]] NativeChatProfile native_chat_profile_for(EngineProfile profile);
 [[nodiscard]] EngineProtocolFlavor protocol_flavor_for(EngineProfile profile);
 [[nodiscard]] EngineFamily engine_family_for(EngineProfile profile);

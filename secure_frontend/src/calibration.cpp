@@ -1,5 +1,6 @@
 #include "secure_frontend/calibration.hpp"
 
+#include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/json.hpp"
 
 #include <algorithm>
@@ -204,13 +205,9 @@ std::vector<SweepStep> sweep_plan(const EngineProfile profile, const SweepMachin
   return {};
 }
 
-double sweep_keep_margin(const EngineProfile profile) noexcept {
-  return profile == EngineProfile::deepseek || profile == EngineProfile::minimax ? 0.05 : 0.03;
-}
+double sweep_keep_margin(const EngineProfile profile) noexcept { return family_descriptor(profile).sweep_keep_margin; }
 
-bool calibrates_before_first_start(const EngineProfile profile) noexcept {
-  return profile == EngineProfile::flint || profile == EngineProfile::gemma4;
-}
+bool calibrates_before_first_start(const EngineProfile profile) noexcept { return family_descriptor(profile).calibrates_before_first_start; }
 
 unsigned physical_cores() {
   const unsigned logical = std::max(1U, std::thread::hardware_concurrency());

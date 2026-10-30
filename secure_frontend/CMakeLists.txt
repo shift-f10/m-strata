@@ -178,12 +178,14 @@ secure_frontend_add_library(secure_frontend_parity
 
 # Web search: the SearXNG URL search.url names, checked by the config in every build.
 secure_frontend_add_library(secure_frontend_search_url SOURCES src/search_url.cpp)
+# The engine families (plugin spec 2026-10-30 section 5): one descriptor per family, under the config layer.
+secure_frontend_add_library(secure_frontend_families SOURCES src/family_descriptor.cpp)
 add_library(secure_frontend_typed_config src/frontend_config.cpp src/config_file.cpp)
 target_compile_features(secure_frontend_typed_config PUBLIC cxx_std_20)
 target_include_directories(secure_frontend_typed_config PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 target_link_libraries(secure_frontend_typed_config PUBLIC secure_frontend_config secure_frontend_json
-    secure_frontend_model_inventory secure_frontend_engine_arguments secure_frontend_parity)
+    secure_frontend_model_inventory secure_frontend_engine_arguments secure_frontend_parity secure_frontend_families)
 target_link_libraries(secure_frontend_typed_config PUBLIC secure_frontend_paths)
 target_link_libraries(secure_frontend_typed_config PUBLIC secure_frontend_search_url)
 # SP4 §3.9: pull.proxy is parsed by parse_proxy (ProxySetting).
@@ -1123,6 +1125,11 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
             token_reader_windows_accepts_plaintext_under_private_dacl
             LABELS windows-runtime)
     endif()
+
+    secure_frontend_add_test_executable(secure_frontend_family_descriptor_tests tests/family_descriptor_test.cpp secure_frontend_families)
+    secure_frontend_add_cases(secure_frontend_family_descriptor_tests
+        every_family_has_one_descriptor_in_order each_family_talks_to_its_engine each_family_takes_its_config_rows
+        each_family_launches_as_before each_family_calibrates_as_before)
 
     secure_frontend_add_test_executable(secure_frontend_config_tests tests/config_test.cpp secure_frontend_config)
     secure_frontend_add_cases(secure_frontend_config_tests

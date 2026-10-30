@@ -1,6 +1,7 @@
 #include "secure_frontend/model_cards.hpp"
 
 #include "secure_frontend/config_file.hpp"
+#include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/model_inventory.hpp"
 
@@ -49,18 +50,7 @@ bool argument_is_flag(const std::string_view argument, const std::string_view fl
 
 }  // namespace
 
-std::string_view profile_name(const EngineProfile profile) noexcept {
-  switch (profile) {
-    case EngineProfile::qwen: return "qwen";
-    case EngineProfile::glm53: return "glm53";
-    case EngineProfile::gemma4: return "gemma4";
-    case EngineProfile::deepseek: return "deepseek";
-    case EngineProfile::raon1: return "raon1";
-    case EngineProfile::flint: return "flint";
-    case EngineProfile::minimax: return "minimax";
-  }
-  return "qwen";  // unreachable: every value is a case above
-}
+std::string_view profile_name(const EngineProfile profile) noexcept { return family_descriptor(profile).id; }
 
 bool is_card_owned_key(const std::string_view path) noexcept {
   if (path == "engine.profile" || path == "engine.lazy_load" || path == "engine.idle_unload_s") return false;
@@ -106,15 +96,9 @@ std::variant<ModelCard, ConfigErrors> parse_model_card(const std::string_view te
       }
       named = true;
     } else if (member.key == "profile") {
-      const auto* value = member.value.if_string();
-      if (value != nullptr && *value == "qwen") card.profile = EngineProfile::qwen;
-      else if (value != nullptr && *value == "gemma4") card.profile = EngineProfile::gemma4;
-      else if (value != nullptr && *value == "raon1") card.profile = EngineProfile::raon1;  // glm_pack, ChatML
-      else if (value != nullptr && *value == "flint") card.profile = EngineProfile::flint;  // multiengine_flint
       // launcher spec D10, met 2026-10-27: the page sends reasoning_effort only to a card whose profile takes it
-      else if (value != nullptr && *value == "glm53") card.profile = EngineProfile::glm53;  // multiengine_maya
-      else if (value != nullptr && *value == "deepseek") card.profile = EngineProfile::deepseek;  // multiengine_maya_ds4
-      else if (value != nullptr && *value == "minimax") card.profile = EngineProfile::minimax;    // multiengine_maya_mm3
+      const auto* value = member.value.if_string();
+      if (const auto* family = value != nullptr ? family_named(*value) : nullptr) card.profile = family->profile;
       else {
         add(errors, "profile", ConfigIssueCode::invalid_value, "must be qwen, gemma4, glm53, deepseek, raon1, flint or minimax");
       }

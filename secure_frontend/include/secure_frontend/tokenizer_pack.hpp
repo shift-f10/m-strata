@@ -1,6 +1,7 @@
 #pragma once
 
 #include "secure_frontend/canonical_path.hpp"
+#include "secure_frontend/engine_family_kinds.hpp"
 #include "secure_frontend/gguf_metadata.hpp"
 #include "secure_frontend/prompt_piece.hpp"
 
@@ -18,18 +19,6 @@
 #include <vector>
 
 namespace secure_frontend {
-
-// Gemma 4 plan 1 Task 4 (spec §6.2): how a pack's merges are stored and applied. The mode
-// is chosen by the engine profile (gemma4 -> spm_bpe, raon1 -> raon_bpe, flint -> flint_bpe, deepseek ->
-// deepseek_bpe, glm53 -> glm_bpe, every other -> byte_bpe), never inferred from the pack's files: byte_bpe is GPT-2's
-// byte alphabet with merges.txt and upstream's Qwen pre-tokenizer (qwen35_pretokenize); spm_bpe is SentencePiece-style
-// BPE over raw UTF-8 characters with merges.json; raon_bpe is byte_bpe's files and alphabet with raon-1-mini's own text
-// handling (raon_nfc, raon_pretokenize); flint_bpe is byte_bpe's files and alphabet with flint's pre-tokenizer
-// (flint_pretokenize); deepseek_bpe is byte_bpe's files and alphabet with DeepSeek-V4.1's pre-tokenizer as Maya splits
-// it (deepseek_pretokenize); glm_bpe is byte_bpe's files and alphabet with GLM-5.3's pre-tokenizer as Maya splits it
-// (glm_pretokenize) and its ignore_merges rule; minimax_bpe is byte_bpe's files and alphabet with MiniMax-M3.1's NFC and
-// pre-tokenizer as Maya runs them (minimax_pretokenize; minimax -> minimax_bpe).
-enum class TokenizerMode { byte_bpe, spm_bpe, raon_bpe, flint_bpe, deepseek_bpe, glm_bpe, minimax_bpe };
 
 // The offline tokenizer assets extracted by upstream/tools/strata_tokenizer.py
 // (through our wrapper tools/secure/secure_tokenizer.py for GLM and Gemma 4 packs).  This

@@ -2,6 +2,7 @@
 
 #include "secure_frontend/canonical_path.hpp"
 #include "secure_frontend/card_builder.hpp"
+#include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/config_file.hpp"
 #include "secure_frontend/crt_environment.hpp"
 #include "secure_frontend/engine_stdio_process.hpp"
@@ -646,7 +647,7 @@ bool ModelLauncher::write_calibration(const CalibrationResult& result) {
 }
 
 bool ModelLauncher::needs_prefill_calibration(const ModelCard& card, const ModelOptionValues& values) const {
-  if (card.profile != EngineProfile::minimax || !settings_.calibration_dir.has_value()) return false;
+  if (!family_descriptor(card.profile).prefill_calibration || !settings_.calibration_dir.has_value()) return false;
   const auto stored = read_prefill(card.name);
   return !stored || compare_key(stored->key, calibration_key(card, values)) == CalibrationState::stale;
 }
@@ -877,7 +878,7 @@ std::string ModelLauncher::calibration_json(const std::size_t index, const Model
                                 ? std::string{"null"}
                                 : "{\"file\":" + json_string(report->second.file) + ",\"date\":" + json_string(report->second.date) + "}");
   // MiniMax: its prefill calibration (null: never run here)
-  if (card.profile == EngineProfile::minimax) {
+  if (family_descriptor(card.profile).prefill_calibration) {
     const auto prefill = read_prefill(card.name);
     out += ",\"prefill\":";
     if (!prefill) {
@@ -1028,7 +1029,7 @@ bool ModelLauncher::run_calibration(const Job& job) {
     calibration_errors_.erase(card.name);
   }
   // MiniMax: Maya's --calibrate measures its prompt reading first (the engine keeps it in the pack; the sweep's starts read it)
-  if (card.profile == EngineProfile::minimax) {
+  if (family_descriptor(card.profile).prefill_calibration) {
     {
       std::lock_guard lock(mutex_);
       calibrating_->progress = SweepProgress{"prompt reading", 0U, 0U, std::nullopt};

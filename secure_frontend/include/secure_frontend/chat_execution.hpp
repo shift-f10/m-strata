@@ -2,6 +2,7 @@
 
 #include "secure_frontend/chat_generation_plan.hpp"
 #include "secure_frontend/config_defaults.hpp"
+#include "secure_frontend/engine_family_kinds.hpp"
 #include "secure_frontend/engine_protocol_client.hpp"
 #include "secure_frontend/generation_run.hpp"
 #include "secure_frontend/sampling_params.hpp"
@@ -16,19 +17,6 @@
 #include <vector>
 
 namespace secure_frontend {
-
-// An explicit startup-selected prompt/tokenizer contract.  This is not
-// inferred from a model name or tokenizer asset: that would allow a model
-// artifact to select behavior in the HTTP-serving process.
-enum class NativeChatProfile {
-  qwen,
-  glm53,
-  gemma4,     // Gemma 4 plan 1 Task 3 (spec §6.1)
-  deepseek,   // unified-engine design §3.2/§3.3: merged-engine families, placeholder templates
-  raon1,
-  flint,      // multiengine_flint: the GGUF's template (render_flint_text_prompt)
-  minimax,    // Maya's maya-mm3 (owner 2026-10-28, MiniMax Community License): Maya's template (render_minimax_text_prompt)
-};
 
 // Bounds for the native, non-streaming chat path, derived from FrontendConfig by
 // chat_execution_limits(). Separate from engine-protocol bounds: both layers

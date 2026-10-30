@@ -459,23 +459,26 @@ Either way, the tests are:
 0. **Done:** the engine ABI and the launcher's `--family` (5beb6a12).
 
 1. **The contract.**
-   - The ABI header and the launcher's `--family` (ABI, id and SHA-256 checks).
-   - The manifest schema and its validator.
+   - The ABI header and the launcher's `--family` (ABI, id and SHA-256 checks). Done: 5beb6a12.
+   - The manifest schema and its validator. Done for every kind but the engine block (5d0fa754): that block declares
+     what a descriptor holds, so it follows phase 2's first step.
    - The fake plugin and its tests.
 2. **The descriptors.**
-   - `FamilyDescriptor` for the built-ins, with no behaviour change (every existing suite stays green).
+   - `FamilyDescriptor` for the built-ins, with no behaviour change (every existing suite stays green). Begun: the
+     engine each family talks to, its config rows, launching and calibration (`family_descriptor.hpp`); the cards' and
+     options' knobs next.
    - Then manifest-driven descriptors for plugins: cards, options, arguments, calibration, Monitor, capabilities.
 3. **Prompt format.** The declarative template renderer, if decision 1 is (a), with its refusal tests.
 4. **Downloads.** Plugin entries in Download models, `prepare: plugin`, and the MTP and picture files.
 5. **Trust and the Plugins tab.** Discovery of every kind, approval and pinning, first-party trust through the build
-   record, the Plugins tab and the TUI's view, and the threat model.
-5b. **Feature plugins** (section 10).
-   - Done: debugging as a diagnostics plugin (b7892340), the TUI's Plugins view (c64018f8).
-   - Plugin settings and secrets.
-   - The tool host, and search as a tool plugin, its rows moved.
-   - The notifier host, and email as a notifier plugin (strata-email), its rows moved.
-   - make and the installers build them as plugins; third-party tools and notifiers run once approved.
-5c. **Key-signed trust** (decision 8, section 11): after 5b.
+   record, the Plugins tab and the TUI's view, and the threat model. Done: 5d0fa754, 764392bc, c64018f8.
+5b. **Feature plugins** (section 10). Done:
+   - debugging as a diagnostics plugin (b7892340), the TUI's Plugins view (c64018f8);
+   - plugin settings and secrets (103f059c);
+   - the tool host, and search as a tool plugin, its rows moved (21b2915f, 77e64b37);
+   - the notifier host, and email as a notifier plugin (strata-email), its rows moved (ebb10d21);
+   - make and the installers build them as plugins; third-party tools and notifiers run once approved (the same two).
+5c. **Key-signed trust** (decision 8, section 11): after 5b. Done: 7b9cd67d, then 0628a468 and 8121d685.
 6. **The SDK and the guide.**
    - `strata_family_runtime` and the skeleton family.
    - `make.py --sdk` / `--plugin`.

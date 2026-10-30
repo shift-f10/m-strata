@@ -1,6 +1,7 @@
 #include "secure_frontend/launch_composition.hpp"
 
 #include "secure_frontend/engine_arguments.hpp"
+#include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/model_index_store.hpp"
 #include "secure_frontend/model_inventory.hpp"
 #include "secure_frontend/canonical_path.hpp"
@@ -55,31 +56,24 @@ std::variant<ComposedLaunch, LaunchFailure> expert_launch(const FrontendConfig& 
   const std::string& id = config.engine.model_id.value();
   const auto selected = std::find_if(list.begin(), list.end(), [&](const ModelManifest& m) { return m.id == id; });
   if (selected == list.end()) return config_failure({"Selected model is not present in roots.models."});
+  const auto& family = family_descriptor(profile);
   const auto arguments_profile = arguments_profile_for(profile);
   // SP5 M1 Task 7 (engine.hip_ordinal, serve/server.py:3023-3029): the recorded HIP number
   // wins over a single (or absent) card — for the strata profile and the Gemma engine (Gemma
   // 4 plan 1 Task 3: --gpu as qwen); the GLM runner takes no --gpu at all. Same rule at the
   // managed path.
-  std::vector<unsigned> gpus;
-  switch (profile) {
-    // qwen, gemma4 and flint select GPUs by argv --gpu (the engine renders CUDA/HIP from it), deepseek by maya-ds4's
-    // own --gpus (build_engine_arguments); only the GLM runner takes none.
-    case EngineProfile::qwen:
-    case EngineProfile::gemma4:
-    case EngineProfile::flint:
-    case EngineProfile::deepseek:
-    case EngineProfile::minimax: gpus = effective_gpu_list(config.engine.gpus, config.engine.hip_ordinal); break;
-    // The glm_pack engine (glm53, raon1) takes no --gpu (GPUs come from the glm env mechanism).
-    case EngineProfile::glm53:
-    case EngineProfile::raon1: gpus = config.engine.gpus; break;
-  }
+  // qwen, gemma4 and flint select GPUs by argv --gpu (the engine renders CUDA/HIP from it), deepseek and minimax by
+  // Maya's own --gpus (build_engine_arguments); the glm_pack engine (glm53, raon1) takes no --gpu (GPUs come from the glm
+  // env mechanism).
+  const std::vector<unsigned> gpus =
+      family.glm_pack_rows ? config.engine.gpus : effective_gpu_list(config.engine.gpus, config.engine.hip_ordinal);
   Glm53LaunchArgs glm{config.glm.max_context, config.replicas.parallel, config.glm.kv};
-  if (profile == EngineProfile::glm53 || profile == EngineProfile::minimax) {
+  if (family.shipped_expert_profile) {
     // Maya's shipped expert profile, where the install put it beside the engine (engine/profiles), as Maya's setup adds
     // it to every GLM config (maya.py v1.1.30 write_config) and every MiniMax one (write_config_mm3's MM3_PROFILE) when it
     // has one; raon1's experts are another model's
-    const auto shipped = config.engine.executable.path().parent_path() / "profiles" /
-                         (profile == EngineProfile::glm53 ? "expert-profile-glm.bin" : "expert-profile-mm3.bin");
+    const auto shipped =
+        config.engine.executable.path().parent_path() / "profiles" / std::filesystem::path{*family.shipped_expert_profile};
     std::error_code ec;
     if (std::filesystem::is_regular_file(shipped, ec)) glm.expert_profile = path_to_utf8(std::filesystem::path{shipped}.make_preferred());
   }
@@ -92,7 +86,7 @@ std::variant<ComposedLaunch, LaunchFailure> expert_launch(const FrontendConfig& 
   // Gemma 4's MTP draft file (owner 2026-10-28; the card's --mtp <file>, an absolute .gguf by the allowlist): held at
   // each launch to the rule a card's picture encoder is - a regular file, not a link, in a folder no other user of this
   // PC may change unless roots.allow_untrusted_media - and refused by name, never by its path.
-  if (profile == EngineProfile::gemma4) {
+  if (family.checks_mtp_side_file) {
     const auto& user = config.engine.args;
     if (const auto at = std::find(user.begin(), user.end(), "--mtp"); at != user.end() && at + 1 != user.end() &&
                                                                        !trusted_side_file(path_from_utf8(*(at + 1)), config)) {
@@ -103,20 +97,10 @@ std::variant<ComposedLaunch, LaunchFailure> expert_launch(const FrontendConfig& 
   // Gemma 4 plan 1 Task 3: the qwen engine's composed tails are qwen's only. The Gemma
   // engine's argv is its allowlisted engine.args, --gpu and --native (build_engine_arguments);
   // the config refuses the typed rows that would compose these tails on gemma4 by name.
-  const bool qwen_tails = [profile] {
-    switch (profile) {
-      case EngineProfile::qwen: return true;
-      // The qwen VRAM/elastic/expert-save/--batch tails are upstream strata's; deepseek (maya-ds4) composes its own
-      // allowlist with --pack and --vision off, raon1 the GLM runner's base, like glm53/gemma4/flint their own.
-      case EngineProfile::glm53:
-      case EngineProfile::gemma4:
-      case EngineProfile::deepseek:
-      case EngineProfile::minimax:  // maya-mm3: its allowlist, --pack, --profile, --gpus, --vision off
-      case EngineProfile::raon1:
-      case EngineProfile::flint: return false;  // multiengine_flint: its allowlist + --gpu + --native
-    }
-    return false;
-  }();
+  // The qwen VRAM/elastic/expert-save/--batch tails are upstream strata's; deepseek (maya-ds4) composes its own
+  // allowlist with --pack and --vision off, maya-mm3 its allowlist, --pack, --profile, --gpus and --vision off, raon1
+  // the GLM runner's base, like glm53/gemma4/flint their own (multiengine_flint: its allowlist + --gpu + --native).
+  const bool qwen_tails = family.composes_strata_tails;
   if (qwen_tails) {  // Ruling T7-a: this family reaches the engine through argv only
     const VramGpuElasticArgs vram{.vram_reserve_mib = engine_vram_reserve(config),
                                   .vram_elastic = config.engine.vram_elastic,
@@ -145,7 +129,7 @@ std::variant<ComposedLaunch, LaunchFailure> expert_launch(const FrontendConfig& 
   std::optional<std::string> vision_mmproj;
   std::optional<std::string> vision_model;
   if (config.vision.enabled) {
-    if (profile != EngineProfile::qwen) return config_failure({"vision: only a qwen model reads images here"});
+    if (!family.reads_images) return config_failure({"vision: only a qwen model reads images here"});
     const std::filesystem::path& mmproj = *config.vision.mmproj;  // set: compose_engine_launch refused otherwise
     if (!trusted_side_file(mmproj, config)) {
       return config_failure({"vision.mmproj: the picture encoder file is missing, a link, or in a folder other users of this PC "
@@ -180,7 +164,8 @@ std::optional<std::filesystem::path> in_version(const CanonicalRoot& models, con
 bool tokenizer_from_gguf(const EngineProfile profile, const bool card) noexcept {
   // owner 2026-10-27: a Qwen card's too (upstream's GGUFs hold the same vocabulary, types and merges its
   // strata_tokenizer.py copies into a pack) - a model card's only: the operator's single-model --expert keeps its pack
-  return profile == EngineProfile::flint || profile == EngineProfile::gemma4 || (card && profile == EngineProfile::qwen);
+  const auto source = family_descriptor(profile).tokenizer_source;
+  return source == TokenizerSource::gguf || (card && source == TokenizerSource::gguf_for_cards);
 }
 
 std::vector<std::string> launch_config_issues(const FrontendConfig& config, const bool expert) {

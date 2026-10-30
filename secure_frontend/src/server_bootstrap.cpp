@@ -7,6 +7,7 @@
 
 #include "secure_frontend/about_info.hpp"
 #include "secure_frontend/card_routes.hpp"
+#include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/login_link.hpp"
 #include "secure_frontend/api_errors.hpp"
 #include "secure_frontend/api_router.hpp"
@@ -826,7 +827,7 @@ std::optional<secure_frontend::DownloadCardTemplate> download_card_template(cons
       return found == entries.end() ? nullptr : std::get_if<std::string>(&found->second.value);
     };
     const auto* executable = text("engine.executable");
-    if (card.profile != secure_frontend::EngineProfile::qwen || executable == nullptr) break;
+    if (!secure_frontend::family_descriptor(card.profile).download_template_card || executable == nullptr) break;
     secure_frontend::DownloadCardTemplate made;
     made.engine_executable = *executable;
     if (const auto found = entries.find("engine.lib_dirs"); found != entries.end()) {

@@ -2,6 +2,7 @@
 
 #include "secure_frontend/config_defaults.hpp"
 #include "secure_frontend/engine_arguments.hpp"
+#include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/http_policy.hpp"
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/model_inventory.hpp"
@@ -929,33 +930,7 @@ std::string render_config_schema_markdown() {
   return out;
 }
 
-namespace {
-std::string_view profile_text(const EngineProfile profile) {
-  switch (profile) {
-    case EngineProfile::qwen: return "qwen";
-    case EngineProfile::glm53: return "glm53";
-    case EngineProfile::gemma4: return "gemma4";
-    case EngineProfile::deepseek: return "deepseek";
-    case EngineProfile::raon1: return "raon1";
-    case EngineProfile::flint: return "flint";
-    case EngineProfile::minimax: return "minimax";
-  }
-  return "qwen";  // unreachable: every value is a case above
-}
-}  // namespace
-
-EngineArgumentsProfile arguments_profile_for(const EngineProfile profile) {
-  switch (profile) {
-    case EngineProfile::qwen: return EngineArgumentsProfile::strata_0143;
-    case EngineProfile::glm53: return EngineArgumentsProfile::lighttransport_glm53;
-    case EngineProfile::gemma4: return EngineArgumentsProfile::strata_gemma4;
-    case EngineProfile::deepseek: return EngineArgumentsProfile::maya_ds4;  // Maya's maya-ds4
-    case EngineProfile::raon1: return EngineArgumentsProfile::lighttransport_glm53;  // rides the glm_pack engine
-    case EngineProfile::flint: return EngineArgumentsProfile::strata_flint;
-    case EngineProfile::minimax: return EngineArgumentsProfile::maya_mm3;  // Maya's maya-mm3
-  }
-  return EngineArgumentsProfile::strata_0143;  // unreachable: every value is a case above
-}
+EngineArgumentsProfile arguments_profile_for(const EngineProfile profile) { return family_descriptor(profile).arguments_profile; }
 
 std::string format_issue(const ConfigIssue& issue) { return issue.key_path + ": " + issue.reason; }
 
@@ -1261,14 +1236,8 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
   // engine
   std::optional<EngineProfile> profile;
   if (const auto text = read.string("engine.profile")) {
-    if (*text == "qwen") profile = EngineProfile::qwen;
-    else if (*text == "glm53") profile = EngineProfile::glm53;
-    else if (*text == "gemma4") profile = EngineProfile::gemma4;
-    else if (*text == "deepseek") profile = EngineProfile::deepseek;
-    else if (*text == "raon1") profile = EngineProfile::raon1;
-    else if (*text == "flint") profile = EngineProfile::flint;
-    else if (*text == "minimax") profile = EngineProfile::minimax;
-    else add(errors, "engine.profile", ConfigIssueCode::invalid_value, "must be qwen, glm53, gemma4, deepseek, raon1, flint or minimax");
+    if (const auto* family = family_named(*text)) profile = family->profile;
+    else add(errors, "engine.profile", ConfigIssueCode::invalid_value, "must be " + family_choices());
   }
   std::optional<CanonicalFile> executable;
   if (const auto text = read.string("engine.executable")) {
@@ -1312,7 +1281,7 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
   std::vector<unsigned> gpus;
   if (const auto gpu_text = read.string("engine.gpu")) {
     if (const auto parsed = parse_gpu_list(*gpu_text)) {
-      if (profile == EngineProfile::glm53 || profile == EngineProfile::raon1) {
+      if (profile.has_value() && family_descriptor(*profile).glm_pack_rows) {
         // The glm_pack engine (glm53, raon1) takes its GPUs from the glm env mechanism, not --gpu.
         add(errors, "engine.gpu", ConfigIssueCode::conflicting_values,
             "is not supported with the glm_pack engine (engine.profile glm53 or raon1)");
@@ -1533,7 +1502,7 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
       glm.model_name = *text;
     }
   }
-  if (any_glm_row && profile.has_value() && *profile != EngineProfile::glm53 && *profile != EngineProfile::raon1) {
+  if (any_glm_row && profile.has_value() && !family_descriptor(*profile).glm_pack_rows) {
     // The glm.* rows configure the glm_pack engine, which serves both glm53 and raon1.
     for (const auto& [path, entry] : draft.entries) {
       static_cast<void>(entry);
@@ -1547,24 +1516,23 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
   // engine counterpart, so on an explicit gemma4 profile each is refused by name rather than
   // silently ignored. A managed model's manifest decides its profile at launch (and the engine
   // gate refuses gemma4 manifests until plan 4).
-  // flint's engine is built like Gemma's (multiengine_flint), so the same rows are refused on it by name.
-  if (profile == EngineProfile::gemma4 || profile == EngineProfile::flint) {
-    const bool gemma = profile == EngineProfile::gemma4;
+  // flint's engine is built like Gemma's (multiengine_flint), so the same rows are refused on it by name - each family
+  // that refuses them in its own words (its descriptor's).
+  if (profile.has_value() && family_descriptor(*profile).refuses_qwen_launch_rows) {
+    const auto& family = family_descriptor(*profile);
+    const std::string refused = "is not supported with engine.profile " + std::string{family.id} + " (";
     static constexpr std::array<std::string_view, 9> kQwenLaunchRows{
         "engine.vram_reserve_mib",   "engine.vram_elastic",         "engine.vram_segment_mib",
         "engine.layer_split",        "engine.split_skip_if_fits",   "session.expert_profile_save",
         "session.expert_profile_save_every", "replicas.parallel",   "engine.mtp"};
     for (const auto row : kQwenLaunchRows) {
       if (draft.entries.contains(row)) {
-        add(errors, std::string{row}, ConfigIssueCode::conflicting_values,
-            gemma ? "is not supported with engine.profile gemma4 (the Gemma engine has no such option)"
-                  : "is not supported with engine.profile flint (the flint engine has no such option)");
+        add(errors, std::string{row}, ConfigIssueCode::conflicting_values, refused + std::string{family.engine_words} + " has no such option)");
       }
     }
     if (draft.entries.contains("reasoning.effort_position")) {
       add(errors, "reasoning.effort_position", ConfigIssueCode::conflicting_values,
-          gemma ? "is not supported with engine.profile gemma4 (Gemma's template has no effort sentence)"
-                : "is not supported with engine.profile flint (flint's template has no effort sentence)");
+          refused + std::string{family.template_words} + " has no effort sentence)");
     }
   }
 
@@ -1691,8 +1659,7 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
   // (glm.idle_unload_s, serve/server.py:8298 at v1.1.21) drives the idle-unload
   // window; 0 means unset and the M1 engine.idle_unload_s keeps driving.
   const std::int64_t idle_window_s =
-      (profile == EngineProfile::glm53 || profile == EngineProfile::raon1) && glm.idle_unload_s > 0 ? glm.idle_unload_s
-                                                                                                    : idle_unload_s;
+      profile.has_value() && family_descriptor(*profile).glm_pack_rows && glm.idle_unload_s > 0 ? glm.idle_unload_s : idle_unload_s;
   EngineLaunch engine{profile,
                       *executable,
                       std::move(*model_id),
@@ -1802,7 +1769,7 @@ std::string describe(const FrontendConfig& c) {
   line("roots.state", path_or_unset(c.roots.state));
   line("token.source", json_quoted((c.token.kind() == SecretSourceKind::environment_variable ? "env:" : "file:") +
                               c.token.location()));
-  line("engine.profile", c.engine.profile ? json_quoted(profile_text(*c.engine.profile)) : std::string{"(unset)"});
+  line("engine.profile", c.engine.profile ? json_quoted(family_descriptor(*c.engine.profile).id) : std::string{"(unset)"});
   line("engine.executable", json_quoted(path_to_utf8(c.engine.executable.path())));
   line("engine.model_id", json_quoted(c.engine.model_id.value()));
   std::string args = "[";

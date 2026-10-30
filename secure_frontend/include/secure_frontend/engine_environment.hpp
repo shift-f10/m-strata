@@ -1,5 +1,7 @@
 #pragma once
 
+#include "secure_frontend/engine_family_kinds.hpp"
+
 #include <array>
 #include <filesystem>
 #include <functional>
@@ -10,13 +12,6 @@
 #include <vector>
 
 namespace secure_frontend {
-
-// SP6 §4.9 (mechanism, R5): which engine family the environment is rendered
-// for. A family's hook may force and suppress rows (family_environment_rows).
-// `strata` has no rows, so it renders exactly the §3.9 allowlist. `glm` is
-// reserved for SP6: it currently renders strata rows, is not reachable from
-// config, and SP6 fills its table.
-enum class EngineFamily { strata, glm };
 
 // One variable a family forces (owning: a hook may derive the value from the
 // EngineEnvironment, e.g. SP6's CUDA_VISIBLE_DEVICES from the gpu list).
