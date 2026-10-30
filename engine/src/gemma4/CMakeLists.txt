@@ -79,7 +79,27 @@ if(MSVC)
     endforeach()
     set(_g4_bigobj -Xcompiler=/bigobj)
 else()
-    message(FATAL_ERROR "multiengine_gemma4: only the MSVC build's per-unit ISA flags are written down here")
+    # GCC and Clang: upstream's own per-unit flags (upstream/CMakeLists.txt, strata_kernels_cpu), file by file
+    set(_g4_avx512 -mavx512f -mavx512bw -mavx512vl -mavx512dq -mavx512vnni -mavx512vbmi)
+    set_property(SOURCE ${_g4_core}/src/kernels/cpu/expert.cpp APPEND PROPERTY COMPILE_OPTIONS ${_g4_avx512} -mf16c -mfma)
+    foreach(_f iq_avx512 nvfp4_avx512)
+        set_property(SOURCE ${_g4_core}/src/kernels/cpu/${_f}.cpp APPEND PROPERTY COMPILE_OPTIONS
+                     ${_g4_avx512} -mavx512vpopcntdq -mbmi2 -mf16c -mfma)
+    endforeach()
+    # the trellis kernels: AVX-512 F/BW/VL/VBMI/VNNI, exactly what cpu_avx512_ok() checks
+    set_property(SOURCE ${_g4_core}/src/kernels/cpu/tq_avx512.cpp APPEND PROPERTY COMPILE_OPTIONS
+                 -mavx512f -mavx512bw -mavx512vl -mavx512vnni -mavx512vbmi -mavx2 -mfma -mf16c)
+    foreach(_f iq_avx2 kq_avx2 nvfp4_avx2 q2_avx2 tq_avx2)
+        set_property(SOURCE ${_g4_core}/src/kernels/cpu/${_f}.cpp APPEND PROPERTY COMPILE_OPTIONS -mavx2 -mfma -mf16c)
+    endforeach()
+    set_property(SOURCE ${_g4_core}/src/kernels/cpu/kq_avx1.cpp APPEND PROPERTY COMPILE_OPTIONS -mavx)
+    # the older CPUs' rows: SSE4.2 + AVX with AVX2/FMA/F16C off, so a -march=native build host cannot leak AVX2 code
+    # into the files that run on a Sandy Bridge Xeon
+    foreach(_f iq_avx1 q2_avx1)
+        set_property(SOURCE ${_g4_core}/src/kernels/cpu/${_f}.cpp APPEND PROPERTY COMPILE_OPTIONS
+                     -msse4.2 -mavx -mno-avx2 -mno-fma -mno-f16c)
+    endforeach()
+    set(_g4_bigobj)
 endif()
 # the MMQ units as the engine's strata_mmq compiles them
 set_property(SOURCE ${_g4c_mmq} ${_g4c_mmq_ggml} APPEND PROPERTY COMPILE_OPTIONS --extended-lambda -use_fast_math ${_g4_bigobj})

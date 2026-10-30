@@ -237,8 +237,9 @@ HttpResponse CardRoutes::sharing(const std::string_view body) {
   const std::optional<bool> shared = flag == read->flags.end() ? std::nullopt : std::optional<bool>{flag->second};
   const std::optional<bool> shares = network == read->flags.end() ? std::nullopt : std::optional<bool>{network->second};
   const std::scoped_lock lock(config_);
-  const auto failure = update_config_file(*settings_.config_file, [shared, shares](FrontendConfigDraft& draft) {
-    const auto set = [&draft](const char* row, const std::optional<bool> on) {
+  // (by reference: the update runs here and now; GCC's optimiser warns of a copied optional as maybe uninitialized)
+  const auto failure = update_config_file(*settings_.config_file, [&shared, &shares](FrontendConfigDraft& draft) {
+    const auto set = [&draft](const char* row, const std::optional<bool>& on) {
       if (!on) return;
       if (*on) draft.entries[row] = ConfigDraftEntry{true, ConfigSource::file};
       else draft.entries.erase(row);

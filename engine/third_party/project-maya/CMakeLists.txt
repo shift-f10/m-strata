@@ -66,10 +66,15 @@ foreach(_t q2_0 iq2_xxs iq2_xs iq2_s iq3_xxs iq3_s iq4_nl iq4_xs q8_0 iq1_s q2_k
 endforeach()
 target_sources(multiengine_raon1 PRIVATE ${_glm_mmq_cuda})
 target_compile_options(multiengine_raon1 PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
-# Maya's MMQ flags on the prompt-path CUDA only: fast-math stays OFF the GLM kernels to keep their numerics.
+# Maya's MMQ flags on the prompt-path CUDA only: fast-math stays OFF the GLM kernels to keep their numerics. /bigobj is
+# MSVC's (GCC would take it for an input file).
+set(_glm_mmq_options -use_fast_math)
+if(MSVC)
+  list(APPEND _glm_mmq_options -Xcompiler=/bigobj)
+endif()
 set_source_files_properties(${_glm_mmq_cuda}
   ${_glm_root}/src/prefill/moe_mmq.cu ${_glm_root}/src/prefill/ggml_cuda_host.cu
-  PROPERTIES COMPILE_OPTIONS "-use_fast_math;-Xcompiler=/bigobj")
+  PROPERTIES COMPILE_OPTIONS "${_glm_mmq_options}")
 
 # The CPU i-quant / KQ lanes need their ISA. Default AVX2; the *_avx512 units want AVX-512.
 if(MSVC)
@@ -80,6 +85,18 @@ if(MSVC)
              src/kernels/cpu/expert.cpp)
     if(EXISTS ${_glm_root}/${_f})
       set_source_files_properties(${_glm_root}/${_f} PROPERTIES COMPILE_OPTIONS "/arch:AVX512")
+    endif()
+  endforeach()
+else()
+  # GCC and Clang: the same ISA - AVX2 (with FMA and F16C, as upstream's AVX2 units) on the C++ lane, AVX-512 on the units
+  # MSVC builds with /arch:AVX512 (upstream's own flags for its AVX-512 units, upstream/CMakeLists.txt)
+  target_compile_options(multiengine_raon1 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-mavx2> $<$<COMPILE_LANGUAGE:CXX>:-mfma>
+                         $<$<COMPILE_LANGUAGE:CXX>:-mf16c>)
+  foreach(_f src/kernels/cpu/iq_avx512.cpp src/kernels/cpu/iq_avx512_one.cpp src/kernels/cpu/kq_avx512.cpp
+             src/kernels/cpu/expert.cpp)
+    if(EXISTS ${_glm_root}/${_f})
+      set_source_files_properties(${_glm_root}/${_f} PROPERTIES COMPILE_OPTIONS
+        "-mavx512f;-mavx512bw;-mavx512vl;-mavx512dq;-mavx512vnni;-mavx512vbmi;-mavx512vpopcntdq;-mbmi2;-mf16c;-mfma")
     endif()
   endforeach()
 endif()
