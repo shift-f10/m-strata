@@ -80,8 +80,8 @@ struct QkvPost {
   __half* q16;
   __half* k_cache;
   __half* v_cache;
-  float theta_scale;  // set by qkv_post from rope_base and hd (callers leave it 0)
-  const int* d_pos;   // non-null: the first row's position is this device word, not pos0 (a captured decode graph)
+  float theta_scale{0.0f};  // set by qkv_post from rope_base and hd (callers leave it 0)
+  const int* d_pos{nullptr};  // non-null: the first row's position is this device word, not pos0 (a captured decode graph)
 };
 void qkv_post(const QkvPost& p, cudaStream_t st);
 

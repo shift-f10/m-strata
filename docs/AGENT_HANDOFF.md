@@ -280,6 +280,43 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z64 (Windows box; owner-directed; the first Linux GPU build)
+
+(On main: replayed from the plugins branch, where it was made and proven; the runs below are that branch's -
+these files are the same on both.)
+
+The owner's Azure VM (Ubuntu 22.04.5, a Tesla T4, 4 CPUs) is the first Linux machine the CUDA engine has been built on:
+"since this is the first time we are fully testing it on linux and on azure, run the full install with the other
+engines selected as well and to include the compile of the window app version as well", and "the fixes you make there,
+make sure you note them and incorporate them here", "make sure you don't break anything on the windows side". This
+repository's committed state was copied there (/opt/source/m-strata-dev, a git archive with upstream and maya-ref) and
+built by install.sh with every engine and feature; each stop was fixed here, copied there and noted.
+- **The engine on GCC 13**:
+  - gemma4's CMake stopped any non-MSVC build ("only the MSVC build's per-unit ISA flags are written down here"): the
+    GCC/Clang branch now gives each kernel unit upstream's own flags (upstream/CMakeLists.txt, strata_kernels_cpu).
+  - `-Werror=missing-field-initializers`: g4k::QkvPost and flk::QkvPost (theta_scale, d_pos) and g4_run.cpp's
+    DecodeLoop (lg) were brace-initialised without members that have no default; they get the zero defaults they were
+    already given.
+  - raon1: `-Xcompiler=/bigobj` reached gcc as an input file - now MSVC only (engine/third_party/project-maya).
+  - The Maya libraries (GLM, DeepSeek, MiniMax): their ExternalProject's static libraries were not position-independent
+    for the .so files - the Maya build now gets `-DCMAKE_POSITION_INDEPENDENT_CODE=ON`.
+- **The frontend in Release on GCC** (make's Linux build): `-Werror=maybe-uninitialized` on copied `std::optional`s
+  (GCC's known false positive, only when optimising - the WSL test trees had no build type, so never saw it):
+  serve_monitor.cpp (the parked state is a reference; the count helper takes its optional by reference),
+  card_routes.cpp (the flags captured by reference). A WSL Release tree (~/window-gcc) now builds everything.
+- **The window app on Linux compiles** for the first time (GTK 3.24, WebKitGTK 4.1, Ayatana AppIndicator), with the
+  whole Release tree.
+- **Windows unchanged**: gemma4 and flint rebuilt with MSVC and nvcc (-Werror), then the whole engine as make builds it
+  (the Maya external build reconfigured, nothing to rebuild - MSVC ignores position-independence; raon1's flags as
+  before), no warnings; the frontend's whole tree and suite 1480/1482 (the two release-only cases).
+- **Proof on Linux**: the VM built the whole engine with GCC 13 and CUDA 13.0 for sm_75 - the
+  launcher and every family library (strata, gemma4, flint, raon1, the three Maya libraries, strata_kq), each fix in
+  turn then the engine's own static libraries' position-independence (`set(CMAKE_POSITION_INDEPENDENT_CODE ON)` after
+  project(): every static library, ggml's included, may go into a family .so); raon1's CPU lane got GCC's ISA flags
+  as gemma4's did (AVX2 + FMA + F16C on the lane, upstream's AVX-512 flags on its four AVX-512 units); the WSL Release tree's whole suite 1485/1486 (the connection-scan case, which passed
+  alone; the two release-only checks pass in a real Release build); gcc and clang trees (no build type) 1530/1533 each (the two release-only cases and the
+  connection-scan case, which passed alone). The full install on the VM (pictures, the frontend, packaging) follows.
+
 ### Claude Code session, 2026-10-30 z62 (Windows box; owner-directed)
 
 The Linux installer on Ubuntu 22.04 (the owner's Azure VM, "it did not fully install"; then "the fixes you make there,

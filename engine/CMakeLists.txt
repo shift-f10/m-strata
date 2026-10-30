@@ -9,6 +9,9 @@
 # and is wrong about its own performance, which is the worst of both outcomes.
 cmake_minimum_required(VERSION 3.24)
 project(strata VERSION 0.1.51 LANGUAGES CXX)
+# Every static library here, ggml's included, may go into a family's shared library (multiengine_<family>.so / .dll):
+# position-independent, which Linux needs and MSVC ignores (the first Linux build, on the owner's Azure VM, 2026-10-30)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # EXPERIMENTAL: the Intel Arc engine, the SYCL port in sycl/ (PR #423; icpx + oneMKL, docs/INTEL_ARC.md). It is its
 # own project that takes the unported sources from src/; with this on, nothing below is configured.
 option(STRATA_ENABLE_SYCL "EXPERIMENTAL: build the Intel Arc (SYCL) engine from sycl/ - docs/INTEL_ARC.md" OFF)

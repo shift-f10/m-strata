@@ -81,7 +81,7 @@ struct DecodeLoop {
   float p_min{0.0f};
   long long produced{0}, offered{0}, accepted{0};
   const char* finish{"length"};
-  std::vector<float> lg;
+  std::vector<float> lg{};
   std::vector<float> cand_v = std::vector<float>(static_cast<std::size_t>(g4::kSampleCandidatesMax));
   std::vector<int> cand_i = std::vector<int>(static_cast<std::size_t>(g4::kSampleCandidatesMax));
 
