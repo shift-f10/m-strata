@@ -280,6 +280,26 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z39 (Windows box; found while taking the README's screenshots, owner-requested)
+
+The owner: "add some screenshots on the readme for the system tray version and tui". The first tray menu captured
+read "Models: open the page", with a model running.
+
+- **The tray could not list any card that has sampling options.** That is every card since the decimal sampling
+  options (top-p 0.95, min-p 0.05). `w::tray_models` parsed `GET /v1/strata/models` without
+  `JsonLimits::allow_fractions`, so any decimal failed the parse and the menu fell back to "Models: open the page".
+  The TUI's parser already allowed fractions. The fix is `allow_fractions = true` in `tray_models`
+  (`window_shell.cpp`), shared by the Win32 and GTK trays.
+- **Proof**:
+  - RED first: `the_tray_lists_the_launchers_cards` with a card whose options are decimals (top-p's minimum
+    `5e-324`, as the launcher writes it). MSVC, gcc and clang all read `5e-324` with `from_chars`.
+  - GREEN: the window shell suite with MSVC (18/18), Linux gcc 13.3 and clang 18.1 (18/18 each).
+  - Live (x25, before the fix): on a fresh data folder the menu read "No models yet". Adding one card, with no
+    restart, turned it into "Models: open the page".
+- **Found, not fixed**: in a `--token-env` start (development only), the window re-reads the key at each server
+  restart. The first read removed the variable from the window's own environment, so after "Restart the server" the
+  tray has no key and shows "Models: open the page". A data folder's key file is re-read correctly.
+
 ### Claude Code session, 2026-10-29 z38 (Windows box; owner-directed; committed with this entry and pushed on the owner's "commit and push once done")
 
 The owner: "when the "--debugging on" was not provided in the install/builder, I want the settings to hide the
