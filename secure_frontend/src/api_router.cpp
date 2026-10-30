@@ -182,6 +182,13 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
       if (head.method == entry.method) matched = &entry;
     }
   }
+  if (config_.plugins.handle) {
+    for (const auto& entry : kPluginRoutes) {
+      if (target != entry.path) continue;
+      allow = entry.method;
+      if (head.method == entry.method) matched = &entry;
+    }
+  }
   for (const auto& entry : kRouteTable) {
     // listener.monitor off: /metrics is no route at all, for any method (EXT-01: upstream's
     // /metrics stays 404 after authentication, never 405).
@@ -215,6 +222,8 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
                          std::any_of(kSearchRoutes.begin(), kSearchRoutes.end(),
                                      [&decision](const RouteEntry& entry) { return entry.id == decision.route; }) ||
                          std::any_of(kConfigRoutes.begin(), kConfigRoutes.end(),
+                                     [&decision](const RouteEntry& entry) { return entry.id == decision.route; }) ||
+                         std::any_of(kPluginRoutes.begin(), kPluginRoutes.end(),
                                      [&decision](const RouteEntry& entry) { return entry.id == decision.route; });
   const bool calibration_post = decision.route == RouteId::strata_calibrate || decision.route == RouteId::strata_calibrate_cancel ||
                                 decision.route == RouteId::strata_calibrate_auto || decision.route == RouteId::strata_calibrate_report;
@@ -423,6 +432,16 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
       case RouteId::strata_config_settings:
       case RouteId::strata_key_rotate: {
         RouteResult result = config_.settings.handle(decision.route, body, context);
+        if (auto* complete = std::get_if<HttpResponse>(&result)) {
+          response = std::move(*complete);
+          break;
+        }
+        return result;
+      }
+      case RouteId::strata_plugins:
+      case RouteId::strata_plugins_approve:
+      case RouteId::strata_plugins_switch: {
+        RouteResult result = config_.plugins.handle(decision.route, body, context);
         if (auto* complete = std::get_if<HttpResponse>(&result)) {
           response = std::move(*complete);
           break;

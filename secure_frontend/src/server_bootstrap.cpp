@@ -24,6 +24,7 @@
 #include "secure_frontend/chat_schema.hpp"
 #include "secure_frontend/config.hpp"
 #include "secure_frontend/config_routes.hpp"
+#include "secure_frontend/plugin_routes.hpp"
 #include "secure_frontend/connection_pool.hpp"
 #include "secure_frontend/crt_environment.hpp"
 #include "secure_frontend/download_catalog.hpp"
@@ -1079,6 +1080,32 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       return routes.answer(route, body, context);
     };
   }
+  // The Plugins tab (owner 2026-10-30; plugin_routes.hpp): <install>/plugins, beside the engine folder, with the owner's
+  // choices in <roots.state>/plugins.json; with model control (files_allowed's clients). What runs is decided here, at
+  // the start: the plugins on now are the ones the tab shows as running.
+  secure_frontend::ModelCardRoutes plugin_route_handler;
+  std::optional<secure_frontend::PluginRoutes> plugin_routes;
+  if (config.models.control) {
+    const auto engine = config.models.default_engine.value_or(config.engine.executable.path());
+    secure_frontend::PluginRouteSettings settings{.plugins_dir = engine.parent_path().parent_path() / "plugins",
+                                                  .state_dir = config.roots.state, .client_allowed = files_allowed};
+    if (const auto build = secure_frontend::read_engine_build(engine.parent_path())) {
+      for (const auto& plugin : build->plugins) {
+        settings.first_party.push_back({.id = plugin.id, .pin = {.manifest = plugin.manifest, .files = plugin.files}, .on = plugin.on});
+      }
+    }
+    if (const auto choices = secure_frontend::read_plugin_choices(*config.roots.state)) {
+      for (const auto& entry : secure_frontend::discover_plugins(settings.plugins_dir, settings.first_party, *choices)) {
+        if (entry.state == secure_frontend::PluginState::on) settings.running.insert(entry.id);
+      }
+    }
+    settings.log = [](const std::string_view line) { std::cerr << line << '\n'; };
+    plugin_routes.emplace(std::move(settings));
+    plugin_route_handler.handle = [&routes = *plugin_routes](const secure_frontend::RouteId route, const std::string_view body,
+                                                             const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {
+      return routes.answer(route, body, context);
+    };
+  }
   // Web search (spec 2026-10-27-web-search-design §2): the page's search settings, with model control (files_allowed's clients).
   secure_frontend::ModelCardRoutes search_route_handler;
 #if defined(SECURE_FRONTEND_WEB_SEARCH)
@@ -1122,6 +1149,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       .alerts = std::move(alert_route_handler),
       .search = std::move(search_route_handler),
       .settings = std::move(settings_route_handler),
+      .plugins = std::move(plugin_route_handler),
       .login_link = std::move(login_link_handler)});
   const secure_frontend::ConnectionLimits connection_bounds = secure_frontend::connection_limits(config);
   std::string bind_error;

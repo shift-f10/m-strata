@@ -280,6 +280,46 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z49 (Windows box; owner-directed)
+
+The plugin platform, step 2: the Plugins tab (the owner, 2026-10-30: "we also need to have a plugin management tab to
+manage these").
+- **The build record's plugins.** `about_info`'s `EngineBuild` reads `make`'s first-party plugins from
+  `engine/build.json`: `"plugins": [{"id", "manifest", "files": {path: sha256}, "on"}]`, at most 32, each strictly
+  checked. A record without the list has none; a bad entry refuses the whole record.
+- **A new error**, `plugin_refused` (422, with its reason).
+- **`plugin_routes.{hpp,cpp}`** (the new library `secure_frontend_plugin_routes`) serves `kPluginRoutes`. They are
+  keyed POSTs of small JSON bodies, served with model control, for the clients the Settings tab answers:
+  - `POST /v1/strata/plugins` lists every plugin: what it is, its state and reason, whether it runs in this server, its
+    SHA-256s and its switches;
+  - `/approve {"id"}` pins the SHA-256s there now and turns the plugin on, for one that waits or changed;
+  - `/switch {"id","on"}` turns a trusted plugin on or off;
+  - each change is kept in `<roots.state>/plugins.json` (`write_private_file`) and applies at the next start. A
+    choices file that is not one is refused, by name, and never overwritten.
+- **The router** has `RouteId::strata_plugins*`, `ApiRouterConfig::plugins`, and the log's route names.
+  `server_bootstrap` serves the routes over `<engine folder>/../plugins`. At the start it decides which plugins run
+  (`running`).
+- **The page**: a Plugins tab, shown wherever the route answers. A refusal shows in the tab.
+  - Each plugin is a card: its name, kind, version, publisher, licence, state badge, reason and switches, whether it
+    runs, and its SHA-256s.
+  - It offers Approve (asked first: a code plugin's code runs with the server's rights) or Turn on/off.
+  - A note says a change applies after a restart.
+- **README**: the Plugins tab joins the features list, said to be still being built.
+- **Proof**:
+  - `plugin_routes_tests`: 3 cases, RED against a stub, then GREEN.
+  - The router: `plugin_routes_need_their_handler_and_the_key` failed with the route loop taken out, and passes with it.
+  - The page: `web_ui_has_a_plugins_tab` was RED first; the views' scroll rule and their list now name the Plugins
+    view.
+  - `http_parser_tests` has the new error's row; `about_info_tests` has the build record's plugins.
+  - MSVC: the whole tree built; the whole suite 1428/1430 (the two release-only cases a test-hooks tree fails).
+    Linux gcc 13.3 and clang 18.1: the whole tree built; the suites it touches 121/121 each.
+  - Live, a shares-tree server on the x25 demo data (port 18091) with two test plugins: listed, approved (the question
+    shown), turned off and on; a tool plugin approved shows as refused (tool plugins do not run yet). After a restart,
+    Debugging shows as running; a changed file shows "Changed since approved" with "Approve again". The test plugins
+    and choices were then moved out of the demo install.
+- **Next:** debugging as the first plugin (make writes it and its build record entry; the server's runtime switch
+  replaces the compile-time `debugging_build()`), the TUI's Plugins view, then search and email.
+
 ### Claude Code session, 2026-10-30 z48 (Windows box; owner-directed)
 
 The plugin platform, step 1 (the owner, 2026-10-30: "Continue building for now"; the order he chose: the platform and

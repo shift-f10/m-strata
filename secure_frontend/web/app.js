@@ -156,15 +156,16 @@
 
   function showView(name) {
     state.view = name;
-    ["login", "chat", "models", "monitor", "settings", "about"].forEach(function (view) { $("view-" + view).hidden = view !== name; });
+    ["login", "chat", "models", "monitor", "settings", "plugins", "about"].forEach(function (view) { $("view-" + view).hidden = view !== name; });
     var signedIn = name !== "login";
     $("tabs").hidden = !signedIn;
     $("new-btn").hidden = name !== "chat";
     $("header-model").hidden = !signedIn || !launcher.enabled;
-    ["chat", "models", "monitor", "settings", "about"].forEach(function (tab) { $("tab-btn-" + tab).setAttribute("aria-selected", tab === name ? "true" : "false"); });
+    ["chat", "models", "monitor", "settings", "plugins", "about"].forEach(function (tab) { $("tab-btn-" + tab).setAttribute("aria-selected", tab === name ? "true" : "false"); });
     if (name === "monitor") { startMonitor(); } else { stopMonitor(); }
     if (name === "models") { renderModels(false); refreshLauncher(); refreshDownloads(); showModelsSubtab(modelsSubtab); }
     if (name === "settings") { refreshFolders(); refreshAlerts(); refreshSearch(); refreshServerConfig(); renderKey(); }
+    if (name === "plugins") { refreshPlugins(); }
     if (name === "about") { renderAbout(); }
     if (name === "chat") { $("input").focus(); }
   }
@@ -193,6 +194,7 @@
     refreshLauncher();  // a server with model control off answers 404 and the page stays as it was
     refreshDownloads();  // likewise with downloads off; a transfer already running is followed
     refreshFolders(); refreshAlerts(); refreshSearch(); refreshServerConfig();  // the Settings tab shows with any of them
+    refreshPlugins();    // the Plugins tab shows wherever its route answers
     loadHostGpus();      // the cards' GPUs choice lists this PC's GPUs
   }
 
@@ -3324,6 +3326,114 @@
     await refreshServerConfig();
   }
 
+  // ---------------------------------------------------------------- Plugins
+  // The owner (2026-10-30): "we also need to have a plugin management tab to manage these". Every plugin of the install
+  // with what it is, its state and why, and its SHA-256s; one that waits is approved here (the files there now are
+  // pinned), a trusted one turned on or off. Each change applies when the server restarts. The tab shows wherever the
+  // server answers its route (model control on; the clients its other settings answer), a refusal shown in it.
+  var plugins = { data: null, acting: false };
+  var PLUGIN_KINDS = { engine: "engine family", tool: "tool", notifier: "notifier", diagnostics: "diagnostics" };
+  var PLUGIN_STATES = {
+    on: ["On", "st-badge--generating"], off: ["Off", "st-badge--stopped"], waiting: ["Waiting for approval", "st-badge--queued"],
+    changed: ["Changed since approved", "st-badge--queued"], refused: ["Refused", "st-badge--error"]
+  };
+  function showPluginsError(text) { $("plugins-error").textContent = text; $("plugins-error").hidden = !text; }
+  async function refreshPlugins() {
+    var response, text;
+    try { response = await api("/v1/strata/plugins", jsonPost({})); text = await response.text(); } catch (e) { return; }
+    $("tab-btn-plugins").hidden = response.status === 404 || response.status === 403;
+    if (!response.ok) { plugins.data = null; renderPlugins(); showPluginsError(errorText(response.status, text)); return; }
+    try { plugins.data = JSON.parse(text); } catch (e) { plugins.data = null; }
+    showPluginsError("");
+    renderPlugins();
+  }
+  function approvalQuestion(p) {
+    var what = p.kind === "diagnostics" ? "It changes what this server logs and shows; it runs no code of its own."
+                                        : "Its code then runs on this PC, with this server's rights.";
+    return "Approve " + (p.name || p.id) + (p.version ? " " + p.version : "") + " from " + (p.publisher || "an unnamed publisher") + "? " +
+           what + " Only the files there now are approved: their SHA-256s are kept, and a changed file waits for approval again.";
+  }
+  function pluginNow(p) {
+    if (p.running === true) { return p.state === "on" ? "Running." : "Running until the server restarts."; }
+    return p.state === "on" ? "Runs after the server restarts." : "Not running.";
+  }
+  function pluginSums(p) {
+    var sums = el("details", "plugin-sums");
+    sums.appendChild(el("summary", "muted small", "SHA-256s"));
+    var list = el("ul");
+    [{ path: "plugin.json", sha256: p.manifest_sha256 }].concat(p.files || []).forEach(function (f) {
+      var item = el("li", "small", String(f.path) + " ");
+      item.appendChild(el("code", null, String(f.sha256)));
+      list.appendChild(item);
+    });
+    sums.appendChild(list);
+    return sums;
+  }
+  function pluginCard(p) {
+    var card = el("div", "st-card alerts-settings plugin-card");
+    var head = el("div", "models-head");
+    head.appendChild(el("span", "card-title", p.name || p.id));
+    var known = PLUGIN_STATES[p.state] || [String(p.state || "-"), ""];
+    head.appendChild(el("span", "st-badge " + known[1], known[0]));
+    card.appendChild(head);
+    var facts = [PLUGIN_KINDS[p.kind] || "not read", p.version ? "version " + p.version : "", p.publisher ? "from " + p.publisher : "",
+                 p.license || "", p.first_party ? "built with this install" : ""].filter(function (f) { return f; });
+    card.appendChild(el("p", "plugin-facts", p.id + DOT + facts.join(DOT)));
+    if (p.about) { card.appendChild(el("p", "small", p.about)); }
+    if (p.reason) { card.appendChild(el("p", "muted small", p.reason)); }
+    if (Array.isArray(p.switches) && p.switches.length) { card.appendChild(el("p", "muted small", "Turns on: " + p.switches.join(", "))); }
+    card.appendChild(el("p", "muted small", pluginNow(p)));
+    if (p.manifest_sha256) { card.appendChild(pluginSums(p)); }
+    var editable = !!(plugins.data && plugins.data.editable);
+    var actions = el("div", "model-actions");
+    var button = null;
+    if (p.state === "waiting" || p.state === "changed") {
+      button = el("button", "st-btn st-btn--primary st-btn--sm", p.state === "changed" ? "Approve again" : "Approve");
+      button.addEventListener("click", function () { approvePlugin(p); });
+    } else if (p.state === "on" || p.state === "off") {
+      var on = p.state !== "on";
+      button = el("button", "st-btn st-btn--secondary st-btn--sm", on ? "Turn on" : "Turn off");
+      button.addEventListener("click", function () { switchPlugin(p, on); });
+    }
+    if (button) {
+      button.type = "button";
+      button.disabled = !editable || plugins.acting;
+      actions.appendChild(button);
+      card.appendChild(actions);
+    }
+    return card;
+  }
+  function renderPlugins() {
+    var list = $("plugins-list");
+    clear(list);
+    var d = plugins.data;
+    $("plugins-folder").textContent = d ? "Folder: " + String(d.folder || "-") + (d.editable ? "" : " (read only: this server keeps no choices)") : "";
+    if (!d) { return; }
+    var all = Array.isArray(d.plugins) ? d.plugins : [];
+    if (!all.length) { list.appendChild(el("p", "muted small", "No plugins yet: each plugin is a folder holding its plugin.json, in the folder above.")); return; }
+    all.forEach(function (p) { list.appendChild(pluginCard(p)); });
+  }
+  async function pluginChange(request) {
+    plugins.acting = true;
+    showPluginsError("");
+    renderPlugins();
+    var answer = await downloadsAnswer(request);
+    plugins.acting = false;
+    if (answer.signedOut) { return; }
+    if (answer.error) { renderPlugins(); showPluginsError(answer.error); return; }
+    $("plugins-restart-note").hidden = false;
+    await refreshPlugins();
+  }
+  async function approvePlugin(p) {
+    if (plugins.acting) { return; }
+    if (!window.confirm(approvalQuestion(p))) { return; }
+    await pluginChange(api("/v1/strata/plugins/approve", jsonPost({ id: p.id })));
+  }
+  async function switchPlugin(p, on) {
+    if (plugins.acting) { return; }
+    await pluginChange(api("/v1/strata/plugins/switch", jsonPost({ id: p.id, on: on })));
+  }
+
   // ---------------------------------------------------------------- Settings: model folders
   // Owner 2026-10-27: the server may use model folders as they are, other users' access included, and never change their
   // permissions (roots.allow_untrusted_media). Read from and saved to the config file; it applies when the server
@@ -3871,6 +3981,8 @@
     $("compat-copy").addEventListener("click", function () { copyCompat("Copied: paste it into an issue on the project's GitHub page."); });
     $("compat-save").addEventListener("click", function () { saveText(compatMarkdown(), "m-strata-compatibility.md"); });
     $("tab-btn-settings").addEventListener("click", function () { showView("settings"); });
+    $("tab-btn-plugins").addEventListener("click", function () { showView("plugins"); });
+    $("plugins-refresh").addEventListener("click", refreshPlugins);
     $("key-show").addEventListener("click", function () { keyShown = !keyShown; renderKey(); });
     $("key-copy").addEventListener("click", function () { if (state.key) { copyText(state.key); } });
     $("key-rotate").addEventListener("click", rotateKey);

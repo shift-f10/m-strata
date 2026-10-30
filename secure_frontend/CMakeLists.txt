@@ -835,6 +835,9 @@ endif()
 # Plugins (owner 2026-10-30; docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md): manifests.
 secure_frontend_add_library(secure_frontend_plugins SOURCES src/plugin_manifest.cpp src/plugin_registry.cpp
     LINKS secure_frontend_json secure_frontend_sha256 secure_frontend_paths)
+# The Plugins tab's server half (plugin_routes.hpp): the list, an approval, on/off, in <roots.state>/plugins.json.
+secure_frontend_add_library(secure_frontend_plugin_routes SOURCES src/plugin_routes.cpp
+    LINKS secure_frontend_plugins secure_frontend_token_store secure_frontend_api_core secure_frontend_paths)
 # A calibration's report for a bug report (owner 2026-10-30): its trials, this PC's hardware and the build, as Markdown.
 secure_frontend_add_library(secure_frontend_calibration_report SOURCES src/calibration_report.cpp
     LINKS secure_frontend_about_info secure_frontend_serve_monitor)
@@ -879,7 +882,7 @@ secure_frontend_add_library(secure_frontend_server_bootstrap
           secure_frontend_socket_io secure_frontend_api_core secure_frontend_connection_pool
           secure_frontend_chat_route secure_frontend_request_log secure_frontend_launch secure_frontend_model_runtime
           secure_frontend_model_launcher secure_frontend_downloads secure_frontend_first_start secure_frontend_card_routes
-          secure_frontend_about_info secure_frontend_config_routes)
+          secure_frontend_about_info secure_frontend_config_routes secure_frontend_plugin_routes)
 if(SECURE_FRONTEND_EMAIL_ALERTS)
     target_link_libraries(secure_frontend_server_bootstrap PUBLIC secure_frontend_alert_routes secure_frontend_email_alerts)
 endif()
@@ -1519,10 +1522,10 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         model_control_routes_need_the_switch_and_the_key model_download_routes_need_the_switch_and_the_key
         model_card_routes_need_the_switch_and_the_key calibration_routes_need_their_handlers_and_the_key
         alert_routes_need_their_handler_and_the_key search_routes_need_their_handler_and_the_key
-        config_routes_need_their_handler_and_the_key
+        config_routes_need_their_handler_and_the_key plugin_routes_need_their_handler_and_the_key
         web_ui_cards_from_this_pc_and_the_danger_zone web_ui_downloads_go_to_a_chosen_folder
         web_ui_downloads_say_what_is_on_this_pc web_ui_downloads_groups_are_accordions web_ui_downloads_destination_is_a_panel
-        web_ui_models_tab_calibrates web_ui_models_tab_shows_compatibility web_ui_has_email_alert_settings web_ui_has_server_settings web_ui_claims_a_login_link_at_load_and_on_hashchange web_ui_opens_the_view_its_address_names
+        web_ui_models_tab_calibrates web_ui_models_tab_shows_compatibility web_ui_has_email_alert_settings web_ui_has_server_settings web_ui_has_a_plugins_tab web_ui_claims_a_login_link_at_load_and_on_hashchange web_ui_opens_the_view_its_address_names
         web_ui_has_web_search_settings web_ui_has_model_folder_setting
         web_ui_monitor_shows_stopped_and_the_model web_ui_monitor_is_even_and_shows_memory_disk_and_cache
         web_ui_about_lists_the_engines_and_this_pc
@@ -2282,7 +2285,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
 
     secure_frontend_add_test_executable(secure_frontend_about_info_tests tests/about_info_test.cpp secure_frontend_about_info)
     secure_frontend_add_cases(secure_frontend_about_info_tests
-        the_build_record_is_read_and_checked this_pcs_hardware_is_named the_about_json_has_both this_pcs_gpus_are_listed
+        the_build_record_is_read_and_checked the_build_record_lists_first_party_plugins this_pcs_hardware_is_named
+        the_about_json_has_both this_pcs_gpus_are_listed
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # Plugins (owner 2026-10-30): plugin.json read and checked.
@@ -2294,6 +2298,12 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_plugin_registry_tests
         a_new_plugin_waits_then_runs_once_approved a_changed_plugin_waits_again a_first_party_plugin_is_trusted_by_its_build_record
         refusals_say_why the_choices_round_trip
+        LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+    # The Plugins tab's routes (owner 2026-10-30): the list, an approval, on/off.
+    secure_frontend_add_test_executable(secure_frontend_plugin_routes_tests tests/plugin_routes_test.cpp
+        secure_frontend_plugin_routes secure_frontend_http_request_handler)
+    secure_frontend_add_cases(secure_frontend_plugin_routes_tests
+        the_plugins_are_listed approval_and_switching_are_kept refusals_say_why
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # A calibration's report for a bug report (owner 2026-10-30).

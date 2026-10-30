@@ -61,6 +61,40 @@ void the_build_record_is_read_and_checked() {
   }
 }
 
+// Plugins (the owner, 2026-10-30, decision 4: plugins `make` built are trusted through the build record): each
+// first-party plugin with the SHA-256s make recorded and whether it starts on; a record without a "plugins" list has
+// none, and a plugin entry that is not one refuses the whole record.
+void the_build_record_lists_first_party_plugins() {
+  const auto folder = secure_frontend_test::make_scratch_directory();
+  const std::string sum_a(64U, 'a');
+  const std::string sum_b(64U, 'b');
+  secure_frontend_test::write_file(folder / "build.json", R"({"schema_version": 1, "built": "x", "commit": "c", "ggml": "g",
+    "cuda_arch": "89-real", "engines": [], "plugins": [
+      {"id": "debugging", "manifest": ")" + sum_a + R"(", "files": {}, "on": true},
+      {"id": "search", "manifest": ")" + sum_a + R"(", "files": {"strata-search.exe": ")" + sum_b + R"("}, "on": false}]})");
+  const auto build = secure_frontend::read_engine_build(folder);
+  expect(build.has_value() && build->plugins.size() == 2U, "two plugins");
+  if (!build || build->plugins.size() != 2U) return;
+  expect(build->plugins[0].id == "debugging" && build->plugins[0].manifest == sum_a && build->plugins[0].files.empty() &&
+             build->plugins[0].on,
+         "the first, on");
+  expect(build->plugins[1].id == "search" && build->plugins[1].files.size() == 1U &&
+             build->plugins[1].files.at("strata-search.exe") == sum_b && !build->plugins[1].on,
+         "the second, its file, off");
+  secure_frontend_test::write_file(folder / "build.json", kRecord);
+  expect(secure_frontend::read_engine_build(folder)->plugins.empty(), "a record without plugins has none");
+  std::vector<std::string> bads;
+  bads.push_back("\"plugins\": [{\"id\": \"Bad\", \"manifest\": \"" + sum_a + "\", \"files\": {}, \"on\": true}]");
+  bads.push_back("\"plugins\": [{\"id\": \"x\", \"manifest\": \"short\", \"files\": {}, \"on\": true}]");
+  bads.push_back("\"plugins\": [{\"id\": \"x\", \"manifest\": \"" + sum_a + "\", \"files\": {}, \"on\": \"yes\"}]");
+  bads.push_back("\"plugins\": [{\"id\": \"x\", \"manifest\": \"" + sum_a + "\", \"files\": {}, \"on\": true, \"more\": 1}]");
+  for (const std::string& bad : bads) {
+    secure_frontend_test::write_file(folder / "build.json",
+                                     R"({"schema_version": 1, "built": "x", "commit": "c", "ggml": "g", "cuda_arch": "a", "engines": [], )" + bad + "}");
+    expect(!secure_frontend::read_engine_build(folder).has_value(), "refused: " + bad.substr(0, 70));
+  }
+}
+
 void this_pcs_hardware_is_named() {
   const auto hardware = secure_frontend::hardware_facts();
   expect(!hardware.cpu.empty() && hardware.cpu.find("threads") != std::string::npos, "the CPU and its threads: " + hardware.cpu);
@@ -136,6 +170,7 @@ void this_pcs_gpus_are_listed() {
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"the_build_record_is_read_and_checked", the_build_record_is_read_and_checked},
+      {"the_build_record_lists_first_party_plugins", the_build_record_lists_first_party_plugins},
       {"this_pcs_hardware_is_named", this_pcs_hardware_is_named},
       {"the_about_json_has_both", the_about_json_has_both},
       {"this_pcs_gpus_are_listed", this_pcs_gpus_are_listed},

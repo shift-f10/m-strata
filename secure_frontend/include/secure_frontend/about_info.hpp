@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -22,6 +23,14 @@ struct EngineBuildLibrary final {
   std::string source;    // what it is built from
   std::uint64_t bytes{0};
 };
+// A first-party plugin `make` built (owner 2026-10-30, decision 4: trusted through this record): its manifest's and
+// files' SHA-256 (lowercase hex) and whether it starts on.
+struct EngineBuildPlugin final {
+  std::string id;
+  std::string manifest;
+  std::map<std::string, std::string> files;
+  bool on{false};
+};
 struct EngineBuild final {
   std::string built;     // UTC, ISO 8601
   std::string commit;    // the repository commit
@@ -29,6 +38,7 @@ struct EngineBuild final {
   std::string cuda_arch; // the GPU targets
   std::vector<std::string> features;
   std::vector<EngineBuildLibrary> engines;
+  std::vector<EngineBuildPlugin> plugins{};
 };
 // <engine_folder>/build.json, read and checked: schema 1, at most 64 KiB, only these fields, each text printable ASCII
 // of at most 200 characters, at most 32 engines and 8 features. nullopt: none there, or not such a record.

@@ -79,6 +79,8 @@ constexpr ExpectedRow kExpected[] = {
     {ApiError::calibration_unsupported, 422, "invalid_request_error", "calibration_unsupported", "This model's engine has no calibration here yet."},
     {ApiError::not_calibrating, 409, "invalid_request_error", "not_calibrating", "No calibration is running."},
     {ApiError::settings_refused, 422, "invalid_request_error", "settings_refused", "These settings can't be used."},
+    // Plugins (owner 2026-10-30): the Plugins tab's refusals, with their reason.
+    {ApiError::plugin_refused, 422, "invalid_request_error", "plugin_refused", "This plugin can't be used that way."},
 };
 
 // GUI-first start-up (spec 2026-10-27 §4): a card or folder refusal carries the module's own fixed reason (never a
@@ -93,6 +95,9 @@ void err_card_and_folder_rows_carry_their_reason() {
   const auto settings = secure_frontend::make_error_response(ApiError::settings_refused, {.reason = "alerts.email.from: must be an email address"});
   expect(settings.status == 422 && settings.body.find("\"message\":\"alerts.email.from: must be an email address\"") != std::string::npos,
          "settings_refused carries its reason");
+  const auto plugin = secure_frontend::make_error_response(ApiError::plugin_refused, {.reason = "waiting for the owner's approval"});
+  expect(plugin.status == 422 && plugin.body.find("\"message\":\"waiting for the owner's approval\"") != std::string::npos,
+         "plugin_refused carries its reason");
   const auto other = secure_frontend::make_error_response(ApiError::invalid_request, {.reason = "anything"});
   expect(other.body.find("anything") == std::string::npos, "other rows never take a reason");
   const auto empty = secure_frontend::make_error_response(ApiError::card_refused);

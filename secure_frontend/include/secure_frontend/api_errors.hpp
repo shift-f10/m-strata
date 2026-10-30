@@ -27,6 +27,8 @@ enum class ApiError {
   calibration_unsupported, not_calibrating,
   // (spec 2026-10-27 §5a) the page's settings.
   settings_refused,
+  // Plugins (owner 2026-10-30): the Plugins tab.
+  plugin_refused,
 };
 
 struct ApiErrorRow final {

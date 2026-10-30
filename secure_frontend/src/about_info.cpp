@@ -23,6 +23,24 @@ constexpr std::uintmax_t kMaxRecordBytes = 64U * 1024U;
 constexpr std::size_t kMaxText = 200U;
 constexpr std::size_t kMaxEngines = 32U;
 constexpr std::size_t kMaxFeatures = 8U;
+constexpr std::size_t kMaxPlugins = 32U;
+
+// A plugin id, as plugin_manifest.hpp's valid_plugin_id takes it (a lowercase letter, then up to 31 of a-z, 0-9, '_').
+bool plugin_id(const std::string& id) {
+  if (id.empty() || id.size() > 32U || id.front() < 'a' || id.front() > 'z') return false;
+  for (const char c : id) {
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
+  }
+  return true;
+}
+
+bool hex64(const std::string& text) {
+  if (text.size() != 64U) return false;
+  for (const char c : text) {
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+  }
+  return true;
+}
 
 bool printable(const std::string& text) {
   if (text.size() > kMaxText) return false;
@@ -136,7 +154,7 @@ std::optional<EngineBuild> read_engine_build(const std::filesystem::path& engine
   std::ifstream in(file, std::ios::binary);
   if (!in) return std::nullopt;
   const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  const auto parsed = parse_json(text, JsonLimits{.max_bytes = static_cast<std::size_t>(kMaxRecordBytes), .max_depth = 4U,
+  const auto parsed = parse_json(text, JsonLimits{.max_bytes = static_cast<std::size_t>(kMaxRecordBytes), .max_depth = 5U,
                                                   .max_container_entries = 64U, .max_string_bytes = 1024U, .allow_fractions = false});
   const auto* root = std::get_if<JsonValue>(&parsed);
   if (root == nullptr || root->if_object() == nullptr) return std::nullopt;
@@ -171,6 +189,31 @@ std::optional<EngineBuild> read_engine_build(const std::filesystem::path& engine
         library.bytes = static_cast<std::uint64_t>(*bytes->if_integer());
       }
       build.engines.push_back(std::move(library));
+    }
+  }
+  // the first-party plugins (owner 2026-10-30, decision 4: trusted through this record): what make built, and whether
+  // each starts on
+  if (const JsonValue* plugins = member(*root, "plugins")) {
+    const auto* list = plugins->if_array();
+    if (list == nullptr || list->size() > kMaxPlugins) return std::nullopt;
+    for (const auto& item : *list) {
+      const JsonValue* id = member(item, "id");
+      const JsonValue* manifest = member(item, "manifest");
+      const JsonValue* files = member(item, "files");
+      const JsonValue* on = member(item, "on");
+      if (item.if_object() == nullptr || item.if_object()->size() != 4U || id == nullptr || id->if_string() == nullptr ||
+          !plugin_id(*id->if_string()) || manifest == nullptr || manifest->if_string() == nullptr || !hex64(*manifest->if_string()) ||
+          files == nullptr || files->if_object() == nullptr || on == nullptr || on->if_boolean() == nullptr) {
+        return std::nullopt;
+      }
+      EngineBuildPlugin plugin{.id = *id->if_string(), .manifest = *manifest->if_string(), .files = {}, .on = *on->if_boolean()};
+      for (const auto& [path, sum] : *files->if_object()) {
+        if (path.empty() || path.size() > 128U || !printable(path) || sum.if_string() == nullptr || !hex64(*sum.if_string())) {
+          return std::nullopt;
+        }
+        plugin.files[path] = *sum.if_string();
+      }
+      build.plugins.push_back(std::move(plugin));
     }
   }
   return build;

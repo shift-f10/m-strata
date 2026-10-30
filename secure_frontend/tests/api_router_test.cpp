@@ -448,8 +448,8 @@ void web_ui_has_the_models_tab_hidden_until_the_server_offers_it() {
          "a 403 shows the Models tab with the reason");
   expect(html.find("id=\"models-denied\"") != std::string::npos && html.find("control_remote") != std::string::npos,
          "the reason names the switch that allows other machines");
-  // (2026-10-28: the Settings tab joined the views)
-  expect(js.find("[\"login\", \"chat\", \"models\", \"monitor\", \"settings\", \"about\"]") != std::string::npos &&
+  // (2026-10-28: the Settings tab joined the views; 2026-10-30: the Plugins tab)
+  expect(js.find("[\"login\", \"chat\", \"models\", \"monitor\", \"settings\", \"plugins\", \"about\"]") != std::string::npos &&
              js.find("$(\"tab-btn-models\").addEventListener(\"click\", function () { showView(\"models\"); });") != std::string::npos,
          "the Models tab switches views like the others");
 }
@@ -675,6 +675,34 @@ void web_ui_models_tab_calibrates() {
          "a card with a report offers it, read from its route, copied or saved");
 }
 
+// The Plugins tab (the owner, 2026-10-30: "we also need to have a plugin management tab to manage these"): shown when the
+// server answers its route; each plugin with what it is, its state and why, its SHA-256s, and Approve or Turn on/off;
+// an approval asked first; every change applies at the next start. Drawn with textContent only (a plugin's words are
+// its publisher's, never markup).
+void web_ui_has_a_plugins_tab() {
+  const std::string html{secure_frontend::find_web_asset("/")->body};
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  for (const char* id : {"id=\"tab-btn-plugins\"", "id=\"view-plugins\"", "id=\"plugins-folder\"", "id=\"plugins-list\"",
+                         "id=\"plugins-restart-note\"", "id=\"plugins-error\""}) {
+    expect(html.find(id) != std::string::npos, std::string{"the Plugins tab has "} + id);
+  }
+  expect(html.find("data-tab=\"plugins\" hidden>") != std::string::npos, "the tab is hidden until the server answers");
+  expect(js.find("api(\"/v1/strata/plugins\", jsonPost({}))") != std::string::npos &&
+             js.find("api(\"/v1/strata/plugins/approve\", jsonPost({ id: p.id }))") != std::string::npos &&
+             js.find("api(\"/v1/strata/plugins/switch\", jsonPost({ id: p.id, on: on }))") != std::string::npos,
+         "the three routes");
+  expect(js.find("[\"login\", \"chat\", \"models\", \"monitor\", \"settings\", \"plugins\", \"about\"].forEach") != std::string::npos &&
+             js.find("if (name === \"plugins\") { refreshPlugins(); }") != std::string::npos,
+         "a view of its own, refreshed when shown");
+  expect(js.find("$(\"tab-btn-plugins\").hidden = response.status === 404 || response.status === 403;") != std::string::npos,
+         "the tab shows wherever the route answers (a refusal shown in it)");
+  expect(js.find("if (!window.confirm(approvalQuestion(p))) { return; }") != std::string::npos, "an approval is asked first");
+  expect(js.find("$(\"plugins-restart-note\").hidden = false;") != std::string::npos, "a change applies at the next start");
+  expect(js.find("p.state === \"waiting\" || p.state === \"changed\"") != std::string::npos &&
+             js.find("p.state === \"on\" || p.state === \"off\"") != std::string::npos,
+         "Approve for one that waits, on/off for a trusted one");
+}
+
 // The Settings tab (spec 2026-10-28-server-window-design, Part 1; the owner: "a configuration tab ... api key, etc"): the
 // API key (the one the page signed in with, shown on request and copied - never fetched), its rotation (typed ROTATE,
 // the new key shown once), and the server's settings drawn from POST /v1/strata/config and saved through
@@ -699,7 +727,7 @@ void web_ui_has_server_settings() {
     }
     return false;
   };
-  for (const char* view : {"view--monitor", "view--about", "view--models", "view--settings"}) {
+  for (const char* view : {"view--monitor", "view--about", "view--models", "view--settings", "view--plugins"}) {
     expect(scrolls(view), std::string{"the "} + view + " view scrolls on its own");
   }
   for (const char* id : {"id=\"key-settings\"", "id=\"key-value\"", "id=\"key-show\"", "id=\"key-copy\"", "id=\"key-rotate-confirm\"",
@@ -1829,6 +1857,49 @@ void config_routes_need_their_handler_and_the_key() {
   expect(none.empty(), "off: nothing is called");
 }
 
+// The Plugins tab (owner 2026-10-30): its routes are keyed, POST, JSON, served only while their handler is set, as the
+// Settings tab's.
+void plugin_routes_need_their_handler_and_the_key() {
+  const std::vector<std::pair<std::string, secure_frontend::RouteId>> routes{
+      {"/v1/strata/plugins", secure_frontend::RouteId::strata_plugins},
+      {"/v1/strata/plugins/approve", secure_frontend::RouteId::strata_plugins_approve},
+      {"/v1/strata/plugins/switch", secure_frontend::RouteId::strata_plugins_switch}};
+  const auto make = [](std::vector<std::string>* calls, const bool on) {
+    secure_frontend::SecretBytes secret;
+    (void)secret.assign(kRouterToken);
+    secure_frontend::ModelCardRoutes plugins;
+    if (on) {
+      plugins.handle = [calls](const secure_frontend::RouteId route, const std::string_view body,
+                               const secure_frontend::RequestContext&) -> secure_frontend::RouteResult {
+        calls->push_back(std::to_string(static_cast<int>(route)) + " " + std::string{body});
+        return secure_frontend::HttpResponse{.status = 200, .headers = {}, .body = "{}\n"};
+      };
+    }
+    return secure_frontend::ApiRouter({
+        .policy = secure_frontend::make_http_policy(*secure_frontend::parse_listener_address("127.0.0.1"), 8080, {}, {}),
+        .validator = secure_frontend::make_bearer_validator(std::make_shared<const secure_frontend::TokenVerifier>(std::move(secret))),
+        .model_id = "", .owned_by = "local", .chat_body_limit = 49152,
+        .health = [] { return secure_frontend::HealthView{true, "none", ""}; },
+        .chat = {},
+        .served = [] { return secure_frontend::ServedModels{}; },
+        .plugins = std::move(plugins)});
+  };
+  std::vector<std::string> calls;
+  auto router = make(&calls, true);
+  for (const auto& [target, route] : routes) {
+    expect(request(router, "POST", target, "{}", false).status == 401, target + " needs the key");
+    expect(request(router, "POST", target, "{\"x\":1}").status == 200 && !calls.empty() &&
+               calls.back() == std::to_string(static_cast<int>(route)) + " {\"x\":1}",
+           target + " reaches the handler");
+    expect(request(router, "GET", target).status == 405, target + " is POST only");
+    expect(request(router, "POST", target, "{}", true, true, "text/plain").status == 415, target + " takes JSON");
+  }
+  std::vector<std::string> none;
+  auto off = make(&none, false);
+  for (const auto& [target, route] : routes) expect(request(off, "POST", target, "{}").status == 404, target + " is no route when off");
+  expect(none.empty(), "off: nothing is called");
+}
+
 // GUI-first start-up (spec 2026-10-27 §5.3): the calibration routes are control routes - keyed, POST, a small JSON
 // body - served only while their handlers are set; a launcher without them (or with control off) answers 404. The
 // report route (owner 2026-10-30: a calibration's report for a bug report) is one of them.
@@ -1978,6 +2049,7 @@ int main(int argc, char** argv) {
       {"alert_routes_need_their_handler_and_the_key", alert_routes_need_their_handler_and_the_key},
       {"search_routes_need_their_handler_and_the_key", search_routes_need_their_handler_and_the_key},
       {"config_routes_need_their_handler_and_the_key", config_routes_need_their_handler_and_the_key},
+      {"plugin_routes_need_their_handler_and_the_key", plugin_routes_need_their_handler_and_the_key},
       {"web_ui_cards_from_this_pc_and_the_danger_zone", web_ui_cards_from_this_pc_and_the_danger_zone},
       {"web_ui_downloads_go_to_a_chosen_folder", web_ui_downloads_go_to_a_chosen_folder},
       {"web_ui_downloads_say_what_is_on_this_pc", web_ui_downloads_say_what_is_on_this_pc},
@@ -1987,6 +2059,7 @@ int main(int argc, char** argv) {
       {"web_ui_models_tab_shows_compatibility", web_ui_models_tab_shows_compatibility},
       {"web_ui_has_email_alert_settings", web_ui_has_email_alert_settings},
       {"web_ui_has_server_settings", web_ui_has_server_settings},
+      {"web_ui_has_a_plugins_tab", web_ui_has_a_plugins_tab},
       {"web_ui_claims_a_login_link_at_load_and_on_hashchange", web_ui_claims_a_login_link_at_load_and_on_hashchange},
       {"web_ui_opens_the_view_its_address_names", web_ui_opens_the_view_its_address_names},
       {"web_ui_has_web_search_settings", web_ui_has_web_search_settings},

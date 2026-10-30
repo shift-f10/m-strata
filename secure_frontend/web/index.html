@@ -32,6 +32,8 @@
       <svg class="st-icon st-icon--sm"><use href="/ui/sprite.svg#i-activity"/></svg>Monitor</button>
     <button class="st-tab" role="tab" id="tab-btn-settings" aria-controls="view-settings" aria-selected="false" data-tab="settings" hidden>
       <svg class="st-icon st-icon--sm"><use href="/ui/sprite.svg#i-settings"/></svg>Settings</button>
+    <button class="st-tab" role="tab" id="tab-btn-plugins" aria-controls="view-plugins" aria-selected="false" data-tab="plugins" hidden>
+      <svg class="st-icon st-icon--sm"><use href="/ui/sprite.svg#i-tool"/></svg>Plugins</button>
     <button class="st-tab" role="tab" id="tab-btn-about" aria-controls="view-about" aria-selected="false" data-tab="about">
       <svg class="st-icon st-icon--sm"><use href="/ui/sprite.svg#i-info"/></svg>About</button>
   </nav>
@@ -519,6 +521,24 @@
         <pre class="search-output" id="search-output" hidden></pre>
         <p class="msg-error" id="search-error" role="alert" hidden></p>
       </div>
+    </div>
+  </section>
+
+  <!-- ============================ Plugins (POST /v1/strata/plugins) ============================ -->
+  <section class="view view--plugins" id="view-plugins" role="tabpanel" aria-labelledby="tab-btn-plugins" hidden>
+    <div class="settings">
+      <p class="msg-warn" id="plugins-restart-note" role="status" hidden>Saved. The server uses the change after it restarts.</p>
+      <div class="st-card alerts-settings">
+        <div class="models-head"><span class="card-title">Plugins</span>
+          <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="plugins-refresh">
+            <svg class="st-icon st-icon--sm"><use href="/ui/sprite.svg#i-refresh"/></svg>Refresh</button></div>
+        <p class="muted small">Plugins add engine families, tools, notifiers and diagnostics. One runs only when this install was
+          built with it or you approved it, and only with the files you approved: a changed file waits for your approval again.
+          A change applies when the server restarts.</p>
+        <p class="muted small" id="plugins-folder"></p>
+        <p class="msg-error" id="plugins-error" role="alert" hidden></p>
+      </div>
+      <div class="plugins-list" id="plugins-list"></div>
     </div>
   </section>
 
