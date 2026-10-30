@@ -832,6 +832,9 @@ secure_frontend_add_library(secure_frontend_about_info SOURCES src/about_info.cp
 if(WIN32)
     target_link_libraries(secure_frontend_about_info PUBLIC advapi32)
 endif()
+# Plugins (owner 2026-10-30; docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md): manifests.
+secure_frontend_add_library(secure_frontend_plugins SOURCES src/plugin_manifest.cpp src/plugin_registry.cpp
+    LINKS secure_frontend_json secure_frontend_sha256 secure_frontend_paths)
 # A calibration's report for a bug report (owner 2026-10-30): its trials, this PC's hardware and the build, as Markdown.
 secure_frontend_add_library(secure_frontend_calibration_report SOURCES src/calibration_report.cpp
     LINKS secure_frontend_about_info secure_frontend_serve_monitor)
@@ -2280,6 +2283,17 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_about_info_tests tests/about_info_test.cpp secure_frontend_about_info)
     secure_frontend_add_cases(secure_frontend_about_info_tests
         the_build_record_is_read_and_checked this_pcs_hardware_is_named the_about_json_has_both this_pcs_gpus_are_listed
+        LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+
+    # Plugins (owner 2026-10-30): plugin.json read and checked.
+    secure_frontend_add_test_executable(secure_frontend_plugin_manifest_tests tests/plugin_manifest_test.cpp secure_frontend_plugins)
+    secure_frontend_add_cases(secure_frontend_plugin_manifest_tests
+        a_diagnostics_manifest_is_read a_code_plugin_names_this_platforms_files a_wrong_manifest_is_refused_by_name
+        LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+    secure_frontend_add_test_executable(secure_frontend_plugin_registry_tests tests/plugin_registry_test.cpp secure_frontend_plugins)
+    secure_frontend_add_cases(secure_frontend_plugin_registry_tests
+        a_new_plugin_waits_then_runs_once_approved a_changed_plugin_waits_again a_first_party_plugin_is_trusted_by_its_build_record
+        refusals_say_why the_choices_round_trip
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # A calibration's report for a bug report (owner 2026-10-30).

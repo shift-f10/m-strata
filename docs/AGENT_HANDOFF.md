@@ -280,6 +280,39 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z48 (Windows box; owner-directed)
+
+The plugin platform, step 1 (the owner, 2026-10-30: "Continue building for now"; the order he chose: the platform and
+the Plugins tab first). The new library `secure_frontend_plugins`:
+- **`plugin_manifest.{hpp,cpp}`** reads `<install>/plugins/<id>/plugin.json` (schema `m-strata.plugin/1`):
+  - the id (the folder's, as the launcher takes it), the kind (engine, tool, notifier, diagnostics), and name, version,
+    publisher, licence and about as bounded printable ASCII;
+  - this platform's code files: relative, '/'-separated, no `.` or `..`, at most 16; a code kind needs them and a
+    diagnostics plugin has none;
+  - its kind's block and no other kind's; a diagnostics plugin's switches (`logging.requests`,
+    `logging.engine_output`, `troubleshooting`).
+
+  Every other key is refused, naming it.
+- **`plugin_registry.{hpp,cpp}`** finds every folder of the plugins folder that holds a `plugin.json`:
+  - it refuses a folder others can change (`open_root` `existing`), an unreadable manifest, a bad one (with its
+    reason) and a missing file;
+  - it hashes the manifest and each of this platform's files, as `PluginPin`;
+  - it decides the trust and the state:
+    - first-party when the pin is the build record's (`FirstPartyPlugin`, starting as the record says);
+    - approved when it is the pin in the owner's `PluginChoices` (`<roots.state>/plugins.json`,
+      `m-strata.plugin-choices/1`, rendered and strictly parsed here);
+    - `changed` when an approved pin differs, `waiting` when it was never approved;
+    - on or off by the owner's choice;
+  - a kind this server does not run yet (all but diagnostics) is `refused`, saying so.
+- **Proof**:
+  - `plugin_manifest_tests`: 3 cases. Written with its code, so there was no separate red run; the only failure seen
+    was a test bug, now fixed.
+  - `plugin_registry_tests`: 5 cases, RED first against a stub, then GREEN. Two test bugs were fixed on the way: a
+    pointer into a temporary list, and crashing on a missing entry.
+  - Both suites: MSVC, and Linux gcc 13.3 and clang 18.1 (8/8 each).
+- **Next:** the build record's first-party plugins, the plugin routes, the Plugins tab, then debugging as the first
+  plugin.
+
 ### Claude Code session, 2026-10-30 z47 (Windows box; owner-directed)
 
 The owner: "we also need to have a plugin management tab to manage these", then "now that I think about it, we should
