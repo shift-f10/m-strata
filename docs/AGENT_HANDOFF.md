@@ -280,6 +280,19 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z63 (Windows box; owner-directed)
+
+The owner, reviewing on the LAN review server: "in the plugins page for the websearch, it is missing the test portion
+that it use to have under settings". It was there only while the plugin's program ran; the review's search plugin was
+waiting (signed with a key the install did not trust), so its card showed neither Try nor why.
+- **The fix** (`web/app.js`, `pluginNotRunning`): a tool's Try and a notifier's Send a test, when the program does not
+  run, say when they work - on: after a restart; waiting or changed: once approved, or its publisher's key trusted,
+  and the server restarts; off: once turned on and the server restarts (refused: its card already says why).
+- **Proof**: the page's assertions (api_router_test: `web_ui_has_a_plugins_tab`, `web_ui_email_is_the_email_plugins_card`)
+  changed to the new lines first - RED, 3 failures - then GREEN, the whole router suite passing; the helper run in the
+  browser pane's engine for every state; the test file compiled with gcc and clang. Seen live once the review server
+  runs the new build.
+
 ### Claude Code session, 2026-10-30 z62 (Windows box; owner-directed)
 
 The Linux installer on Ubuntu 22.04 (the owner's Azure VM, "it did not fully install"; then "the fixes you make there,

@@ -3498,10 +3498,21 @@
   // 10): Settings' test search became this, for every tool plugin. One call to a tool of the plugin's running program,
   // with the arguments typed, and the text that came back - what a model reads - so its settings can be checked before a
   // chat depends on them. The list names a plugin's tools only while its program runs (the tool hub starts it), so one
-  // that is on but not started yet says when Try works; one that is off says nothing more.
+  // whose program does not run says when Try works (pluginNotRunning).
+  // What a card says while its plugin's program does not run, so Try (a tool's) or Send a test (a notifier's) is never
+  // just missing (the owner, 2026-10-30): on, it starts with the server; waiting or changed, it needs approval or its
+  // publisher's key; off, it needs turning on. A refused one's card already says why.
+  function pluginNotRunning(p, what) {
+    if (p.state === "on") { return el("p", "muted small", what + " works once its program is running (after a restart)."); }
+    if (p.state === "waiting" || p.state === "changed") {
+      return el("p", "muted small", what + " works once it is approved, or its publisher's key is trusted, and the server restarts.");
+    }
+    if (p.state === "off") { return el("p", "muted small", what + " works once it is turned on and the server restarts."); }
+    return null;
+  }
   function pluginTry(p) {
     var tools = (Array.isArray(p.tools) ? p.tools : []).filter(function (tool) { return tool && typeof tool.name === "string" && tool.name; });
-    if (!tools.length) { return p.state === "on" ? el("p", "muted small", "Try works once its program is running (after a restart).") : null; }
+    if (!tools.length) { return pluginNotRunning(p, "Try"); }
     var box = el("div", "plugin-try");
     drawPluginTry(box, p, tools);
     return box;
@@ -3510,7 +3521,7 @@
   // goes to the plugin's running program through the server's notifier host, and its answer is shown as the plugin gave
   // it (the email plugin's: what the mail server said). One that is on but not running yet says when the test works.
   function pluginTest(p) {
-    if (p.running !== true) { return p.state === "on" ? el("p", "muted small", "Send a test works once its program is running (after a restart).") : null; }
+    if (p.running !== true) { return pluginNotRunning(p, "Send a test"); }
     var t = pluginTryState(p.id);
     var box = el("div", "plugin-try");
     var actions = el("div", "model-actions");

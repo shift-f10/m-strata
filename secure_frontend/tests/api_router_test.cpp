@@ -736,9 +736,17 @@ void web_ui_has_a_plugins_tab() {
   expect(js.find("var trying = p.kind === \"tool\" ? pluginTry(p) : p.kind === \"notifier\" ? pluginTest(p) : null;") != std::string::npos &&
              js.find("var tools = (Array.isArray(p.tools) ? p.tools : [])") != std::string::npos,
          "a tool plugin's card has Try, from the tools its running program lists");
-  expect(js.find("if (!tools.length) { return p.state === \"on\" ? el(\"p\", \"muted small\", \"Try works once its program is running (after a restart).\") : null; }") !=
-             std::string::npos,
-         "a tool plugin that is on but lists no tools says when Try works");
+  // (the owner, 2026-10-30, reviewing: a search plugin waiting for approval showed no Try and no word of it) a tool
+  // plugin whose program does not run says when Try works, whatever keeps it from running
+  expect(js.find("if (!tools.length) { return pluginNotRunning(p, \"Try\"); }") != std::string::npos,
+         "a tool plugin that lists no tools says when Try works");
+  expect(js.find("if (p.state === \"on\") { return el(\"p\", \"muted small\", what + \" works once its program is running (after a restart).\"); }") !=
+                 std::string::npos &&
+             js.find("if (p.state === \"waiting\" || p.state === \"changed\") {\n      return el(\"p\", \"muted small\", what + \" works once it is "
+                     "approved, or its publisher's key is trusted, and the server restarts.\");") != std::string::npos &&
+             js.find("if (p.state === \"off\") { return el(\"p\", \"muted small\", what + \" works once it is turned on and the server restarts.\"); }") !=
+                 std::string::npos,
+         "on, waiting or changed, and off each say when it works");
   expect(js.find("tools.forEach(function (tool) {") != std::string::npos &&
              js.find("pick.addEventListener(\"change\", function () { t.tool = pick.value; t.result = null; drawPluginTry(box, p, tools); });") !=
                  std::string::npos &&
@@ -880,9 +888,8 @@ void web_ui_email_is_the_email_plugins_card() {
          "the Settings tab shows with the model folders or the server's own settings");
   expect(js.find("var trying = p.kind === \"tool\" ? pluginTry(p) : p.kind === \"notifier\" ? pluginTest(p) : null;") != std::string::npos,
          "a notifier plugin's card has Send a test, as a tool's has Try");
-  expect(js.find("if (p.running !== true) { return p.state === \"on\" ? el(\"p\", \"muted small\", \"Send a test works once its program is running (after a restart).\") : null; }") !=
-             std::string::npos,
-         "one that is on but not running says when the test works");
+  expect(js.find("if (p.running !== true) { return pluginNotRunning(p, \"Send a test\"); }") != std::string::npos,
+         "one that is not running says when the test works");
   expect(js.find("el(\"button\", \"st-btn st-btn--secondary st-btn--sm\", \"Send a test\")") != std::string::npos &&
              js.find("api(\"/v1/strata/plugins/test\", jsonPost({ id: p.id }))") != std::string::npos,
          "Send a test posts the plugin's id");
