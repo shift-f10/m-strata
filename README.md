@@ -690,6 +690,14 @@ starts, restarts or stops the server and when the server ends (with its exit cod
 A `--debugging` build opens with a pop-up saying what it logs and starts the server only on **Yes**; `strata-tui`
 shows the same and starts it only on **y**.
 
+<img src="docs/images/strata-window-chat.png" width="49%" alt="strata-window: a chat with Gemma 4 26B-A4B (Q8) on an RTX 4080 SUPER, 78 tok/s">
+<img src="docs/images/strata-window-monitor.png" width="49%" alt="strata-window's Monitor: decode and prefill speed, GPU load, VRAM, temperature, power, PCIe, CPU and disk">
+
+<img src="docs/images/strata-window-tray.png" width="290" alt="The tray icon's menu: open the window, the server log, stop the running model, restart the server, exit">
+
+*`strata-window` with Gemma 4 26B-A4B (Q8_0, 27 GB) on an RTX 4080 SUPER (16 GB): the chat, the Monitor, and the
+tray icon's menu while the model runs (2026-10-29).*
+
 ### The terminal
 
 A build with `--with tui` has `strata-tui` beside the server. Start it in a terminal instead of the server, with the
@@ -711,6 +719,12 @@ opens on the Monitor:
 Saved settings apply when the server starts again, as on the page. The server's output is in the Log view and in
 `data/logs/server.log`, as for the window, and the one-time login link is never shown or written. The views talk to the
 server over loopback with its API key, as the page does; the key stays in memory and is shown only when you press `k`.
+
+<img src="docs/images/strata-tui-monitor.png" width="49%" alt="strata-tui's Monitor while Gemma 4 answers: 86 tok/s, GPU, CPU, RAM, VRAM, temperature, power, disk and the engine's expert tiers">
+<img src="docs/images/strata-tui-models.png" width="49%" alt="strata-tui's Models view: the running card, its options and its calibration">
+
+*`strata-tui` in the Windows console with the same model: the Monitor while it answers, and the Models view
+(2026-10-29).*
 
 ### The API (OpenAI-compatible)
 
