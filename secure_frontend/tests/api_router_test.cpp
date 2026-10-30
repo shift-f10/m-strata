@@ -604,6 +604,34 @@ void web_ui_cards_from_this_pc_and_the_danger_zone() {
   }
 }
 
+// The owner (2026-10-30): "in the models section we create another tab, the same Compatibility Table we have on the
+// readme based on the active calibrated models and have a copy/share so users can report their stats and notes on their
+// system". A third Models sub-tab: the README's columns, a row per card calibrated here (Pass) or whose calibration
+// failed (Fail), this PC's hardware from the About route, the user's notes kept for the tab (the guarded storage), and
+// Copy and Save to share it in a GitHub issue - the page names no other server, so it links to none.
+void web_ui_models_tab_shows_compatibility() {
+  const std::string html{secure_frontend::find_web_asset("/")->body};
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  for (const char* id : {"id=\"models-subtab-compat\"", "id=\"models-pane-compat\"", "id=\"compat-table\"", "id=\"compat-empty\"",
+                         "id=\"compat-refresh\"", "id=\"compat-copy\"", "id=\"compat-save\""}) {
+    expect(html.find(id) != std::string::npos, std::string{"the page has "} + id);
+  }
+  expect(html.find("an issue on the project's GitHub page") != std::string::npos, "it says where to share it");
+  expect(js.find("$(\"models-pane-compat\").hidden = name !== \"compat\";") != std::string::npos &&
+             js.find("if (name === \"compat\") { refreshCompat(); }") != std::string::npos,
+         "the sub-tab shows its pane and reads the hardware when it opens");
+  expect(js.find("var COMPAT_HEADER = \"| OS | CPU | GPU Type | VRAM | RAM | Model Family | Pass | Fail | Notes |\";") != std::string::npos,
+         "the README's columns");
+  expect(js.find("api(\"/v1/strata/about\")") != std::string::npos && js.find("typeof cal.after === \"number\"") != std::string::npos &&
+             js.find("var failed = typeof cal.error === \"string\" && cal.error !== \"\";") != std::string::npos,
+         "rows from the calibrated cards and the failed ones, the hardware from About");
+  expect(js.find("save(COMPAT_NOTES, all);") != std::string::npos && js.find("load(COMPAT_NOTES, {})") != std::string::npos,
+         "the notes are kept for the tab, through the guarded storage helpers");
+  expect(js.find("navigator.clipboard.writeText(compatMarkdown())") != std::string::npos &&
+             js.find("saveText(compatMarkdown(), \"m-strata-compatibility.md\")") != std::string::npos,
+         "Copy and Save give the Markdown");
+}
+
 // GUI-first start-up (spec 2026-10-27 §5.3): each card shows its calibration - its state, the speed before and after and
 // the kept flags - with Calibrate (Recalibrate once there is one), the progress while it runs (asked every 2 s like a
 // start), Cancel, and the "Recalibrate when settings change" switch.
@@ -1956,6 +1984,7 @@ int main(int argc, char** argv) {
       {"web_ui_downloads_groups_are_accordions", web_ui_downloads_groups_are_accordions},
       {"web_ui_downloads_destination_is_a_panel", web_ui_downloads_destination_is_a_panel},
       {"web_ui_models_tab_calibrates", web_ui_models_tab_calibrates},
+      {"web_ui_models_tab_shows_compatibility", web_ui_models_tab_shows_compatibility},
       {"web_ui_has_email_alert_settings", web_ui_has_email_alert_settings},
       {"web_ui_has_server_settings", web_ui_has_server_settings},
       {"web_ui_claims_a_login_link_at_load_and_on_hashchange", web_ui_claims_a_login_link_at_load_and_on_hashchange},

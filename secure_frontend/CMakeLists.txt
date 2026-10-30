@@ -1519,7 +1519,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         config_routes_need_their_handler_and_the_key
         web_ui_cards_from_this_pc_and_the_danger_zone web_ui_downloads_go_to_a_chosen_folder
         web_ui_downloads_say_what_is_on_this_pc web_ui_downloads_groups_are_accordions web_ui_downloads_destination_is_a_panel
-        web_ui_models_tab_calibrates web_ui_has_email_alert_settings web_ui_has_server_settings web_ui_claims_a_login_link_at_load_and_on_hashchange web_ui_opens_the_view_its_address_names
+        web_ui_models_tab_calibrates web_ui_models_tab_shows_compatibility web_ui_has_email_alert_settings web_ui_has_server_settings web_ui_claims_a_login_link_at_load_and_on_hashchange web_ui_opens_the_view_its_address_names
         web_ui_has_web_search_settings web_ui_has_model_folder_setting
         web_ui_monitor_shows_stopped_and_the_model web_ui_monitor_is_even_and_shows_memory_disk_and_cache
         web_ui_about_lists_the_engines_and_this_pc

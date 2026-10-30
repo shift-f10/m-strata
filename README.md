@@ -81,6 +81,11 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   It is saved in the logs folder (`data/logs/calibration-reports/`). The card offers **Show the report** (read, Copy,
   Save) and the TUI says where it is. Paths in the model, data, engine and home folders are shortened; it holds no key,
   user name or host name. Look it over before you share it.
+- **Models > Compatibility:** the [compatibility table](#compatibility) for your PC, built from the models calibrated
+  on this server: a **Pass** row per finished calibration (its speed), a **Fail** row per failed one (its reason and
+  report), this PC's OS, CPU, GPU, VRAM and RAM, and your own notes (kept for the browser tab). **Copy** and **Save**
+  give the Markdown the README's table takes, to paste into an issue on this project's GitHub page. (The page links to
+  no other site, so it does not open GitHub itself.)
 - **Add a model** from files already on this PC (a folder and its `.gguf`); the pack is built when the family needs one.
   A Qwen model whose folder holds its picture encoder (one `mmproj*.gguf`) gets a card that reads pictures, with a
   **Pictures** option (GPU, CPU or off).
@@ -231,8 +236,9 @@ What has been run, on which PC (status 2026-10-30). Each row is one PC and one m
 loads, answers and its checks hold, **Fail** when it does not. Two PCs so far: the development system above, and a
 second Windows desktop with an RTX 5090 (Blackwell) and 48 GB of RAM, which has run the two Qwen families. The CUDA
 engines have not been run on Linux yet (see [What this system could not test](#what-this-system-could-not-test)).
-Results from other PCs are welcome: a calibration with an error writes a report with the hardware lines this table
-needs.
+Results from other PCs are welcome: the page's **Models > Compatibility** tab builds these rows for your PC from the
+models you calibrated, with your notes, ready to copy into a GitHub issue; a calibration with an error also writes a
+report with the details.
 
 | OS | CPU | GPU Type | VRAM | RAM | Model Family | Pass | Fail | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

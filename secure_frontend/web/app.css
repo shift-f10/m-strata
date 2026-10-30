@@ -344,6 +344,15 @@ main { flex: 1; min-height: 0; display: flex; }
 .facts dd { margin: 0; color: var(--st-ink-soft); font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 6px;
             overflow-wrap: anywhere; }
 .facts dd code { font: 400 13px var(--st-font-mono); }
+/* Models > Compatibility (owner 2026-10-30): the README's table, scrolled sideways in its card on a narrow page */
+.compat { grid-column: 1 / -1; min-width: 0; }
+.compat-scroll { overflow-x: auto; margin-top: var(--st-s-4); }
+.compat-table { width: 100%; font-size: var(--st-fs-sm); }
+.compat-table th, .compat-table td { vertical-align: top; text-align: left; }
+.compat-table td { color: var(--st-ink-soft); }
+.compat-table td.compat-mark { text-align: center; }
+.compat-table td.compat-notes { min-width: 18em; }
+.compat-table .st-input { margin-top: 6px; width: 100%; }
 /* About's engines (owner 2026-10-28: the list was hard to read when it wrapped): one row per library */
 .about-engines { width: 100%; margin-top: var(--st-s-4); font-size: var(--st-fs-sm); }
 .about-engines th, .about-engines td { vertical-align: top; text-align: left; }

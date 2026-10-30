@@ -203,6 +203,7 @@
       <nav class="models-subtabs" role="tablist" aria-label="Models">
         <button type="button" class="models-subtab" id="models-subtab-start" role="tab" aria-selected="true">Start a model</button>
         <button type="button" class="models-subtab" id="models-subtab-download" role="tab" aria-selected="false" hidden>Download models</button>
+        <button type="button" class="models-subtab" id="models-subtab-compat" role="tab" aria-selected="false">Compatibility</button>
       </nav>
       <div class="models-pane" id="models-pane-start">
       <div class="st-card models-card">
@@ -334,6 +335,28 @@
           </form>
         </div>
       </div>
+      </div>
+      <!-- Compatibility (owner 2026-10-30): the README's table for this PC, from the models calibrated here -->
+      <div class="models-pane" id="models-pane-compat" hidden>
+        <div class="st-card compat">
+          <div class="models-head"><span class="card-title">Compatibility</span>
+            <button type="button" class="st-btn st-btn--icon" id="compat-refresh" title="Refresh" aria-label="Refresh the table">
+              <svg class="st-icon"><use href="/ui/sprite.svg#i-refresh"/></svg></button></div>
+          <p class="muted small">How the models calibrated on this server ran on this PC, in the columns of the README's
+            compatibility table: <strong>Pass</strong> for a calibration that finished, <strong>Fail</strong> for one that did
+            not. Add your notes, then copy or save the table and paste it into an issue on the project's GitHub page, so
+            others with the same hardware know what to expect. It lists this PC's hardware and the models' names: look it
+            over first.</p>
+          <div class="compat-scroll"><table class="st-table compat-table" id="compat-table"></table></div>
+          <p class="muted" id="compat-empty" hidden>No model has been calibrated on this server yet: calibrate one under
+            <strong>Start a model</strong>, then come back.</p>
+          <p class="muted small" id="compat-build"></p>
+          <div class="model-actions">
+            <button type="button" class="st-btn st-btn--primary st-btn--sm" id="compat-copy">Copy</button>
+            <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="compat-save">Save</button>
+          </div>
+          <p class="muted small" id="compat-result" role="status" aria-live="polite"></p>
+        </div>
       </div>
     </div>
   </section>
