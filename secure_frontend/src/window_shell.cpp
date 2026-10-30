@@ -236,8 +236,9 @@ Navigation navigation_for(const std::string_view url, const std::string_view ori
 
 // --------------------------------------------------------------------------- the tray's models
 std::optional<TrayModels> tray_models(const std::string_view launcher_json) {
+  // fractions: a card's sampling options are decimals (top_p 0.95)
   constexpr JsonLimits kLimits{.max_bytes = 4U * 1024U * 1024U, .max_depth = 12U, .max_container_entries = 4096U,
-                               .max_string_bytes = 64U * 1024U};
+                               .max_string_bytes = 64U * 1024U, .allow_fractions = true};
   const auto parsed = parse_json(launcher_json, kLimits);
   const auto* root = std::get_if<JsonValue>(&parsed);
   if (root == nullptr || root->if_object() == nullptr) return std::nullopt;

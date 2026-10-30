@@ -128,6 +128,16 @@ void the_tray_lists_the_launchers_cards() {
          "the cards, in order, with their states");
   const auto none = w::tray_models(R"({"object":"list","running":null,"state":"stopped","error":null,"data":[]})");
   expect(none.has_value() && none->models.empty() && !none->running.has_value() && none->state == "stopped", "no card yet");
+  // a card's sampling options are decimals (2026-10-29: the tray read "Models: open the page" for every card that had
+  // them, as the launcher's /v1/strata/models writes them - top_p's minimum the smallest double above zero)
+  const auto sampling = w::tray_models(
+      R"({"object":"list","running":null,"state":"stopped","error":null,"data":[)"
+      R"({"name":"gemma-4","profile":"gemma4","state":"stopped","error":null,"page_card":true,"options":[)"
+      R"({"name":"temperature","kind":"decimal","default":1,"min":0,"max":2,"value":1},)"
+      R"({"name":"top_p","kind":"decimal","default":0.95,"min":5e-324,"max":1,"value":0.95},)"
+      R"({"name":"min_p","kind":"decimal","default":0.05,"min":0,"max":1,"value":0.05}],"calibration":null,"reasoning_effort":true}]})");
+  expect(sampling.has_value() && sampling->models.size() == 1U && sampling->models[0].name == "gemma-4",
+         "a card with decimal sampling options is listed");
   expect(!w::tray_models(R"({"object":"list","data":[{"id":"Qwen3.8","object":"model"}]})").has_value(), "/v1/models is not it");
   expect(!w::tray_models("not json").has_value(), "not JSON");
   expect(w::start_body("Qwen \"3.8\"") == R"({"name":"Qwen \"3.8\""})", "the start names the card");
