@@ -125,6 +125,20 @@ void a_qwen36_gguf_makes_a_qwen_card() {
   expect(plain_card != nullptr && plain_card->json.find("--mtp") == std::string::npos &&
              plain_card->json.find("\"mtp\": {\"default\": false}") != std::string::npos,
          "no MTP block: no draft layer");
+  // The owner (2026-10-29: "it did not prompt for the mtp layer and the card has no browse folder for it"): a Qwen3.6
+  // card's draft layer is in its model file (upstream's Qwen3.6 engine reads the GGUF's own MTP block), so it has no
+  // folder to point at; the card says whether the file carries one.
+  const auto inside = secure_frontend::draft_layer_slot(*back);
+  expect(inside.has_value() && inside->inside && inside->in_file && !inside->folder &&
+             secure_frontend::draft_layer_json(*inside) == R"({"kind":"inside","in_file":true,"path":null})",
+         "the draft layer is in the model file: " + (inside ? secure_frontend::draft_layer_json(*inside) : std::string{"(none)"}));
+  if (plain_card == nullptr) return;
+  const auto plain_parsed = secure_frontend::parse_model_card(plain_card->json, folder);
+  const auto* plain_back = std::get_if<secure_frontend::ModelCard>(&plain_parsed);
+  const auto none = plain_back != nullptr ? secure_frontend::draft_layer_slot(*plain_back) : std::nullopt;
+  expect(none.has_value() && none->inside && !none->in_file &&
+             secure_frontend::draft_layer_json(*none) == R"({"kind":"inside","in_file":false,"path":null})",
+         "a file without one says so: " + (none ? secure_frontend::draft_layer_json(*none) : std::string{"(none)"}));
 }
 
 // Vision for cards (spec 2026-10-28 point 3): a qwen card made with the model's picture encoder (a Qwen3.6 GGUF's or a

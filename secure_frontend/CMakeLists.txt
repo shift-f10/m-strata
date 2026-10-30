@@ -1047,7 +1047,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         cfg04_rejects_reserved_and_device_names cfg04_rejects_trailing_dot_space_and_8dot3 cfg04_rejects_ads_and_drive_forms)
     secure_frontend_add_cases(secure_frontend_paths_tests
         cfg02_rejects_relative_root cfg02_sibling_prefix_root_rejected cfg04_rejects_unc_device_and_extended_roots
-        cfg04_final_path_on_network_share_is_actionable)
+        cfg04_final_path_on_network_share_is_actionable network_share_roots_are_a_model_folders_opt_in
+        a_model_folder_on_a_share_opens_only_when_allowed)
     target_link_libraries(secure_frontend_paths_tests PRIVATE secure_frontend_token_reader)
     secure_frontend_add_cases(secure_frontend_paths_tests paths_handle_non_ascii_and_long_names
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
@@ -1303,7 +1304,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         dos02_resources_return_to_idle shutdown_errors_never_report_fatal
         dos01_service_healthy_after_each_attack
         ext01_upstream_control_routes_are_404_after_auth ext02_http_headers_cannot_enable_extensions
-        log_line_format_and_rate_limit engine_output_reaches_the_log_only_when_asked err_no_token_prompt_or_path_in_any_body_or_log
+        log_line_format_and_rate_limit engine_output_reaches_the_log_only_when_asked network_shares_warn_at_every_start
+        err_no_token_prompt_or_path_in_any_body_or_log
         undecodable_output_logs_its_own_code web_ui_page_is_served_and_the_api_keeps_its_key
         keyless_loopback_server_answers_without_a_key monitor_reports_generations_without_their_text)
     if(WIN32)
@@ -1767,6 +1769,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # SP3 SP1-addendum A1 (spec §5.1): unlabelled, so the wine smoke runs them (pre-flight T4).
     secure_frontend_add_cases(secure_frontend_typed_config_tests cfg01_sp3_rows_type_and_range logging_engine_output_is_off_unless_asked
+        network_shares_are_an_experimental_opt_in
         cfg01_header_deadline_le_request_deadline cfg01_response_deadline_ge_write_stall
         cfg01_wildcard_bind_requires_host_aliases cfg01_host_alias_grammar_and_count
         web05_cors_origin_config_rejects_wildcard_null_path_duplicate_and_17_entries
@@ -2188,6 +2191,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_local_folders_tests
         volumes_are_the_local_drives a_folder_lists_its_folders_and_gguf_files a_model_folder_is_made_private
         a_model_folder_with_its_pack_is_made_private an_mtp_draft_layer_folder_is_made_private a_private_folder_is_made_in_a_shared_one
+        a_share_folder_is_picked_only_when_allowed
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # GUI-first start-up (spec 2026-10-27 §4.2): a GGUF's header (bounded), and the tokenizer read from it.

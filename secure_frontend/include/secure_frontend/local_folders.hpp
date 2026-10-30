@@ -21,6 +21,7 @@ struct LocalVolume final {
   std::string label;  // the volume's label; may be empty
   std::uint64_t free_bytes{0};
   std::uint64_t total_bytes{0};
+  bool network{false};  // a mapped network drive / an NFS, CIFS or SMB mount (listed only while shares are allowed)
 };
 inline constexpr std::size_t kMaxLocalVolumes = 32;
 [[nodiscard]] std::vector<LocalVolume> local_volumes();
@@ -44,11 +45,15 @@ struct FolderError final {
 inline constexpr std::size_t kMaxFolderEntries = 1000;
 
 // A path from the page, checked: valid UTF-8, absolute, no "." or ".." part; Windows: a drive letter path on a fixed
-// or removable drive (no UNC, device or drive-relative path).
+// or removable drive (no UNC, device or drive-relative path). While network shares are allowed (network_shares(),
+// experimental) a mapped network drive and a share's folder \\server\share\... too.
 [[nodiscard]] std::variant<std::filesystem::path, FolderError> local_folder_path(std::string_view path_utf8);
 [[nodiscard]] std::variant<FolderListing, FolderError> list_local_folder(std::string_view path_utf8);
 // The free space of the folder's volume (for the caller; nullopt when it cannot be read).
 [[nodiscard]] std::optional<std::uint64_t> free_space(const std::filesystem::path& folder);
+// Whether the folder is on a network share: Windows, a UNC path or a mapped network drive; Linux, an NFS, CIFS or SMB
+// mount. A share's permissions are the share's: its folders are never made private or given a private folder here.
+[[nodiscard]] bool on_network_share(const std::filesystem::path& folder);
 
 // A whole folder tree made owner-only: Windows, a protected DACL (the user, SYSTEM and Administrators, inherited by
 // everything below, every object below reset to inherit it only); POSIX, no group or other write (links are never

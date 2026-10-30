@@ -223,6 +223,11 @@ void a_qwen_model_beside_its_encoder_reads_pictures() {
   secure_frontend_test::write_file(folder / "Qwen3.6-Test-Q8_0.gguf", qwen36);
   const auto plain = f.add(folder, "Qwen3.6-Test-Q8_0.gguf");
   expect(plain.status == 201, "a Qwen3.6 model is added: " + shown(plain));
+  // the owner (2026-10-29: "it did not prompt for the mtp layer and the card has no browse folder for it"): the answer
+  // says the draft layer would be in the model file (this one has none), and the card takes no other to point at
+  expect(has(plain, R"("draft":{"kind":"inside","in_file":false,"path":null})"), "the answer says where its draft layer is: " + shown(plain));
+  const auto pointed = f.post(secure_frontend::RouteId::strata_card_mtp, R"({"name":"Qwen3.6-Test-Q8_0","folder":)" + json_path(folder) + "}");
+  expect(pointed.status == 422 && has(pointed, "in its model file"), "a Qwen3.6 card takes no other draft layer: " + shown(pointed));
   const auto encoder_of = [&f](const std::string& name) {
     std::pair<std::string, bool> out;
     const auto held = f.launcher->card(name);
@@ -955,9 +960,25 @@ void the_shared_folders_setting_is_read_and_saved() {
   expect(f.post(RouteId::strata_folder_sharing, "{\"shared\":false}").status == 200 &&
              has(f.post(RouteId::strata_folder_sharing, "{}"), "\"shared\":false"),
          "and turned off again");
-  for (const char* body : {"{\"shared\":\"yes\"}", "{\"other\":true}", "[]", "{\"shared\":true,\"shared\":false}"}) {
+  for (const char* body : {"{\"shared\":\"yes\"}", "{\"other\":true}", "[]", "{\"shared\":true,\"shared\":false}", "{\"network\":1}"}) {
     expect(f.post(RouteId::strata_folder_sharing, body).status == 400, std::string{"a malformed body is refused: "} + body);
   }
+  // The owner (2026-10-29): model folders on network shares (SMB/CIFS, NFS), experimental - its own switch in the same
+  // card, saved as roots.allow_network_shares; each switch is saved without touching the other.
+  const auto shares_off = f.post(RouteId::strata_folder_sharing, "{}");
+  expect(has(shares_off, "\"network\":false") && has(shares_off, "\"network_running\":false"), "shares are off by default: " + shown(shares_off));
+  const auto shares_saved = f.post(RouteId::strata_folder_sharing, "{\"network\":true}");
+  expect(shares_saved.status == 200 && has(shares_saved, "\"restart_needed\":true"), "the shares switch is saved: " + shown(shares_saved));
+  const auto shares_read = f.post(RouteId::strata_folder_sharing, "{}");
+  expect(has(shares_read, "\"network\":true") && has(shares_read, "\"shared\":false"), "on its own: " + shown(shares_read));
+  const auto shares_draft = secure_frontend::read_config_file(f.data.config_file);
+  const auto* shares_entries = std::get_if<secure_frontend::FrontendConfigDraft>(&shares_draft);
+  expect(shares_entries != nullptr && shares_entries->entries.contains("roots.allow_network_shares") &&
+             !shares_entries->entries.contains("roots.allow_untrusted_media"),
+         "the config file holds roots.allow_network_shares");
+  expect(f.post(RouteId::strata_folder_sharing, "{\"network\":false}").status == 200 &&
+             has(f.post(RouteId::strata_folder_sharing, "{}"), "\"network\":false"),
+         "and turned off again");
 
   Fixture listed(true, [](const secure_frontend::RequestContext& context) {
     return secure_frontend::model_files_allowed(context.loopback_peer, context.peer, true,

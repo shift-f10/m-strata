@@ -805,6 +805,24 @@ void logging_engine_output_is_off_unless_asked() {
   }
 }
 
+// The owner (2026-10-29): "support SMB shares or CIFS shares or NFS shares for models", "mark that as experimental".
+// roots.allow_network_shares is off by default, says it is experimental, and sets the path layer's switch (a model
+// folder may then be on a share) as the config is read.
+void network_shares_are_an_experimental_opt_in() {
+  ConfigFixture f;
+  const auto* key = secure_frontend::find_config_key("roots.allow_network_shares");
+  expect(key != nullptr && key->type == ConfigValueType::boolean && std::string_view{key->description}.rfind("Experimental", 0) == 0,
+         "the row exists, a boolean, and says it is experimental");
+  const auto defaults = with_literals(f, {});
+  const auto* off = std::get_if<secure_frontend::ValidatedConfig>(&defaults);
+  expect(off != nullptr && !off->get().roots.allow_network_shares && !secure_frontend::network_shares(),
+         "off by default: " + issues_of(defaults));
+  const auto asked = with_literals(f, {{"roots.allow_network_shares", "true"}});
+  const auto* on = std::get_if<secure_frontend::ValidatedConfig>(&asked);
+  expect(on != nullptr && on->get().roots.allow_network_shares && secure_frontend::network_shares(), "on when asked: " + issues_of(asked));
+  secure_frontend::set_network_shares(false);
+}
+
 void cfg01_header_deadline_le_request_deadline() {
   ConfigFixture f;
   expect(has_issue(with_literals(f, {{"limits.http.header_deadline_ms", "30001"}}), "limits.http.header_deadline_ms",
@@ -2486,6 +2504,7 @@ int main(int argc, char** argv) {
       {"cfg01_pull_keys_table_driven", cfg01_pull_keys_table_driven},
       {"cfg01_sp3_rows_type_and_range", cfg01_sp3_rows_type_and_range},
       {"logging_engine_output_is_off_unless_asked", logging_engine_output_is_off_unless_asked},
+      {"network_shares_are_an_experimental_opt_in", network_shares_are_an_experimental_opt_in},
       {"cfg01_header_deadline_le_request_deadline", cfg01_header_deadline_le_request_deadline},
       {"cfg01_response_deadline_ge_write_stall", cfg01_response_deadline_ge_write_stall},
       {"cfg01_wildcard_bind_requires_host_aliases", cfg01_wildcard_bind_requires_host_aliases},

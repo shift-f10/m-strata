@@ -14,6 +14,9 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/vfs.h>
+#endif
 
 #include <cerrno>
 
@@ -54,10 +57,22 @@ std::optional<std::string> utf8_name(const std::filesystem::path& name) {
 }
 
 #if defined(_WIN32)
-// Fixed and removable drives only (no network, optical or RAM drive); no error dialog for an empty card reader.
+// Fixed and removable drives only (no network, optical or RAM drive); no error dialog for an empty card reader. While
+// network shares are allowed (experimental), a network drive too.
 bool local_drive(const std::wstring& root) {
   const UINT type = GetDriveTypeW(root.c_str());
-  return type == DRIVE_FIXED || type == DRIVE_REMOVABLE;
+  return type == DRIVE_FIXED || type == DRIVE_REMOVABLE || (type == DRIVE_REMOTE && network_shares());
+}
+
+// The root GetDriveTypeW takes: X:\, or a share's \\server\share\ (std::filesystem's root of a UNC path stops at
+// \\server\ on MSVC, which is no drive).
+std::wstring drive_root(const std::filesystem::path& path) {
+  const std::wstring text = path.wstring();
+  if (text.rfind(L"\\\\", 0) != 0) return path.root_path().wstring();
+  const auto server_end = text.find(L'\\', 2U);
+  if (server_end == std::wstring::npos) return text + L"\\";
+  const auto share_end = text.find(L'\\', server_end + 1U);
+  return share_end == std::wstring::npos ? text + L"\\" : text.substr(0, share_end + 1U);
 }
 
 struct QuietErrors final {
@@ -126,6 +141,7 @@ std::vector<LocalVolume> local_volumes() {
   for (const wchar_t* root = buffer; *root != L'\0' && volumes.size() < kMaxLocalVolumes; root += wcslen(root) + 1U) {
     const std::wstring drive{root};
     if (!local_drive(drive)) continue;
+    const bool network = GetDriveTypeW(drive.c_str()) == DRIVE_REMOTE;
     ULARGE_INTEGER available{};
     ULARGE_INTEGER total{};
     if (GetDiskFreeSpaceExW(drive.c_str(), &available, &total, nullptr) == 0 || total.QuadPart == 0U) continue;
@@ -135,11 +151,13 @@ std::vector<LocalVolume> local_volumes() {
       label_text = utf8_name(std::filesystem::path{std::wstring{label}}).value_or("");
     }
     volumes.push_back(LocalVolume{.path = path_to_utf8(std::filesystem::path{drive}), .label = std::move(label_text),
-                                  .free_bytes = available.QuadPart, .total_bytes = total.QuadPart});
+                                  .free_bytes = available.QuadPart, .total_bytes = total.QuadPart, .network = network});
   }
 #else
   if (auto root = statvfs_volume("/")) volumes.push_back(std::move(*root));
-  // Linux: the mounted local block filesystems (no pseudo, network or boot filesystem).
+  // Linux: the mounted local block filesystems (no pseudo, network or boot filesystem); while network shares are allowed
+  // (experimental), the NFS, CIFS and SMB mounts too.
+  static const std::set<std::string> kNetwork{"nfs", "nfs4", "cifs", "smb3", "smbfs"};
   static const std::set<std::string> kLocal{"ext2", "ext3", "ext4", "xfs", "btrfs", "f2fs", "zfs", "exfat", "vfat",
                                             "ntfs", "ntfs3", "fuseblk", "jfs", "reiserfs", "bcachefs"};
   std::ifstream mounts("/proc/self/mounts");
@@ -150,18 +168,30 @@ std::vector<LocalVolume> local_volumes() {
     std::string device;
     std::string mount;
     std::string type;
-    if (!(fields >> device >> mount >> type) || kLocal.count(type) == 0U) continue;
+    if (!(fields >> device >> mount >> type)) continue;
+    const bool network = kNetwork.count(type) != 0U;
+    if (kLocal.count(type) == 0U && !(network && network_shares())) continue;
     mount = unescape_mount(mount);
     const auto under = [&mount](const std::string_view prefix) {
       return mount == prefix || (mount.size() > prefix.size() && mount.compare(0, prefix.size(), prefix) == 0 && mount[prefix.size()] == '/');
     };
     if (under("/proc") || under("/sys") || under("/dev") || under("/run") || under("/boot") || under("/snap")) continue;
     if (!seen.insert(mount).second || !is_valid_utf8(mount)) continue;
-    if (auto volume = statvfs_volume(mount)) volumes.push_back(std::move(*volume));
+    if (auto volume = statvfs_volume(mount)) {
+      volume->network = network;
+      volumes.push_back(std::move(*volume));
+    }
   }
 #endif
   return volumes;
 }
+
+#if defined(_WIN32)
+// a share's path, or a mapped network drive, while network shares are off: the switch that allows it
+constexpr const char* kSharesOff =
+    "the folder is on a network share: turn on Settings > Model folders > \"Use model folders on network shares\" "
+    "(experimental) and restart the server to use it";
+#endif
 
 std::variant<std::filesystem::path, FolderError> local_folder_path(const std::string_view path_utf8) {
   if (path_utf8.empty()) return FolderError{"type or pick a folder"};
@@ -169,10 +199,20 @@ std::variant<std::filesystem::path, FolderError> local_folder_path(const std::st
     return FolderError{"the folder's path is not valid"};
   }
 #if defined(_WIN32)
-  // "X:\..." only: no UNC (\\server), device (\\?\, \\.\) or drive-relative (X:folder) path.
+  // "X:\..." only: no UNC (\\server), device (\\?\, \\.\) or drive-relative (X:folder) path - but a share's folder
+  // \\server\share\... while network shares are allowed (experimental), in the form a model folder's root takes
   const bool drive = path_utf8.size() >= 3U && std::isalpha(static_cast<unsigned char>(path_utf8[0])) != 0 && path_utf8[1] == ':' &&
                      (path_utf8[2] == '\\' || path_utf8[2] == '/');
-  if (!drive) return FolderError{"the folder must be a full path on a drive of this PC (like D:\\models)"};
+  const bool share = network_shares() && path_utf8.size() > 2U && path_utf8[0] == '\\' && path_utf8[1] == '\\' &&
+                     !check_windows_root_form(path_from_utf8(path_utf8).wstring(), true).has_value();
+  if (!drive && !share) {
+    if (network_shares()) {
+      return FolderError{"the folder must be a full path on a drive of this PC (like D:\\models) or on a share "
+                         "(like \\\\server\\share\\models)"};
+    }
+    const bool unc = path_utf8.size() > 2U && path_utf8[0] == '\\' && path_utf8[1] == '\\' && path_utf8[2] != '?' && path_utf8[2] != '.';
+    return FolderError{unc ? kSharesOff : "the folder must be a full path on a drive of this PC (like D:\\models)"};
+  }
 #endif
   const std::filesystem::path path = path_from_utf8(path_utf8);
   if (!path.is_absolute()) return FolderError{"the folder must be a full path"};
@@ -180,11 +220,28 @@ std::variant<std::filesystem::path, FolderError> local_folder_path(const std::st
     if (part == "." || part == "..") return FolderError{"the folder's path may not hold . or .."};
   }
 #if defined(_WIN32)
-  if (!local_drive(path.root_path().wstring())) return FolderError{"the folder must be on a local drive (not a network drive)"};
+  if (!local_drive(drive_root(path))) {
+    return FolderError{network_shares() ? "the folder must be on a drive of this PC or a share it reaches" : kSharesOff};
+  }
 #endif
   std::filesystem::path normal = path.lexically_normal();
   if (!normal.has_filename() && normal != normal.root_path()) normal = normal.parent_path();
   return normal;
+}
+
+bool on_network_share(const std::filesystem::path& folder) {
+#if defined(_WIN32)
+  const std::wstring root = drive_root(folder);
+  if (root.rfind(L"\\\\", 0) == 0) return true;  // \\server\share\ (a device path never reaches here: it is no folder)
+  const QuietErrors quiet;
+  return GetDriveTypeW(root.c_str()) == DRIVE_REMOTE;
+#elif defined(__linux__)
+  struct statfs info {};
+  return ::statfs(folder.c_str(), &info) == 0 && is_network_file_system(static_cast<unsigned long long>(info.f_type));
+#else
+  (void)folder;
+  return false;
+#endif
 }
 
 std::optional<std::uint64_t> free_space(const std::filesystem::path& folder) {
@@ -323,6 +380,10 @@ bool holds_mtp_runtime(const std::filesystem::path& rt) {
 
 std::optional<FolderError> make_model_folder_private(const std::filesystem::path& folder) {
   if (!folder.is_absolute()) return FolderError{"the folder must be a full path"};
+  if (on_network_share(folder)) {
+    return FolderError{"a folder on a network share can't be made private from this PC; with network shares on "
+                       "(Settings > Model folders, experimental) it is used as it is"};
+  }
   auto checked = local_folder_path(path_to_utf8(folder));
   if (auto* error = std::get_if<FolderError>(&checked)) return std::move(*error);
   const auto& path = std::get<std::filesystem::path>(checked);
@@ -373,6 +434,9 @@ std::variant<std::filesystem::path, FolderError> make_private_folder(const std::
                                   c == '_' || c == ' ';
                          });
   if (!good_name) return FolderError{"a folder name is letters, digits, spaces, dots, dashes and underscores"};
+  if (on_network_share(parent)) {
+    return FolderError{"a private folder can't be made on a network share from this PC; make the folder on the share itself"};
+  }
   auto checked = local_folder_path(path_to_utf8(parent));
   if (auto* error = std::get_if<FolderError>(&checked)) return std::move(*error);
   const auto& base = std::get<std::filesystem::path>(checked);

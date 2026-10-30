@@ -253,6 +253,16 @@ std::optional<secure_frontend::SearchServiceSettings> search_settings(const Fron
 
 // Owner 2026-10-29: a server that copies its engines' own output into this log says so at every start, with what that
 // output can hold and what to do about it (docs/security/threat-model.md, the second engine-stderr exception).
+// Owner 2026-10-29 ("mark that as experimental"): a server that takes model folders on network shares says so at every
+// start, with what a share allows (docs/security/threat-model.md, model folders on network shares).
+void warn_of_network_shares(const FrontendConfig& config) {
+  if (!config.roots.allow_network_shares) return;
+  std::cerr << "strata: warning: roots.allow_network_shares is true (experimental): model folders may be on network "
+               "shares, used as they are - anyone who can write to a share can change what a model runs, a model's "
+               "first load streams it over the network, and an engine fails if the share drops while it reads. Turn it "
+               "off in Settings > Model folders when you do not need it.\n";
+}
+
 void warn_of_engine_output(const FrontendConfig& config) {
   if (secure_frontend::debugging_build()) {
     std::cerr << "strata: warning: this is a debugging build (make --debugging): it logs every request and the engine's own "
@@ -430,6 +440,7 @@ int server_run_impl(const FrontendConfig& config, const bool expert) {
               << authority << " (loopback only; Host and Origin are still checked)\n";
   }
   warn_of_engine_output(config);
+  warn_of_network_shares(config);
   std::cout << "Secure server listening on http://" << authority
             << (keyless ? " (no API key: loopback only; Ctrl-C to stop)\n" : " (authenticated; Ctrl-C to stop)\n");
   std::cout.flush();
@@ -1095,6 +1106,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
               << authority << " (loopback only; Host and Origin are still checked)\n";
   }
   warn_of_engine_output(config);
+  warn_of_network_shares(config);
   // D5: models.start names the card started at boot (after bind, like every spawn).
   if (config.models.start.has_value()) {
     if (const auto refused = launcher.start(*config.models.start, nullptr, false)) {

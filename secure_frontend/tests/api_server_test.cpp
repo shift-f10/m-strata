@@ -1260,6 +1260,22 @@ void engine_output_reaches_the_log_only_when_asked() {
          "off: no engine line and no notice in the log");
 }
 
+// The owner (2026-10-29): model folders on network shares, "mark that as experimental" - a server with
+// roots.allow_network_shares says so at every start, with what a share allows; without it, nothing is said.
+void network_shares_warn_at_every_start() {
+  {
+    auto server = start_server({{"roots.allow_network_shares", "true"}});
+    if (!server) return;
+    const std::string log = server->stderr_text();
+    expect(log.find("strata: warning: roots.allow_network_shares is true (experimental)") != std::string::npos &&
+               log.find("anyone who can write to a share can change what a model runs") != std::string::npos,
+           "the start says so, with what it allows: " + log);
+  }
+  auto server = start_server({});
+  if (!server) return;
+  expect(server->stderr_text().find("allow_network_shares") == std::string::npos, "off: nothing is said");
+}
+
 // SP3 Task 21 (spec §8): fixed-field request lines under a token bucket, the
 // startup summary, and nothing secret anywhere (PRIV-02 frontend part).
 void log_line_format_and_rate_limit() {
@@ -2227,6 +2243,7 @@ int main(int argc, char** argv) {
       {"ext02_http_headers_cannot_enable_extensions", ext02_http_headers_cannot_enable_extensions},
       {"log_line_format_and_rate_limit", log_line_format_and_rate_limit},
       {"engine_output_reaches_the_log_only_when_asked", engine_output_reaches_the_log_only_when_asked},
+      {"network_shares_warn_at_every_start", network_shares_warn_at_every_start},
       {"undecodable_output_logs_its_own_code", undecodable_output_logs_its_own_code},
       {"web_ui_page_is_served_and_the_api_keeps_its_key", web_ui_page_is_served_and_the_api_keeps_its_key},
       {"monitor_reports_generations_without_their_text", monitor_reports_generations_without_their_text},

@@ -202,7 +202,10 @@ Trust write_access_is_private(const HANDLE handle, const bool also_trusted_insta
 }
 
 std::wstring extended_path(const std::wstring& absolute) {
-  return absolute.rfind(L"\\\\?\\", 0) == 0 ? absolute : L"\\\\?\\" + absolute;
+  if (absolute.rfind(L"\\\\?\\", 0) == 0) return absolute;
+  // a share's folder (\\server\share\...): \\?\UNC\server\share\...
+  if (absolute.rfind(L"\\\\", 0) == 0) return L"\\\\?\\UNC\\" + absolute.substr(2);
+  return L"\\\\?\\" + absolute;
 }
 
 PrivateSecurityAttributes::PrivateSecurityAttributes(const bool directory) {

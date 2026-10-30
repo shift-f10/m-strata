@@ -74,6 +74,13 @@ bool allows_shared_folders(const FrontendConfigDraft& draft) {
   return on != nullptr && *on;
 }
 
+// Model folders on network shares (owner 2026-10-29, experimental): the config's roots.allow_network_shares.
+bool allows_network_shares(const FrontendConfigDraft& draft) {
+  const auto found = draft.entries.find("roots.allow_network_shares");
+  const bool* on = found == draft.entries.end() ? nullptr : std::get_if<bool>(&found->second.value);
+  return on != nullptr && *on;
+}
+
 // A folder the page names, opened as the server opens a model folder; a folder other users may write is told apart
 // (the page offers "Make this folder private"), unless `shared`: then it is used as it is (still local, never a link).
 std::variant<CanonicalRoot, HttpResponse> trusted_folder(const std::string& text, const bool shared) {
@@ -82,7 +89,7 @@ std::variant<CanonicalRoot, HttpResponse> trusted_folder(const std::string& text
   const auto& path = std::get<std::filesystem::path>(checked);
   std::error_code ec;
   if (!std::filesystem::is_directory(path, ec)) return refused(ApiError::folder_refused, "there is no such folder");
-  auto opened = open_root(path, shared ? RootPolicy::external : RootPolicy::existing);
+  auto opened = open_root(path, shared ? RootPolicy::external : RootPolicy::model_folder);
   if (auto* root = std::get_if<CanonicalRoot>(&opened)) return std::move(*root);
   const auto& error = std::get<PathError>(opened);
   switch (error.code) {
@@ -148,7 +155,8 @@ HttpResponse CardRoutes::folders(const std::string_view body) {
     bool first = true;
     for (const auto& volume : local_volumes()) {
       out += std::string{first ? "" : ","} + "{\"path\":" + json_string(volume.path) + ",\"label\":" + json_string(volume.label) +
-             ",\"free_bytes\":" + std::to_string(volume.free_bytes) + ",\"total_bytes\":" + std::to_string(volume.total_bytes) + "}";
+             ",\"free_bytes\":" + std::to_string(volume.free_bytes) + ",\"total_bytes\":" + std::to_string(volume.total_bytes) +
+             (volume.network ? ",\"network\":true}" : "}");
       first = false;
     }
     return json_answer(200, out + "]}\n");
@@ -198,35 +206,55 @@ HttpResponse CardRoutes::new_folder(const std::string_view body) {
 
 // The page's Model folders setting: roots.allow_untrusted_media as the config file holds it (it applies at the next
 // start), and as this server started with it; saved with {"shared": bool} (off: the row is taken out, its default).
+// Beside it (owner 2026-10-29, experimental) model folders on network shares, roots.allow_network_shares: "network"
+// and "network_running", saved with {"network": bool}; a body with one of them leaves the other row as it is.
 HttpResponse CardRoutes::sharing(const std::string_view body) {
-  const auto read = read_body(body, {"shared"});
+  const auto read = read_body(body, {"shared", "network"});
   if (!read || !read->text.empty()) return make_error_response(ApiError::invalid_request);
   const bool editable = settings_.config_file.has_value();
   const auto flag = read->flags.find("shared");
-  if (flag == read->flags.end()) {
+  const auto network = read->flags.find("network");
+  const bool network_running = allows_network_shares(settings_.main);
+  if (flag == read->flags.end() && network == read->flags.end()) {
     bool saved = shared_folders_;
+    bool saved_network = network_running;
     if (editable) {
       const auto draft = read_config_file(*settings_.config_file);
       if (!std::holds_alternative<FrontendConfigDraft>(draft)) {
         return make_error_response(ApiError::settings_refused, {.reason = config_update_reason(ConfigUpdateFailure::unreadable)});
       }
       saved = allows_shared_folders(std::get<FrontendConfigDraft>(draft));
+      saved_network = allows_network_shares(std::get<FrontendConfigDraft>(draft));
     }
     return json_answer(200, std::string{"{\"shared\":"} + (saved ? "true" : "false") + ",\"running\":" +
-                                (shared_folders_ ? "true" : "false") + ",\"editable\":" + (editable ? "true" : "false") + "}\n");
+                                (shared_folders_ ? "true" : "false") + ",\"network\":" + (saved_network ? "true" : "false") +
+                                ",\"network_running\":" + (network_running ? "true" : "false") + ",\"editable\":" +
+                                (editable ? "true" : "false") + "}\n");
   }
   if (!editable) {
     return make_error_response(ApiError::settings_refused, {.reason = "this server was started without a config file to write"});
   }
-  const bool on = flag->second;
+  const std::optional<bool> shared = flag == read->flags.end() ? std::nullopt : std::optional<bool>{flag->second};
+  const std::optional<bool> shares = network == read->flags.end() ? std::nullopt : std::optional<bool>{network->second};
   const std::scoped_lock lock(config_);
-  const auto failure = update_config_file(*settings_.config_file, [on](FrontendConfigDraft& draft) {
-    if (on) draft.entries["roots.allow_untrusted_media"] = ConfigDraftEntry{true, ConfigSource::file};
-    else draft.entries.erase("roots.allow_untrusted_media");
+  const auto failure = update_config_file(*settings_.config_file, [shared, shares](FrontendConfigDraft& draft) {
+    const auto set = [&draft](const char* row, const std::optional<bool> on) {
+      if (!on) return;
+      if (*on) draft.entries[row] = ConfigDraftEntry{true, ConfigSource::file};
+      else draft.entries.erase(row);
+    };
+    set("roots.allow_untrusted_media", shared);
+    set("roots.allow_network_shares", shares);
   });
   if (failure) return make_error_response(ApiError::settings_refused, {.reason = config_update_reason(*failure)});
-  log(on ? "[strata] models: model folders will be used as they are, other users' access included (from the next start)"
-         : "[strata] models: model folders must be private again (from the next start)");
+  if (shared) {
+    log(*shared ? "[strata] models: model folders will be used as they are, other users' access included (from the next start)"
+                : "[strata] models: model folders must be private again (from the next start)");
+  }
+  if (shares) {
+    log(*shares ? "[strata] models: model folders may be on network shares, experimental (from the next start)"
+                : "[strata] models: model folders on network shares are refused again (from the next start)");
+  }
   return json_answer(200, "{\"saved\":true,\"restart_needed\":true}\n");
 }
 
@@ -317,7 +345,7 @@ HttpResponse CardRoutes::add(const std::string_view body) {
     if (mtp && (ec || !is_within(root.path(), resolved))) {
       log("[strata] models: the MTP draft file " + path_to_utf8(mtp->filename()) + " leads out of the model folder: the card runs without it");
       mtp.reset();
-    } else if (mtp && !std::holds_alternative<CanonicalRoot>(open_root(mtp->parent_path(), shared_folders_ ? RootPolicy::external : RootPolicy::existing))) {
+    } else if (mtp && !std::holds_alternative<CanonicalRoot>(open_root(mtp->parent_path(), shared_folders_ ? RootPolicy::external : RootPolicy::model_folder))) {
       log("[strata] models: the MTP draft file " + path_to_utf8(mtp->filename()) +
           " is in a folder other users of this PC can change: the card runs without it");
       mtp.reset();
@@ -400,7 +428,7 @@ HttpResponse CardRoutes::add_packed(const PackedFamily family, const GgufMetadat
     // the MTP draft layer upstream's setup made (owner 2026-10-28: MTP settings on the cards), held to the model
     // folder's rule: private, unless model folders are used as they are
     if (const auto rt = find_mtp_runtime(root.path())) {
-      if (std::holds_alternative<CanonicalRoot>(open_root(*rt, shared_folders_ ? RootPolicy::external : RootPolicy::existing))) {
+      if (std::holds_alternative<CanonicalRoot>(open_root(*rt, shared_folders_ ? RootPolicy::external : RootPolicy::model_folder))) {
         request.mtp = *rt;
         log("[strata] models: " + name + ": the MTP draft layer in " + path_to_utf8(*rt) + " is used");
       } else {
@@ -435,7 +463,7 @@ HttpResponse CardRoutes::add_packed(const PackedFamily family, const GgufMetadat
     std::vector<std::string> arguments{"download", "--maya", "--gguf", path_to_utf8(model), "--out", path_to_utf8(request.pack)};
     arguments.insert(arguments.end(), extra.begin(), extra.end());
     if (auto failure = built(std::move(arguments))) return std::move(*failure);
-    if (!shared_folders_ && !std::holds_alternative<CanonicalRoot>(open_root(request.pack)) && !make_tree_owner_only(request.pack)) {
+    if (!shared_folders_ && !std::holds_alternative<CanonicalRoot>(open_root(request.pack, RootPolicy::model_folder)) && !make_tree_owner_only(request.pack)) {
       return refused(ApiError::card_refused, "its pack could not be made private");
     }
     // the inventory's model, whose folder the launch passes as --pack: Maya's model name
@@ -452,7 +480,7 @@ HttpResponse CardRoutes::add_packed(const PackedFamily family, const GgufMetadat
     if (auto failure = built({"download", "--maya", "--gguf", path_to_utf8(model), "--out", path_to_utf8(request.pack)})) return std::move(*failure);
     // the card's model folder: owner-only as the server checks one (a pack strata-prepare just made inherits its folder's),
     // or as it is where the owner has the server use model folders as they are
-    if (!shared_folders_ && !std::holds_alternative<CanonicalRoot>(open_root(request.pack)) && !make_tree_owner_only(request.pack)) {
+    if (!shared_folders_ && !std::holds_alternative<CanonicalRoot>(open_root(request.pack, RootPolicy::model_folder)) && !make_tree_owner_only(request.pack)) {
       return refused(ApiError::card_refused, "its pack could not be made private");
     }
     // the inventory's model, whose folder the launch passes as --glm-pack: Maya's model name (raon1: the served one)
@@ -546,6 +574,9 @@ HttpResponse CardRoutes::point_draft(const std::string_view body) {
   if (held->state == CardState::starting) return make_error_response(ApiError::card_in_use);
   const auto slot = draft_layer_slot(held->card);
   if (!slot) return refused(ApiError::card_refused, "this card's model has no draft layer of its own to point at");
+  if (slot->inside) {
+    return refused(ApiError::card_refused, "this model's draft layer is in its model file; there is no other to point at");
+  }
   auto trusted = trusted_folder(*folder, shared_folders_);
   if (auto* answer = std::get_if<HttpResponse>(&trusted)) return std::move(*answer);
   const auto& root = std::get<CanonicalRoot>(trusted);

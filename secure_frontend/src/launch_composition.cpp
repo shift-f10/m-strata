@@ -33,7 +33,7 @@ LaunchFailure store_failure(const AcquireError& error) { return LaunchFailure{ex
 // folders' rule: a regular file, not a link, in a folder no other user of this PC may change (unless
 // roots.allow_untrusted_media).
 bool trusted_side_file(const std::filesystem::path& file, const FrontendConfig& config) {
-  const auto folder = open_root(file.parent_path(), config.roots.allow_untrusted_media ? RootPolicy::external : RootPolicy::existing);
+  const auto folder = open_root(file.parent_path(), config.roots.allow_untrusted_media ? RootPolicy::external : RootPolicy::model_folder);
   std::error_code ec;
   return std::holds_alternative<CanonicalRoot>(folder) && std::filesystem::is_regular_file(file, ec) && !std::filesystem::is_symlink(file, ec);
 }
@@ -331,7 +331,7 @@ std::variant<ComposedLaunch, LaunchFailure> compose_engine_launch(const Frontend
   }
   // Opened once, on the path (F-7), and only if it stays below roots.models.
   auto opened = open_root(*tokenizer,
-                          config.roots.allow_untrusted_media ? RootPolicy::external : RootPolicy::existing);
+                          config.roots.allow_untrusted_media ? RootPolicy::external : RootPolicy::model_folder);
   auto* root = std::get_if<CanonicalRoot>(&opened);
   if (root == nullptr || !is_within(config.roots.models.path(), root->path())) {
     return LaunchFailure{ExitCode::verification,

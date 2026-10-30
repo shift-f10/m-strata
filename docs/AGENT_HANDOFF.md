@@ -308,6 +308,80 @@ calibrate-then-start B while A runs.
   - Live: `/metrics` during a calibration named the calibrating card, with nothing loaded.
 - **Not verified**: a real engine's calibration (only the fake and the probe), and the owner's 5090.
 
+### Claude Code session, 2026-10-29 z36 (Windows box; owner-directed; committed with z35 and this entry, not pushed)
+
+The owner: "when I browsed for the qwen 3.6 35B it did not prompt for the mtp layer and the card has no browse folder
+for it" (answered: its draft layer is the GGUF's own MTP block, `MTP block loaded` in his log), then "Yes, show it";
+and "make sure you are updating the readme on the features and changes as well".
+
+- **Card JSON**: `card_builder`'s `DraftLayerSlot` gains `inside` and `in_file`. A qwen-profile card with no `--pack` and
+  an `mtp` option (a Qwen3.6 card) is `{"kind":"inside","in_file":<the card has --mtp>,"path":null}`: there is no
+  folder to point at. `POST /v1/strata/cards/mtp` on such a card is 422 `card_refused` ("this model's draft layer is in
+  its model file; there is no other to point at").
+- **Page**: the card's MTP draft layer row says **In the model file** (the card drafts with it; its MTP switch turns it
+  off) or **This model file has no MTP draft layer**, hides **Choose...**, and the options hide the MTP switch when the
+  file has none. Add a model says the same in its toast and never offers to point to a draft layer for such a card.
+- **README.md pass** (the changes since z29): the Qwen3.6 draft layer; Settings > Model folders' network-shares switch
+  and a section "Model folders on network shares (experimental)" with its status, what has and has not been tried (the
+  owner: "add in the readme the experimental network share as well and it's status"), also in the Features list;
+  Settings > Troubleshooting (`logging.engine_output`);
+  the per-card **longest answer**; the `--debugging` build and its pop-up / `y` prompt; the window's **Server log**;
+  Troubleshooting rows (an engine that does not start or a calibration that stops, an exit code; a Monitor with no GPU
+  readings; a Qwen3.6 card with no draft layer to choose; a share's folder refused).
+- **Proof**:
+  - RED: `a_qwen36_gguf_makes_a_qwen_card` (card_builder: the slot and its JSON), the Qwen3.6 add test in card_routes
+    (the 422), the page strings in api_router's cards tests.
+  - GREEN: with z35 (below).
+- **Not verified**: the page's draft-layer row with a real Qwen3.6 file (only the fixture's GGUF header).
+
+### Claude Code session, 2026-10-29 z35 (Windows box; owner-directed; committed with z36, not pushed)
+
+The owner: "I want to entertain the idea of being able to support SMB shares or CIFS shares or NFS shares for models",
+"we should mark that as experimental", then "Yes, build it". Off by default; nothing changes until it is turned on.
+
+- **Config**: `roots.allow_network_shares` (boolean, default false; README table row). Its description says it is
+  experimental and why. The server warns at every start while it is on (`warn_of_network_shares`, after
+  `warn_of_engine_output`, both start paths).
+- **Paths** (`canonical_path`): a new `RootPolicy::model_folder`. On this PC's own drives it is exactly `existing`. On a
+  network share it opens like `external` (no owner or write checks; marked external) only while `network_shares()` is
+  on (set from the config at load):
+  - **Windows**: a UNC root `\\server\share\...`, or a mapped drive whose final path is `\\?\UNC\...`.
+    `check_windows_root_form` and `classify_final_path` take `allow_unc`; the root keeps its `\\server\share` name, and
+    `open_beneath` classifies with UNC allowed when the root is UNC. `extended_path` turns `\\server\...` into
+    `\\?\UNC\server\...`.
+  - **Linux**: `fstatfs` f_type NFS (0x6969), SMB (0x517B), CIFS (0xFF534D42), SMB2 (0xFE534D42)
+    (`is_network_file_system`).
+  - Every model-folder site uses `model_folder` (`roots.models`, the launch composition, the card routes and both pack
+    checks) unless `roots.allow_untrusted_media` makes it `external`. The server's own folders, key, config and
+    downloads stay `existing`/`create_private`.
+- **Folders** (`local_folders`): `LocalVolume.network`; `on_network_share` (Windows: `GetDriveTypeW` = `DRIVE_REMOTE` or a
+  UNC root, through `drive_root`, since MSVC's root of a UNC path is only `\\server\`; Linux: `statfs`). While on, the
+  picker lists mapped drives (Windows) and nfs/nfs4/cifs/smb3/smbfs mounts (Linux), and takes a typed
+  `\\server\share\...`. While off, a share's path or a mapped drive is refused with the switch's name. A folder on a
+  share is never made private, and no private folder is made in one.
+- **Page**: Settings > Model folders > **Use model folders on network shares (SMB/CIFS, NFS)**, with an Experimental
+  badge, what it means, and the running server's state. `POST /v1/strata/folders/sharing` takes and answers `network`
+  (and `network_running`), and saves `shared` and `network` independently. The volumes JSON marks a share's drive.
+- **Threat model**: the "Model folders on network shares" contract entry and the "Network shares residual".
+- **Proof**:
+  - RED: `network_share_roots_are_a_model_folders_opt_in` and `a_model_folder_on_a_share_opens_only_when_allowed`
+    (paths; live through `\\localhost\C$`), `a_share_folder_is_picked_only_when_allowed` (local_folders; then again for
+    the off text that names the switch), `network_shares_are_an_experimental_opt_in` (typed_config),
+    `network_shares_warn_at_every_start` (api_server), the sharing route in `the_shared_folders_setting_is_read_and_saved`
+    (card_routes), auth04 (server_cli).
+  - GREEN with z36 (the shares build tree, MSVC): 230/231 of the touched suites. The one failure,
+    `switch_waits_for_the_generation_then_swaps` (model_launcher, a file this change does not touch), failed under the
+    parallel run while a Linux build loaded the PC, then passed alone three times. Linux gcc 13.3 and clang 18.1: 237/237
+    each.
+  - Live, a scratch server on port 18091 (fake engine) and `\\localhost\C$\...\share-live\models`:
+    - Off, the share was refused (422) and the page's picker named the switch.
+    - The switch saved ("Saved. It applies when the server restarts."). After the restart the warning was in the log,
+      the sharing route answered `network_running: true`, the picker opened the share and listed its file, and
+      make-private was refused (422, "a folder on a network share can't be made private from this PC; ...").
+    - Then off again.
+- **Not verified**: a real SMB/CIFS server on another PC, an NFS or CIFS mount on Linux (only the f_type check and the
+  local UNC path), a drive letter mapped as another account, a model run from a share, and the window app's view.
+
 ### Claude Code session, 2026-10-29 z34 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner: "starting an uncalibrated server recommend calibrating first and when answered yes, it will calibrate.

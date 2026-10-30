@@ -45,7 +45,8 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 
 - **Model cards:** every model you add or download becomes a card on the page's **Models** tab, with the options its
   engine takes: context length, KV cache format, thinking level, temperature, top-p and the other sampling defaults,
-  and web search. The page remembers each card's last options; **Defaults** resets them.
+  web search, and the **longest answer** (minutes; 30 by default, the server's own setting). The page remembers each
+  card's last options; **Defaults** resets them.
 - **Start, Stop and swap:** Start runs the card you pick; starting another card swaps the engine. The new model and its
   tokenizer are checked before the running one is touched, the answer in progress may finish (up to 60 s), then the old
   engine stops and the new one loads; a start that fails never takes the running model down. One model runs at a
@@ -128,15 +129,22 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 - **OpenAI-compatible API:** `/v1/chat/completions` (streamed or not, with usage and `reasoning_effort`),
   `/v1/models`, `/health` and `/metrics`.
 - **Settings tab:** the API key (show, copy, rotate), where the server listens and which PCs may use it, limits and
-  timeouts, the download folders, and the model folders, email alerts and web search.
+  timeouts, the download folders, and the model folders (as they are, or on network shares - experimental), email
+  alerts, web search, and **Troubleshooting** (the engine's own output in the server log).
+- **Model folders on network shares - experimental, off by default:** a model folder may be on an SMB/CIFS share
+  or an NFS mount once Settings turns it on; see
+  [Model folders on network shares](#model-folders-on-network-shares-experimental) for what it means and its status.
+- **A debugging build** (`make --debugging`, `install.bat -Debugging`): verbose logs to find out why a model does not
+  start or calibrate, said before the build, at every start of the server, and in the window and terminal apps,
+  which ask before they start it.
 
 **The window app**
 
 - **`strata-window`** (a build with `window`) is the server in a window. It runs the server as its child, signs you
   in with the one-time link and shows the page, opening on the Monitor. Closing the window keeps the server running in the tray; the tray
   icon's menu opens the window, starts or stops a model, restarts the server and exits (the model stops in order
-  first). Windows uses Microsoft Edge WebView2, part of Windows 10 and 11; Linux uses WebKitGTK and a tray icon
-  (Ayatana AppIndicator).
+  first). **Server log** (the tray, or Ctrl+Shift+L) shows the server's lines live, to copy or save. Windows uses
+  Microsoft Edge WebView2, part of Windows 10 and 11; Linux uses WebKitGTK and a tray icon (Ayatana AppIndicator).
 
 **The terminal app**
 
@@ -472,6 +480,9 @@ On the page, open **Models**:
   (0-1, default 0.6, the fastest measured on a 4080 SUPER).
   When none is found beside the model, the page offers to point to it (upstream's `mtp\rt` folder, or a folder holding
   it; Gemma 4's `mtp-*.gguf`), and a card shows its **MTP draft layer** with **Choose...** to change it later.
+  A Qwen3.6 model's draft layer is part of its GGUF (Unsloth's files carry one; upstream's Qwen3.6 engine reads it), so
+  there is no folder to choose: Add a model and the card say whether the file has one - **In the model file** (the card
+  drafts with it; its MTP switch turns it off) or **This model file has no MTP draft layer** (no MTP switch).
   A Qwen3.8 or Qwen3.6 model with its picture encoder beside it (one `mmproj*.gguf` in the folder) reads pictures.
 - **Download** fetches a model from the built-in catalog (every file pinned by its SHA-256) or a Hugging Face link
   into a drive or folder you choose; the free space is checked first. A large file comes over 16 connections at once
@@ -518,6 +529,12 @@ is left as it was. An empty box puts the setting back to its default.
 
 - **Model folders:** "Use model folders as they are, even if other users of this PC can access them" lets the server
   use shared folders without changing their permissions (then other users of the PC can read or change those files).
+  "Use model folders on network shares (SMB/CIFS, NFS)" - **experimental** - lets a model folder be on a share; see
+  [Model folders on network shares](#model-folders-on-network-shares-experimental).
+- **Troubleshooting:** "Write the engine's own output to the server log" (`logging.engine_output`), to find out why a
+  model does not start or calibrate: each line the engine prints reaches the log as `[engine] ...`. That output can
+  hold what the engine prints of your prompts and the paths of your model files, so the server warns of it at every
+  start: turn it off when you are done, and look through a log before you share it. A `--debugging` build has it on.
 - **Email alerts** (a build with `email`): the SMTP server, port and security (SSL/TLS on 465 or STARTTLS on 587),
   user name, From and To, and which events to send (downloads, calibrations, engine stops, server start). "Fill in
   IONOS" presets one provider; the password is stored on its own and never shown again; "Send a test email" checks it.
@@ -541,6 +558,38 @@ is left as it was. An empty box puts the setting back to its default.
 | `limits.engine.generation_timeout_s` | How long one generation may run before it is stopped: 1800 s (half an hour) by default, up to 86400. Each model card's **Longest answer (minutes)** sets it for that model; this row is the card's default. |
 | `limits.chat.max_prompt_tokens`, `limits.chat.max_completion_tokens` | The largest prompt and answer a request may ask for (the card's context still bounds them). |
 | `pull.connections` | Connections per large download (16 by default, 1-32). |
+
+### Model folders on network shares (experimental)
+
+With Settings > Model folders > **Use model folders on network shares (SMB/CIFS, NFS)** on (`roots.allow_network_shares`,
+off by default; it applies when the server restarts), a model folder may be on a share:
+
+- **Windows:** a `\\server\share\models` path (type it in the folder picker) or a mapped network drive (the picker
+  lists it). The server keeps the folder under its `\\server\share` name.
+- **Linux:** an NFS, CIFS or SMB mount (the picker lists it).
+
+Connect or mount the share with the system's own tools, as the user the server runs as; M-Strata keeps no share
+password. Only model folders may be on a share: the server's own folders, its key, its config and downloads stay on
+this PC. Why it is experimental:
+
+- A share's permissions are the share's, so a model folder on one is used as it is (never made private): anyone who
+  can write to the share can change what a model runs.
+- A model's first load streams it over the network: a 100 GB model takes about 15 minutes on 1 GbE and about 1.5
+  minutes on 10 GbE. A model that fits in RAM then runs at the local speed; with `--mmap-experts` every expert miss
+  goes over the network.
+- If the share drops while an engine still reads from it, the engine fails.
+- A drive letter mapped as you is not seen by a server running as another account; a `\\server\share` path is.
+
+The server warns at every start while it is on.
+
+**Status (2026-10-29): experimental, off by default.**
+
+- **Tried:** on Windows, through the PC's own administrative share (`\\localhost\C$\...`): the switch saves and
+  applies after a restart, the server warns, the folder picker opens a `\\server\share` folder and lists its
+  files, a folder on a share is never made private, and with the switch off a share is refused with the switch's
+  name. The automated tests pass on Windows and on Linux (gcc and clang).
+- **Not tried yet:** a share on another PC or a NAS, an NFS or CIFS mount on Linux, a mapped drive letter, and a
+  model loaded and run from a share (its load time is an estimate). Tell us how it goes on yours.
 
 ### Use it from other machines on your network
 
@@ -625,6 +674,11 @@ opens the page signed in on the Monitor, and puts an icon in the tray. Closing t
 tray icon's menu (right-click; on Linux, its menu) opens the window, starts or stops a model, restarts the server
 (how saved settings take effect) and exits. The server's output goes to `data/logs/server.log` (two files of at most
 4 MiB; the one-time login link is never written there). Starting it a second time shows the running window.
+**Server log** (the tray menu, Ctrl+Shift+L, or on Windows the title bar's menu) shows the server's lines live, newest
+last (the last 2000), with **Copy all**, **Save as...** and **Open the logs folder**; the window adds a line when it
+starts, restarts or stops the server and when the server ends (with its exit code).
+A `--debugging` build opens with a pop-up saying what it logs and starts the server only on **Yes**; `strata-tui`
+shows the same and starts it only on **y**.
 
 ### The terminal
 
@@ -740,6 +794,10 @@ for a real install, which makes its own key at the first start.
 | A web-search answer is empty | It ran out of tokens while reasoning (`finish_reason` `length`): raise `max_tokens`. If every search found nothing, the search box says why; see "Web search through SearXNG" for more engines. |
 | An answer stops early, marked "Max tokens" (`length`), with room left in the context | It reached the longest answer the server allows (`limits.engine.generation_timeout_s`, half an hour by default; servers built before 2026-10-29 stopped at 120 s). Raise **Longest answer (minutes)** on the model's card, or **Longest answer (seconds)** in Settings → Limits and timeouts for every model, and restart the model or the server. |
 | The engine takes long to stop with a big model | Freeing tens of GB of pinned RAM takes time; the server waits, then reports it. |
+| A model does not start, or its calibration stops ("the engine did not start") | Turn on Settings > Troubleshooting (or build with `--debugging`), restart, try again, and read the `[engine]` lines in the log (the console, or the window app's Server log): the engine says why. After `engine generation N ended: crashed` the next line gives its exit code (`0xC0000005` an access violation, `0xC0000409` an abort). Turn it off afterwards. |
+| The Monitor shows no GPU load, memory, temperature or power | Its readings come from `nvidia-smi`. A field it cannot read only blanks that reading; when there is no reading at all, the GPU card's grey line quotes what `nvidia-smi` answered (for example `Failed to initialize NVML: ...`, usually a driver that needs a restart or reinstall). |
+| A Qwen3.6 card has no MTP draft layer to choose | Its draft layer is part of the model file: the card says whether the file has one. A file without one runs without MTP; an Unsloth Qwen3.6 GGUF carries it. |
+| A model folder on a network share is refused | Turn on Settings > Model folders > Use model folders on network shares (experimental) and restart; a mapped drive must be mapped for the account the server runs as. |
 
 ## Current progress and open items
 

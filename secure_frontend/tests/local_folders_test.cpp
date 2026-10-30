@@ -268,6 +268,50 @@ void a_private_folder_is_made_in_a_shared_one() {
 #endif
 }
 
+// The owner (2026-10-29): "support SMB shares or CIFS shares or NFS shares for models", "mark that as experimental".
+// While network shares are allowed the page may pick a model folder on a share - here \\localhost\C$\... where the
+// admin share answers (elsewhere the case says so and passes) - and list it; a share's folder is never made private or
+// given a new private folder (this PC cannot set a share's permissions). Off, a share is refused as before.
+void a_share_folder_is_picked_only_when_allowed() {
+#if defined(_WIN32)
+  const auto local = secure_frontend_test::make_scratch_directory() / "share-pick";
+  secure_frontend_test::make_private_directory(local);
+  secure_frontend_test::write_file(local / "model.gguf", "GGUF");
+  const std::wstring text = local.wstring();
+  std::error_code ec;
+  if (text.size() < 3U || (text[0] != L'C' && text[0] != L'c') ||
+      !std::filesystem::exists(std::filesystem::path{L"\\\\localhost\\C$\\" + text.substr(3U)} / "model.gguf", ec)) {
+    std::cerr << "note: \\\\localhost\\C$ does not answer here; nothing to pick\n";
+    return;
+  }
+  const std::filesystem::path share{L"\\\\localhost\\C$\\" + text.substr(3U)};
+  const std::string share_text = secure_frontend::path_to_utf8(share);
+  secure_frontend::set_network_shares(false);
+  const auto off = secure_frontend::local_folder_path(share_text);
+  const auto* off_error = std::get_if<secure_frontend::FolderError>(&off);
+  expect(off_error != nullptr && off_error->message.find("Use model folders on network shares") != std::string::npos,
+         "off: a share is refused, naming the switch that allows it: " + (off_error ? off_error->message : std::string{"(picked)"}));
+  expect(!secure_frontend::on_network_share(local) && secure_frontend::on_network_share(share), "a share is told from a local folder");
+  secure_frontend::set_network_shares(true);
+  const auto checked = secure_frontend::local_folder_path(share_text);
+  expect(std::holds_alternative<std::filesystem::path>(checked), "on: a share's folder is a folder the page may pick");
+  const auto listed = secure_frontend::list_local_folder(share_text);
+  const auto* listing = std::get_if<secure_frontend::FolderListing>(&listed);
+  expect(listing != nullptr && listing->entries.size() == 1U && listing->entries[0].name == "model.gguf", "and is listed");
+  const auto made = secure_frontend::make_model_folder_private(share);
+  expect(made.has_value() && made->message.find("network share") != std::string::npos,
+         "a share's folder is never made private: " + (made ? made->message : std::string{"(made)"}));
+  const auto created = secure_frontend::make_private_folder(share, "new");
+  const auto* refused = std::get_if<secure_frontend::FolderError>(&created);
+  expect(refused != nullptr && refused->message.find("network share") != std::string::npos && !std::filesystem::exists(local / "new", ec),
+         "nor given a new private folder");
+  for (const auto& volume : secure_frontend::local_volumes()) {
+    expect(volume.network == secure_frontend::on_network_share(secure_frontend::path_from_utf8(volume.path)), "each drive says whether it is a share");
+  }
+  secure_frontend::set_network_shares(false);
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -278,5 +322,6 @@ int main(int argc, char** argv) {
       {"a_model_folder_with_its_pack_is_made_private", a_model_folder_with_its_pack_is_made_private},
       {"an_mtp_draft_layer_folder_is_made_private", an_mtp_draft_layer_folder_is_made_private},
       {"a_private_folder_is_made_in_a_shared_one", a_private_folder_is_made_in_a_shared_one},
+      {"a_share_folder_is_picked_only_when_allowed", a_share_folder_is_picked_only_when_allowed},
   }, failures);
 }

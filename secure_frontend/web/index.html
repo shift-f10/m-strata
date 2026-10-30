@@ -218,7 +218,7 @@
           <span class="st-label">MTP draft layer</span>
           <div class="model-folder__row"><code id="model-draft-path"></code>
             <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-draft-change">Choose...</button></div>
-          <p class="muted small">The model's draft layer guesses tokens ahead, so answers come faster. Kept somewhere else? Point the card at it.</p>
+          <p class="muted small" id="model-draft-help">The model's draft layer guesses tokens ahead, so answers come faster. Kept somewhere else? Point the card at it.</p>
         </div>
         <div class="model-options" id="model-options"></div>
         <div class="st-progress model-loading" id="model-loading" hidden><div class="st-progress__bar"></div></div>
@@ -382,6 +382,14 @@
           reads them as you. The server's own folders stay private. This setting applies when the server restarts.</p>
         <label class="model-calibration__auto"><input type="checkbox" id="folders-shared"> Use model folders as they are,
           even if other users of this PC can access them</label>
+        <label class="model-calibration__auto"><input type="checkbox" id="folders-network">
+          Use model folders on network shares (SMB/CIFS, NFS) <span class="st-badge st-badge--reading">Experimental</span></label>
+        <p class="muted small">A model folder may then be on a share: a <code>\\server\share\...</code> path or a mapped
+          drive on Windows, an NFS, CIFS or SMB mount on Linux - connected with this PC's own tools (the server keeps no share
+          password). Only model folders: the server's own folders stay on this PC. A share's permissions are the share's, so
+          it is used as it is: anyone who can write to the share can change what a model runs, a model's first load streams
+          it over the network, and an engine fails if the share drops while it reads.</p>
+        <p class="muted small" id="folders-network-state"></p>
         <div class="model-actions">
           <button type="button" class="st-btn st-btn--primary st-btn--sm" id="folders-save">Save</button>
         </div>

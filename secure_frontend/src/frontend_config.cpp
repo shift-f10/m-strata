@@ -36,7 +36,7 @@ std::string decimal_text(const double value) {
   return ec == std::errc{} ? std::string{buffer, end} : std::string{"?"};
 }
 
-constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 + 1 + 2 + 1 + 1 + 2 + 4 + 5 + 1 + 1 /* roots.allow_untrusted_media */ + 1 /* glm.kv */ + 3 /* listener.login_link, models.default_engine, models.default_root */ + 8 /* alerts.email.* */ + 1 /* models.control_remote_networks */ + 5 /* search.* */ + 2 /* vision.mmproj, vision.gpu */ + 2 /* glm.pcie_share, glm.cpu_lane */ + 1 /* logging.engine_output */> kSchema{{
+constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 + 1 + 2 + 1 + 1 + 2 + 4 + 5 + 1 + 1 /* roots.allow_untrusted_media */ + 1 /* glm.kv */ + 3 /* listener.login_link, models.default_engine, models.default_root */ + 8 /* alerts.email.* */ + 1 /* models.control_remote_networks */ + 5 /* search.* */ + 2 /* vision.mmproj, vision.gpu */ + 2 /* glm.pcie_share, glm.cpu_lane */ + 1 /* logging.engine_output */ + 1 /* roots.allow_network_shares */> kSchema{{
     {"schema_version", T::integer, false, 1, 1, d::kSchemaVersion, false, "", "",
      "Config format version; must be 1. Required in a config file."},
     {"listener.host", T::string, false, 0, 0, 0, false, "127.0.0.1", "--host",
@@ -113,6 +113,9 @@ constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 
     {"roots.logs", T::string, false, 0, 0, 0, false, "", "", "Absolute log directory (created 0700; unused in SP1)."},
     {"roots.cache", T::string, false, 0, 0, 0, false, "", "",
      "Absolute cache directory (created 0700); when set, it holds the engine's CUDA cache in its cuda subdirectory."},
+    // Owner 2026-10-29 ("support SMB shares or CIFS shares or NFS shares for models", "mark that as experimental").
+    {"roots.allow_network_shares", T::boolean, false, 0, 0, 0, false, "", "",
+     "Experimental: model folders may be on a network share - a UNC path (\\\\server\\share\\...) or a mapped network drive on Windows, an NFS, CIFS or SMB mount on Linux - connected or mounted with this PC's own tools (the server keeps no share password). Only model folders: the server's own folders stay on this PC. A share's permissions are the share's, so it is used as it is: anyone who can write to the share can change what a model runs, a model's first load streams it over the network, and an engine fails if the share drops while it reads. The server warns of it at every start."},
     {"roots.allow_untrusted_media", T::boolean, false, 0, 0, 0, false, "", "--allow-untrusted-media",
      "Use model folders as they are, even where other users of this PC can read or change them (shared folders, exFAT/FAT media whose permissions the OS ignores): roots.models and roots.tokenizer_pack open with RootPolicy::external (no owner-only / not-shared-writable check), and the page adds, moves and packs models in such folders without changing their permissions (the Settings tab's Model folders switch). Owner opt-in; links below the root are still refused; the server's own folders keep their checks."},
     {"roots.state", T::string, false, 0, 0, 0, false, "", "--state-dir",
@@ -1159,7 +1162,10 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
   // secret root keeps the strict check (it holds the API token).
   const bool untrusted_media = read.boolean("roots.allow_untrusted_media");
   secure_frontend::set_relaxed_paths(untrusted_media);
-  const RootPolicy models_policy = untrusted_media ? RootPolicy::external : RootPolicy::existing;
+  // roots.allow_network_shares (experimental): a model folder may be on a network share (RootPolicy::model_folder)
+  const bool network_shares = read.boolean("roots.allow_network_shares");
+  secure_frontend::set_network_shares(network_shares);
+  const RootPolicy models_policy = untrusted_media ? RootPolicy::external : RootPolicy::model_folder;
   const auto models = canonical_root(read, errors, "roots.models", models_policy);
   const auto tokenizer = canonical_root(read, errors, "roots.tokenizer_pack", models_policy);
   auto secret = canonical_root(read, errors, "roots.secret");
@@ -1618,7 +1624,7 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
       EngineLimits{std::chrono::seconds(ready_s), std::chrono::seconds(generation_s), std::chrono::seconds(drain_s)},
       ConcurrencyLimits{u32(concurrent), u32(queued), std::chrono::milliseconds(queue_timeout_ms), u32(remote_cap), !queue_set,
                         !cap_set}};
-  Roots roots{*models, tokenizer, secret, logs, cache, state, untrusted_media};
+  Roots roots{*models, tokenizer, secret, logs, cache, state, untrusted_media, network_shares};
   // SP5-P2 Task 4 (D-7, R-T4-b): under the glm53 profile the Maya-named key
   // (glm.idle_unload_s, serve/server.py:8298 at v1.1.21) drives the idle-unload
   // window; 0 means unset and the M1 engine.idle_unload_s keeps driving.
