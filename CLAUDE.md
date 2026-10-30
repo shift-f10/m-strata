@@ -17,3 +17,4 @@ Sub-controllers and implementers also read `docs/superpowers/handoff/briefs/subc
 - No `rm -rf`, `git clean -fd*`, or bypass flags. Retire worktrees by moving them out, then `git worktree prune`.
 - `-Werror` everywhere; TDD with RED evidence; a test is never weakened to pass.
 - Windows claims come only from the `windows-msys2-clang` CI job; GPU claims only from the owner's box. Update `docs/AGENT_HANDOFF.md` with every change.
+- **Standing rule (owner, 2026-10-30): workers are checked.** Workers (sub-agents, with skills) may be used where they help, but their work is checked before it is reported or committed, and each running worker is checked on about every ten minutes to make sure it is not stuck.
