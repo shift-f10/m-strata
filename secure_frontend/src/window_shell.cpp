@@ -774,4 +774,6 @@ bool ServerChild::stop(const std::chrono::milliseconds grace) {
   return orderly;
 }
 
+bool asks_before_starting() noexcept { return debugging_build(); }
+
 }  // namespace secure_frontend::window

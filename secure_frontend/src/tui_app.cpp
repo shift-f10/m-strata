@@ -1574,4 +1574,44 @@ void App::draw_about(Screen& screen, const Rect area) const {
   walk(walk, *about_, "");
 }
 
+GateAnswer debugging_gate(const Key& key) noexcept {
+  if (key.kind == Key::Kind::wheel_up || key.kind == Key::Kind::wheel_down) return GateAnswer::waiting;
+  return key.kind == Key::Kind::character && (key.text == "y" || key.text == "Y") ? GateAnswer::accepted : GateAnswer::declined;
+}
+
+void draw_debugging_notice(Screen& screen, const std::string_view notice) {
+  const int left = 2;
+  const int width = std::max(1, screen.width() - 2 * left);
+  // each paragraph's words, line by line within the width (a word longer than a line gets a line of its own, clipped)
+  std::vector<std::string> lines;
+  std::size_t start = 0;
+  while (start <= notice.size()) {
+    const auto end = std::min(notice.find("\n\n", start), notice.size());
+    const std::string_view paragraph = notice.substr(start, end - start);
+    if (!lines.empty()) lines.emplace_back();
+    std::string line;
+    std::size_t at = 0;
+    while (at < paragraph.size()) {
+      const auto space = std::min(paragraph.find_first_of(" \n", at), paragraph.size());
+      const std::string_view word = paragraph.substr(at, space - at);
+      at = space + 1U;
+      if (word.empty()) continue;
+      if (!line.empty() && text_width(line) + 1 + text_width(word) > width) {
+        lines.push_back(std::move(line));
+        line.clear();
+      }
+      if (!line.empty()) line += ' ';
+      line += word;
+    }
+    if (!line.empty()) lines.push_back(std::move(line));
+    start = end + 2U;
+  }
+  (void)screen.text(left, 1, "Debugging build", kTitle, width);
+  const int keys_row = std::min(3 + static_cast<int>(lines.size()) + 1, screen.height() - 1);
+  for (std::size_t i = 0; i < lines.size() && 3 + static_cast<int>(i) < keys_row; ++i) {
+    (void)screen.text(left, 3 + static_cast<int>(i), lines[i], kNormal, width);
+  }
+  (void)screen.text(left, keys_row, "y: start the server    any other key: quit", kSelected, width);
+}
+
 }  // namespace secure_frontend::tui

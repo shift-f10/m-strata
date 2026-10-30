@@ -183,4 +183,18 @@ class ServerChild final {
   std::unique_ptr<State> state_;
 };
 
+// make --debugging (the owner, 2026-10-29: "it will have a pop up on the windows version that this is the debugging
+// version and the tui you will have to accept and press y to start"): what a debugging build's window (a pop-up) and
+// TUI (a screen) say before they start the server. Plain text, its paragraphs split by a blank line.
+inline constexpr std::string_view kDebuggingNotice =
+    "This is a debugging build of M-Strata (built with --debugging), made to find out why a model does not start or "
+    "calibrate.\n\n"
+    "It logs one line per request (never its text) and the engine's own output, which can hold what the engine prints of "
+    "your prompts and the paths of your model files.\n\n"
+    "Take care: run it on your own PC, keep the server's log private, look through a log before you share it and take "
+    "out prompts, paths and names, and build again without --debugging for everyday use. The engine's output can be "
+    "turned off without a new build: Settings > Troubleshooting.";
+// Whether this build asks before it starts the server (a debugging build: debugging_build()).
+[[nodiscard]] bool asks_before_starting() noexcept;
+
 }  // namespace secure_frontend::window

@@ -199,6 +199,43 @@ int main(int argc, char** argv) {
     return 1;
   }
   const t::Capabilities capabilities = terminal.capabilities();
+  // make --debugging (owner 2026-10-29): a debugging build says what it logs and starts the server only on y; any other
+  // key (or a quit signal, or a closed terminal) ends it before anything starts
+  if (w::asks_before_starting()) {
+    t::KeyDecoder decoder;
+    std::optional<t::TerminalSize> drawn;
+    t::GateAnswer answer = t::GateAnswer::waiting;
+    while (answer == t::GateAnswer::waiting) {
+      if (g_quit_signal.load() || terminal.gone()) {
+        answer = t::GateAnswer::declined;
+        break;
+      }
+      const auto size = terminal.size();
+      if (!drawn || !(*drawn == size)) {
+        t::Screen screen(size.width, size.height);
+        t::draw_debugging_notice(screen, w::kDebuggingNotice);
+        terminal.write(t::render(screen, nullptr, capabilities));
+        drawn = size;
+      }
+      const std::string typed = terminal.read(std::chrono::milliseconds(100));
+      auto keys = decoder.feed(typed);
+      if (typed.empty() && decoder.holding()) {
+        for (auto& key : decoder.flush()) keys.push_back(std::move(key));
+      }
+      for (const auto& key : keys) {
+        answer = t::debugging_gate(key);
+        if (answer != t::GateAnswer::waiting) break;
+      }
+    }
+    if (answer != t::GateAnswer::accepted) {
+      terminal.close();
+      std::cout << "strata-tui: not started (a debugging build starts the server only on y).\n";
+#if defined(_WIN32)
+      if (g_stopped != nullptr) (void)SetEvent(g_stopped);
+#endif
+      return 0;
+    }
+  }
   t::App app(capabilities, std::nullopt);
   Shared shared;
   std::optional<w::RotatingLog> log;  // opened at the first line once the logs folder is there (a first start makes it)

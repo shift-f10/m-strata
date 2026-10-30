@@ -461,7 +461,7 @@ def test_debugging_is_off_unless_asked_for_and_says_what_it_means(tmp_path, caps
     # what it logs, what that can hold, and what to do about it: before the build starts and in the folder's README
     for words in ("one line per request", "the engine's own output", "your prompts", "the paths of your model files",
                   "keep the server's log private", "before you share it", "without --debugging",
-                  "Settings > Troubleshooting"):
+                  "Settings > Troubleshooting", "only when you accept"):
         assert words in make.DEBUGGING_NOTICE, words
     make.announce(asked)
     assert make.DEBUGGING_NOTICE in capsys.readouterr().out
