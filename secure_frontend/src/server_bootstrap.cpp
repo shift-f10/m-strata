@@ -1121,8 +1121,12 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
   secure_frontend::ModelCardRoutes plugin_route_handler;
   std::optional<secure_frontend::PluginRoutes> plugin_routes;
   if (config.models.control) {
-    secure_frontend::PluginRouteSettings settings{.plugins_dir = plugins.folder, .state_dir = config.roots.state,
-                                                  .first_party = plugins.first_party, .client_allowed = files_allowed};
+    // a tool's or notifier's settings: the config file (plugins.<id>.<name>) and the secret folder (its secrets)
+    secure_frontend::PluginRouteSettings settings{
+        .plugins_dir = plugins.folder, .state_dir = config.roots.state, .first_party = plugins.first_party,
+        .config_file = config_file,
+        .secret_dir = config.roots.secret ? std::optional<std::filesystem::path>{config.roots.secret->path()} : std::nullopt,
+        .client_allowed = files_allowed};
     for (const auto& entry : plugins.entries) {
       if (entry.state == secure_frontend::PluginState::on) settings.running.insert(entry.id);
     }

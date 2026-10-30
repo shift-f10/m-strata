@@ -830,11 +830,15 @@ secure_frontend_add_library(secure_frontend_plugins SOURCES src/plugin_manifest.
     LINKS secure_frontend_json secure_frontend_sha256 secure_frontend_paths)
 # The Plugins tab's server half (plugin_routes.hpp): the list, an approval, on/off, in <roots.state>/plugins.json.
 secure_frontend_add_library(secure_frontend_plugin_routes SOURCES src/plugin_routes.cpp
-    LINKS secure_frontend_plugins secure_frontend_token_store secure_frontend_api_core secure_frontend_paths)
+    LINKS secure_frontend_plugins secure_frontend_token_store secure_frontend_api_core secure_frontend_paths
+          secure_frontend_config_writer secure_frontend_typed_config secure_frontend_plugin_secrets)
 # An install's plugins as its server finds them when it starts (install_plugins.hpp): make's record beside the engine
 # and the owner's choices; the server, strata-window and strata-tui read them.
 secure_frontend_add_library(secure_frontend_install_plugins SOURCES src/install_plugins.cpp
     LINKS secure_frontend_plugins secure_frontend_about_info)
+# A tool's or notifier's secret settings (plugin_secrets.hpp): plugin-<id>-<name> in roots.secret, DPAPI or 0600.
+secure_frontend_add_library(secure_frontend_plugin_secrets SOURCES src/plugin_secrets.cpp
+    LINKS secure_frontend_token_store secure_frontend_paths)
 # A calibration's report for a bug report (owner 2026-10-30): its trials, this PC's hardware and the build, as Markdown.
 secure_frontend_add_library(secure_frontend_calibration_report SOURCES src/calibration_report.cpp
     LINKS secure_frontend_about_info secure_frontend_serve_monitor)
@@ -1781,6 +1785,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # SP3 SP1-addendum A1 (spec §5.1): unlabelled, so the wine smoke runs them (pre-flight T4).
     secure_frontend_add_cases(secure_frontend_typed_config_tests cfg01_sp3_rows_type_and_range logging_engine_output_is_off_unless_asked
+        plugin_settings_live_in_the_config
         network_shares_are_an_experimental_opt_in
         cfg01_header_deadline_le_request_deadline cfg01_response_deadline_ge_write_stall
         cfg01_wildcard_bind_requires_host_aliases cfg01_host_alias_grammar_and_count
@@ -2266,6 +2271,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         the_screen_draws_text_boxes_and_gauges charts_are_braille_or_blocks only_the_changes_are_written
         keys_decode_from_vt_sequences the_monitor_draws_the_servers_readings the_views_switch_and_keys_become_requests
         settings_are_edited_then_saved quitting_asks_first downloads_say_what_is_on_this_pc the_debugging_notice_waits_for_y plugins_are_approved_and_switched
+        the_plugins_settings_are_edited_then_saved
         the_plugins_view_fits_and_waits_for_its_changes
         an_uncalibrated_start_asks_to_calibrate_first)
 
@@ -2297,18 +2303,23 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     target_compile_definitions(secure_frontend_plugin_manifest_tests PRIVATE
         SECURE_FRONTEND_REPO_PLUGINS="${CMAKE_CURRENT_SOURCE_DIR}/../plugins")
     secure_frontend_add_cases(secure_frontend_plugin_manifest_tests
-        the_shipped_debugging_plugin_is_one a_diagnostics_manifest_is_read a_code_plugin_names_this_platforms_files a_wrong_manifest_is_refused_by_name
+        the_shipped_debugging_plugin_is_one a_diagnostics_manifest_is_read
+        a_tool_manifest_says_how_its_program_runs a_wrong_run_block_is_refused_by_name values_are_checked_against_the_settings a_code_plugin_names_this_platforms_files a_wrong_manifest_is_refused_by_name
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_test_executable(secure_frontend_plugin_registry_tests tests/plugin_registry_test.cpp secure_frontend_plugins)
     secure_frontend_add_cases(secure_frontend_plugin_registry_tests
         the_diagnostics_that_are_on_are_combined a_new_plugin_waits_then_runs_once_approved a_changed_plugin_waits_again a_first_party_plugin_is_trusted_by_its_build_record
         refusals_say_why the_choices_round_trip
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+    # A tool's or notifier's secret settings (owner 2026-10-30, decision 6).
+    secure_frontend_add_test_executable(secure_frontend_plugin_secrets_tests tests/plugin_secrets_test.cpp secure_frontend_plugin_secrets)
+    secure_frontend_add_cases(secure_frontend_plugin_secrets_tests a_secret_is_stored_read_and_removed
+        LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # The Plugins tab's routes (owner 2026-10-30): the list, an approval, on/off.
     secure_frontend_add_test_executable(secure_frontend_plugin_routes_tests tests/plugin_routes_test.cpp
         secure_frontend_plugin_routes secure_frontend_http_request_handler)
     secure_frontend_add_cases(secure_frontend_plugin_routes_tests
-        the_plugins_are_listed approval_and_switching_are_kept refusals_say_why
+        the_plugins_are_listed approval_and_switching_are_kept refusals_say_why settings_are_listed_and_saved
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # A calibration's report for a bug report (owner 2026-10-30).

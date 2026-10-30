@@ -3361,7 +3361,8 @@
   }
   function approvalQuestion(p) {
     var what = p.kind === "diagnostics" ? "It changes what this server logs and shows; it runs no code of its own. " + diagnosticsNotice(p)
-                                        : "Its code then runs on this PC, with this server's rights.";
+                                        : "Its code then runs on this PC, with this server's rights." +
+                                          (p.network ? " It says it connects to " + p.network + "." : "");
     return "Approve " + (p.name || p.id) + (p.version ? " " + p.version : "") + " from " + (p.publisher || "an unnamed publisher") + "? " +
            what + " Only the files there now are approved: their SHA-256s are kept, and a changed file waits for approval again.";
   }
@@ -3395,6 +3396,9 @@
     if (p.reason) { card.appendChild(el("p", "muted small", p.reason)); }
     if (Array.isArray(p.switches) && p.switches.length) { card.appendChild(el("p", "muted small", "Turns on: " + p.switches.join(", "))); }
     card.appendChild(el("p", "muted small", pluginNow(p)));
+    if (p.network) { card.appendChild(el("p", "muted small", "Connects to " + p.network + ".")); }
+    if (p.settings_problem) { card.appendChild(el("p", "msg-warn small", "Not ready: " + p.settings_problem)); }
+    if (Array.isArray(p.settings) && p.settings.length) { card.appendChild(pluginSettingsForm(p)); }
     if (p.manifest_sha256) { card.appendChild(pluginSums(p)); }
     var editable = !!(plugins.data && plugins.data.editable);
     var actions = el("div", "model-actions");
@@ -3414,6 +3418,132 @@
       card.appendChild(actions);
     }
     return card;
+  }
+  // A tool's or notifier's settings (owner 2026-10-30, decision 6; plugin spec section 10): each drawn by its kind, a
+  // secret as a password field that only replaces it (or Clear removes it) and is never shown, the presets that fill
+  // them in, and Save. What is saved applies when the server restarts.
+  function pluginSettingField(s) {
+    var field = el("div", "config-field");
+    var input;
+    if (s.kind === "boolean") {
+      var check = el("label", "option-auto");
+      input = el("input");
+      input.type = "checkbox";
+      input.checked = s.value === null || s.value === undefined ? s["default"] === true : s.value === true;
+      check.appendChild(input);
+      check.appendChild(document.createTextNode(s.label || s.name));
+      field.appendChild(check);
+    } else {
+      field.appendChild(el("label", "st-label", (s.label || s.name) + (s.required ? " (needed)" : "")));
+      if (s.kind === "choice") {
+        input = el("select", "st-input");
+        (s.choices || []).forEach(function (c) {
+          var option = el("option", null, String(c));
+          option.value = String(c);
+          input.appendChild(option);
+        });
+        var chosen = s.value !== null && s.value !== undefined ? s.value : s["default"];
+        if (chosen !== null && chosen !== undefined) { input.value = String(chosen); }
+      } else if (s.kind === "text_list") {
+        input = el("textarea", "st-input config-list");
+        input.rows = 3;
+        input.value = Array.isArray(s.value) ? s.value.join("\n") : "";
+        input.placeholder = "One per line" + (s.max_items ? ", at most " + s.max_items : "") +
+          (Array.isArray(s["default"]) && s["default"].length ? " (default: " + s["default"].join(", ") + ")" : "");
+      } else {
+        input = el("input", "st-input");
+        input.type = s.kind === "integer" ? "number" : s.kind === "secret" ? "password" : s.kind === "url" ? "url" : "text";
+        if (s.kind === "integer") {
+          input.step = "1";
+          input.min = String(s.min);
+          input.max = String(s.max);
+        }
+        if (s.kind === "secret") {
+          input.value = "";
+          input.autocomplete = "new-password";
+          input.placeholder = s.set ? "Set: type a new one to replace it" : "Not set";
+        } else {
+          input.value = s.value === null || s.value === undefined ? "" : String(s.value);
+          input.placeholder = s["default"] === null || s["default"] === undefined ? "Not set" : "Default: " + String(s["default"]);
+        }
+        input.spellcheck = false;
+        input.autocapitalize = "off";
+      }
+      field.appendChild(input);
+    }
+    if (s.help) { field.appendChild(el("span", "muted small", String(s.help))); }
+    return { node: field, input: input, setting: s, cleared: false };
+  }
+  // A field's value to send: undefined leaves it as it is (a secret not typed), null puts it back to its default (a
+  // secret: removes it).
+  function pluginSettingValue(f) {
+    var s = f.setting;
+    if (s.kind === "secret") { if (f.cleared) { return null; } return f.input.value === "" ? undefined : f.input.value; }
+    if (s.kind === "boolean") { return f.input.checked; }
+    if (s.kind === "text_list") {
+      var items = f.input.value.split(/\r?\n|,/).map(function (x) { return x.trim(); }).filter(function (x) { return x; });
+      return items.length ? items : null;
+    }
+    var text = f.input.value.trim();
+    if (text === "") { return null; }
+    if (s.kind === "integer") { var number = Number(text); return Number.isInteger(number) ? number : text; }
+    return text;
+  }
+  function fillPluginPreset(fields, preset) {
+    fields.forEach(function (f) {
+      if (!Object.prototype.hasOwnProperty.call(preset.values, f.setting.name)) { return; }
+      var v = preset.values[f.setting.name];
+      if (f.setting.kind === "boolean") { f.input.checked = v === true; }
+      else if (f.setting.kind === "text_list") { f.input.value = Array.isArray(v) ? v.join("\n") : ""; }
+      else { f.input.value = String(v); }
+    });
+  }
+  function pluginSettingsForm(p) {
+    var box = el("div", "plugin-settings");
+    var editable = !!(plugins.data && plugins.data.editable);
+    var fields = p.settings.map(pluginSettingField);
+    if (Array.isArray(p.presets) && p.presets.length) {
+      var row = el("div", "model-actions");
+      p.presets.forEach(function (preset) {
+        var fill = el("button", "st-btn st-btn--secondary st-btn--sm", "Fill in " + preset.label);
+        fill.type = "button";
+        fill.addEventListener("click", function () { fillPluginPreset(fields, preset); });
+        row.appendChild(fill);
+      });
+      box.appendChild(row);
+    }
+    var grid = el("div", "config-grid");
+    fields.forEach(function (f) {
+      if (f.setting.kind === "secret" && f.setting.set) {
+        var forget = el("button", "st-btn st-btn--secondary st-btn--sm", "Clear");
+        forget.type = "button";
+        forget.addEventListener("click", function () {
+          f.cleared = true;
+          f.input.value = "";
+          f.input.placeholder = "Removed when you save";
+        });
+        f.node.appendChild(forget);
+      }
+      grid.appendChild(f.node);
+    });
+    box.appendChild(grid);
+    var actions = el("div", "model-actions");
+    var save = el("button", "st-btn st-btn--primary st-btn--sm", "Save settings");
+    save.type = "button";
+    save.disabled = !editable || plugins.acting;
+    save.addEventListener("click", function () { savePluginSettings(p, fields); });
+    actions.appendChild(save);
+    box.appendChild(actions);
+    return box;
+  }
+  async function savePluginSettings(p, fields) {
+    if (plugins.acting) { return; }
+    var values = {};
+    fields.forEach(function (f) {
+      var v = pluginSettingValue(f);
+      if (v !== undefined) { values[f.setting.name] = v; }
+    });
+    await pluginChange(api("/v1/strata/plugins/settings", jsonPost({ id: p.id, values: values })));
   }
   function renderPlugins() {
     var list = $("plugins-list");

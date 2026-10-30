@@ -423,6 +423,16 @@ leaves unset (`logging.requests`, `logging.engine_output`) are on, every start s
 Troubleshooting, and strata-window and strata-tui say what it logs before they start the server. Turning it on in the
 tab says the same first.
 
+A tool's or notifier's settings (owner 2026-10-30, decision 6; the spec's section 10) are declared in its manifest
+(`text`, `url`, `secret`, `integer`, `boolean`, `choice`, `text_list`, each with its label, help, default and bounds),
+drawn in its card and saved through `POST /v1/strata/plugins/settings {"id", "values": {name: value or null}}`: each
+value is checked against the manifest; every one but a secret is kept in the config file as `plugins.<id>.<name>` (the
+config reader takes these rows, bounded, and `--check` prints them); a secret goes to the secret folder as
+`plugin-<id>-<name>` (DPAPI on Windows, 0600 elsewhere), is never answered again (the card shows set or not set) and is
+removed by a null. The list says what each plugin connects to (`network`, its values filled in) and what keeps it from
+running (`settings_problem`: a required setting missing, a value its manifest refuses); presets fill a card in. A change
+applies when the server restarts.
+
 ### strata-window: the server in a window with a tray icon (2026-10-28)
 
 `-DSECURE_FRONTEND_WINDOW=ON` (`make.py --with window`) builds `strata-window`

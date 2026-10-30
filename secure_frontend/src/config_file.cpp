@@ -57,6 +57,7 @@ bool walk_rejected(const std::vector<JsonMember>& members, const std::string& pr
   for (const auto& member : members) {
     if (member.key.empty() || member.key.find('.') != std::string::npos) continue;  // not a path segment
     const std::string path = prefix.empty() ? member.key : prefix + "." + member.key;
+    if (path == "plugins") continue;  // plugin settings: the plugins' own names, never upstream's options
     if (find_config_key(path) == nullptr && !(is_config_section(path) && typed_section_object(member.value, path))) {
       const auto* row = parity::strata_parity_row(member.key);
       if (row != nullptr && row->disposition == parity::ParityDisposition::rejected) {
@@ -79,6 +80,7 @@ bool walk_rejected(const std::vector<JsonMember>& members, const std::string& pr
 bool walk_fraction_outside_decimal(const std::vector<JsonMember>& members, const std::string& prefix) {
   for (const auto& member : members) {
     const std::string path = prefix.empty() ? member.key : prefix + "." + member.key;
+    if (path == "plugins") continue;  // plugin settings: collect_plugins refuses a fraction at its own row
     if (const auto* inner = member.value.if_object()) {
       if (walk_fraction_outside_decimal(*inner, path)) return true;
       continue;
@@ -114,6 +116,50 @@ std::optional<ConfigDraftValue> draft_value(const JsonValue& value) {
   return std::nullopt;
 }
 
+// Tool and notifier plugins' settings (plugin spec 2026-10-30, section 10): {"<id>": {"<name>": value}}, each a plugin
+// name, each value a whole number, true or false, a text or a list of texts; at most 32 plugins of 16 settings. Their
+// lengths are validate()'s, their meaning each plugin's manifest's (checked when the server starts).
+void collect_plugins(const JsonValue& value, FrontendConfigDraft& draft, ConfigErrors& errors) {
+  const auto* plugins = value.if_object();
+  if (plugins == nullptr) {
+    errors.push_back(ConfigIssue{"plugins", ConfigIssueCode::wrong_type, "must be an object of plugins' settings"});
+    return;
+  }
+  if (plugins->size() > kMaxConfigPlugins) {
+    errors.push_back(ConfigIssue{"plugins", ConfigIssueCode::out_of_range, "holds at most 32 plugins' settings"});
+    return;
+  }
+  for (const auto& plugin : *plugins) {
+    const std::string at = "plugins." + plugin.key;
+    if (!plugin_setting_path(at + ".x")) {
+      errors.push_back(ConfigIssue{at, ConfigIssueCode::unknown_key, "is not a plugin's name (a lowercase letter, then lowercase letters, digits or '_')"});
+      continue;
+    }
+    const auto* settings = plugin.value.if_object();
+    if (settings == nullptr) {
+      errors.push_back(ConfigIssue{at, ConfigIssueCode::wrong_type, "must be an object of its settings"});
+      continue;
+    }
+    if (settings->size() > kMaxPluginSettingRows) {
+      errors.push_back(ConfigIssue{at, ConfigIssueCode::out_of_range, "holds at most 16 settings"});
+      continue;
+    }
+    for (const auto& setting : *settings) {
+      const std::string path = at + "." + setting.key;
+      if (!plugin_setting_path(path)) {
+        errors.push_back(ConfigIssue{path, ConfigIssueCode::unknown_key, "is not a setting's name (a lowercase letter, then lowercase letters, digits or '_')"});
+        continue;
+      }
+      auto read = setting.value.if_decimal() == nullptr ? draft_value(setting.value) : std::nullopt;
+      if (!read) {
+        errors.push_back(ConfigIssue{path, ConfigIssueCode::wrong_type, "must be a whole number, true or false, a text or a list of texts"});
+        continue;
+      }
+      draft.entries.emplace(path, ConfigDraftEntry{std::move(*read), ConfigSource::file});
+    }
+  }
+}
+
 void collect(const std::vector<JsonMember>& members, const std::string& prefix, FrontendConfigDraft& draft,
              ConfigErrors& errors) {
   for (const auto& member : members) {
@@ -124,7 +170,9 @@ void collect(const std::vector<JsonMember>& members, const std::string& prefix, 
       errors.push_back(ConfigIssue{path, ConfigIssueCode::unknown_key, "unknown key"});
       continue;
     }
-    if (const ConfigKey* key = find_config_key(path)) {
+    if (path == "plugins") {
+      collect_plugins(member.value, draft, errors);
+    } else if (const ConfigKey* key = find_config_key(path)) {
       if (draft.entries.contains(path)) {
         errors.push_back(ConfigIssue{path, ConfigIssueCode::duplicate_key, "is set more than once"});
       } else if (auto value = draft_value(member.value)) {

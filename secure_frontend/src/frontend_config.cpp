@@ -994,6 +994,18 @@ std::atomic<bool> g_debugging_requests{false};
 std::atomic<bool> g_debugging_engine_output{false};
 }  // namespace
 
+bool plugin_setting_path(const std::string_view path) noexcept {
+  // (the rule of a plugin's id, plugin_manifest.hpp's valid_plugin_id, for its name and each setting's)
+  const auto name = [](const std::string_view text) {
+    return !text.empty() && text.size() <= 32U && text.front() >= 'a' && text.front() <= 'z' &&
+           std::all_of(text.begin(), text.end(), [](const char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'; });
+  };
+  if (!path.starts_with("plugins.")) return false;
+  const std::string_view rest = path.substr(8U);
+  const auto dot = rest.find('.');
+  return dot != std::string_view::npos && name(rest.substr(0U, dot)) && name(rest.substr(dot + 1U));
+}
+
 void set_debugging_logs(const DebuggingLogs logs) noexcept {
   g_debugging_requests.store(logs.requests);
   g_debugging_engine_output.store(logs.engine_output);
@@ -1006,7 +1018,25 @@ bool LoggingConfig::logs_engine_output() const noexcept { return engine_output.v
 
 ConfigValidationResult validate(const FrontendConfigDraft& draft) {
   ConfigErrors errors;
+  // tool and notifier plugins' settings (plugin spec 2026-10-30, section 10): bounded here, checked against each plugin's
+  // manifest when the server starts
+  PluginSettingsConfig plugin_settings;
   for (const auto& [path, entry] : draft.entries) {
+    if (plugin_setting_path(path)) {
+      const auto* text = std::get_if<std::string>(&entry.value);
+      const auto* list = std::get_if<std::vector<std::string>>(&entry.value);
+      const bool long_text = text != nullptr && text->size() > 1024U;
+      const bool long_list = list != nullptr && (list->size() > 16U || std::any_of(list->begin(), list->end(), [](const std::string& item) {
+                                                   return item.size() > 1024U;
+                                                 }));
+      if (long_text || long_list) {
+        add(errors, path, ConfigIssueCode::out_of_range, "a text of at most 1024 characters, a list of at most 16 of them");
+        continue;
+      }
+      const auto dot = path.find('.', 8U);
+      plugin_settings.values[path.substr(8U, dot - 8U)][path.substr(dot + 1U)] = entry.value;
+      continue;
+    }
     if (find_config_key(path) == nullptr) add(errors, path, ConfigIssueCode::unknown_key, "unknown key");
   }
   DraftReader read(draft, errors);
@@ -1692,7 +1722,7 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
                                       std::chrono::seconds(stall), std::chrono::seconds(connect), static_cast<std::uint32_t>(connections)},
                          LoggingConfig{log_requests, log_engine_output}, std::move(sampling_defaults), reasoning, std::move(session),
                          replicas, vision, std::move(glm), UpdateSettings{std::move(update_source)},
-                         std::move(models_config), std::move(alerts_config), std::move(search_config)));
+                         std::move(models_config), std::move(alerts_config), std::move(search_config), std::move(plugin_settings)));
   return ValidatedConfig{std::move(config_ptr)};
 }
 
@@ -1928,6 +1958,17 @@ std::string describe(const FrontendConfig& c) {
   line("engine.min_tokens", c.engine.min_tokens ? std::to_string(*c.engine.min_tokens) : std::string{"unset"});
   line("model.aliases", list_text(c.engine.aliases));
   line("model.name", c.engine.served_name ? json_quoted(*c.engine.served_name) : std::string{"(unset)"});
+  // tool and notifier plugins' settings (never a secret: those are in roots.secret)
+  for (const auto& [plugin, settings] : c.plugins.values) {
+    for (const auto& [name, value] : settings) {
+      std::string text;
+      if (const auto* b = std::get_if<bool>(&value)) text = *b ? "true" : "false";
+      else if (const auto* i = std::get_if<std::int64_t>(&value)) text = std::to_string(*i);
+      else if (const auto* s = std::get_if<std::string>(&value)) text = json_quoted(*s);
+      else if (const auto* items = std::get_if<std::vector<std::string>>(&value)) text = list_text(*items);
+      line("plugins." + plugin + "." + name, text);
+    }
+  }
   return out;
 }
 

@@ -961,6 +961,19 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
   strata-window and strata-tui say what it logs and start the server only
   when the owner accepts (`the_debugging_plugin_turns_the_logs_on`,
   `the_debugging_plugin_says_what_it_logs_before_it_starts`).
+- Plugin settings (owner 2026-10-30, decision 6; spec section 10): a
+  tool's or notifier's manifest declares its settings by kind and bound,
+  and every value is checked against it when saved and again when the
+  server starts. Values live in the owner-only config file as
+  `plugins.<id>.<name>` (bounded by the config reader: 32 plugins, 16
+  settings each, texts of 1024 bytes, lists of 16). A secret never does: it
+  is kept in the secret folder as `plugin-<id>-<name>` (DPAPI on Windows,
+  0600 elsewhere), never answered by any route (the tab sees set or not
+  set), never logged, and meant only for that plugin's own process (its
+  environment, never its arguments: the manifest reader refuses a secret
+  in arguments or in the words it shows). The settings route answers the
+  clients the other settings routes answer (`settings_are_listed_and_saved`,
+  `a_secret_is_stored_read_and_removed`).
 - MCP, tool execution, arbitrary plugins, and remote command execution are
   disabled and absent from the default build/runtime configuration. The one exception is
   the web search build's own MCP server and tool (above), which no request, model or

@@ -81,12 +81,14 @@ class App final {
   void draw_plugins(Screen& screen, Rect area) const;
   void draw_prompt(Screen& screen) const;
   // the keys
-  void show(View view);  // a view switch (1-7, Tab, Shift-Tab, F1-F7): the option focus off, Settings and Plugins read again
+  // a view switch (1-7, Tab, Shift-Tab, F1-F7): the option and plugin settings focus off, Settings and Plugins read again
+  void show(View view);
   [[nodiscard]] Outcome models_key(const Key& key);
   [[nodiscard]] Outcome downloads_key(const Key& key);
   [[nodiscard]] Outcome settings_key(const Key& key);
   [[nodiscard]] Outcome log_key(const Key& key);
   [[nodiscard]] Outcome plugins_key(const Key& key);
+  [[nodiscard]] Outcome plugin_settings_key(const Key& key);  // the selected plugin's settings in focus
   [[nodiscard]] Outcome prompt_key(const Key& key);
   // the selected card and its options as the start body has them
   [[nodiscard]] const JsonValue* cards() const;
@@ -149,16 +151,27 @@ class App final {
   // a change under way (as the page's buttons wait): sent, then answered, then over once the list is read again
   enum class PluginChange { none, sent, answered };
   PluginChange plugin_change_{PluginChange::none};
-  // a one-line prompt: a text field (a setting's value, ROTATE) or a yes/no question (quit; stop one card and start
-  // another, or restart the running one, as the page asks); a plugin's question is wrapped over as many lines as it takes
-  enum class Prompt { none, quit, edit_setting, rotate, start, remove, calibrate_first, plugin };
+  // the selected plugin's settings (owner 2026-10-30, decision 6): the one in focus (-1: the plugin list), the changes
+  // not yet saved, the preset p fills in next, and what the save under way sent (dropped from the changes once the list
+  // is read again after it was saved; a change made since waits for the next save)
+  int plugin_setting_{-1};
+  std::map<std::string, std::map<std::string, std::string>> plugin_pending_;  // plugin -> setting -> its JSON value ("null": its default, a secret removed)
+  std::size_t plugin_preset_{0};
+  std::string plugin_saving_id_;
+  std::map<std::string, std::string> plugin_saving_;
+  bool plugin_saved_{false};
+  // a one-line prompt: a text field (a setting's value, a plugin setting's, ROTATE) or a yes/no question (quit; stop one
+  // card and start another, or restart the running one, as the page asks); a plugin's question is wrapped over as many
+  // lines as it takes
+  enum class Prompt { none, quit, edit_setting, plugin_setting, rotate, start, remove, calibrate_first, plugin };
   Prompt prompt_{Prompt::none};
   std::string input_;
   std::optional<Request> confirm_;   // the start (or the card removal) a yes sends
   std::optional<Request> calibrate_;  // calibrate_first: the calibrate-then-start c sends (s sends confirm_)
   std::string question_;             // and its question
   std::string question_title_;       // a plugin's question's box title
-  std::optional<JsonValue> editing_;  // the setting the edit field was opened on (its key, type and range)
+  std::optional<JsonValue> editing_;  // the setting the edit field was opened on (its key, type and range; a plugin's: its name, kind and rules)
+  std::string editing_plugin_;        // and, for a plugin's setting, that plugin
 };
 
 // The Debugging plugin (owner 2026-10-29, 2026-10-30): while it is on, the TUI shows what it logs

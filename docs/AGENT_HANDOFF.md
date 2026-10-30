@@ -280,6 +280,55 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z53 (Windows box; owner-directed)
+
+The plugin platform, step 5b-1: plugin settings and secrets (the design's section 10; the owner's decision 6).
+- **The manifest** (`plugin_manifest.{hpp,cpp}`): a `tool` or `notifier` block is now read as a `PluginRun`:
+  - this platform's `program` (one of its files);
+  - `arguments` and `environment` as fixed texts or one `{setting}` each (a secret only in the environment; `PATH`,
+    `SYSTEMROOT`, `TEMP`, `TMP`, `HOME` and `STRATA_*` refused);
+  - `network` (`{setting}` allowed, never a secret's), a tool's `note` (`{today}` only);
+  - up to 16 `settings` of seven kinds with their bounds, and up to 8 `presets`.
+  `setting_value_problem`, `plugin_values` (each value or its default, all checked, a required one missing said) and
+  `value_text` serve the routes now and the hosts next. An empty `tool: {}` is refused now (the old fixtures got a
+  `program`).
+- **The config** (`config_file.cpp`, `frontend_config.{hpp,cpp}`): `plugins.<id>.<name>` rows are read (whole numbers,
+  booleans, texts, lists of texts; 32 plugins of 16 settings, texts of 1024 bytes, lists of 16), kept through a rewrite,
+  printed by `--check`, and handed on as `FrontendConfig::plugins`. The excluded-option and fraction checks skip the
+  `plugins` section; a decimal there is refused at its own row.
+- **Secrets** (`plugin_secrets.{hpp,cpp}`, library `secure_frontend_plugin_secrets`): `plugin-<id>-<name>` in
+  `roots.secret`, DPAPI on Windows, 0600 elsewhere, 1-1024 printable characters; stored, read, removed.
+- **The routes** (`plugin_routes`): the list adds each plugin's `settings` (rules and value, a secret only as `set`),
+  `presets`, `network` (values filled in) and `settings_problem`; `POST /v1/strata/plugins/settings` checks each value
+  against the manifest, writes the config file (`update_config_file`) and the secret folder, and logs no value.
+  `RouteId::strata_plugins_settings` joins `kPluginRoutes`, the router and the request log.
+- **The page**: a plugin card draws its settings by kind (a secret as a password field that only replaces or clears),
+  "Fill in <preset>", Save settings, "Connects to ...", "Not ready: ...", and the approval question says what it
+  connects to.
+- **The TUI** (built by a worker under the owner's standing rule; its diff read, its case registered and every TUI case
+  rerun here): the Plugins view draws "Connects to ...", "Not ready: ..." and the selected plugin's settings (a value,
+  else its default marked, a secret only as set or not; unsaved changes marked as Settings marks them). `o` focuses
+  them: Enter changes one (a switch flips, a choice moves on, the others open the text field, a secret typed as `*`),
+  Left/Right cycle a choice, `c` clears, `p` fills in the presets in turn, `w` saves the changes (a plugin change that
+  waits for its answer and the re-read), `u` drops them, `o`/Esc go back; `q`, 1-7 and Tab do nothing meanwhile.
+  `the_plugins_settings_are_edited_then_saved` (RED 23, then GREEN).
+- **Docs**: the README's Plugins bullet, the frontend README's Plugins paragraph, the threat model's plugin settings.
+- **Proof**:
+  - RED first each time, against stubs (the old parser with empty new functions, a `plugin_setting_path` that refuses,
+    an empty secret store, the old routes with a 404 save, the old page): `a_tool_manifest_says_how_its_program_runs`
+    (its first run passed against the stub - it returned early without `run` - so it now asserts `run`, RED 1),
+    `a_wrong_run_block_is_refused_by_name` (20), `values_are_checked_against_the_settings` (1),
+    `plugin_settings_live_in_the_config` (10), `a_secret_is_stored_read_and_removed` (12),
+    `settings_are_listed_and_saved` (16), `web_ui_has_a_plugins_tab` (4), the TUI case (23). Then GREEN.
+  - MSVC: the whole tree built, no warnings; the whole suite 1440/1442 (the two release-only cases a test-hooks tree
+    fails). Linux gcc 13.3 and clang 18.1: the whole tree built, no warnings; the suites it touches 238/238 each. Python
+    `tools/secure` 154 passed, 4 skipped (`test_build_release.py` left out, as in z50).
+  - Live, a shares-tree server on the x25 demo data (port 18091) with a test notifier: its card drew each setting,
+    "Not ready: its setting host is required"; "Fill in IONOS", a recipient and a test password, Save settings: the
+    config file got `plugins.mailer.{host,port,security,to}`, the password only `plugin-mailer-password` in the secret
+    folder (in neither the config nor the log), and the card then showed the values, "set" and no problem. The server
+    restarted cleanly with those rows. The demo config was put back byte for byte and the plugin and secret moved out.
+
 ### Claude Code session, 2026-10-30 z52 (Windows box; owner-directed)
 
 Design only: search and email as plugins (the owner: "Search and email next"). The plugin design spec

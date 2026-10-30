@@ -353,7 +353,7 @@ void request_log_format_and_token_bucket() {
       {R::strata_about, "strata_about"},               {R::strata_download_link, "strata_download_link"},
       {R::strata_card_remove, "strata_card_remove"},   {R::strata_card_mtp, "strata_card_mtp"},
       {R::strata_plugins, "strata_plugins"},           {R::strata_plugins_approve, "strata_plugins_approve"},
-      {R::strata_plugins_switch, "strata_plugins_switch"}};
+      {R::strata_plugins_switch, "strata_plugins_switch"},   {R::strata_plugins_settings, "strata_plugins_settings"}};
   for (const auto& [route, name] : named) {
     const secure_frontend::RequestLogRecord line{route, 200, "", std::chrono::milliseconds(1), 0U, secure_frontend::AddressScope::loopback};
     expect(secure_frontend::format_request_line(1, line) == "req 1 " + std::string{name} + " 200 - 1 0 loopback",

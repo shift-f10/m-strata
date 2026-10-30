@@ -4,7 +4,10 @@
 #include "secure_frontend/plugin_manifest.hpp"
 #include "support/test_support.hpp"
 
+#include <algorithm>
+#include <cstdint>
 #include <fstream>
+#include <map>
 #include <iostream>
 #include <iterator>
 #include <string>
@@ -121,6 +124,138 @@ void a_wrong_manifest_is_refused_by_name() {
          "ids as the launcher takes them");
 }
 
+// A tool plugin (spec section 10): how its program runs - this platform's program (one of its files), arguments and
+// environment as fixed texts or one setting each, what it connects to, its note - and its settings and presets.
+const std::string kSearchTool = R"({"schema": "m-strata.plugin/1", "id": "search", "kind": "tool", "name": "Web search",
+  "version": "1.0.0", "publisher": "M-Strata", "license": "AGPL-3.0-only", "about": "SearXNG.",
+  "files": {"windows": ["strata-search.exe"], "linux": ["strata-search"]},
+  "tool": {
+    "program": {"windows": "strata-search.exe", "linux": "strata-search"},
+    "arguments": ["--url", "{url}", "--results", "{results}"],
+    "environment": {"SEARX_TOKEN": "{token}", "MODE": "plain"},
+    "network": "the SearXNG instance at {url}",
+    "note": "Today is {today}.",
+    "settings": [
+      {"name": "url", "kind": "url", "label": "SearXNG address", "help": "Its JSON format on.", "required": true},
+      {"name": "results", "kind": "integer", "label": "Results", "help": "", "default": 5, "min": 1, "max": 10},
+      {"name": "safe", "kind": "boolean", "label": "Safe search", "help": "", "default": false},
+      {"name": "engine", "kind": "choice", "label": "Engine", "help": "", "default": "all", "choices": ["all", "news"]},
+      {"name": "langs", "kind": "text_list", "label": "Languages", "help": "", "max_items": 3, "default": ["en"]},
+      {"name": "token", "kind": "secret", "label": "Token", "help": "", "required": false}],
+    "presets": [{"label": "Local", "values": {"url": "http://127.0.0.1:8080", "results": 3}}]}})";
+
+void a_tool_manifest_says_how_its_program_runs() {
+  const auto parsed = secure_frontend::parse_plugin_manifest(kSearchTool, "search");
+  const auto* manifest = std::get_if<secure_frontend::PluginManifest>(&parsed);
+  expect(manifest != nullptr && manifest->run.has_value(), "read, with how it runs: " + why(parsed));
+  if (manifest == nullptr || !manifest->run) return;
+  const auto& run = *manifest->run;
+  using T = secure_frontend::PluginTemplate;
+#if defined(_WIN32)
+  expect(run.program == "strata-search.exe", "Windows' program: " + run.program);
+#else
+  expect(run.program == "strata-search", "Linux's program: " + run.program);
+#endif
+  expect(run.arguments == std::vector<T>{{.text = "--url"}, {.setting = "url"}, {.text = "--results"}, {.setting = "results"}},
+         "its arguments, fixed or a setting");
+  expect(run.environment.size() == 2U && run.environment[0].first == "SEARX_TOKEN" && run.environment[0].second == T{.setting = "token"} &&
+             run.environment[1].first == "MODE" && run.environment[1].second == T{.text = "plain"},
+         "its environment");
+  expect(run.network == "the SearXNG instance at {url}" && run.note == "Today is {today}.", "network and note");
+  using K = secure_frontend::SettingKind;
+  expect(run.settings.size() == 6U && run.settings[0].kind == K::url && run.settings[0].required &&
+             run.settings[1].kind == K::integer && run.settings[1].min == 1 && run.settings[1].max == 10 &&
+             run.settings[1].default_value == secure_frontend::PluginValue{std::int64_t{5}} &&
+             run.settings[3].choices == std::vector<std::string>{"all", "news"} && run.settings[4].max_items == 3U &&
+             run.settings[5].kind == K::secret && !run.settings[5].default_value,
+         "its settings");
+  expect(run.presets.size() == 1U && run.presets[0].label == "Local" &&
+             run.presets[0].values.at("results") == secure_frontend::PluginValue{std::int64_t{3}},
+         "its presets");
+  expect(secure_frontend::setting_kind_name(K::text_list) == "text_list", "the kinds' names");
+}
+
+// Each refusal of a tool's or notifier's block names what is wrong.
+void a_wrong_run_block_is_refused_by_name() {
+  const auto refuse = [](const std::string& from, const std::string& to, const std::string& reason) {
+    std::string text = kSearchTool;
+    const auto at = text.find(from);
+    expect(at != std::string::npos, "the test's text has: " + from);
+    if (at != std::string::npos) text.replace(at, from.size(), to);
+    const auto parsed = secure_frontend::parse_plugin_manifest(text, "search");
+    expect(why(parsed).find(reason) != std::string::npos, "refused (" + reason + ") for " + to + ": " + why(parsed));
+  };
+  refuse(R"("program": {"windows": "strata-search.exe", "linux": "strata-search"})", R"("program": {"windows": "other.exe", "linux": "other"})",
+         "program");
+  refuse(R"("--results", "{results}")", R"("--token", "{token}")", "secret");
+  refuse(R"("--results", "{results}")", R"("--results", "{nothing}")", "nothing");
+  refuse(R"("--results", "{results}")", R"("--results={results}")", "arguments");
+  refuse(R"("MODE": "plain")", R"("PATH": "plain")", "PATH");
+  refuse(R"("MODE": "plain")", R"("STRATA_KEY": "plain")", "STRATA_");
+  refuse(R"("MODE": "plain")", R"("mode": "plain")", "environment");
+  refuse(R"("network": "the SearXNG instance at {url}")", R"("network": "at {token}")", "secret");
+  refuse(R"("label": "Results")", R"("label": "Results", "colour": 1)", "colour");
+  refuse(R"("kind": "integer")", R"("kind": "decimal")", "kind");
+  refuse(R"("default": 5, "min": 1)", R"("default": 50, "min": 1)", "results");
+  refuse(R"("default": "all")", R"("default": "old")", "engine");
+  refuse(R"("required": false}])", R"("required": false, "default": "x"}])", "secret");
+  refuse(R"({"name": "results")", R"({"name": "url")", "url");
+  refuse(R"({"name": "results")", R"({"name": "Results")", "name");
+  refuse(R"("max_items": 3, "default": ["en"])", R"("max_items": 1, "default": ["en", "de"])", "langs");
+  refuse(R"("values": {"url": "http://127.0.0.1:8080", "results": 3})", R"("values": {"results": 30})", "results");
+  refuse(R"("values": {"url": "http://127.0.0.1:8080", "results": 3})", R"("values": {"token": "x"})", "secret");
+  refuse(R"("note": "Today is {today}.",)", R"("note": "Today is {today}.", "extra": 1,)", "extra");
+  // a notifier has no note; only its own block
+  std::string notifier = kSearchTool;
+  notifier.replace(notifier.find(R"("kind": "tool")"), 14U, R"("kind": "notifier")");
+  notifier.replace(notifier.find(R"("tool": {)"), 9U, R"("notifier": {)");
+  const auto parsed = secure_frontend::parse_plugin_manifest(notifier, "search");
+  expect(why(parsed).find("note") != std::string::npos, "a notifier has no note: " + why(parsed));
+}
+
+// A value is checked against its setting, and the values a plugin runs with are each setting's own or its default.
+void values_are_checked_against_the_settings() {
+  const auto parsed = secure_frontend::parse_plugin_manifest(kSearchTool, "search");
+  const auto* manifest = std::get_if<secure_frontend::PluginManifest>(&parsed);
+  if (manifest == nullptr || !manifest->run) {
+    expect(false, "read: " + why(parsed));
+    return;
+  }
+  const auto& run = *manifest->run;
+  using V = secure_frontend::PluginValue;
+  const auto setting = [&run](const std::string& name) -> const secure_frontend::PluginSetting& {
+    return *std::find_if(run.settings.begin(), run.settings.end(), [&name](const auto& s) { return s.name == name; });
+  };
+  const auto fits = [](const secure_frontend::PluginSetting& s, const V& value) { return !secure_frontend::setting_value_problem(s, value); };
+  expect(fits(setting("url"), V{std::string{"https://search.example.org/x"}}) && !fits(setting("url"), V{std::string{"ftp://x"}}) &&
+             !fits(setting("url"), V{std::int64_t{1}}),
+         "a url: http(s) only, a text");
+  expect(fits(setting("results"), V{std::int64_t{10}}) && !fits(setting("results"), V{std::int64_t{11}}) &&
+             !fits(setting("results"), V{std::string{"5"}}),
+         "an integer within its bounds");
+  expect(fits(setting("engine"), V{std::string{"news"}}) && !fits(setting("engine"), V{std::string{"old"}}), "a choice");
+  expect(fits(setting("langs"), V{std::vector<std::string>{"en", "de", "fr"}}) &&
+             !fits(setting("langs"), V{std::vector<std::string>{"a", "b", "c", "d"}}),
+         "a text list within its items");
+  expect(fits(setting("safe"), V{true}) && !fits(setting("safe"), V{std::string{"yes"}}), "a boolean");
+  expect(secure_frontend::setting_value_problem(setting("results"), V{std::int64_t{11}})->find("results") != std::string::npos,
+         "the reason names the setting");
+  // the values it runs with
+  const auto values = secure_frontend::plugin_values(run, {{"url", V{std::string{"http://127.0.0.1:8080"}}}, {"other", V{true}}}, {});
+  const auto* got = std::get_if<std::map<std::string, V>>(&values);
+  expect(got != nullptr && got->at("results") == V{std::int64_t{5}} && got->at("engine") == V{std::string{"all"}} && !got->contains("other") &&
+             !got->contains("token"),
+         "a setting's own value, else its default; an undeclared one left out; a secret never");
+  const auto missing = secure_frontend::plugin_values(run, {}, {});
+  expect(std::holds_alternative<std::string>(missing) && std::get<std::string>(missing).find("url") != std::string::npos,
+         "a required setting missing: " + (std::holds_alternative<std::string>(missing) ? std::get<std::string>(missing) : std::string{}));
+  const auto wrong = secure_frontend::plugin_values(run, {{"url", V{std::string{"http://x"}}}, {"results", V{std::int64_t{0}}}}, {});
+  expect(std::holds_alternative<std::string>(wrong) && std::get<std::string>(wrong).find("results") != std::string::npos, "a value refused");
+  expect(secure_frontend::value_text(V{std::vector<std::string>{"en", "de"}}) == "en,de" && secure_frontend::value_text(V{false}) == "false" &&
+             secure_frontend::value_text(V{std::int64_t{7}}) == "7",
+         "values as text");
+}
+
 // The debugging plugin this repository ships (plugins/debugging/plugin.json; the owner, 2026-10-30: "we should make
 // the email, websearch, debugging all plugins as well"): make puts it in every install, on with --debugging. It is a
 // diagnostics plugin with each switch a make --debugging build had.
@@ -150,5 +285,8 @@ int main(int argc, char** argv) {
       {"a_diagnostics_manifest_is_read", a_diagnostics_manifest_is_read},
       {"a_code_plugin_names_this_platforms_files", a_code_plugin_names_this_platforms_files},
       {"a_wrong_manifest_is_refused_by_name", a_wrong_manifest_is_refused_by_name},
+      {"a_tool_manifest_says_how_its_program_runs", a_tool_manifest_says_how_its_program_runs},
+      {"a_wrong_run_block_is_refused_by_name", a_wrong_run_block_is_refused_by_name},
+      {"values_are_checked_against_the_settings", values_are_checked_against_the_settings},
   }, failures);
 }

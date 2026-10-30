@@ -90,6 +90,41 @@ std::string json_string(const std::string_view value) {
   return out;
 }
 
+// A text without the spaces around it.
+std::string trimmed(std::string_view words) {
+  while (!words.empty() && words.front() == ' ') words.remove_prefix(1);
+  while (!words.empty() && words.back() == ' ') words.remove_suffix(1);
+  return std::string{words};
+}
+
+// A list typed in a field: its items separated by commas, each trimmed, the empty ones left out.
+std::vector<std::string> typed_items(const std::string_view typed) {
+  std::vector<std::string> items;
+  std::size_t at = 0;
+  while (at <= typed.size()) {
+    const std::size_t comma = typed.find(',', at);
+    std::string item = trimmed(typed.substr(at, comma == std::string_view::npos ? std::string_view::npos : comma - at));
+    if (!item.empty()) items.push_back(std::move(item));
+    if (comma == std::string_view::npos) break;
+    at = comma + 1U;
+  }
+  return items;
+}
+
+std::string items_json(const std::vector<std::string>& items) {
+  std::string out = "[";
+  for (const auto& item : items) out += (out.size() > 1U ? "," : "") + json_string(item);
+  return out + "]";
+}
+
+// The whole text one whole number (none: it is not one).
+std::optional<long long> whole_number(const std::string_view typed) {
+  long long value = 0;
+  const char* const end = typed.data() + typed.size();
+  const auto parsed = std::from_chars(typed.data(), end, value);
+  return parsed.ec == std::errc{} && parsed.ptr == end ? std::optional<long long>{value} : std::nullopt;
+}
+
 std::string fixed(const double value, const int decimals) {
   char buffer[32];
   std::snprintf(buffer, sizeof buffer, "%.*f", decimals, value);
@@ -341,6 +376,96 @@ std::string plugin_action(const JsonValue& plugin) {
                               : std::string{};
 }
 
+// A plugin's settings (a tool's or notifier's, as the list says them: plugin_routes settings_json); none for one without.
+const std::vector<JsonValue>* plugin_settings(const JsonValue* plugin) {
+  const auto* settings = member(plugin, "settings");
+  return settings != nullptr && settings->if_array() != nullptr && !settings->if_array()->empty() ? settings->if_array() : nullptr;
+}
+
+// A value as a save sends it (compact JSON: a whole number, true or false, a text, a list of texts).
+std::string compact_json(const JsonValue& value) {
+  if (const auto* items = value.if_array()) {
+    std::string out = "[";
+    for (const auto& item : *items) out += (out.size() > 1U ? "," : "") + compact_json(item);
+    return out + "]";
+  }
+  return value.if_string() != nullptr ? json_string(*value.if_string()) : python_json_text(value);
+}
+
+bool saved_value(const JsonValue& setting) {
+  if (text(member(&setting, "kind")) == "secret") return flag(member(&setting, "set"));
+  const auto* value = member(&setting, "value");
+  return value != nullptr && value->kind() != JsonKind::null;
+}
+
+// A plugin's setting back to its default (a secret: removed), as a change to save (null) - no change for one with no
+// saved value (a secret not set).
+void back_to_default(std::map<std::string, std::string>& pending, const JsonValue& setting) {
+  const std::string name = text(member(&setting, "name"));
+  if (saved_value(setting)) pending[name] = "null";
+  else pending.erase(name);
+}
+
+// A plugin's setting now: its change not yet saved, else its value, else its default (none: no value at all).
+std::optional<JsonValue> setting_now(const JsonValue& setting, const std::string* pending) {
+  if (pending != nullptr && *pending != "null") {
+    auto parsed = parse_json(*pending, kAnswerLimits);
+    if (auto* value = std::get_if<JsonValue>(&parsed)) return std::move(*value);
+  }
+  const auto* value = pending == nullptr ? member(&setting, "value") : nullptr;
+  if (value == nullptr || value->kind() == JsonKind::null) value = member(&setting, "default");
+  return value != nullptr && value->kind() != JsonKind::null ? std::optional<JsonValue>{*value} : std::nullopt;
+}
+
+// A choice one along (Enter, Right) or back (Left) from its value now, round its list; one with none starts at its
+// first (its last).
+std::optional<std::string> next_choice(const JsonValue& setting, const std::string* pending, const int direction) {
+  const auto* choices = member(&setting, "choices");
+  if (choices == nullptr || choices->if_array() == nullptr || choices->if_array()->empty()) return std::nullopt;
+  const auto& list = *choices->if_array();
+  const auto now = setting_now(setting, pending);
+  std::optional<std::size_t> at;
+  for (std::size_t i = 0; i < list.size(); ++i) {
+    if (now && compact_json(list[i]) == compact_json(*now)) at = i;
+  }
+  const std::size_t next = !at ? (direction > 0 ? 0U : list.size() - 1U) : (*at + (direction > 0 ? 1U : list.size() - 1U)) % list.size();
+  return compact_json(list[next]);
+}
+
+// A plugin's setting as the view shows it (app.js pluginSettingField): its change not yet saved, marked as Settings
+// marks one; else its value; else its default, marked; a secret only as set or not, never its value.
+std::string plugin_setting_text(const JsonValue& setting, const std::string* pending) {
+  const bool secret = text(member(&setting, "kind")) == "secret";
+  const auto* fallback = member(&setting, "default");
+  const std::string by_default = fallback != nullptr && fallback->kind() != JsonKind::null ? setting_text(*fallback) + " (default)" : "not set";
+  if (pending != nullptr) {
+    std::string shown;
+    if (secret) {
+      shown = *pending == "null" ? "not set" : "set";
+    } else if (*pending == "null") {
+      shown = by_default;
+    } else {
+      const auto parsed = parse_json(*pending, kAnswerLimits);
+      const auto* typed = std::get_if<JsonValue>(&parsed);
+      shown = typed != nullptr ? setting_text(*typed) : *pending;
+    }
+    return shown + "  * unsaved";
+  }
+  if (secret) return saved_value(setting) ? "set" : "not set";
+  return saved_value(setting) ? setting_text(*member(&setting, "value")) : by_default;
+}
+
+// The edit field's line for a plugin's setting, by its kind.
+std::string plugin_field_question(const JsonValue& setting) {
+  const std::string kind = text(member(&setting, "kind"));
+  if (kind == "secret") return "The new secret (drawn as *), Enter keeps it, Esc leaves it";
+  if (kind == "integer") {
+    return "A whole number from " + text(member(&setting, "min")) + " to " + text(member(&setting, "max")) + ", Enter keeps it, Esc leaves it";
+  }
+  if (kind == "text_list") return "Up to " + text(member(&setting, "max_items")) + " items, separated by commas; Enter keeps them";
+  return "The new value (empty: its default), Enter keeps it, Esc leaves it";
+}
+
 }  // namespace
 
 App::App(const Capabilities capabilities, std::optional<std::string> key)
@@ -403,6 +528,21 @@ void App::answer(const Request& request, const int status, const std::string_vie
       const auto* list = member(&*plugins_, "plugins");
       const std::size_t count = list != nullptr && list->if_array() != nullptr ? list->if_array()->size() : 0U;
       plugin_ = count == 0U ? 0U : std::min(plugin_, count - 1U);
+      // a save's changes go once the list is read again after it was saved (the list then says them); a change made
+      // while it was under way waits for the next
+      if (plugin_saved_) {
+        auto& pending = plugin_pending_[plugin_saving_id_];
+        for (const auto& [name, sent] : plugin_saving_) {
+          if (const auto still = pending.find(name); still != pending.end() && still->second == sent) pending.erase(still);
+        }
+        plugin_saving_.clear();
+        plugin_saved_ = false;
+      }
+      // the settings in focus: on the last of fewer, back to the list when there are none
+      if (plugin_setting_ >= 0) {
+        const auto* settings = plugin_settings(selected_plugin());
+        plugin_setting_ = settings == nullptr ? -1 : std::min(plugin_setting_, static_cast<int>(settings->size()) - 1);
+      }
     } else {
       settings_ = *value;
       settings_stale_ = false;
@@ -433,6 +573,7 @@ void App::answer(const Request& request, const int status, const std::string_vie
       say("A new API key was made; it applies when the server starts again (strata key show)", false);
     } else if (plugin_change) {
       plugins_changed_ = true;
+      if (request.path == "/v1/strata/plugins/settings") plugin_saved_ = true;
       say(request.purpose + ": done; it applies when the server starts again", false);
     } else {
       say(request.purpose + ": done", false);
@@ -550,6 +691,7 @@ std::vector<Request> App::polls() const {
 void App::show(const View view) {
   view_ = view;
   option_ = -1;
+  plugin_setting_ = -1;
   if (view == View::settings) settings_stale_ = true;
   if (view == View::plugins) plugins_stale_ = true;
   // a failure of a poll this view no longer runs (another view's downloads, settings, About, plugins) goes with that view
@@ -569,12 +711,14 @@ Outcome App::key(const Key& key) {
     prompt_ = Prompt::quit;
     return {};
   }
-  if (key.kind == Key::Kind::character && key.text == "q" && option_ < 0) {
+  // (among a card's options or a plugin's settings, q and the views' keys are not Quit and View)
+  const bool focused = option_ >= 0 || plugin_setting_ >= 0;
+  if (key.kind == Key::Kind::character && key.text == "q" && !focused) {
     prompt_ = Prompt::quit;
     return {};
   }
-  // the views: 1-7, Tab and Shift-Tab (from a card's list, not its options), F1-F7
-  if (key.kind == Key::Kind::character && key.text.size() == 1U && key.text[0] >= '1' && key.text[0] <= '7' && option_ < 0) {
+  // the views: 1-7, Tab and Shift-Tab (from a card's list, not its options; from the plugins, not one's settings), F1-F7
+  if (key.kind == Key::Kind::character && key.text.size() == 1U && key.text[0] >= '1' && key.text[0] <= '7' && !focused) {
     show(kViews[static_cast<std::size_t>(key.text[0] - '1')].first);
     return {};
   }
@@ -582,7 +726,7 @@ Outcome App::key(const Key& key) {
     show(kViews[static_cast<std::size_t>(key.number - 1)].first);
     return {};
   }
-  if ((key.kind == Key::Kind::tab || key.kind == Key::Kind::back_tab) && option_ < 0) {
+  if ((key.kind == Key::Kind::tab || key.kind == Key::Kind::back_tab) && !focused) {
     const std::size_t at = view_index(view_);
     show(kViews[(at + (key.kind == Key::Kind::tab ? 1U : kViews.size() - 1U)) % kViews.size()].first);
     return {};
@@ -658,35 +802,57 @@ Outcome App::prompt_key(const Key& key) {
         pending_[name] = "null";  // back to the default
       } else if (type == "integer") {
         // the whole text one number, within the setting's range
-        long long number_typed = 0;
-        const char* const typed_begin = input_.data();
-        const char* const typed_end = typed_begin + input_.size();
-        const auto parsed = std::from_chars(typed_begin, typed_end, number_typed);
+        const auto typed = whole_number(input_);
         const auto* lowest = member(&entry, "min");
         const auto* highest_allowed = member(&entry, "max");
         const auto lo = number(lowest);
         const auto hi = number(highest_allowed);
-        const bool whole = parsed.ec == std::errc{} && parsed.ptr == typed_end;
-        if (whole && (!lo || static_cast<double>(number_typed) >= *lo) && (!hi || static_cast<double>(number_typed) <= *hi)) {
-          pending_[name] = std::to_string(number_typed);
+        if (typed && (!lo || static_cast<double>(*typed) >= *lo) && (!hi || static_cast<double>(*typed) <= *hi)) {
+          pending_[name] = std::to_string(*typed);
         } else {
           say(name + " takes a whole number" + (lo && hi ? " from " + text(lowest) + " to " + text(highest_allowed) : std::string{}), true);
         }
       } else if (type == "string array") {
-        std::string list_json = "[";
-        std::size_t at = 0;
-        while (at <= input_.size()) {
-          const std::size_t comma = input_.find(',', at);
-          std::string item = input_.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
-          while (!item.empty() && item.front() == ' ') item.erase(item.begin());
-          while (!item.empty() && item.back() == ' ') item.pop_back();
-          if (!item.empty()) list_json += (list_json.size() > 1U ? "," : "") + json_string(item);
-          if (comma == std::string::npos) break;
-          at = comma + 1U;
-        }
-        pending_[name] = list_json + "]";
+        pending_[name] = items_json(typed_items(input_));
       } else {
         pending_[name] = json_string(input_);
+      }
+    }
+  } else if (prompt_ == Prompt::plugin_setting) {
+    // the plugin's setting the field was opened on (the list may have been read again since), checked as the page and
+    // the server check it: a text trimmed (empty: back to its default), a whole number in its range, a list of no more
+    // items than it takes; a secret as typed (nothing typed: kept as it is)
+    if (editing_) {
+      const JsonValue& entry = *editing_;
+      const std::string name = text(member(&entry, "name"));
+      const std::string kind = text(member(&entry, "kind"));
+      const std::string label = text(member(&entry, "label")).empty() ? name : text(member(&entry, "label"));
+      auto& pending = plugin_pending_[editing_plugin_];
+      const std::string typed = trimmed(input_);
+      if (kind == "secret") {
+        if (!input_.empty()) pending[name] = json_string(input_);
+      } else if (typed.empty()) {
+        back_to_default(pending, entry);
+      } else if (kind == "integer") {
+        const auto whole = whole_number(typed);
+        const auto* lowest = member(&entry, "min");
+        const auto* highest_allowed = member(&entry, "max");
+        const auto lo = number(lowest);
+        const auto hi = number(highest_allowed);
+        if (whole && (!lo || static_cast<double>(*whole) >= *lo) && (!hi || static_cast<double>(*whole) <= *hi)) {
+          pending[name] = std::to_string(*whole);
+        } else {
+          say(label + " takes a whole number" + (lo && hi ? " from " + text(lowest) + " to " + text(highest_allowed) : std::string{}), true);
+        }
+      } else if (kind == "text_list") {
+        const auto items = typed_items(typed);
+        const auto* most_items = member(&entry, "max_items");
+        const auto most = number(most_items);
+        if (most && static_cast<double>(items.size()) > *most) say(label + " takes at most " + text(most_items) + " items", true);
+        else if (items.empty()) back_to_default(pending, entry);
+        else pending[name] = items_json(items);
+      } else {
+        pending[name] = json_string(typed);
       }
     }
   }
@@ -979,8 +1145,10 @@ const JsonValue* App::selected_plugin() const {
 }
 
 // The page's Plugins tab (owner 2026-10-30): Up/Down a plugin, Enter its action - Approve (asked first: its SHA-256s
-// pinned), Turn on (a diagnostics plugin says what it logs first) or Turn off - and r reads the list again.
+// pinned), Turn on (a diagnostics plugin says what it logs first) or Turn off - o its settings, and r reads the list
+// again.
 Outcome App::plugins_key(const Key& key) {
+  if (plugin_setting_ >= 0) return plugin_settings_key(key);
   Outcome out;
   const auto* list = member(plugins_ ? &*plugins_ : nullptr, "plugins");
   const std::size_t count = list != nullptr && list->if_array() != nullptr ? list->if_array()->size() : 0U;
@@ -988,6 +1156,10 @@ Outcome App::plugins_key(const Key& key) {
   if (key.kind == Key::Kind::down && plugin_ + 1U < count) ++plugin_;
   if (key.kind == Key::Kind::character && key.text == "r") plugins_stale_ = true;
   const auto* plugin = selected_plugin();
+  if (key.kind == Key::Kind::character && key.text == "o" && plugin_settings(plugin) != nullptr) {
+    plugin_setting_ = 0;
+    plugin_preset_ = 0;
+  }
   if (key.kind != Key::Kind::enter || plugin == nullptr) return out;
   const std::string name = plugin_name(*plugin);
   const std::string state = text(member(plugin, "state"));
@@ -1019,6 +1191,109 @@ Outcome App::plugins_key(const Key& key) {
   } else {
     const std::string reason = text(member(plugin, "reason"));
     say(name + " is refused" + (reason.empty() ? std::string{} : ": " + reason), true);
+  }
+  return out;
+}
+
+// A tool's or notifier's settings, as the page's form sets them (owner 2026-10-30, decision 6): Up/Down a setting, Enter
+// changes it - a switch flips, a choice moves to its next, the others open the text field (a list as its items, a secret
+// empty and typed unseen) - Left/Right cycle a choice, c puts it back to its default (a secret: removed), p fills in the
+// presets in turn, w saves the changes (a plugin change: it waits as Enter's do), u drops them; o or Esc goes back to the
+// plugins. What is saved applies when the server starts again.
+Outcome App::plugin_settings_key(const Key& key) {
+  Outcome out;
+  const auto* plugin = selected_plugin();
+  const auto* settings = plugin_settings(plugin);
+  if (settings == nullptr) {  // (the list read again without them)
+    plugin_setting_ = -1;
+    return out;
+  }
+  const int count = static_cast<int>(settings->size());
+  plugin_setting_ = std::min(plugin_setting_, count - 1);
+  const std::string id = text(member(plugin, "id"));
+  auto& pending = plugin_pending_[id];
+  const auto& setting = (*settings)[static_cast<std::size_t>(plugin_setting_)];
+  const std::string name = text(member(&setting, "name"));
+  const std::string kind = text(member(&setting, "kind"));
+  const auto found = pending.find(name);
+  const std::string* changed = found != pending.end() ? &found->second : nullptr;
+  switch (key.kind) {
+    case Key::Kind::up:
+      plugin_setting_ = std::max(0, plugin_setting_ - 1);
+      return out;
+    case Key::Kind::down:
+      plugin_setting_ = std::min(count - 1, plugin_setting_ + 1);
+      return out;
+    case Key::Kind::escape:
+      plugin_setting_ = -1;
+      return out;
+    case Key::Kind::left:
+    case Key::Kind::right:
+      if (kind == "choice") {
+        if (auto next = next_choice(setting, changed, key.kind == Key::Kind::right ? 1 : -1)) pending[name] = std::move(*next);
+      }
+      return out;
+    case Key::Kind::enter:
+      if (kind == "boolean") {
+        const auto now = setting_now(setting, changed);
+        pending[name] = now && now->if_boolean() != nullptr && *now->if_boolean() ? "false" : "true";
+      } else if (kind == "choice") {
+        if (auto next = next_choice(setting, changed, 1)) pending[name] = std::move(*next);
+      } else {
+        prompt_ = Prompt::plugin_setting;
+        editing_ = setting;
+        editing_plugin_ = id;
+        input_.clear();
+        // the field starts with the change not yet saved, else the saved value (as the page's field: never its
+        // default); a secret's empty, as it is never shown
+        if (kind != "secret" && (changed != nullptr ? *changed != "null" : saved_value(setting))) {
+          if (const auto start = setting_now(setting, changed)) input_ = editable_text(*start);
+        }
+      }
+      return out;
+    case Key::Kind::character: break;
+    default: return out;
+  }
+  if (key.text == "o") {
+    plugin_setting_ = -1;
+  } else if (key.text == "c") {
+    back_to_default(pending, setting);
+  } else if (key.text == "u") {
+    pending.clear();
+    plugin_preset_ = 0;
+  } else if (key.text == "p") {
+    // the next preset's values, for the settings it names (the page's "Fill in" buttons)
+    const auto* presets = member(plugin, "presets");
+    if (presets == nullptr || presets->if_array() == nullptr || presets->if_array()->empty()) return out;
+    const auto& preset = (*presets->if_array())[plugin_preset_++ % presets->if_array()->size()];
+    const auto* values = member(&preset, "values");
+    for (const auto& each : *settings) {
+      const std::string each_name = text(member(&each, "name"));
+      if (const auto* value = member(values, each_name); value != nullptr) pending[each_name] = compact_json(*value);
+    }
+    say("Filled in " + text(member(&preset, "label")) + "; w saves it", false);
+  } else if (key.text == "w") {
+    if (pending.empty() || plugin_change_ != PluginChange::none) return out;  // (the last change first)
+    if (!flag(member(&*plugins_, "editable"))) {
+      say("The plugins cannot be changed here: this server keeps no choices", true);
+      return out;
+    }
+    // in the settings' order, as the page sends its fields; a secret left out unless typed or removed
+    std::string values = "{";
+    plugin_saving_.clear();
+    for (const auto& each : *settings) {
+      const std::string each_name = text(member(&each, "name"));
+      const auto change = pending.find(each_name);
+      if (change == pending.end()) continue;
+      values += (values.size() > 1U ? "," : "") + json_string(each_name) + ":" + change->second;
+      plugin_saving_[each_name] = change->second;
+    }
+    if (plugin_saving_.empty()) return out;
+    plugin_saving_id_ = id;
+    plugin_saved_ = false;
+    out.requests.push_back({"save " + plugin_name(*plugin) + "'s settings", "POST", "/v1/strata/plugins/settings",
+                            "{\"id\":" + json_string(id) + ",\"values\":" + values + "}}"});
+    plugin_change_ = PluginChange::sent;
   }
   return out;
 }
@@ -1101,7 +1376,9 @@ void App::draw_tabs(Screen& screen) const {
 void App::draw_keys(Screen& screen) const {
   const int y = screen.height() - 1;
   screen.fill(Rect{0, y, screen.width(), 1}, U' ', Style{kText, kPanel});
-  std::vector<std::pair<std::string, std::string>> keys{{"q", "Quit"}, {"Tab", "View"}};
+  std::vector<std::pair<std::string, std::string>> keys;
+  // (q and Tab are not Quit and View among a plugin's settings)
+  if (view_ != View::plugins || plugin_setting_ < 0) keys = {{"q", "Quit"}, {"Tab", "View"}};
   switch (view_) {
     case View::models:
       if (option_ >= 0) keys.insert(keys.end(), {{"Up/Down", "Option"}, {"Left/Right", "Change"}, {"Enter", "Start"}, {"Esc", "Cards"}});
@@ -1111,10 +1388,27 @@ void App::draw_keys(Screen& screen) const {
     case View::settings: keys.insert(keys.end(), {{"Enter", "Edit"}, {"w", "Save"}, {"u", "Undo"}, {"k", "Key"}, {"R", "Rotate"}}); break;
     case View::log: keys.insert(keys.end(), {{"Up/Down", "Scroll"}, {"End", "Newest"}}); break;
     case View::plugins: {
-      keys.emplace_back("Up/Down", "Plugin");
       const auto* plugin = selected_plugin();
       const bool can = plugin != nullptr && plugin_change_ == PluginChange::none && flag(member(&*plugins_, "editable"));
+      const auto* settings = plugin_settings(plugin);
+      if (plugin_setting_ >= 0 && settings != nullptr) {
+        // the settings in focus: a choice cycles; Save once there are changes and no change is under way
+        const auto& setting = (*settings)[static_cast<std::size_t>(std::min(plugin_setting_, static_cast<int>(settings->size()) - 1))];
+        const auto pending = plugin_pending_.find(text(member(plugin, "id")));
+        const bool changes = pending != plugin_pending_.end() && !pending->second.empty();
+        const auto* presets = member(plugin, "presets");
+        keys.insert(keys.end(), {{"Up/Down", "Setting"}, {"Enter", "Change"}});
+        if (text(member(&setting, "kind")) == "choice") keys.emplace_back("Left/Right", "Choice");
+        keys.emplace_back("c", "Clear");
+        if (changes && can) keys.emplace_back("w", "Save");
+        if (changes) keys.emplace_back("u", "Undo");
+        if (presets != nullptr && presets->if_array() != nullptr && !presets->if_array()->empty()) keys.emplace_back("p", "Preset");
+        keys.emplace_back("Esc", "Back");
+        break;
+      }
+      keys.emplace_back("Up/Down", "Plugin");
       if (const std::string action = can ? plugin_action(*plugin) : std::string{}; !action.empty()) keys.emplace_back("Enter", action);
+      if (settings != nullptr) keys.emplace_back("o", "Settings");
       keys.emplace_back("r", "Refresh");
       break;
     }
@@ -1161,11 +1455,14 @@ void App::draw_prompt(Screen& screen) const {
   const bool calibrate_first = prompt_ == Prompt::calibrate_first;
   const Rect box{(screen.width() - width) / 2, screen.height() / 2 - 2, width, calibrate_first ? 7 : 5};
   screen.fill(box, U' ', Style{kText, kPanel});
-  const char* const title = prompt_ == Prompt::quit     ? "Quit"
-                            : prompt_ == Prompt::rotate ? "Rotate the API key"
-                            : prompt_ == Prompt::start || calibrate_first ? "Start"
-                            : prompt_ == Prompt::remove ? "Remove card"
-                                                        : "Edit";
+  // (a plugin's setting: its label as the title)
+  const JsonValue* plugin_setting = prompt_ == Prompt::plugin_setting && editing_ ? &*editing_ : nullptr;
+  std::string title = prompt_ == Prompt::quit     ? "Quit"
+                      : prompt_ == Prompt::rotate ? "Rotate the API key"
+                      : prompt_ == Prompt::start || calibrate_first ? "Start"
+                      : prompt_ == Prompt::remove ? "Remove card"
+                                                  : "Edit";
+  if (plugin_setting != nullptr && !text(member(plugin_setting, "label")).empty()) title = text(member(plugin_setting, "label"));
   screen.box(box, title, Style{kAccent, kPanel}, Style{kAccent, kPanel, true});
   const Rect inner = box.inner();
   if (calibrate_first) {
@@ -1179,9 +1476,14 @@ void App::draw_prompt(Screen& screen) const {
     screen.field(inner.x + 1, inner.y + 1, inner.width - 2, question + "  y / n", Style{kText, kPanel});
     return;
   }
-  const std::string question = prompt_ == Prompt::rotate ? "Type ROTATE and Enter (Esc: keep the key)" : "The new value, Enter to keep it, Esc to leave it";
+  const std::string question = plugin_setting != nullptr      ? plugin_field_question(*plugin_setting)
+                               : prompt_ == Prompt::rotate ? "Type ROTATE and Enter (Esc: keep the key)"
+                                                           : "The new value, Enter to keep it, Esc to leave it";
   screen.field(inner.x + 1, inner.y, inner.width - 2, question, Style{kMuted, kPanel});
-  screen.field(inner.x + 1, inner.y + 1, inner.width - 2, input_ + "_", Style{231, kPanel, true});
+  // a secret typed is drawn as one * a character, never itself
+  const bool secret = plugin_setting != nullptr && text(member(plugin_setting, "kind")) == "secret";
+  const std::string typed = secret ? std::string(code_points(input_).size(), '*') : input_;
+  screen.field(inner.x + 1, inner.y + 1, inner.width - 2, typed + "_", Style{231, kPanel, true});
 }
 
 namespace {
@@ -1866,15 +2168,74 @@ void App::draw_plugins(Screen& screen, const Rect area) const {
   if (const std::string license = text(member(&plugin, "license")); !license.empty()) facts += dot + license;
   if (flag(member(&plugin, "first_party"))) facts += dot + "built with this install";
   put(facts, kNormal);
-  for (const auto& about : wrapped(text(member(&plugin, "about")), std::max(1, r.width - 2))) put(about, kNormal);
+  std::vector<std::pair<std::string, Style>> details;
+  for (auto& about : wrapped(text(member(&plugin, "about")), std::max(1, r.width - 2))) details.emplace_back(std::move(about), kNormal);
   const std::string state = text(member(&plugin, "state"));
   if (const std::string reason = text(member(&plugin, "reason")); !reason.empty()) {
-    put(reason, Style{state == "refused" ? kRed : kYellow, kDefault});
+    details.emplace_back(reason, Style{state == "refused" ? kRed : kYellow, kDefault});
   }
   if (const auto* switches = member(&plugin, "switches"); switches != nullptr && switches->if_array() != nullptr && !switches->if_array()->empty()) {
-    put("Turns on: " + items_text(*switches), kDim);
+    details.emplace_back("Turns on: " + items_text(*switches), kDim);
   }
-  put(plugin_now(plugin), kDim);
+  details.emplace_back(plugin_now(plugin), kDim);
+  // then, as the page's card: what it connects to, what keeps it from running, and its settings (owner 2026-10-30,
+  // decision 6) - each its label and its value, the one in focus with its help
+  std::vector<std::pair<std::string, Style>> heading;
+  if (const std::string network = text(member(&plugin, "network")); !network.empty()) heading.emplace_back("Connects to " + network + ".", kDim);
+  if (const std::string problem = text(member(&plugin, "settings_problem")); !problem.empty()) {
+    heading.emplace_back("Not ready: " + problem, Style{kYellow, kDefault});
+  }
+  const auto* settings = plugin_settings(&plugin);
+  const auto changes = plugin_pending_.find(text(member(&plugin, "id")));
+  const std::map<std::string, std::string>* pending = changes != plugin_pending_.end() ? &changes->second : nullptr;
+  const bool focused = settings != nullptr && plugin_setting_ >= 0;
+  const int focus = focused ? std::min(plugin_setting_, static_cast<int>(settings->size()) - 1) : -1;
+  std::string help;
+  if (settings != nullptr) {
+    const std::size_t count = pending != nullptr ? pending->size() : 0U;
+    heading.emplace_back("Settings" + (!focused ? std::string{"  (o to change)"}
+                                       : count > 0U ? "  (" + std::to_string(count) + " unsaved change(s): w saves, u undoes)"
+                                                    : std::string{}),
+                         kTitle);
+    if (focused) help = text(member(&(*settings)[static_cast<std::size_t>(focus)], "help"));
+  }
+  // (while the settings are focused on a screen too short for all of it, they take the details' place, so the one in
+  // focus stays in view)
+  const int setting_rows = settings != nullptr ? static_cast<int>(settings->size()) : 0;
+  const int help_rows = help.empty() ? 0 : 1;
+  const int wanted = line + static_cast<int>(details.size() + heading.size()) + setting_rows + help_rows;
+  if (!focused || wanted <= r.height - 1) {
+    for (const auto& [words, style] : details) put(words, style);
+  }
+  for (const auto& [words, style] : heading) put(words, style);
+  if (settings != nullptr) {
+    const int bottom = r.height - 1 - help_rows;  // (the note's row, and the help's above it)
+    const int room = std::max(1, bottom - line);
+    const std::size_t settings_from = focus >= room ? static_cast<std::size_t>(focus - room + 1) : 0U;
+    const int label_width = std::clamp(r.width / 3, 10, 30);
+    for (std::size_t i = settings_from; i < settings->size() && line < bottom; ++i, ++line) {
+      const auto& setting = (*settings)[i];
+      const int y = r.y + line;
+      const bool selected = static_cast<int>(i) == focus;
+      const Style base = selected ? Style{231, kAccent, true} : kNormal;
+      if (selected) screen.fill(Rect{r.x, y, r.width, 1}, U' ', base);
+      const std::string name = text(member(&setting, "name"));
+      std::string label = text(member(&setting, "label"));
+      if (label.empty()) label = name;
+      if (flag(member(&setting, "required"))) label += " (needed)";
+      const std::string* changed = nullptr;
+      if (pending != nullptr) {
+        if (const auto change = pending->find(name); change != pending->end()) changed = &change->second;
+      }
+      const bool by_default = changed == nullptr && text(member(&setting, "kind")) != "secret" && !saved_value(setting);
+      const Style value_style = selected ? base : changed != nullptr ? Style{kYellow, kDefault, true} : by_default ? kDim : kNormal;
+      screen.field(r.x + 1, y, label_width, label, base);
+      if (r.width > label_width + 4) {
+        screen.field(r.x + 2 + label_width, y, r.width - label_width - 3, plugin_setting_text(setting, changed), value_style);
+      }
+    }
+    if (help_rows > 0 && line < r.height - 1) screen.field(r.x + 1, r.y + line++, r.width - 2, help, kDim);
+  }
   if (const std::string manifest = text(member(&plugin, "manifest_sha256")); !manifest.empty()) {
     put("SHA-256s", kDim);
     put("plugin.json  " + manifest, kDim);

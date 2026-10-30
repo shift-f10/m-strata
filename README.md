@@ -154,7 +154,8 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 - **Plugins tab** (being built; Debugging is the first plugin): every plugin in the install's `plugins` folder, with
   what it is, its state and its SHA-256s. A plugin runs only when this install was built with it or you approved it,
   and only with the files you approved: a changed file waits for your approval again. Approve, and turn on or off, from
-  the tab; a change applies when the server restarts.
+  the tab; a tool's or notifier's settings are in its card too (a password or key is kept protected and never shown
+  again). A change applies when the server restarts.
 - **Model folders on network shares - experimental, off by default:** a model folder may be on an SMB/CIFS share
   or an NFS mount once Settings turns it on; see
   [Model folders on network shares](#model-folders-on-network-shares-experimental) for what it means and its status.

@@ -2,6 +2,7 @@
 // the list with each plugin's state, approval (its SHA-256s pinned, kept in <roots.state>/plugins.json) and on/off, each
 // applying at the next start; refusals with their reason; this PC only by default.
 #include "secure_frontend/plugin_routes.hpp"
+#include "secure_frontend/plugin_secrets.hpp"
 #include "support/test_support.hpp"
 
 #include <filesystem>
@@ -27,28 +28,52 @@ const std::string kDebugging = R"({"schema": "m-strata.plugin/1", "id": "debuggi
   "name": "Debugging", "version": "1.0.0", "publisher": "M-Strata", "license": "AGPL-3.0-only", "about": "Verbose logs.",
   "diagnostics": {"switches": ["logging.requests", "troubleshooting"]}})";
 const std::string kTool = R"({"schema": "m-strata.plugin/1", "id": "search", "kind": "tool", "name": "Web search",
-  "version": "1.0.0", "publisher": "M-Strata", "license": "AGPL-3.0-only", "about": "", "tool": {},
+  "version": "1.0.0", "publisher": "M-Strata", "license": "AGPL-3.0-only", "about": "", "tool": {"program": {"windows": "strata-search.exe", "linux": "strata-search"}},
   "files": {"windows": ["strata-search.exe"], "linux": ["strata-search"]}})";
 
-// An install's plugins folder and a data folder's state folder, and the routes over them.
+// A notifier with settings of each kind, a secret among them, a preset and what it connects to (plugin spec section 10).
+const std::string kMailer = R"({"schema": "m-strata.plugin/1", "id": "mailer", "kind": "notifier", "name": "Mailer",
+  "version": "1.0.0", "publisher": "Example Labs", "license": "MIT", "about": "",
+  "files": {"windows": ["mailer.exe"], "linux": ["mailer"]},
+  "notifier": {"program": {"windows": "mailer.exe", "linux": "mailer"}, "arguments": ["--host", "{host}"],
+    "environment": {"MAIL_PASSWORD": "{password}"}, "network": "the mail server {host}:{port}",
+    "settings": [
+      {"name": "host", "kind": "text", "label": "Mail server", "help": "Its name.", "required": true},
+      {"name": "port", "kind": "integer", "label": "Port", "help": "", "default": 465, "min": 1, "max": 65535},
+      {"name": "security", "kind": "choice", "label": "Security", "help": "", "default": "ssl", "choices": ["ssl", "starttls"]},
+      {"name": "to", "kind": "text_list", "label": "To", "help": "", "required": true, "max_items": 5},
+      {"name": "password", "kind": "secret", "label": "Password", "help": "", "required": true}],
+    "presets": [{"label": "IONOS", "values": {"host": "smtp.ionos.com", "port": 465, "security": "ssl"}}]}})";
+
+// An install's plugins folder and a data folder's state, secret folder and config file, and the routes over them.
 struct Fixture final {
   std::filesystem::path root = secure_frontend_test::make_scratch_directory();
   std::filesystem::path plugins = root / "plugins";
   std::filesystem::path state = root / "state";
+  std::filesystem::path secret = root / "secret";
+  std::filesystem::path config = root / "config.json";
   std::unique_ptr<secure_frontend::PluginRoutes> routes;
   std::vector<std::string> logged;
   explicit Fixture(std::set<std::string> running = {}, std::vector<secure_frontend::FirstPartyPlugin> first_party = {}) {
     secure_frontend_test::make_private_directory(plugins);
     secure_frontend_test::make_private_directory(state);
+    secure_frontend_test::make_private_directory(secret);
+    secure_frontend_test::write_file(config, "{\"schema_version\": 1}\n");
     add("debugging", kDebugging);
     add("search", kTool);
+    add("mailer", kMailer);
+#if defined(_WIN32)
+    secure_frontend_test::write_file(plugins / "mailer" / "mailer.exe", "notifier");
+#else
+    secure_frontend_test::write_file(plugins / "mailer" / "mailer", "notifier", 0700);
+#endif
 #if defined(_WIN32)
     secure_frontend_test::write_file(plugins / "search" / "strata-search.exe", "tool");
 #else
     secure_frontend_test::write_file(plugins / "search" / "strata-search", "tool", 0700);
 #endif
     secure_frontend::PluginRouteSettings settings{.plugins_dir = plugins, .state_dir = state, .first_party = std::move(first_party),
-                                                  .running = std::move(running)};
+                                                  .running = std::move(running), .config_file = config, .secret_dir = secret};
     settings.log = [this](const std::string_view line) { logged.emplace_back(line); };
     routes = std::make_unique<secure_frontend::PluginRoutes>(std::move(settings));
   }
@@ -120,6 +145,60 @@ void refusals_say_why() {
   expect(secure_frontend_test::read_file(f.state / "plugins.json") == "not json", "a choices file that is not one is never overwritten");
 }
 
+// The owner (2026-10-30, decision 6): a tool's or notifier's settings, listed with their values (a secret's only as set
+// or not), its presets, what it connects to and what keeps it from running; saved - every value but a secret's in the
+// config file as plugins.<id>.<name>, a secret in the secret folder - checked against its manifest, null putting one
+// back to its default; refusals by name; the server log never holds a value.
+void settings_are_listed_and_saved() {
+  Fixture f;
+  auto listed = f.post(RouteId::strata_plugins, "{}");
+  expect(has(listed, R"({"name":"host","kind":"text","label":"Mail server","help":"Its name.","required":true,"default":null,"value":null})") &&
+             has(listed, R"({"name":"port","kind":"integer","label":"Port","help":"","required":false,"default":465,"min":1,"max":65535,"value":null})") &&
+             has(listed, R"("choices":["ssl","starttls"])") && has(listed, R"("max_items":5)") &&
+             has(listed, R"({"name":"password","kind":"secret","label":"Password","help":"","required":true,"set":false})"),
+         "each setting with its rules and value: " + listed.body);
+  expect(has(listed, R"("presets":[{"label":"IONOS","values":{"host":"smtp.ionos.com","port":465,"security":"ssl"}}])") &&
+             has(listed, R"("network":"the mail server {host}:465")") &&
+             has(listed, R"("settings_problem":"its setting host is required: set it in the Plugins tab")"),
+         "its presets, what it connects to, and what keeps it from running: " + listed.body);
+  expect(has(listed, R"("id":"debugging")") && has(listed, R"("settings":[],"presets":[],"network":"","settings_problem":null)"),
+         "a plugin without settings: " + listed.body);
+  const auto saved = f.post(RouteId::strata_plugins_settings,
+                            R"({"id":"mailer","values":{"host":"smtp.example.org","to":["a@example.org"],"password":"s3cret pw"}})");
+  expect(saved.status == 200 && has(saved, R"({"id":"mailer","saved":true,"restart_needed":true})"), "saved: " + shown(saved));
+  const std::string file = secure_frontend_test::read_file(f.config);
+  expect(file.find("\"mailer\"") != std::string::npos && file.find("smtp.example.org") != std::string::npos &&
+             file.find("a@example.org") != std::string::npos && file.find("s3cret") == std::string::npos,
+         "the config file has the values, never the secret:\n" + file);
+  expect(secure_frontend::read_plugin_secret(f.secret, "mailer", "password") == std::string{"s3cret pw"}, "the secret is in the secret folder");
+  listed = f.post(RouteId::strata_plugins, "{}");
+  expect(has(listed, R"("value":"smtp.example.org")") && has(listed, R"("set":true)") && has(listed, R"("network":"the mail server smtp.example.org:465")") &&
+             has(listed, R"("id":"mailer")") && listed.body.find("s3cret") == std::string::npos,
+         "listed with its values, the secret as set: " + listed.body);
+  expect(listed.body.find(R"("settings_problem":"its setting)") == std::string::npos, "nothing keeps it from running now: " + listed.body);
+  // null puts a setting back to its default, and removes a secret
+  expect(f.post(RouteId::strata_plugins_settings, R"({"id":"mailer","values":{"host":null,"password":null}})").status == 200, "cleared");
+  expect(secure_frontend_test::read_file(f.config).find("smtp.example.org") == std::string::npos &&
+             !secure_frontend::plugin_secret_set(f.secret, "mailer", "password"),
+         "gone from the file and the secret folder");
+  for (const auto& line : f.logged) expect(line.find("smtp.example.org") == std::string::npos && line.find("s3cret") == std::string::npos, "no value in the log: " + line);
+  // refusals, by name
+  const auto refused = [&f](const std::string& body, const std::string& why) {
+    const auto answer = f.post(RouteId::strata_plugins_settings, body);
+    expect(answer.status == 422 && has(answer, "\"code\":\"plugin_refused\"") && has(answer, why), body + " refused for " + why + ": " + shown(answer));
+  };
+  refused(R"({"id":"ghost","values":{}})", "no plugin");
+  refused(R"({"id":"debugging","values":{"x":1}})", "no settings");
+  refused(R"({"id":"mailer","values":{"colour":"red"}})", "colour");
+  refused(R"({"id":"mailer","values":{"port":70000}})", "port");
+  refused(R"({"id":"mailer","values":{"security":"none"}})", "security");
+  refused(R"({"id":"mailer","values":{"password":"two\nlines"}})", "password");
+  refused(R"({"id":"mailer","values":{"to":["a","b","c","d","e","f"]}})", "to");
+  expect(f.post(RouteId::strata_plugins_settings, R"({"id":"mailer"})").status == 400, "values are needed");
+  expect(f.post(RouteId::strata_plugins_settings, R"({"id":"mailer","values":{"port":465}})", false).status == 403, "another PC is refused");
+  expect(secure_frontend_test::read_file(f.config).find("70000") == std::string::npos, "a refused value is never written");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -127,5 +206,6 @@ int main(int argc, char** argv) {
       {"the_plugins_are_listed", the_plugins_are_listed},
       {"approval_and_switching_are_kept", approval_and_switching_are_kept},
       {"refusals_say_why", refusals_say_why},
+      {"settings_are_listed_and_saved", settings_are_listed_and_saved},
   }, failures);
 }

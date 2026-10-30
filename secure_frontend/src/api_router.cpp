@@ -440,7 +440,8 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
       }
       case RouteId::strata_plugins:
       case RouteId::strata_plugins_approve:
-      case RouteId::strata_plugins_switch: {
+      case RouteId::strata_plugins_switch:
+      case RouteId::strata_plugins_settings: {
         RouteResult result = config_.plugins.handle(decision.route, body, context);
         if (auto* complete = std::get_if<HttpResponse>(&result)) {
           response = std::move(*complete);

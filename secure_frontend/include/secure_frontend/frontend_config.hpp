@@ -413,6 +413,18 @@ struct SearchConfig final {
 };
 // The search.* rows of a draft alone, by validate()'s own rules (the page's settings, before they are written).
 [[nodiscard]] std::variant<SearchConfig, ConfigErrors> search_from_draft(const FrontendConfigDraft& draft);
+// Tool and notifier plugins' settings (docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md, section 10;
+// owner 2026-10-30, decision 6): the plugins.<id>.<name> rows as config.json holds them. The server checks them against
+// each plugin's manifest when it starts. A secret is never here (roots.secret).
+struct PluginSettingsConfig final {
+  std::map<std::string, std::map<std::string, ConfigDraftValue>> values{};  // plugin id -> setting name -> value
+};
+inline constexpr std::size_t kMaxConfigPlugins = 32U;
+inline constexpr std::size_t kMaxPluginSettingRows = 16U;
+// Whether `path` is a plugin setting's row: plugins.<id>.<name>, each a lowercase letter, then lowercase letters,
+// digits or '_' (at most 32).
+[[nodiscard]] bool plugin_setting_path(std::string_view path) noexcept;
+
 // The Debugging plugin (owner 2026-10-30: "we should make the email, websearch, debugging all plugins as well"; it
 // replaced the make --debugging build of 2026-10-29): while it is on, the logging rows a config leaves unset are on.
 // The server says so once, when it starts and knows which plugins are on (plugin_registry.hpp), before it serves; until
@@ -478,6 +490,7 @@ class FrontendConfig final {
   const ModelsConfig models;        // model launcher: models.* (plan 2026-10-23 Task 1)
   const AlertsConfig alerts;        // GUI-first start-up: alerts.email.* (spec 2026-10-27 §5a)
   const SearchConfig search;        // web search: search.* (spec 2026-10-27-web-search-design §2)
+  const PluginSettingsConfig plugins;  // plugins.<id>.<name> (plugin spec 2026-10-30 §10)
 
  private:
   friend std::variant<ValidatedConfig, std::vector<ConfigIssue>> validate(const FrontendConfigDraft& draft);
@@ -486,13 +499,14 @@ class FrontendConfig final {
                  SamplingDefaults sampling_value, ReasoningConfig reasoning_value, SessionPolicy session_value,
                  ReplicasConfig replicas_value, VisionConfig vision_value, GlmSettings glm_value,
                  UpdateSettings update_value = {}, ModelsConfig models_value = {}, AlertsConfig alerts_value = {},
-                 SearchConfig search_value = {})
+                 SearchConfig search_value = {}, PluginSettingsConfig plugins_value = {})
       : listener(std::move(listener_value)), limits(limits_value), roots(std::move(roots_value)),
         token(std::move(token_value)), engine(std::move(engine_value)), pull(std::move(pull_value)),
         update(std::move(update_value)),
         logging(logging_value), sampling(std::move(sampling_value)), reasoning(reasoning_value),
         session(std::move(session_value)), replicas(replicas_value), vision(vision_value), glm(std::move(glm_value)),
-        models(std::move(models_value)), alerts(std::move(alerts_value)), search(std::move(search_value)) {}
+        models(std::move(models_value)), alerts(std::move(alerts_value)), search(std::move(search_value)),
+        plugins(std::move(plugins_value)) {}
 };
 
 // Immutable after validation; subsystems derive their limits from it once.

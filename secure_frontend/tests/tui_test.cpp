@@ -1159,6 +1159,225 @@ void the_plugins_view_fits_and_waits_for_its_changes() {
          "no plugins:\n" + all_text(empty));
 }
 
+// A notifier with a setting of each kind (two secrets: one set, one not) and two presets, as the server lists it
+// (plugin_routes settings_json): a secret only as set or not, never its value.
+const std::string kMailer =
+    R"({"id":"mailer","kind":"notifier","name":"Mailer","version":"1.0.0","publisher":"Example Labs","license":"MIT",)"
+    R"("about":"Sends a mail when a download finishes.","first_party":false,"state":"on","reason":null,"running":true,)"
+    R"("manifest_sha256":"eeee5555","files":[],"switches":[],"settings":[)"
+    R"({"name":"host","kind":"text","label":"Mail server","help":"The name of the server that sends the mail","required":true,)"
+    R"("default":null,"value":"smtp.example.com"},)"
+    R"({"name":"port","kind":"integer","label":"Port","help":"","required":false,"default":587,"min":1,"max":65535,"value":null},)"
+    R"({"name":"security","kind":"choice","label":"Security","help":"","required":false,"default":"starttls",)"
+    R"("choices":["none","starttls","tls"],"value":null},)"
+    R"({"name":"on_finish","kind":"boolean","label":"Mail on finish","help":"","required":false,"default":true,"value":false},)"
+    R"({"name":"status_page","kind":"url","label":"Status page","help":"","required":false,"default":null,"value":null},)"
+    R"({"name":"to","kind":"text_list","label":"Recipients","help":"","required":true,"default":null,"max_items":2,"value":["ops"]},)"
+    R"({"name":"password","kind":"secret","label":"Password","help":"","required":true,"set":true},)"
+    R"({"name":"token","kind":"secret","label":"API token","help":"","required":true,"set":false}],)"
+    R"("presets":[{"label":"Hosted","values":{"host":"smtp.example.net","port":465,"security":"tls"}},)"
+    R"({"label":"This PC","values":{"host":"localhost","port":25,"security":"none","on_finish":true,"to":["root"]}}],)"
+    R"("network":"the mail server smtp.example.com","settings_problem":"its setting token is required: set it in the Plugins tab"})";
+
+// The owner (2026-10-30, decision 6): a tool's or notifier's settings are set in the Plugins view as on the page's card -
+// o focuses them, Enter changes the one in focus (a switch flips, a choice moves on, the others in the text field, a
+// secret typed unseen), c puts it back to its default (a secret: removed), p fills in a preset, w saves them as one plugin
+// change (it waits as Enter's do) and u drops them. A secret is only ever said set or not.
+void the_plugins_settings_are_edited_then_saved() {
+  const t::Request list{"plugins", "POST", "/v1/strata/plugins", "{}"};
+  const auto with = [](std::string json, const std::string& from, const std::string& to) {
+    json.replace(json.find(from), from.size(), to);
+    return json;
+  };
+  const std::string listed = with(kPlugins, R"("plugins":[)", R"("plugins":[)" + kMailer + ",");
+  t::App app(t::Capabilities{}, std::nullopt);
+  app.server_state("http://127.0.0.1:8080", true);
+  (void)app.key(character("7"));
+  app.answer(list, 200, listed);
+  const auto drawn = [&app](const int height) {
+    auto screen = std::make_unique<t::Screen>(120, height);
+    app.draw(*screen, 0);
+    return screen;
+  };
+  // a setting's row ("" when it is not drawn)
+  const auto row_of = [](const t::Screen& screen, const std::string& label) {
+    const int y = row_with(screen, label);
+    return y < 0 ? std::string{} : row_text(screen, y);
+  };
+  // the selected plugin's settings below its details: what it connects to, what keeps it from running, then each
+  // setting's label and value - its default when it has none, a secret as set or not
+  auto screen = drawn(40);
+  std::string text = all_text(*screen);
+  for (const char* words : {"Connects to the mail server smtp.example.com.", "Not ready: its setting token is required: set it in the Plugins tab",
+                            "Settings  (o to change)"}) {
+    expect(text.find(words) != std::string::npos, std::string{"the view shows: "} + words + "\n" + text);
+  }
+  expect(row_of(*screen, "Mail server (needed)").find(" smtp.example.com ") != std::string::npos &&
+             row_of(*screen, "Port").find(" 587 (default) ") != std::string::npos &&
+             row_of(*screen, "Security").find(" starttls (default) ") != std::string::npos &&
+             row_of(*screen, "Mail on finish").find(" off ") != std::string::npos &&
+             row_of(*screen, "Mail on finish").find("(default)") == std::string::npos &&
+             row_of(*screen, "Status page").find(" not set ") != std::string::npos &&
+             row_of(*screen, "Recipients (needed)").find(" ops ") != std::string::npos,
+         "each setting's value, else its default:\n" + text);
+  expect(row_of(*screen, "Password (needed)").find(" set ") != std::string::npos && row_of(*screen, "Password").find("not set") == std::string::npos &&
+             row_of(*screen, "API token (needed)").find(" not set ") != std::string::npos,
+         "a secret as set or not:\n" + text);
+  expect(row_text(*screen, 39).find("o  Settings") != std::string::npos, "the keys offer the settings: " + row_text(*screen, 39));
+  // o focuses them: their own keys, and neither q nor the views' keys (1-7, Tab) do anything meanwhile
+  (void)app.key(character("o"));
+  const std::string focused_keys = row_text(*drawn(40), 39);
+  expect(focused_keys.find("Up/Down  Setting") != std::string::npos && focused_keys.find("Enter  Change") != std::string::npos &&
+             focused_keys.find("c  Clear") != std::string::npos && focused_keys.find("p  Preset") != std::string::npos &&
+             focused_keys.find("Esc  Back") != std::string::npos && focused_keys.find("Quit") == std::string::npos &&
+             focused_keys.find("Tab") == std::string::npos && focused_keys.find("Save") == std::string::npos,
+         "the keys while the settings are focused: " + focused_keys);
+  (void)app.key(character("q"));
+  const auto after_q = app.key(character("y"));
+  expect(!after_q.quit && after_q.requests.empty(), "q does not quit (the y after it answers no question)");
+  for (const char* view : {"1", "5", "7"}) (void)app.key(character(view));
+  (void)app.key(plain(t::Key::Kind::tab));
+  (void)app.key(plain(t::Key::Kind::back_tab));
+  expect(app.view() == t::View::plugins && row_text(*drawn(40), 39).find("Up/Down  Setting") != std::string::npos,
+         "1-7 and Tab neither switch the view nor leave the settings");
+  expect(all_text(*drawn(40)).find("The name of the server that sends the mail") != std::string::npos, "the focused setting's help");
+  // a text: Enter opens the field on its value
+  const auto typed_in = [&app](const std::string& typed) {
+    for (int i = 0; i < 40; ++i) (void)app.key(plain(t::Key::Kind::backspace));
+    for (const char c : typed) (void)app.key(character(std::string(1U, c)));
+    (void)app.key(plain(t::Key::Kind::enter));
+  };
+  (void)app.key(plain(t::Key::Kind::enter));
+  expect(all_text(*drawn(40)).find("smtp.example.com_") != std::string::npos, "the field starts with the value:\n" + all_text(*drawn(40)));
+  typed_in("mail.example.org");
+  // a whole number in its range, or the status line says what it takes and it is not kept
+  (void)app.key(plain(t::Key::Kind::down));
+  for (const char* refused : {"70000", "2.5", "x1", "0"}) {
+    (void)app.key(plain(t::Key::Kind::enter));
+    typed_in(refused);
+    expect(app.status() == "Port takes a whole number from 1 to 65535", std::string{refused} + " is refused: " + app.status());
+  }
+  expect(row_of(*drawn(40), "Port").find("unsaved") == std::string::npos, "a refused number is not kept: " + row_of(*drawn(40), "Port"));
+  (void)app.key(plain(t::Key::Kind::enter));
+  typed_in("2525");
+  // a choice: Enter moves to its next choice (from its default), Right and Left cycle it
+  (void)app.key(plain(t::Key::Kind::down));
+  (void)app.key(plain(t::Key::Kind::enter));
+  expect(row_of(*drawn(40), "Security").find(" tls  * unsaved") != std::string::npos, "Enter: the next choice: " + row_of(*drawn(40), "Security"));
+  (void)app.key(plain(t::Key::Kind::right));
+  expect(row_of(*drawn(40), "Security").find(" none  * unsaved") != std::string::npos, "Right: round to the first: " + row_of(*drawn(40), "Security"));
+  (void)app.key(plain(t::Key::Kind::left));
+  // a switch flips; an address in the field (none yet: it starts empty)
+  (void)app.key(plain(t::Key::Kind::down));
+  (void)app.key(plain(t::Key::Kind::enter));
+  (void)app.key(plain(t::Key::Kind::down));
+  (void)app.key(plain(t::Key::Kind::enter));
+  typed_in("https://status.example.org");
+  // a list as its items, separated by commas, no more than it takes
+  (void)app.key(plain(t::Key::Kind::down));
+  (void)app.key(plain(t::Key::Kind::enter));
+  expect(all_text(*drawn(40)).find("ops_") != std::string::npos, "a list's field starts with its items");
+  typed_in("ops, admin, extra");
+  expect(app.status() == "Recipients takes at most 2 items" && row_of(*drawn(40), "Recipients").find("unsaved") == std::string::npos,
+         "too many items are refused: " + app.status());
+  (void)app.key(plain(t::Key::Kind::enter));
+  typed_in("ops,, admin ");
+  // c removes a secret that is set; another is typed unseen, and only ever said set
+  (void)app.key(plain(t::Key::Kind::down));
+  (void)app.key(character("c"));
+  (void)app.key(plain(t::Key::Kind::down));
+  (void)app.key(plain(t::Key::Kind::enter));
+  for (const char c : std::string_view{"s3cret-token"}) (void)app.key(character(std::string(1U, c)));
+  text = all_text(*drawn(40));
+  expect(text.find(std::string(12U, '*') + "_") != std::string::npos && text.find("s3cret-token") == std::string::npos,
+         "a secret is typed unseen:\n" + text);
+  (void)app.key(plain(t::Key::Kind::enter));
+  screen = drawn(40);
+  text = all_text(*screen);
+  expect(row_of(*screen, "Mail server").find(" mail.example.org  * unsaved") != std::string::npos &&
+             row_of(*screen, "Port").find(" 2525  * unsaved") != std::string::npos &&
+             row_of(*screen, "Security").find(" tls  * unsaved") != std::string::npos &&
+             row_of(*screen, "Mail on finish").find(" on  * unsaved") != std::string::npos &&
+             row_of(*screen, "Status page").find(" https://status.example.org  * unsaved") != std::string::npos &&
+             row_of(*screen, "Recipients").find(" ops, admin  * unsaved") != std::string::npos &&
+             row_of(*screen, "Password").find(" not set  * unsaved") != std::string::npos &&
+             row_of(*screen, "API token").find(" set  * unsaved") != std::string::npos && row_of(*screen, "API token").find("not set") == std::string::npos &&
+             text.find("s3cret-token") == std::string::npos && text.find("Settings  (8 unsaved change(s): w saves, u undoes)") != std::string::npos,
+         "the unsaved changes, as Settings marks them:\n" + text);
+  // a short screen keeps the focused setting in view, above the note
+  const auto low = drawn(20);
+  expect(row_with(*low, "API token") >= 0 && row_with(*low, "API token") < row_with(*low, "A change applies"),
+         "the focused setting in view on a short screen:\n" + all_text(*low));
+  // w saves them, in the settings' order: a secret removed as null
+  auto out = app.key(character("w"));
+  const t::Request save{"save Mailer's settings", "POST", "/v1/strata/plugins/settings",
+                        R"({"id":"mailer","values":{"host":"mail.example.org","port":2525,"security":"tls","on_finish":true,)"
+                        R"("status_page":"https://status.example.org","to":["ops","admin"],"password":null,"token":"s3cret-token"}})"};
+  expect(out.requests.size() == 1U && out.requests[0] == save,
+         "w saves the changes: " + (out.requests.empty() ? std::string{"(none)"} : out.requests[0].purpose + " " + out.requests[0].body));
+  if (out.requests.empty()) return;
+  // a plugin change: nothing more is sent until it is answered and the list read again, and the changes stay until then
+  expect(app.key(character("w")).requests.empty(), "no second save while the first is under way");
+  screen = drawn(40);
+  expect(row_text(*screen, 39).find("Save") == std::string::npos && row_of(*screen, "Port").find(" 2525  * unsaved") != std::string::npos,
+         "meanwhile no Save, and the changes stay: " + row_text(*screen, 39));
+  app.answer(out.requests[0], 200, R"({"id":"mailer","saved":true,"restart_needed":true})");
+  expect(app.status() == "save Mailer's settings: done; it applies when the server starts again", "saved: " + app.status());
+  const auto polls = app.polls();
+  expect(std::find(polls.begin(), polls.end(), list) != polls.end(), "and the list is read again");
+  expect(app.key(character("w")).requests.empty() && row_of(*drawn(40), "Port").find(" 2525  * unsaved") != std::string::npos,
+         "nor before the list is read again; the changes kept until then");
+  app.answer(list, 200,
+             with(with(listed, R"("value":"smtp.example.com")", R"("value":"mail.example.org")"), R"("max":65535,"value":null)",
+                  R"("max":65535,"value":2525)"));
+  screen = drawn(40);
+  text = all_text(*screen);
+  expect(text.find("unsaved") == std::string::npos && row_of(*screen, "Port").find(" 2525 ") != std::string::npos &&
+             row_of(*screen, "Mail server").find(" mail.example.org ") != std::string::npos,
+         "then the saved changes are dropped, the list's values shown:\n" + text);
+  // p fills in the presets in turn (the page's "Fill in" buttons); a refused save keeps its changes
+  (void)app.key(character("p"));
+  screen = drawn(40);
+  expect(row_of(*screen, "Mail server").find(" smtp.example.net  * unsaved") != std::string::npos &&
+             row_of(*screen, "Port").find(" 465  * unsaved") != std::string::npos &&
+             row_of(*screen, "Security").find(" tls  * unsaved") != std::string::npos && app.status() == "Filled in Hosted; w saves it",
+         "p fills in the first preset: " + app.status() + "\n" + all_text(*screen));
+  (void)app.key(character("p"));
+  out = app.key(character("w"));
+  const t::Request preset{"save Mailer's settings", "POST", "/v1/strata/plugins/settings",
+                          R"({"id":"mailer","values":{"host":"localhost","port":25,"security":"none","on_finish":true,"to":["root"]}})"};
+  expect(out.requests.size() == 1U && out.requests[0] == preset,
+         "then the next: " + (out.requests.empty() ? std::string{"(none)"} : out.requests[0].body));
+  if (out.requests.empty()) return;
+  app.answer(out.requests[0], 422,
+             R"({"error":{"message":"this server was started without a config file to write","type":"invalid_request_error","param":null,"code":"plugin_refused"}})");
+  expect(app.status() == "save Mailer's settings: this server was started without a config file to write", "refused: " + app.status());
+  app.answer(list, 200, listed);
+  out = app.key(character("w"));
+  expect(out.requests == std::vector<t::Request>{preset}, "a refused save keeps its changes");
+  if (out.requests.empty()) return;
+  app.answer(out.requests[0], 422, R"({"error":{"message":"refused again"}})");
+  app.answer(list, 200, listed);
+  // u drops the changes; c puts a setting back to its default, sent as null
+  (void)app.key(character("u"));
+  expect(all_text(*drawn(40)).find("unsaved") == std::string::npos, "u drops them");
+  for (int i = 0; i < 4; ++i) (void)app.key(plain(t::Key::Kind::up));
+  (void)app.key(character("c"));
+  expect(row_of(*drawn(40), "Mail on finish").find(" on (default)  * unsaved") != std::string::npos,
+         "c: back to the default: " + row_of(*drawn(40), "Mail on finish"));
+  out = app.key(character("w"));
+  expect(out.requests.size() == 1U && out.requests[0].body == R"({"id":"mailer","values":{"on_finish":null}})",
+         "c sends null: " + (out.requests.empty() ? std::string{"(none)"} : out.requests[0].body));
+  // Esc leaves the settings, and o focuses and leaves them as well; q quits again
+  (void)app.key(plain(t::Key::Kind::escape));
+  expect(row_text(*drawn(40), 39).find("Quit") != std::string::npos, "Esc leaves the settings: " + row_text(*drawn(40), 39));
+  (void)app.key(character("o"));
+  expect(row_text(*drawn(40), 39).find("Esc  Back") != std::string::npos, "o focuses them again");
+  (void)app.key(character("o"));
+  expect(row_text(*drawn(40), 39).find("Quit") != std::string::npos, "and o leaves them");
+  expect(!app.key(character("q")).quit && app.key(character("y")).quit, "q quits again");
+}
+
 }  // namespace
 
 // The owner (2026-10-29, then 2026-10-30 as a plugin): while the Debugging plugin is on, the TUI shows what it logs and
@@ -1227,6 +1446,7 @@ int main(int argc, char** argv) {
       {"the_debugging_notice_waits_for_y", the_debugging_notice_waits_for_y},
       {"plugins_are_approved_and_switched", plugins_are_approved_and_switched},
       {"the_plugins_view_fits_and_waits_for_its_changes", the_plugins_view_fits_and_waits_for_its_changes},
+      {"the_plugins_settings_are_edited_then_saved", the_plugins_settings_are_edited_then_saved},
       {"an_uncalibrated_start_asks_to_calibrate_first", an_uncalibrated_start_asks_to_calibrate_first},
       {"charts_are_braille_or_blocks", charts_are_braille_or_blocks},
       {"only_the_changes_are_written", only_the_changes_are_written},

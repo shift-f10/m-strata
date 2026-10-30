@@ -12,6 +12,13 @@
 //   POST /v1/strata/plugins/approve  {"id"} -> {"id", "state", "restart_needed": true}
 //                                       (waiting or changed: its SHA-256s now are pinned, and it is turned on)
 //   POST /v1/strata/plugins/switch   {"id", "on"} -> {"id", "state", "restart_needed": true}   (a trusted plugin only)
+//   POST /v1/strata/plugins/settings {"id", "values": {name: value or null}} -> {"id", "saved": true, "restart_needed": true}
+//                                       (a tool's or notifier's settings, plugin spec section 10: each checked against its
+//                                       manifest; every value but a secret's in the config file as plugins.<id>.<name>, a
+//                                       secret in the secret folder; null back to the default, or a secret removed)
+// Each listed plugin also has its "settings" ({"name", "kind", "label", "help", "required", "default", "min"/"max",
+// "choices", "max_items", and "value", or a secret's "set"}), "presets", "network" (its words, the values filled in) and
+// "settings_problem" (what keeps it from running, or null).
 // A refusal is plugin_refused with its reason (no such plugin, already trusted, refused, not trusted yet).
 
 #include "secure_frontend/api_router.hpp"
@@ -34,6 +41,8 @@ struct PluginRouteSettings final {
   std::optional<std::filesystem::path> state_dir{}; // <roots.state>: the choices file's folder (unset: read-only)
   std::vector<FirstPartyPlugin> first_party{};      // engine/build.json's
   std::set<std::string> running{};                  // the plugins on when the server started
+  std::optional<std::filesystem::path> config_file{}; // where plugins.<id>.<name> live (unset: settings read-only)
+  std::optional<std::filesystem::path> secret_dir{};  // roots.secret: a secret setting's folder (unset: none kept)
   std::function<void(std::string_view)> log{};
   // Who may read and change them (the server passes model_files_allowed, as for its other settings). Empty: loopback
   // clients only.
@@ -49,6 +58,7 @@ class PluginRoutes final {
   [[nodiscard]] HttpResponse list() const;
   [[nodiscard]] HttpResponse approve(std::string_view body);
   [[nodiscard]] HttpResponse change(std::string_view body);
+  [[nodiscard]] HttpResponse save_settings(std::string_view body);
   [[nodiscard]] std::optional<PluginChoices> choices() const;
   [[nodiscard]] bool save(const PluginChoices& choices);
 

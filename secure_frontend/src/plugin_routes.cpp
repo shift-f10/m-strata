@@ -2,10 +2,18 @@
 
 #include "secure_frontend/api_errors.hpp"
 #include "secure_frontend/canonical_path.hpp"
+#include "secure_frontend/config_file.hpp"
+#include "secure_frontend/config_writer.hpp"
 #include "secure_frontend/json.hpp"
+#include "secure_frontend/plugin_secrets.hpp"
 #include "secure_frontend/token_store.hpp"
 
 #include <algorithm>
+#include <cstdint>
+#include <map>
+#include <optional>
+#include <set>
+#include <string>
 #include <utility>
 #include <variant>
 
@@ -60,7 +68,107 @@ std::optional<PluginRequest> parse_request(const std::string_view body, const bo
   return request;
 }
 
-std::string entry_json(const PluginEntry& entry, const bool running) {
+// A settings body: {"id", "values": {name: value or null}} - at most 16 values, each a whole number, true or false, a
+// text or a list of texts (a text at most 1024 bytes).
+constexpr JsonLimits kSettingsLimits{.max_bytes = 32U * 1024U, .max_depth = 3U, .max_container_entries = 32U,
+                                     .max_string_bytes = 1024U, .allow_fractions = false};
+
+std::string value_json(const PluginValue& value) {
+  if (const auto* b = std::get_if<bool>(&value)) return *b ? "true" : "false";
+  if (const auto* i = std::get_if<std::int64_t>(&value)) return std::to_string(*i);
+  if (const auto* s = std::get_if<std::string>(&value)) return json_text(*s);
+  std::string out = "[";
+  for (const auto& item : std::get<std::vector<std::string>>(value)) out += (out.size() > 1U ? "," : "") + json_text(item);
+  return out + "]";
+}
+
+// The plugins.<id>.<name> rows of a config file, by plugin and setting (a decimal is no setting's value: left out).
+using PluginValues = std::map<std::string, std::map<std::string, PluginValue>>;
+PluginValues values_in(const FrontendConfigDraft& draft) {
+  PluginValues values;
+  for (const auto& [path, entry] : draft.entries) {
+    if (!plugin_setting_path(path)) continue;
+    const auto dot = path.find('.', 8U);
+    auto& slot = values[path.substr(8U, dot - 8U)];
+    const std::string name = path.substr(dot + 1U);
+    if (const auto* b = std::get_if<bool>(&entry.value)) slot[name] = *b;
+    else if (const auto* i = std::get_if<std::int64_t>(&entry.value)) slot[name] = *i;
+    else if (const auto* s = std::get_if<std::string>(&entry.value)) slot[name] = *s;
+    else if (const auto* items = std::get_if<std::vector<std::string>>(&entry.value)) slot[name] = *items;
+  }
+  return values;
+}
+
+// The words of `network` with each {setting} filled in: its value, else its default, else as written.
+std::string network_now(const PluginRun& run, const std::map<std::string, PluginValue>& values) {
+  std::string out;
+  std::size_t at = 0;
+  while (at < run.network.size()) {
+    const auto open = run.network.find('{', at);
+    const auto close = open == std::string::npos ? std::string::npos : run.network.find('}', open);
+    if (close == std::string::npos) {
+      out += run.network.substr(at);
+      break;
+    }
+    out += run.network.substr(at, open - at);
+    const std::string name = run.network.substr(open + 1U, close - open - 1U);
+    const auto setting = std::find_if(run.settings.begin(), run.settings.end(), [&name](const PluginSetting& s) { return s.name == name; });
+    if (const auto value = values.find(name); value != values.end()) out += value_text(value->second);
+    else if (setting != run.settings.end() && setting->default_value) out += value_text(*setting->default_value);
+    else out += "{" + name + "}";
+    at = close + 1U;
+  }
+  return out;
+}
+
+// A tool's or notifier's settings (each with its rules and its value, a secret's only as set or not), its presets, what
+// it connects to and what keeps it from running; none for any other plugin.
+std::string settings_json(const PluginManifest* manifest, const std::map<std::string, PluginValue>& values,
+                          const std::set<std::string>& secrets_set) {
+  const PluginRun* run = manifest != nullptr && manifest->run ? &*manifest->run : nullptr;
+  std::string out = ",\"settings\":[";
+  bool first = true;
+  for (const auto& setting : run != nullptr ? run->settings : std::vector<PluginSetting>{}) {
+    out += (first ? "{" : ",{") + std::string{"\"name\":"} + json_text(setting.name) + ",\"kind\":" + json_text(setting_kind_name(setting.kind)) +
+           ",\"label\":" + json_text(setting.label) + ",\"help\":" + json_text(setting.help) + ",\"required\":" + (setting.required ? "true" : "false");
+    first = false;
+    if (setting.kind == SettingKind::secret) {
+      out += std::string{",\"set\":"} + (secrets_set.contains(setting.name) ? "true" : "false") + "}";
+      continue;
+    }
+    out += ",\"default\":" + (setting.default_value ? value_json(*setting.default_value) : std::string{"null"});
+    if (setting.kind == SettingKind::integer) out += ",\"min\":" + std::to_string(setting.min) + ",\"max\":" + std::to_string(setting.max);
+    if (!setting.choices.empty()) out += ",\"choices\":" + value_json(PluginValue{setting.choices});
+    if (setting.kind == SettingKind::text_list) out += ",\"max_items\":" + std::to_string(setting.max_items);
+    const auto value = values.find(setting.name);
+    out += ",\"value\":" + (value != values.end() ? value_json(value->second) : std::string{"null"}) + "}";
+  }
+  out += "],\"presets\":[";
+  first = true;
+  for (const auto& preset : run != nullptr ? run->presets : std::vector<PluginPreset>{}) {
+    out += (first ? "" : ",") + std::string{"{\"label\":"} + json_text(preset.label) + ",\"values\":{";
+    first = false;
+    bool first_value = true;
+    // in the order the manifest declares its settings
+    for (const auto& setting : run->settings) {
+      const auto value = preset.values.find(setting.name);
+      if (value == preset.values.end()) continue;
+      out += (first_value ? "" : ",") + json_text(setting.name) + ":" + value_json(value->second);
+      first_value = false;
+    }
+    out += "}}";
+  }
+  std::optional<std::string> problem;
+  if (run != nullptr) {
+    auto checked = plugin_values(*run, values, secrets_set);
+    if (const auto* why = std::get_if<std::string>(&checked)) problem = *why;
+  }
+  return out + "],\"network\":" + json_text(run != nullptr ? network_now(*run, values) : std::string{}) +
+         ",\"settings_problem\":" + (problem ? json_text(*problem) : std::string{"null"});
+}
+
+std::string entry_json(const PluginEntry& entry, const bool running, const std::map<std::string, PluginValue>& values,
+                       const std::set<std::string>& secrets_set) {
   const auto* manifest = entry.manifest ? &*entry.manifest : nullptr;
   std::string out = "{\"id\":" + json_text(entry.id);
   out += ",\"kind\":" + (manifest != nullptr ? json_text(plugin_kind_name(manifest->kind)) : std::string{"null"});
@@ -86,7 +194,7 @@ std::string entry_json(const PluginEntry& entry, const bool running) {
       first = false;
     }
   }
-  return out + "]}";
+  return out + "]" + settings_json(manifest, values, secrets_set) + "}";
 }
 
 }  // namespace
@@ -100,6 +208,7 @@ HttpResponse PluginRoutes::answer(const RouteId route, const std::string_view bo
     case RouteId::strata_plugins: return list();
     case RouteId::strata_plugins_approve: return approve(body);
     case RouteId::strata_plugins_switch: return change(body);
+    case RouteId::strata_plugins_settings: return save_settings(body);
     default: return make_error_response(ApiError::not_found);
   }
 }
@@ -123,9 +232,21 @@ HttpResponse PluginRoutes::list() const {
   if (!chosen) return unreadable_choices();
   std::string out = "{\"folder\":" + json_text(path_to_utf8(settings_.plugins_dir)) + ",\"editable\":" +
                     (settings_.state_dir ? "true" : "false") + ",\"plugins\":[";
+  // the settings as the config file holds them now (a change shows before the restart that applies it)
+  PluginValues values;
+  if (settings_.config_file) {
+    auto read = read_config_file(*settings_.config_file);
+    if (const auto* draft = std::get_if<FrontendConfigDraft>(&read)) values = values_in(*draft);
+  }
   bool first = true;
   for (const auto& entry : discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen)) {
-    out += (first ? "" : ",") + entry_json(entry, settings_.running.contains(entry.id));
+    std::set<std::string> secrets_set;
+    if (settings_.secret_dir && entry.manifest && entry.manifest->run) {
+      for (const auto& setting : entry.manifest->run->settings) {
+        if (setting.kind == SettingKind::secret && plugin_secret_set(*settings_.secret_dir, entry.id, setting.name)) secrets_set.insert(setting.name);
+      }
+    }
+    out += (first ? "" : ",") + entry_json(entry, settings_.running.contains(entry.id), values[entry.id], secrets_set);
     first = false;
   }
   return json_answer(200, out + "]}\n");
@@ -172,6 +293,103 @@ HttpResponse PluginRoutes::change(const std::string_view body) {
     settings_.log("[strata] plugins: " + entry->id + " was turned " + (request->on ? "on" : "off") + " (it applies at the next start)");
   }
   return json_answer(200, "{\"id\":" + json_text(entry->id) + ",\"state\":" + (request->on ? "\"on\"" : "\"off\"") + ",\"restart_needed\":true}\n");
+}
+
+}  // namespace secure_frontend
+
+namespace secure_frontend {
+
+HttpResponse PluginRoutes::save_settings(const std::string_view body) {
+  // {"id", "values": {name: value or null}}, nothing else
+  const auto parsed = parse_json(body, kSettingsLimits);
+  const auto* root = std::get_if<JsonValue>(&parsed);
+  const auto* members = root == nullptr ? nullptr : root->if_object();
+  const JsonValue* id_value = nullptr;
+  const JsonValue* values = nullptr;
+  if (members != nullptr && members->size() == 2U) {
+    for (const auto& member : *members) {
+      if (member.key == "id") id_value = &member.value;
+      if (member.key == "values") values = &member.value;
+    }
+  }
+  if (id_value == nullptr || id_value->if_string() == nullptr || values == nullptr || values->if_object() == nullptr ||
+      values->if_object()->size() > kMaxPluginSettings) {
+    return make_error_response(ApiError::invalid_request);
+  }
+  const std::string& id = *id_value->if_string();
+  const std::scoped_lock lock(file_);
+  const auto chosen = choices();
+  if (!chosen) return unreadable_choices();
+  const auto entries = discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen);
+  const auto entry = std::find_if(entries.begin(), entries.end(), [&id](const PluginEntry& e) { return e.id == id; });
+  if (entry == entries.end()) return refused("there is no plugin " + id + " in the plugins folder");
+  if (!entry->manifest || !entry->manifest->run || entry->manifest->run->settings.empty()) return refused(id + " has no settings");
+  const auto& run = *entry->manifest->run;
+  // each value checked against its setting before anything is written
+  struct Change final {
+    const PluginSetting* setting;
+    std::optional<PluginValue> value;  // nullopt: back to the default (a secret: removed)
+  };
+  std::vector<Change> changes;
+  bool in_file = false;
+  bool secret = false;
+  for (const auto& member : *values->if_object()) {
+    const auto setting = std::find_if(run.settings.begin(), run.settings.end(), [&member](const PluginSetting& s) { return s.name == member.key; });
+    if (setting == run.settings.end()) {
+      return refused(id + " has no setting " + (member.key.size() <= 64U ? member.key : member.key.substr(0U, 64U)));
+    }
+    Change change{&*setting, std::nullopt};
+    if (member.value.kind() != JsonKind::null) {
+      std::optional<PluginValue> value;
+      if (const auto* b = member.value.if_boolean()) value = *b;
+      else if (const auto* i = member.value.if_integer()) value = *i;
+      else if (const auto* s = member.value.if_string()) value = *s;
+      else if (const auto* items = member.value.if_array()) {
+        std::vector<std::string> texts;
+        for (const auto& item : *items) {
+          if (item.if_string() == nullptr) break;
+          texts.push_back(*item.if_string());
+        }
+        if (texts.size() == items->size()) value = std::move(texts);
+      }
+      if (!value) return refused(setting->name + " must be a value of its kind");
+      if (const auto problem = setting_value_problem(*setting, *value)) return refused(*problem);
+      change.value = std::move(*value);
+    }
+    (setting->kind == SettingKind::secret ? secret : in_file) = true;
+    changes.push_back(std::move(change));
+  }
+  if (in_file && !settings_.config_file) return refused("this server was started without a config file to write");
+  if (secret && !settings_.secret_dir) return refused("this server was started without a secret folder to keep a secret in");
+  if (in_file) {
+    const auto failure = update_config_file(*settings_.config_file, [&changes, &id](FrontendConfigDraft& draft) {
+      for (const auto& change : changes) {
+        if (change.setting->kind == SettingKind::secret) continue;
+        const std::string path = "plugins." + id + "." + change.setting->name;
+        if (!change.value) {
+          draft.entries.erase(path);
+          continue;
+        }
+        ConfigDraftValue value;
+        if (const auto* b = std::get_if<bool>(&*change.value)) value = *b;
+        else if (const auto* i = std::get_if<std::int64_t>(&*change.value)) value = *i;
+        else if (const auto* s = std::get_if<std::string>(&*change.value)) value = *s;
+        else value = std::get<std::vector<std::string>>(*change.value);
+        draft.entries.insert_or_assign(path, ConfigDraftEntry{std::move(value), ConfigSource::file});
+      }
+    });
+    if (failure) return refused(std::string{config_update_reason(*failure)});
+  }
+  for (const auto& change : changes) {
+    if (change.setting->kind != SettingKind::secret) continue;
+    if (!change.value) {
+      if (!remove_plugin_secret(*settings_.secret_dir, id, change.setting->name)) return refused(change.setting->name + " could not be removed");
+    } else if (const auto problem = store_plugin_secret(*settings_.secret_dir, id, change.setting->name, std::get<std::string>(*change.value))) {
+      return refused(change.setting->name + ": " + *problem);
+    }
+  }
+  if (settings_.log) settings_.log("[strata] plugins: " + id + "'s settings were saved (they apply at the next start)");
+  return json_answer(200, "{\"id\":" + json_text(id) + ",\"saved\":true,\"restart_needed\":true}\n");
 }
 
 }  // namespace secure_frontend

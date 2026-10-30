@@ -709,6 +709,25 @@ void web_ui_has_a_plugins_tab() {
              js.find("the engine's own output, which can hold what the engine prints of your prompts and the paths of your model files") !=
                  std::string::npos,
          "a diagnostics plugin says what it logs before it is turned on");
+  // the owner (2026-10-30, decision 6): a tool's or notifier's settings are drawn in its card by their kinds (a secret as
+  // a password field that only replaces or clears it), its presets fill them in, Save sends them, and the card says what
+  // it connects to and what keeps it from running; the approval question says what it connects to
+  expect(js.find("api(\"/v1/strata/plugins/settings\", jsonPost({ id: p.id, values: values }))") != std::string::npos &&
+             js.find("if (Array.isArray(p.settings) && p.settings.length) { card.appendChild(pluginSettingsForm(p)); }") != std::string::npos,
+         "a plugin's settings are drawn and saved");
+  expect(js.find("input.type = s.kind === \"integer\" ? \"number\" : s.kind === \"secret\" ? \"password\" : s.kind === \"url\" ? \"url\" : \"text\";") !=
+                 std::string::npos &&
+             js.find("input.placeholder = s.set ? \"Set: type a new one to replace it\" : \"Not set\";") != std::string::npos &&
+             js.find("if (s.kind === \"secret\") { if (f.cleared) { return null; } return f.input.value === \"\" ? undefined : f.input.value; }") !=
+                 std::string::npos,
+         "a secret is never shown: typed only to replace it, or cleared");
+  expect(js.find("el(\"button\", \"st-btn st-btn--secondary st-btn--sm\", \"Fill in \" + preset.label)") != std::string::npos,
+         "a preset fills the settings in");
+  expect(js.find("if (p.network) { card.appendChild(el(\"p\", \"muted small\", \"Connects to \" + p.network + \".\")); }") != std::string::npos &&
+             js.find("if (p.settings_problem) { card.appendChild(el(\"p\", \"msg-warn small\", \"Not ready: \" + p.settings_problem)); }") !=
+                 std::string::npos &&
+             js.find("(p.network ? \" It says it connects to \" + p.network + \".\" : \"\")") != std::string::npos,
+         "what it connects to, and what keeps it from running");
 }
 
 // The Settings tab (spec 2026-10-28-server-window-design, Part 1; the owner: "a configuration tab ... api key, etc"): the
@@ -1871,7 +1890,8 @@ void plugin_routes_need_their_handler_and_the_key() {
   const std::vector<std::pair<std::string, secure_frontend::RouteId>> routes{
       {"/v1/strata/plugins", secure_frontend::RouteId::strata_plugins},
       {"/v1/strata/plugins/approve", secure_frontend::RouteId::strata_plugins_approve},
-      {"/v1/strata/plugins/switch", secure_frontend::RouteId::strata_plugins_switch}};
+      {"/v1/strata/plugins/switch", secure_frontend::RouteId::strata_plugins_switch},
+      {"/v1/strata/plugins/settings", secure_frontend::RouteId::strata_plugins_settings}};
   const auto make = [](std::vector<std::string>* calls, const bool on) {
     secure_frontend::SecretBytes secret;
     (void)secret.assign(kRouterToken);

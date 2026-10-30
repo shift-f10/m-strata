@@ -782,6 +782,59 @@ void cfg01_sp3_rows_type_and_range() {
          "a non-string entry is a type error");
 }
 
+// The owner (2026-10-30, decision 6): a tool's or notifier's settings live in config.json as plugins.<id>.<name> - one
+// object per plugin of whole numbers, booleans, texts and lists of texts, bounded - and the server checks them against
+// the plugin's manifest when it starts. A config file rewritten (a Settings save) keeps them.
+void plugin_settings_live_in_the_config() {
+  ConfigFixture f;
+  const auto ok = with_literals(f, {{"plugins.search.url", "\"http://127.0.0.1:8080\""}, {"plugins.search.results", "5"},
+                                    {"plugins.email.to", "[\"a@example.org\", \"b@example.org\"]"}, {"plugins.email.ssl", "true"}});
+  const auto* validated = std::get_if<secure_frontend::ValidatedConfig>(&ok);
+  expect(validated != nullptr, "plugin settings read: " + issues_of(ok));
+  if (validated != nullptr) {
+    using V = secure_frontend::ConfigDraftValue;
+    const auto& values = validated->get().plugins.values;
+    expect(values.size() == 2U && values.at("search").at("url") == V{std::string{"http://127.0.0.1:8080"}} &&
+               values.at("search").at("results") == V{std::int64_t{5}} &&
+               values.at("email").at("to") == V{std::vector<std::string>{"a@example.org", "b@example.org"}} &&
+               values.at("email").at("ssl") == V{true},
+           "each plugin's values");
+    expect(secure_frontend::describe(validated->get()).find("\nplugins.search.url = \"http://127.0.0.1:8080\"\n") != std::string::npos,
+           "--check prints them");
+  }
+  const auto refused = [&f](const std::string& path, const std::string& literal, const std::string& at, const ConfigIssueCode code) {
+    const auto result = with_literals(f, {{path, literal}});
+    expect(has_issue(result, at, code), "refused " + path + " = " + literal + ": " + issues_of(result));
+  };
+  refused("plugins.Search.url", "\"x\"", "plugins.Search", ConfigIssueCode::unknown_key);
+  refused("plugins.search.Url", "\"x\"", "plugins.search.Url", ConfigIssueCode::unknown_key);
+  refused("plugins.search.ratio", "0.5", "plugins.search.ratio", ConfigIssueCode::wrong_type);
+  refused("plugins.search.deep.x", "1", "plugins.search.deep", ConfigIssueCode::wrong_type);
+  refused("plugins.search.list", "[1, 2]", "plugins.search.list", ConfigIssueCode::wrong_type);
+  refused("plugins.search.long", "\"" + std::string(1025U, 'a') + "\"", "plugins.search.long", ConfigIssueCode::out_of_range);
+  std::string seventeen = "[";
+  for (int i = 0; i < 17; ++i) seventeen += std::string{i == 0 ? "" : ","} + "\"x\"";
+  refused("plugins.search.many", seventeen + "]", "plugins.search.many", ConfigIssueCode::out_of_range);
+  std::map<std::string, std::string> crowded;
+  for (int i = 0; i < 17; ++i) crowded["plugins.search.s" + std::to_string(i)] = "1";
+  expect(has_issue(with_literals(f, crowded), "plugins.search", ConfigIssueCode::out_of_range), "at most 16 settings a plugin");
+  // a rewrite keeps them
+  auto literals = f.literals;
+  literals["plugins.search.url"] = "\"http://127.0.0.1:8080\"";
+  literals["plugins.email.to"] = "[\"a@example.org\"]";
+  auto draft = secure_frontend::parse_config_text(render_config_json(literals), f.dir);
+  const auto* read = std::get_if<secure_frontend::FrontendConfigDraft>(&draft);
+  expect(read != nullptr, "the draft reads");
+  if (read != nullptr) {
+    const std::string again = secure_frontend::render_config_document(*read);
+    auto reread = secure_frontend::parse_config_text(again, f.dir);
+    const auto* back = std::get_if<secure_frontend::FrontendConfigDraft>(&reread);
+    expect(back != nullptr && back->entries.contains("plugins.search.url") && back->entries.contains("plugins.email.to") &&
+               std::get<std::string>(back->entries.at("plugins.search.url").value) == "http://127.0.0.1:8080",
+           "a rewritten file keeps them:\n" + again);
+  }
+}
+
 // Owner 2026-10-29: logging.engine_output puts the engine's own output in the server log, to see why an engine fails
 // on a new GPU. It can carry what is asked of the model, so it is off unless asked for, and --check prints it.
 void logging_engine_output_is_off_unless_asked() {
@@ -2516,6 +2569,7 @@ int main(int argc, char** argv) {
       {"cfg01_pull_keys_table_driven", cfg01_pull_keys_table_driven},
       {"cfg01_sp3_rows_type_and_range", cfg01_sp3_rows_type_and_range},
       {"logging_engine_output_is_off_unless_asked", logging_engine_output_is_off_unless_asked},
+      {"plugin_settings_live_in_the_config", plugin_settings_live_in_the_config},
       {"network_shares_are_an_experimental_opt_in", network_shares_are_an_experimental_opt_in},
       {"cfg01_header_deadline_le_request_deadline", cfg01_header_deadline_le_request_deadline},
       {"cfg01_response_deadline_ge_write_stall", cfg01_response_deadline_ge_write_stall},

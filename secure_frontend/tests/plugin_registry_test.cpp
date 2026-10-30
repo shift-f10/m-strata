@@ -135,7 +135,7 @@ void refusals_say_why() {
     "publisher": "Example Labs", "license": "Apache-2.0", "about": "", "engine": {},
     "files": {"windows": ["multiengine_acme3.dll"], "linux": ["libmultiengine_acme3.so"]}})");
   plugins.add("search", R"({"schema": "m-strata.plugin/1", "id": "search", "kind": "tool", "name": "Web search", "version": "1.0.0",
-    "publisher": "M-Strata", "license": "AGPL-3.0-only", "about": "", "tool": {},
+    "publisher": "M-Strata", "license": "AGPL-3.0-only", "about": "", "tool": {"program": {"windows": "strata-search.exe", "linux": "strata-search"}},
     "files": {"windows": ["strata-search.exe"], "linux": ["strata-search"]}})");
 #if defined(_WIN32)
   secure_frontend_test::write_file(plugins.dir / "search" / "strata-search.exe", "tool");
