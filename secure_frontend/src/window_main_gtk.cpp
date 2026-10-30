@@ -521,6 +521,17 @@ void activate(GtkApplication* application, gpointer) {
     show_window();
     return;
   }
+  // make --debugging (owner 2026-10-29): a debugging build says what it logs and starts the server only on Yes (No, the
+  // default, returns before the application is held, so it ends before anything starts)
+  if (w::asks_before_starting()) {
+    const std::string notice = std::string{w::kDebuggingNotice} + "\n\nStart the server?";
+    GtkWidget* ask = gtk_message_dialog_new(nullptr, GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_YES_NO, "%s", notice.c_str());
+    gtk_window_set_title(GTK_WINDOW(ask), "M-Strata - debugging build");
+    gtk_dialog_set_default_response(GTK_DIALOG(ask), GTK_RESPONSE_NO);
+    const gint answer = gtk_dialog_run(GTK_DIALOG(ask));
+    gtk_widget_destroy(ask);
+    if (answer != GTK_RESPONSE_YES) return;
+  }
   app.window = gtk_application_window_new(application);
   // the first start only: the tray keeps it running while the window is hidden (a second start's activation is sent
   // here instead, so that process holds nothing and ends once it has shown this window)

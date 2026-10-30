@@ -939,9 +939,33 @@ void quitting_asks_first() {
 
 }  // namespace
 
+// The owner (2026-10-29): a debugging build's TUI shows what that build logs and starts the server only on y; any other
+// key quits without starting it (a wheel turn is no answer). The screen fits a small terminal.
+void a_debugging_build_waits_for_y() {
+  using Kind = t::Key::Kind;
+  for (const char* yes : {"y", "Y"}) {
+    expect(t::debugging_gate(t::Key{Kind::character, yes}) == t::GateAnswer::accepted, std::string{"accepted: "} + yes);
+  }
+  for (const t::Key& no : {t::Key{Kind::character, "n"}, t::Key{Kind::character, "q"}, t::Key{Kind::escape},
+                          t::Key{Kind::enter}, t::Key{Kind::ctrl, "c"}}) {
+    expect(t::debugging_gate(no) == t::GateAnswer::declined, "any other key quits: " + no.text);
+  }
+  expect(t::debugging_gate(t::Key{Kind::wheel_down}) == t::GateAnswer::waiting, "a wheel turn is no answer");
+  const std::string notice = "This is a debugging build.\n\nIt logs a lot, so keep the log private and read it before you share it.";
+  t::Screen screen(40, 16);
+  t::draw_debugging_notice(screen, notice);
+  const std::string shown = all_text(screen);
+  expect(shown.find("Debugging build") != std::string::npos && shown.find("This is a debugging build.") != std::string::npos,
+         "its title and its text: " + shown);
+  expect(row_with(screen, "It logs a lot") >= 0 && row_with(screen, "read it before") > row_with(screen, "It logs a lot"),
+         "a long line wraps at the screen's width: " + shown);
+  expect(row_with(screen, "y: start") > row_with(screen, "read it before"), "the keys under the text: " + shown);
+}
+
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"the_screen_draws_text_boxes_and_gauges", the_screen_draws_text_boxes_and_gauges},
+      {"a_debugging_build_waits_for_y", a_debugging_build_waits_for_y},
       {"charts_are_braille_or_blocks", charts_are_braille_or_blocks},
       {"only_the_changes_are_written", only_the_changes_are_written},
       {"keys_decode_from_vt_sequences", keys_decode_from_vt_sequences},

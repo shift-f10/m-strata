@@ -870,6 +870,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     CloseHandle(single);
     return 0;
   }
+  // make --debugging (owner 2026-10-29): a debugging build says what it logs and starts the server only on Yes (No, the
+  // default, ends it before anything starts)
+  if (w::asks_before_starting()) {
+    const std::wstring notice = wide(std::string{w::kDebuggingNotice} + "\n\nStart the server?");
+    if (MessageBoxW(nullptr, notice.c_str(), L"M-Strata - debugging build", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
+      if (single != nullptr) CloseHandle(single);
+      return 0;
+    }
+  }
   if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) return 1;
   app.instance = instance;
   app.icon_large = make_icon(GetSystemMetrics(SM_CXICON));

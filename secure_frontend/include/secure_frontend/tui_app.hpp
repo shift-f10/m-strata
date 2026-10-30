@@ -147,4 +147,12 @@ class App final {
   std::optional<JsonValue> editing_;  // the setting the edit field was opened on (its key, type and range)
 };
 
+// make --debugging (owner 2026-10-29): before a debugging build's TUI starts the server it shows what that build logs
+// (window::kDebuggingNotice) and starts only on y; any other key quits without starting it. A wheel turn is no answer.
+enum class GateAnswer { waiting, accepted, declined };
+[[nodiscard]] GateAnswer debugging_gate(const Key& key) noexcept;
+// The notice as a screen: its title, its paragraphs wrapped at the screen's width, then the keys (on the last row when
+// the text does not fit).
+void draw_debugging_notice(Screen& screen, std::string_view notice);
+
 }  // namespace secure_frontend::tui

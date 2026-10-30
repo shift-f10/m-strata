@@ -3,6 +3,7 @@
 // has the start and stop models menu"): what the window reads from the server's console and keeps of it, where its
 // web view may go, the tray's model list and requests, the server it starts and its key, and the server child.
 #include "secure_frontend/first_start.hpp"
+#include "secure_frontend/frontend_config.hpp"
 #include "secure_frontend/secret_source.hpp"
 #include "secure_frontend/token_reader.hpp"
 #include "secure_frontend/window_shell.hpp"
@@ -471,9 +472,25 @@ void every_start_gets_the_windows_first_environment() {
 
 }  // namespace
 
+// The owner (2026-10-29): a build made with --debugging opens with a pop-up (the window) or a screen to accept with y
+// (the TUI) before it starts the server, saying what that build logs and what to take care of; any other build starts
+// as before. One text for both.
+void a_debugging_build_says_what_it_logs_before_it_starts() {
+  const std::string_view notice = w::kDebuggingNotice;
+  for (const char* words : {"debugging build", "one line per request", "the engine's own output", "your prompts",
+                            "the paths of your model files", "keep the server's log private", "before you share it",
+                            "without --debugging", "Settings > Troubleshooting"}) {
+    expect(notice.find(words) != std::string_view::npos, std::string{"the notice says: "} + words);
+  }
+  expect(notice.find('\t') == std::string_view::npos && notice.find('\r') == std::string_view::npos,
+         "plain text, paragraphs split by blank lines");
+  expect(w::asks_before_starting() == secure_frontend::debugging_build(), "only a debugging build asks");
+}
+
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"the_sign_in_link_is_read_and_never_logged", the_sign_in_link_is_read_and_never_logged},
+      {"a_debugging_build_says_what_it_logs_before_it_starts", a_debugging_build_says_what_it_logs_before_it_starts},
       {"the_listening_line_names_the_pages_origin", the_listening_line_names_the_pages_origin},
       {"the_window_opens_on_the_monitor_first", the_window_opens_on_the_monitor_first},
       {"navigation_stays_on_the_pages_origin", navigation_stays_on_the_pages_origin},

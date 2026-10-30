@@ -433,7 +433,8 @@ DEBUGGING_NOTICE = """Debugging:  this is a debugging build (make --debugging): 
             console, the window app's Server log, logs/), look through a log before you share it and take out
             prompts, paths and names, and build again without --debugging for everyday use. The engine's
             output can be turned off without a new build: Settings > Troubleshooting (logging.engine_output;
-            logging.requests for the request lines)."""
+            logging.requests for the request lines). strata-window and strata-tui say this before they start
+            the server and start it only when you accept (Yes in the window, y in the TUI)."""
 
 
 def announce(opts: Options) -> None:

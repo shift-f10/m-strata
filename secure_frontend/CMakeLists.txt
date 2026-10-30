@@ -2246,12 +2246,13 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_tui_tests
         the_screen_draws_text_boxes_and_gauges charts_are_braille_or_blocks only_the_changes_are_written
         keys_decode_from_vt_sequences the_monitor_draws_the_servers_readings the_views_switch_and_keys_become_requests
-        settings_are_edited_then_saved quitting_asks_first downloads_say_what_is_on_this_pc)
+        settings_are_edited_then_saved quitting_asks_first downloads_say_what_is_on_this_pc a_debugging_build_waits_for_y)
 
     secure_frontend_add_test_executable(secure_frontend_window_shell_tests tests/window_shell_test.cpp
         secure_frontend_window_shell secure_frontend_first_start secure_frontend_token_reader)
     secure_frontend_add_cases(secure_frontend_window_shell_tests
-        the_sign_in_link_is_read_and_never_logged the_listening_line_names_the_pages_origin
+        the_sign_in_link_is_read_and_never_logged a_debugging_build_says_what_it_logs_before_it_starts
+        the_listening_line_names_the_pages_origin
         the_window_opens_on_the_monitor_first navigation_stays_on_the_pages_origin the_tray_lists_the_launchers_cards requests_carry_the_key_only_in_its_header
         the_log_rotates_at_its_bound the_log_view_keeps_the_newest_lines_in_its_bound the_log_view_holds_text_a_view_can_show
         the_log_view_saves_what_it_shows the_window_starts_the_server_beside_it)

@@ -280,6 +280,36 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z32 (Windows box; owner-directed; committed with this entry, not pushed)
+
+The owner: "moving forward, we would rather build a version that has --debugging on the installer and it will have a
+pop up on the windows version that this is the debugging version and the tui you will have to accept and press y to
+start".
+
+- **One notice** (`window::kDebuggingNotice`, window_shell): what a debugging build is for, what it logs and what that
+  can hold, and the precautions. `window::asks_before_starting()` is `debugging_build()`.
+- **strata-window** (Windows and GTK): a debugging build opens with a Yes/No pop-up ("M-Strata - debugging build", the
+  notice and "Start the server?"); **No is the default** and ends the app before anything starts. Windows: a
+  `MessageBoxW` after the one-window-per-data-folder check (a second start shows the first window, no second pop-up).
+  GTK: a `GtkMessageDialog` in `activate` before the window is made (only the first instance activates that way; a
+  refusal returns before the application is held, so it ends).
+- **strata-tui**: a debugging build shows the notice on a screen of its own (`tui::draw_debugging_notice`: title, the
+  paragraphs wrapped at the width, then `y: start the server    any other key: quit`) and starts the server only on y
+  (`tui::debugging_gate`: y or Y accepts, a wheel turn is no answer, any other key, a quit signal or a closed terminal
+  ends it before anything starts).
+- make's notice and the README's `--debugging` row say so. Any other build starts as before.
+- **Proof**:
+  - RED: `a_debugging_build_says_what_it_logs_before_it_starts` (window shell) and `a_debugging_build_waits_for_y`
+    (TUI) against stubs.
+  - GREEN: the window shell and TUI suites 28/28 with MSVC, Linux gcc 13.3 and clang 18.1. strata-window builds with GTK
+    on both Linux compilers.
+  - Live, in a debugging tree (`out/build/debugging`, `SECURE_FRONTEND_DEBUGGING=ON`, scratch data, port 18090):
+    - TUI: n quit with nothing listening; y showed the dashboard, and the server log had the debugging-build and
+      engine-output warnings.
+    - Window: the pop-up came up with nothing listening. No ended the app (exit 0). Yes started the server and showed
+      the window.
+- **Not verified**: the GTK pop-up was compiled but not run (no display in the toolchain distro).
+
 ### Claude Code session, 2026-10-29 z31 (Windows box; owner-directed; a worker session's change, committed with this entry, not pushed)
 
 On his RTX 5090 PC the Monitor showed no GPU reading at all (load, VRAM, temperature, power, PCIe).
