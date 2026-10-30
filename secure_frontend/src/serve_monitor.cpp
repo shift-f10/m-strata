@@ -402,6 +402,7 @@ std::string ServeMonitor::render_json(const MonitorView& view) const {
   if (stopped) state = "stopped";
   else if (unloaded) state = "unloaded";
   else if (view.engine == "starting") state = "starting";
+  else if (view.engine == "calibrating") state = "calibrating";  // a calibration's trials (owner 2026-10-29)
   else if (view.engine == "failed") state = "error";
   else if (live_.has_value()) state = live_->first_token.has_value() ? "generating" : "reading";
   append_key(&out, "live");

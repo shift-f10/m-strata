@@ -13,6 +13,7 @@
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/model_launcher.hpp"
 #include "secure_frontend/model_runtime.hpp"
+#include "secure_frontend/serve_monitor.hpp"
 #include "secure_frontend/tool_runner.hpp"
 #include "support/config_json.hpp"
 #include "support/fake_engine_dump.hpp"
@@ -629,6 +630,7 @@ struct CalibrationFixture final {
   secure_frontend::DataFolder data = secure_frontend::data_folder_layout(root / "data");
   std::string winner;  // the --cpu-threads value that is faster
   std::shared_ptr<std::vector<std::string>> events = std::make_shared<std::vector<std::string>>();  // alerts raised
+  secure_frontend::ServeMonitor monitor;  // the page's Monitor (metrics_json)
   std::unique_ptr<secure_frontend::ModelLauncher> launcher;
 
   // operator_cards: the two cards are the operator's (listed), which never calibrate before a first start; factory:
@@ -675,6 +677,7 @@ struct CalibrationFixture final {
     settings.on_event = [list = events](const std::string_view event, const std::string& subject, const std::string&) {
       list->push_back(std::string{event} + ": " + subject);
     };
+    settings.monitor = &monitor;
     launcher = std::make_unique<secure_frontend::ModelLauncher>(std::move(settings));
     if (!operator_cards) {
       for (auto& card : cards) (void)launcher->add_card(std::move(card));
@@ -768,6 +771,32 @@ void the_start_route_takes_calibrate_false() {
   expect(server->stderr_text().find("start Plain") != std::string::npos &&
              server->stderr_text().find("calibrate, then start Plain") == std::string::npos,
          "started, not calibrated: " + server->stderr_text());
+}
+
+// The owner (2026-10-29): "clicking calibrate does not stop the current running model and empty the vram before
+// running the calibration". It does (the running model is stopped and its engine has ended before the first trial;
+// its Monitor readings go), but the Monitor then said an engine was "starting", with no model, for the whole
+// calibration, while each trial's engine filled the GPU again. It names the calibration instead.
+void the_monitor_names_a_calibration_while_it_runs() {
+  CalibrationFixture f({"--ready-delay-ms=400"});
+  const std::string name = "tiny-gemma-Q8_0";
+  expect(!f.launcher->start("other-gemma-Q8_0", nullptr, false, false).has_value() &&
+             f.launcher->wait_until_settled(std::chrono::seconds(60)),
+         "another card runs first");
+  expect(f.launcher->metrics_json().find("\"model\":\"other-gemma-Q8_0\"") != std::string::npos, "the Monitor names it");
+  expect(!f.launcher->calibrate(name, nullptr, false, std::nullopt, false).has_value(), "the calibration is accepted");
+  for (int i = 0; i < 200 && f.launcher->list_json().find("\"running\":{\"stage\":") == std::string::npos; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  const std::string during = f.launcher->metrics_json();
+  expect(f.launcher->state_of("other-gemma-Q8_0") == secure_frontend::CardState::stopped, "the running card was stopped");
+  expect(during.find("\"health\":\"calibrating\"") != std::string::npos &&
+             during.find("\"model\":\"tiny-gemma-Q8_0\"") != std::string::npos &&
+             during.find("\"state\":\"calibrating\"") != std::string::npos &&
+             during.find("other-gemma-Q8_0") == std::string::npos,
+         "while the trials run the Monitor names the calibration, and no longer the stopped card: " + during);
+  expect(!f.launcher->cancel_calibration().has_value() && f.launcher->wait_until_settled(std::chrono::seconds(60)), "cancelled");
+  expect(f.launcher->metrics_json().find("\"health\":\"none\"") != std::string::npos, "then nothing runs");
 }
 
 // §5a: alerts - a calibration whose engine never starts raises calibration_failed; a start of a card that does not
@@ -1406,6 +1435,7 @@ int main(int argc, char** argv) {
       {"a_first_start_calibrates_first", a_first_start_calibrates_first},
       {"a_start_without_calibrating_starts_at_once", a_start_without_calibrating_starts_at_once},
       {"the_start_route_takes_calibrate_false", the_start_route_takes_calibrate_false},
+      {"the_monitor_names_a_calibration_while_it_runs", the_monitor_names_a_calibration_while_it_runs},
       {"a_minimax_card_measures_its_prompt_reading_first", a_minimax_card_measures_its_prompt_reading_first},
       {"a_glm_card_calibrates", a_glm_card_calibrates},
       {"a_failed_prefill_calibration_is_not_retried_by_itself", a_failed_prefill_calibration_is_not_retried_by_itself},

@@ -1412,6 +1412,12 @@ std::string ModelLauncher::metrics_json() const {
   const auto runtime = running_runtime();
   if (runtime == nullptr) {
     std::lock_guard lock(mutex_);
+    // owner 2026-10-29 ("clicking calibrate does not stop the current running model and empty the vram"): while a
+    // calibration runs, the Monitor names it - its trials' engines are what the GPU memory then holds - rather than an
+    // engine starting with no model
+    if (calibrating_.has_value() && calibrating_->card < settings_.cards.size()) {
+      return settings_.monitor->render_json({.model = settings_.cards[calibrating_->card].name, .engine = "calibrating", .queued = 0U});
+    }
     return settings_.monitor->render_json({.model = "", .engine = switching_ || busy_ ? "starting" : "none", .queued = 0U});
   }
   const auto snapshot = runtime->port().snapshot();

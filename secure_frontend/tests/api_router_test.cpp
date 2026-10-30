@@ -511,6 +511,10 @@ void web_ui_models_tab_starts_stops_and_polls() {
              js.find("options: collected.values, calibrate: false") != std::string::npos &&
              js.find("options: collected.values, then_start: true") != std::string::npos,
          "a card never calibrated is asked about; the answers post calibrate false or then_start true");
+  // owner 2026-10-29: while a calibration runs, the Monitor names it (its trials are what fill the GPU)
+  expect(html.find("<span class=\"st-badge st-badge--reading\" data-s=\"calibrating\">Calibrating</span>") != std::string::npos &&
+             js.find("live.state === \"calibrating\"") != std::string::npos,
+         "the Monitor has a Calibrating state");
   expect(js.find("$(\"model-calibrate-cancel\").hidden = !run;") != std::string::npos &&
              js.find("Start it now without calibrating?") != std::string::npos,
          "a calibration has its Cancel; a cancelled calibrate-then-start offers the start without it");

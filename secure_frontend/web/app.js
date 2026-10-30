@@ -3398,6 +3398,10 @@
       detail = "the next request loads it";
     } else if (live.state === "starting") {
       label = "The engine is starting";
+    } else if (live.state === "calibrating") {
+      // owner 2026-10-29: the model that ran was stopped first; each trial starts the model being calibrated
+      label = "Calibrating " + (eng.model || "a model");
+      detail = "each trial starts the model, so the GPU memory in use is the calibration's";
     } else if (live.state === "error") {
       label = "The engine is not available";
     } else if (live.state === "reading") {

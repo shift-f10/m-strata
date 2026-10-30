@@ -1969,7 +1969,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_card_without_sampling_starts_with_the_recommended
         a_qwen36_card_reads_its_tokenizer_from_the_gguf
         calibration_finds_the_win_and_starts_with_it a_first_start_calibrates_first a_start_without_calibrating_starts_at_once
-        the_start_route_takes_calibrate_false
+        the_start_route_takes_calibrate_false the_monitor_names_a_calibration_while_it_runs
         a_minimax_card_measures_its_prompt_reading_first a_glm_card_calibrates a_failed_prefill_calibration_is_not_retried_by_itself
         a_prefill_calibration_falls_back_to_the_default_chunk
         a_calibration_can_be_cancelled
