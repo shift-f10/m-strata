@@ -1,11 +1,14 @@
 #!/bin/sh
 # install.sh - from a fresh Ubuntu 24.04 (or newer) / Debian PC to a built M-Strata in one step (install.bat's twin).
 #
-#   ./install.sh                                    build into ../M-Strata-app: email alerts, web search, the window and the
-#                                                   TUI (without a display - DISPLAY, WAYLAND_DISPLAY - the TUI only)
+#   ./install.sh                                    ask what to build (Enter takes each default: everything but a
+#                                                   debugging build, and without a display - DISPLAY, WAYLAND_DISPLAY -
+#                                                   no window), then build into ../M-Strata-app
 #   ./install.sh --out /opt/m-strata --with email,search,tui
+#   ./install.sh --without maya,raon1,vision        leave the GLM/DeepSeek/MiniMax engines, raon1 or pictures out
 #   ./install.sh --plan                             only say what it would install, fetch and run
-#   ./install.sh --yes                              do not ask before installing
+#   ./install.sh --yes                              ask nothing: build everything (no debugging; no window without a
+#                                                   display), install without asking
 #   ./install.sh --debugging                        a server that logs verbosely, to find out why a model does not
 #                                                   start or calibrate (the plan says what to take care of)
 #
@@ -32,19 +35,24 @@ CUDA_ROOT=/usr/local/cuda-13.0
 
 out=""
 with=""
+with_given=0
+without=""
+without_given=0
 ggml=""
 plan=0
 debugging=0
+debugging_given=0
 yes=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) out=$2; shift 2 ;;
-    --with) with=$2; shift 2 ;;
+    --with) with=$2; with_given=1; shift 2 ;;
+    --without) without=$2; without_given=1; shift 2 ;;
     --ggml-dir) ggml=$2; shift 2 ;;
     --plan) plan=1; shift ;;
-    --debugging) debugging=1; shift ;;
+    --debugging) debugging=1; debugging_given=1; shift ;;
     --yes) yes=1; shift ;;
-    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
     *) echo "install: unknown option $1 (see ./install.sh --help)" >&2; exit 2 ;;
   esac
 done
@@ -54,14 +62,69 @@ step() { printf '\n== %s\n' "$*"; }
 fail() { printf '\ninstall: %s\n' "$*" >&2; exit 1; }
 has_feature() { case ",$with," in *",$1,"*) return 0 ;; esac; return 1; }
 installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'; }
+# ask QUESTION y|n: yes or no from the terminal; Enter (or no terminal) takes the default
+ask() {
+  if [ "$2" = y ]; then hint='[Y/n]'; else hint='[y/N]'; fi
+  while :; do
+    printf '  %s %s ' "$1" "$hint"
+    reply=""
+    read -r reply </dev/tty || { printf '\n'; reply=""; }
+    case "$reply" in
+      '') [ "$2" = y ]; return ;;
+      y|Y|yes|Yes|YES) return 0 ;;
+      n|N|no|No|NO) return 1 ;;
+      *) say '  y or n, please (Enter takes the capital one)' ;;
+    esac
+  done
+}
 
-# --- 1. what is there ------------------------------------------------------------------------------------------------
+# --- what to build (owner 2026-10-29: "we should ask these questions, if they want email alerts, search, etc so that
+# they can build exactly what they want"): a question for each of make's choices that --with, --without or --debugging
+# did not answer on the command line; --yes asks nothing and takes the defaults. make's lists (make.py's
+# OPTIONAL_FEATURES and LEAVE_OUT: tools/secure/test_install.py)
+known_features="email search window tui"
+known_leave_out="maya raon1 vision"
+with=$(printf '%s' "$with" | tr -d ' ')
+without=$(printf '%s' "$without" | tr -d ' ')
+for name in $(printf '%s' "$with" | tr ',' ' '); do
+  case " $known_features " in *" $name "*) ;; *) fail "--with takes only email, search, window, tui, not $name" ;; esac
+done
+for name in $(printf '%s' "$without" | tr ',' ' '); do
+  case " $known_leave_out " in *" $name "*) ;; *) fail "--without takes only maya, raon1, vision, not $name" ;; esac
+done
 # both front ends by default, the user picks one to run; a machine with no display (a server over SSH) gets the TUI only
-if [ -z "$with" ]; then
-  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then with="email,search,window,tui"
+display=0
+if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then display=1; fi
+if [ "$with_given" = 0 ]; then
+  if [ "$display" = 1 ]; then with="email,search,window,tui"
   else with="email,search,tui"; no_display=1; fi
 fi
+if [ "$yes" = 0 ] && { [ "$with_given" = 0 ] || [ "$without_given" = 0 ] || [ "$debugging_given" = 0 ]; }; then
+  step 'What to build'
+  say '  Answer y or n; Enter takes the capital one. Qwen, Gemma 4 and flint models are always built.'
+  if [ "$with_given" = 0 ]; then
+    with=""
+    no_display=0
+    if [ "$display" = 1 ]; then window_default=y; window_note=""; else window_default=n; window_note=" (no display here)"; fi
+    if ask 'Email alerts: the server e-mails you when a download or a calibration ends, an engine stops, or it starts?' y; then with="$with,email"; fi
+    if ask 'Web search: the models search the web through a SearXNG you run?' y; then with="$with,search"; fi
+    if ask "The window app (strata-window): the page in a window of its own, with a tray icon$window_note?" "$window_default"; then with="$with,window"; fi
+    if ask 'The terminal app (strata-tui): the server in a terminal, with a dashboard?' y; then with="$with,tui"; fi
+    with=${with#,}
+  fi
+  if [ "$without_given" = 0 ]; then
+    without=""
+    if ! ask "GLM-5.3, DeepSeek-V4.1 and MiniMax-M3.1 models (Project Maya's engines, the largest part of the build)?" y; then without="$without,maya"; fi
+    if ! ask 'Raon-1-mini models (the raon1 engine)?' y; then without="$without,raon1"; fi
+    if ! ask 'Pictures in Qwen chats (the picture encoder, strata-vision)?' y; then without="$without,vision"; fi
+    without=${without#,}
+  fi
+  if [ "$debugging_given" = 0 ]; then
+    if ask 'A debugging build: verbose logs, to find out why a model does not start or calibrate (the plan says what it logs)?' n; then debugging=1; fi
+  fi
+fi
 
+# --- 1. what is there ------------------------------------------------------------------------------------------------
 step 'Looking at what this PC has'
 [ "$(uname -s)" = Linux ] || fail 'install.sh is for Linux; on Windows run install.bat'
 [ "$(uname -m)" = x86_64 ] || fail 'M-Strata builds on x86_64 only'
@@ -116,6 +179,7 @@ say "  CMake and Ninja into $repo/.venv-dev (pip, from PyPI)"
 if [ "$ggml_given" = 1 ]; then say "  llama.cpp: $ggml, as it is"; else say "  llama.cpp at $LLAMA_PIN in $ggml"; fi
 make_flags=""
 [ "$debugging" = 1 ] && make_flags="--debugging"
+if [ -n "$without" ]; then make_flags="--without $without${make_flags:+ $make_flags}"; fi
 say "  make.sh --out $out --with $with${make_flags:+ $make_flags}"
 if [ "$debugging" = 1 ]; then
   say ''

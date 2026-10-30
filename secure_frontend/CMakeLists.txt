@@ -1277,7 +1277,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_api_client_tests ${SECURE_FRONTEND_API_CLIENT_CASES} TIMEOUT 120 LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     secure_frontend_add_test_executable(secure_frontend_api_server_tests tests/api_server_test.cpp
-        secure_frontend_test_support secure_frontend_api_core secure_frontend_socket_io secure_frontend_api_client)
+        secure_frontend_test_support secure_frontend_api_core secure_frontend_socket_io secure_frontend_api_client
+        secure_frontend_typed_config)
     secure_frontend_test_paths(secure_frontend_api_server_tests)
     set(SECURE_FRONTEND_API_SERVER_CASES
         dos01_body_over_limit_is_413_before_reading dos01_content_length_over_request_limit_is_413_before_auth
@@ -2237,6 +2238,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_config_routes secure_frontend_first_start secure_frontend_http_request_handler)
     secure_frontend_add_cases(secure_frontend_config_routes_tests
         the_settings_are_listed_with_their_rules a_save_is_held_to_the_start_up_rules the_key_is_rotated_in_its_store
+        troubleshooting_is_offered_only_in_a_debugging_build
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # strata-window's portable half (spec 2026-10-28-server-window-design, Part 2), the server child driven with a fake

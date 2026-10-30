@@ -1,10 +1,12 @@
 ﻿<#
 install.ps1 - from a fresh Windows 10/11 PC to a built M-Strata in one step (run it through install.bat).
 
-  .\install.bat                                        build into ..\M-Strata-app: email alerts, web search, the window and the TUI
+  .\install.bat                                        ask what to build (Enter takes each default: everything but
+                                                       a debugging build), then build into ..\M-Strata-app
   .\install.bat -Out D:\Apps\M-Strata -With email,search,tui      (no window: only the terminal one)
+  .\install.bat -Without maya,raon1,vision              leave the GLM/DeepSeek/MiniMax engines, raon1 or pictures out
   .\install.bat -Plan                                  only say what it would install, fetch and run
-  .\install.bat -Yes                                   do not ask before installing
+  .\install.bat -Yes                                   ask nothing: build everything (no debugging), install without asking
   .\install.bat -Debugging                             a server that logs verbosely, to find out why a model does not
                                                        start or calibrate (the plan says what to take care of)
 
@@ -25,6 +27,7 @@ from GitHub, the WebView2 SDK from nuget.org. Nothing else is downloaded, and no
 param(
   [string]$Out = "",
   [string]$With = "email,search,window,tui",
+  [string]$Without = "",
   [string]$GgmlDir = "",
   [switch]$Debugging,
   [switch]$Plan,
@@ -128,10 +131,59 @@ function Install-WithWinget([string]$id, [string[]]$extra) {
 }
 $restartAfter = $false
 
+# y or n; Enter takes the default
+function Ask([string]$question, [bool]$default) {
+  $hint = if ($default) { '[Y/n]' } else { '[y/N]' }
+  while ($true) {
+    $answer = Read-Host "  $question $hint"
+    if (-not $answer) { return $default }
+    if ($answer -match '^(y|yes)$') { return $true }
+    if ($answer -match '^(n|no)$') { return $false }
+    Say '  y or n, please (Enter takes the capital one)'
+  }
+}
+
+# --- what to build (owner 2026-10-29: "we should ask these questions, if they want email alerts, search, etc so that
+# they can build exactly what they want"): a question for each of make's choices that -With, -Without or -Debugging
+# did not answer on the command line; -Yes asks nothing and takes the defaults. make's lists (make.py's
+# OPTIONAL_FEATURES and LEAVE_OUT: tools/secure/test_install.py)
+$KnownFeatures = @('email', 'search', 'window', 'tui')
+$KnownLeaveOut = @('maya', 'raon1', 'vision')
+$features = @($With.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$leaveOut = @($Without.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+foreach ($name in $features) { if ($KnownFeatures -notcontains $name) { Fail "-With takes only $($KnownFeatures -join ', '), not $name" } }
+foreach ($name in $leaveOut) { if ($KnownLeaveOut -notcontains $name) { Fail "-Without takes only $($KnownLeaveOut -join ', '), not $name" } }
+$askFeatures = -not $Yes -and -not $PSBoundParameters.ContainsKey('With')
+$askLeaveOut = -not $Yes -and -not $PSBoundParameters.ContainsKey('Without')
+$askDebugging = -not $Yes -and -not $PSBoundParameters.ContainsKey('Debugging')
+if ($askFeatures -or $askLeaveOut -or $askDebugging) {
+  Step 'What to build'
+  Say '  Answer y or n; Enter takes the capital one. Qwen, Gemma 4 and flint models are always built.'
+  if ($askFeatures) {
+    $features = @()
+    if (Ask 'Email alerts: the server e-mails you when a download or a calibration ends, an engine stops, or it starts?' $true) { $features += 'email' }
+    if (Ask 'Web search: the models search the web through a SearXNG you run?' $true) { $features += 'search' }
+    if (Ask 'The window app (strata-window): the page in a window of its own, with a tray icon?' $true) { $features += 'window' }
+    if (Ask 'The terminal app (strata-tui): the server in a terminal, with a dashboard?' $true) { $features += 'tui' }
+  }
+  if ($askLeaveOut) {
+    $leaveOut = @()
+    if (-not (Ask 'GLM-5.3, DeepSeek-V4.1 and MiniMax-M3.1 models (Project Maya''s engines, the largest part of the build)?' $true)) { $leaveOut += 'maya' }
+    if (-not (Ask 'Raon-1-mini models (the raon1 engine)?' $true)) { $leaveOut += 'raon1' }
+    if (-not (Ask 'Pictures in Qwen chats (the picture encoder, strata-vision)?' $true)) { $leaveOut += 'vision' }
+  }
+  if ($askDebugging) {
+    $Debugging = [switch](Ask 'A debugging build: verbose logs, to find out why a model does not start or calibrate (the plan says what it logs)?' $false)
+  }
+}
+$makeArgs = @()
+if ($features.Count -gt 0) { $makeArgs += @('--with', ($features -join ',')) }
+if ($leaveOut.Count -gt 0) { $makeArgs += @('--without', ($leaveOut -join ',')) }
+if ($Debugging) { $makeArgs += '--debugging' }
+
 # --- 1. what is there ------------------------------------------------------------------------------------------------
 Step 'Looking at what this PC has'
 if (-not [Environment]::Is64BitOperatingSystem) { Fail 'M-Strata builds on 64-bit Windows 10 or 11 only.' }
-$features = @($With.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 $git = Find-Git
 $python = Find-Python
 $vs = Find-VsCpp
@@ -197,7 +249,7 @@ if ($features -contains 'window') {
   if (Test-Path (Join-Path $repo ".toolchains\webview2\$WebView2Version\build\native\include\WebView2.h")) { Say "  the WebView2 SDK ${WebView2Version}: already in $repo\.toolchains\webview2" }
   else { Say "  the WebView2 SDK $WebView2Version into $repo\.toolchains\webview2 (nuget.org, SHA-256 checked)" }
 }
-Say "  make.bat --out $Out --with $($features -join ',')$(if ($Debugging) { ' --debugging' })"
+Say "  make.bat --out $Out $($makeArgs -join ' ')"
 if ($Debugging) {
   Say ''
   Say "  -Debugging: the server will log verbosely, to find out why a model does not start or calibrate. It logs"
@@ -314,9 +366,7 @@ if ($features -contains 'window') {
 
 # --- 6. the build ----------------------------------------------------------------------------------------------------
 Step "Building into $Out (the first build compiles the CUDA engine: allow an hour or more)"
-$makeArgs = @()
-if ($Debugging) { $makeArgs += '--debugging' }
-& (Join-Path $repo 'make.bat') --out $Out --ggml-dir $ggml --cuda-root $cuda --with ($features -join ',') @makeArgs
+& (Join-Path $repo 'make.bat') --out $Out --ggml-dir $ggml --cuda-root $cuda @makeArgs
 if ($LASTEXITCODE -ne 0) { Fail "make stopped (exit code $LASTEXITCODE); its message is above" }
 
 Step 'Done'

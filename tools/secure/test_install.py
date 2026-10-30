@@ -2,9 +2,11 @@
 download dependencies, install them then run the build"): what they pin is what the build pins, and they run make."""
 from __future__ import annotations
 
+import importlib.util
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -116,8 +118,60 @@ def test_debugging_is_passed_to_make_and_explained_first():
     """The owner (2026-10-29): --debugging from the installer too, telling the user what it means before the build."""
     ps, sh = text("install.ps1"), text("install.sh")
     assert "[switch]$Debugging" in ps and "if ($Debugging) { $makeArgs += '--debugging' }" in ps
-    assert "--debugging) debugging=1; shift ;;" in sh and '[ "$debugging" = 1 ] && make_flags="--debugging"' in sh
+    assert "--debugging) debugging=1; debugging_given=1; shift ;;" in sh and '[ "$debugging" = 1 ] && make_flags="--debugging"' in sh
     assert '--with "$with" $make_flags' in sh
     for script in (ps, sh):
         for words in ("your prompts", "keep the server's log private", "before you share it", "without the debugging option"):
             assert words in script, words
+
+
+def make_lists() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    spec = importlib.util.spec_from_file_location("strata_make_lists", ROOT / "make.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["strata_make_lists"] = module  # its dataclass looks its module up there
+    spec.loader.exec_module(module)
+    return module.OPTIONAL_FEATURES, module.LEAVE_OUT
+
+
+def test_the_installers_ask_what_to_build():
+    """The owner (2026-10-29): "In the install section, we should ask these questions, if they want email alerts,
+    search, etc so that they can build exactly what they want". One question for each of make's choices - every
+    optional feature, every family it can leave out, a debugging build - asked before the PC is looked at (what it
+    installs depends on them). An answer the command line gave (-With, -Without, -Debugging) is not asked again;
+    -Yes / --yes asks nothing and takes every default: everything, no debugging."""
+    features, leave_out = make_lists()
+    ps, sh = text("install.ps1"), text("install.sh")
+    # the installers know make's lists, and refuse anything else before they install anything
+    assert "$KnownFeatures = @(" + ", ".join(f"'{f}'" for f in features) + ")" in ps
+    assert "$KnownLeaveOut = @(" + ", ".join(f"'{f}'" for f in leave_out) + ")" in ps
+    assert f'known_features="{" ".join(features)}"' in sh and f'known_leave_out="{" ".join(leave_out)}"' in sh
+    # each defaults to yes (Linux's window: test_the_window_question_defaults_to_no_without_a_display) ...
+    for feature in features:
+        assert f"?' $true) {{ $features += '{feature}' }}" in ps, feature
+        assert feature == "window" or f"?' y; then with=\"$with,{feature}\"; fi" in sh, feature
+    for family in leave_out:
+        assert f"?' $true)) {{ $leaveOut += '{family}' }}" in ps, family
+        assert re.search(r"if ! ask ['\"][^\n]*\?['\"] y; then without=\"\$without," + family + r"\"; fi", sh), family
+    # ... but a debugging build
+    assert "$Debugging = [switch](Ask 'A debugging build" in ps and "?' $false)\n" in ps.replace("\r\n", "\n")
+    assert "if ask 'A debugging build" in sh and "?' n; then debugging=1; fi" in sh
+    # asked only when the command line did not say, and never with -Yes / --yes
+    for option in ("With", "Without", "Debugging"):
+        assert f"-not $Yes -and -not $PSBoundParameters.ContainsKey('{option}')" in ps, option
+    for given in ("with_given", "without_given", "debugging_given"):
+        assert f'[ "${given}" = 0 ]' in sh, given
+    assert 'if [ "$yes" = 0 ] && {' in sh
+    # before the PC is looked at, and what was chosen reaches make
+    for script in (ps, sh):
+        assert script.index("What to build") < script.index("Looking at what this PC has")
+    assert "if ($leaveOut.Count -gt 0) { $makeArgs += @('--without', ($leaveOut -join ',')) }" in ps
+    assert "& (Join-Path $repo 'make.bat') --out $Out --ggml-dir $ggml --cuda-root $cuda @makeArgs" in ps
+    assert '--without) without=$2; without_given=1; shift 2 ;;' in sh and 'make_flags="--without $without' in sh
+
+
+def test_the_window_question_defaults_to_no_without_a_display():
+    """Linux: with no display (DISPLAY, WAYLAND_DISPLAY - a server over SSH) the window's question defaults to no, as
+    the build without questions leaves it out (test_both_front_ends_by_default)."""
+    sh = text("install.sh")
+    assert 'if [ "$display" = 1 ]; then window_default=y; window_note=""; else window_default=n; window_note=" (no display here)"; fi' in sh
+    assert '?" "$window_default"; then with="$with,window"; fi' in sh

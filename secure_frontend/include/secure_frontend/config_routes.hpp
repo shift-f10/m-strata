@@ -5,9 +5,11 @@
 // other settings answer (loopback, and the ones ConfigRouteSettings::client_allowed lets in); key rotation for this PC
 // only. Each body a small JSON object:
 //
-//   POST /v1/strata/config           {} -> {"editable", "settings": [{"key", "type", "value", "default", "min"?, "max"?,
-//                                            "help"}], "key": {"rotatable"}}   (the config file's values; null: the
-//                                            file leaves it to the default)
+//   POST /v1/strata/config           {} -> {"editable", "debugging", "settings": [{"key", "type", "value", "default",
+//                                            "min"?, "max"?, "help"}], "key": {"rotatable"}}   (the config file's values;
+//                                            null: the file leaves it to the default. debugging: a make --debugging
+//                                            build, the only one that lists and saves logging.engine_output, the page's
+//                                            Troubleshooting section)
 //   POST /v1/strata/config/settings  {"values": {"<key>": <value or null>, ...}} -> {"saved": true, "restart_needed": true}
 //                                       (only the keys listed above; the whole file is checked after the change by the
 //                                       rules the server starts with, and a value it would refuse is refused by name)

@@ -371,7 +371,12 @@ Trust boundaries:
   text and model paths on stderr (upstream's `session N: prompt:` line), so
   those reach the log. The row's description, the Settings page's
   Troubleshooting card and the server's start-up notice all say so and say
-  to turn it off and to read a log before sharing it. With the row off,
+  to turn it off and to read a log before sharing it. Only a debugging build
+  (`make --debugging`; owner 2026-10-29) offers the row in Settings: any
+  other build neither lists nor saves it through `POST /v1/strata/config*`
+  (refused by name), the page hides the card, and its start-up notice names
+  the config row to turn it off (`troubleshooting_is_offered_only_in_a_
+  debugging_build`). With the row off,
   nothing above changes: the exception before this one is the only reader
   (`stderr_lines_reach_the_sink_when_asked`,
   `engine_output_reaches_the_log_only_when_asked`).
