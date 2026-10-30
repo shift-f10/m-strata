@@ -495,8 +495,8 @@ def readme_text(opts: Options, platform: str) -> str:
     tui_exe = ".\\strata-tui.exe" if windows else "./strata-tui"
     window += ("\nTerminal:   " + tui_exe + "   (takes the same options)\n"
                "            The same server in this terminal (over SSH too): a dashboard of its GPU, CPU, memory and speed,\n"
-               "            the models (start, stop, options, calibrate), downloads, settings and the log; q quits and stops\n"
-               "            the server." if "tui" in opts.with_features else "")
+               "            the models (start, stop, options, calibrate), downloads, settings, the log and the plugins;\n"
+               "            q quits and stops the server." if "tui" in opts.with_features else "")
     window_contents = ("\n            strata-window: the server in a window with a tray icon" if "window" in opts.with_features else "")
     window_contents += ("\n            strata-tui: the server in a terminal, with a dashboard" if "tui" in opts.with_features else "")
     maya = "maya" not in opts.without

@@ -6,8 +6,10 @@
 #include "secure_frontend/tui_screen.hpp"
 #include "support/test_support.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -78,6 +80,25 @@ std::string value_of(const t::Screen& screen, const std::string& label) {
   rest = rest.substr(0, rest.find("\xE2\x94\x82"));  // (U+2502, the panel's edge)
   while (!rest.empty() && rest.back() == ' ') rest.pop_back();
   return rest;
+}
+
+// The text inside the box whose top edge holds `title`, its lines joined by single spaces (a wrapped question read whole).
+std::string box_words(const t::Screen& screen, const std::string& title) {
+  const int top = row_with(screen, title);
+  const auto boxes = boxes_on(screen, top);
+  if (top < 0 || boxes.size() != 1U) return "(no box " + title + ")";
+  const auto [left, right] = boxes.front();
+  std::string words;
+  for (int y = top + 1; y < screen.height() && screen.at(left, y).glyph != char32_t{0x2570}; ++y) {
+    for (int x = left + 1; x < right; ++x) {
+      const char32_t glyph = screen.at(x, y).glyph;
+      if (glyph == char32_t{' '} && (words.empty() || words.back() == ' ')) continue;
+      words += t::utf8(glyph);
+    }
+    if (!words.empty() && words.back() != ' ') words += ' ';
+  }
+  while (!words.empty() && words.back() == ' ') words.pop_back();
+  return words;
 }
 
 bool has_braille(const t::Screen& screen) {
@@ -941,6 +962,203 @@ void quitting_asks_first() {
   expect(app.view() == t::View::monitor && app.key(character("y")).quit, "after F1, q quits again");
 }
 
+const std::string kPlugins =
+    R"({"folder":"/opt/m-strata/plugins","editable":true,"plugins":[)"
+    R"({"id":"debugging","kind":"diagnostics","name":"Debugging","version":"1.0.0","publisher":"M-Strata","license":"AGPL-3.0-only",)"
+    R"("about":"Verbose logs, to find out why a model does not start or calibrate.","first_party":true,"state":"off","reason":null,)"
+    R"("running":false,"manifest_sha256":"aaaa1111","files":[],"switches":["logging.requests","logging.engine_output","troubleshooting"]},)"
+    R"({"id":"acme","kind":"tool","name":"Acme search","version":"0.2.0","publisher":"Example Labs","license":"MIT","about":"A search tool.",)"
+    R"("first_party":false,"state":"waiting","reason":"never approved","running":false,"manifest_sha256":"bbbb2222",)"
+    R"("files":[{"path":"acme.exe","sha256":"cccc3333"}],"switches":[]},)"
+    R"({"id":"old","kind":"engine","name":"Old family","version":"1","publisher":"x","license":"x","about":"","first_party":false,)"
+    R"("state":"refused","reason":"this server does not run engine plugins yet","running":false,"manifest_sha256":"dddd4444",)"
+    R"("files":[],"switches":[]}]})";
+
+// The owner (2026-10-30): "we also need to have a plugin management tab to manage these"; the TUI has the page's
+// Plugins tab as its view 7 (F7, Tab): each plugin with its state, the selected one's facts, and Enter for its action -
+// Approve (asked first, as the page asks: a code plugin's code runs with the server's rights), Turn on (a diagnostics
+// plugin says what it logs first) or Turn off. A change applies when the server starts again; the list is read again.
+void plugins_are_approved_and_switched() {
+  t::App app(t::Capabilities{}, std::nullopt);
+  app.server_state("http://127.0.0.1:8080", true);
+  const t::Request list{"plugins", "POST", "/v1/strata/plugins", "{}"};
+  const auto polls_list = [&app, &list] {
+    const auto polls = app.polls();
+    return std::find(polls.begin(), polls.end(), list) != polls.end();
+  };
+  (void)app.key(character("6"));
+  (void)app.key(plain(t::Key::Kind::tab));
+  expect(app.view() == t::View::plugins && polls_list(), "Tab after About is Plugins, which reads the list");
+  (void)app.key(character("1"));
+  (void)app.key(character("7"));
+  expect(app.view() == t::View::plugins, "7 is Plugins");
+  (void)app.key(t::Key{t::Key::Kind::function, {}, 1});
+  (void)app.key(t::Key{t::Key::Kind::function, {}, 7});
+  expect(app.view() == t::View::plugins, "and F7");
+  // a refusal of the list is said in the view as on the status line
+  app.answer(list, 403, R"({"error":{"message":"model control is not allowed from this client","type":"invalid_request_error","param":null,"code":"control_not_allowed"}})");
+  const auto shown = [&app] {
+    t::Screen screen(120, 32);
+    app.draw(screen, 0);
+    return all_text(screen);
+  };
+  {
+    t::Screen screen(120, 32);
+    app.draw(screen, 0);
+    expect(row_with(screen, "plugins: model control is not allowed from this client (HTTP 403)") == 3,
+           "the list's refusal, in the view (not only on the status line):\n" + all_text(screen));
+  }
+  expect(!polls_list(), "a refusal (403, 404) is not asked again every second");
+  (void)app.key(character("r"));
+  expect(polls_list(), "until r");
+  app.answer(list, 200, kPlugins);
+  expect(!polls_list(), "read once, not polled again");
+  std::string text = shown();
+  for (const char* words : {"Folder: /opt/m-strata/plugins", "Debugging", "Acme search", "Waiting for approval", "Refused",
+                            "debugging \xC2\xB7 diagnostics \xC2\xB7 version 1.0.0 \xC2\xB7 from M-Strata \xC2\xB7 AGPL-3.0-only \xC2\xB7 built with this install",
+                            "Verbose logs, to find out why", "Turns on: logging.requests, logging.engine_output, troubleshooting",
+                            "Not running.", "plugin.json  aaaa1111", "A change applies when the server starts again."}) {
+    expect(text.find(words) != std::string::npos, std::string{"the view shows: "} + words + "\n" + text);
+  }
+  const auto drawn = [&app] {
+    auto screen = std::make_unique<t::Screen>(120, 32);
+    app.draw(*screen, 0);
+    return screen;
+  };
+  expect(row_text(*drawn(), 31).find("Turn on") != std::string::npos, "the keys name the selected plugin's action");
+  // Turn on: a diagnostics plugin says what it logs first, the whole notice; n turns nothing on
+  auto out = app.key(plain(t::Key::Kind::enter));
+  std::string asked = box_words(*drawn(), "Turn the plugin on");
+  expect(out.requests.empty() &&
+             asked.find("Turn Debugging on? While it is on, the server logs one line per request (never its text) and the "
+                        "engine's own output, which can hold what the engine prints of your prompts and the paths of your model "
+                        "files. Keep the server's log private, look through a log before you share it, and turn it off when you "
+                        "are done.") != std::string::npos &&
+             asked.find("y / n") != std::string::npos,
+         "asked first, the whole notice: " + asked);
+  expect(app.key(character("n")).requests.empty() && shown().find("Turn Debugging on?") == std::string::npos, "n: nothing");
+  (void)app.key(plain(t::Key::Kind::enter));
+  out = app.key(character("y"));
+  expect(out.requests.size() == 1U && out.requests[0] == t::Request{"turn on Debugging", "POST", "/v1/strata/plugins/switch", R"({"id":"debugging","on":true})"},
+         "y turns it on: " + (out.requests.empty() ? std::string{} : out.requests[0].purpose + " " + out.requests[0].body));
+  if (out.requests.empty()) return;
+  app.answer(out.requests[0], 200, R"({"id":"debugging","state":"on","restart_needed":true})");
+  expect(app.status() == "turn on Debugging: done; it applies when the server starts again", "said: " + app.status());
+  expect(polls_list(), "and the list is read again");
+  std::string on = kPlugins;
+  on.replace(on.find(R"("state":"off")"), 13U, R"("state":"on")");
+  app.answer(list, 200, on);
+  // Turn off asks nothing (the page asks nothing either)
+  out = app.key(plain(t::Key::Kind::enter));
+  expect(out.requests.size() == 1U && out.requests[0] == t::Request{"turn off Debugging", "POST", "/v1/strata/plugins/switch", R"({"id":"debugging","on":false})"},
+         "Enter on one that is on turns it off: " + (out.requests.empty() ? std::string{} : out.requests[0].body));
+  if (out.requests.empty()) return;
+  app.answer(out.requests[0], 200, "{}");
+  app.answer(list, 200, kPlugins);
+  // Approve: asked first, saying its code runs with the server's rights
+  (void)app.key(plain(t::Key::Kind::down));
+  text = shown();
+  expect(text.find("acme \xC2\xB7 tool \xC2\xB7 version 0.2.0 \xC2\xB7 from Example Labs \xC2\xB7 MIT") != std::string::npos &&
+             text.find("never approved") != std::string::npos && text.find("acme.exe  cccc3333") != std::string::npos,
+         "the selected plugin's facts, reason and files:\n" + text);
+  out = app.key(plain(t::Key::Kind::enter));
+  asked = box_words(*drawn(), "Approve the plugin");
+  expect(out.requests.empty() &&
+             asked.find("Approve Acme search 0.2.0 from Example Labs? Its code then runs on this PC, with this server's rights. "
+                        "Only the files there now are approved: their SHA-256s are kept, and a changed file waits for approval "
+                        "again.") != std::string::npos,
+         "approval is asked first: " + asked);
+  out = app.key(character("y"));
+  expect(out.requests.size() == 1U && out.requests[0] == t::Request{"approve Acme search", "POST", "/v1/strata/plugins/approve", R"({"id":"acme"})"},
+         "y approves it: " + (out.requests.empty() ? std::string{} : out.requests[0].body));
+  if (out.requests.empty()) return;
+  app.answer(out.requests[0], 422,
+             R"({"error":{"message":"it is already approved","type":"invalid_request_error","param":null,"code":"plugin_refused"}})");
+  expect(app.status() == "approve Acme search: it is already approved", "a refusal in the server's words: " + app.status());
+  // a refused plugin has no action: why is said
+  (void)app.key(plain(t::Key::Kind::down));
+  out = app.key(plain(t::Key::Kind::enter));
+  expect(out.requests.empty() && app.status() == "Old family is refused: this server does not run engine plugins yet", "refused: " + app.status());
+  // r reads the list again
+  app.answer(list, 200, kPlugins);
+  (void)app.key(character("r"));
+  expect(polls_list(), "r reads the list again");
+}
+
+// The Plugins view on a standard 80x24 terminal and smaller, a selection kept on a shorter list, a change waited for
+// (as the page's buttons wait), and a server that keeps no choices - the page's words for each.
+void the_plugins_view_fits_and_waits_for_its_changes() {
+  const t::Request list{"plugins", "POST", "/v1/strata/plugins", "{}"};
+  const auto with = [](std::string json, const std::string& from, const std::string& to) {
+    json.replace(json.find(from), from.size(), to);
+    return json;
+  };
+  const auto first_two = [](const std::string& json) { return json.substr(0, json.find(R"(,{"id":"old")")) + "]}"; };
+  const std::string running = with(kPlugins, R"("state":"off","reason":null,"running":false)", R"("state":"on","reason":null,"running":true)");
+  t::App app(t::Capabilities{}, std::nullopt);
+  app.server_state("http://127.0.0.1:8080", true);
+  (void)app.key(character("7"));
+  app.answer(list, 200, running);
+  // 80x24: every tab, and each state whole, with whether it runs
+  t::Screen standard(80, 24);
+  app.draw(standard, 0);
+  const auto line_of = [&standard](const std::string& part) {
+    const int y = row_with(standard, part);
+    return y < 0 ? std::string{} : row_text(standard, y);
+  };
+  expect(row_text(standard, 1).find("7 Plugins") != std::string::npos, "the tab row has Plugins at 80 columns: " + row_text(standard, 1));
+  expect(line_of("Acme search").find("Waiting for approval") != std::string::npos && line_of("Debugging").find("running") != std::string::npos,
+         "each state whole, and running, at 80 columns:\n" + all_text(standard));
+  // 10 rows: the selected plugin's row stays in view, above the note
+  (void)app.key(plain(t::Key::Kind::down));
+  (void)app.key(plain(t::Key::Kind::down));
+  t::Screen low(120, 10);
+  app.draw(low, 0);
+  expect(row_with(low, "Old family") >= 0 && row_with(low, "Old family") < row_with(low, "A change applies"),
+         "the selected plugin is in view above the note:\n" + all_text(low));
+  // the list read again shorter: the selection is its last one, and one Up moves it
+  app.answer(list, 200, first_two(running));
+  (void)app.key(plain(t::Key::Kind::up));
+  auto out = app.key(plain(t::Key::Kind::enter));
+  expect(out.requests.size() == 1U && out.requests[0].purpose == "turn off Debugging",
+         "one Up from the last of two is the first: " + (out.requests.empty() ? std::string{"(none)"} : out.requests[0].purpose));
+  // a change waits for its answer and the list read again: Enter does nothing meanwhile (the page's buttons wait too)
+  expect(app.key(plain(t::Key::Kind::enter)).requests.empty(), "no second change while the first is under way");
+  app.answer({"turn off Debugging", "POST", "/v1/strata/plugins/switch", R"({"id":"debugging","on":false})"}, 200, "{}");
+  expect(app.key(plain(t::Key::Kind::enter)).requests.empty(), "nor before the list is read again");
+  t::Screen waiting(120, 32);
+  app.draw(waiting, 0);
+  expect(row_text(waiting, 31).find("Enter") == std::string::npos, "the keys offer no Enter meanwhile: " + row_text(waiting, 31));
+  app.answer(list, 200, first_two(kPlugins));
+  out = app.key(plain(t::Key::Kind::enter));
+  t::Screen again(120, 32);
+  app.draw(again, 0);
+  expect(out.requests.empty() && box_words(again, "Turn the plugin on").find("Turn Debugging on?") != std::string::npos,
+         "then Enter acts again (Debugging is off: it asks first): " + box_words(again, "Turn the plugin on"));
+  (void)app.key(character("n"));
+  // a question taller than the screen says so
+  app.answer(list, 200, with(kPlugins, R"("state":"off","reason":null)", R"("state":"changed","reason":"changed since approved")"));
+  out = app.key(plain(t::Key::Kind::enter));
+  t::Screen short_screen(40, 12);
+  app.draw(short_screen, 0);
+  expect(out.requests.empty() && box_words(short_screen, "Approve the plugin").find("enlarge the terminal to read it all") != std::string::npos,
+         "a cut question says so: " + box_words(short_screen, "Approve the plugin"));
+  (void)app.key(character("n"));
+  // a server that keeps no choices: said, and no action offered (the page's buttons are disabled)
+  app.answer(list, 200, with(kPlugins, R"("editable":true)", R"("editable":false)"));
+  t::Screen read_only(120, 32);
+  app.draw(read_only, 0);
+  expect(all_text(read_only).find("Folder: /opt/m-strata/plugins (read only: this server keeps no choices)") != std::string::npos &&
+             row_text(read_only, 31).find("Enter") == std::string::npos,
+         "read only, as the page says it, and no Enter:\n" + all_text(read_only));
+  // no plugins: the page's words
+  app.answer(list, 200, R"({"folder":"/opt/m-strata/plugins","editable":true,"plugins":[]})");
+  t::Screen empty(120, 32);
+  app.draw(empty, 0);
+  expect(all_text(empty).find("No plugins yet: each plugin is a folder holding its plugin.json, in the folder above.") != std::string::npos,
+         "no plugins:\n" + all_text(empty));
+}
+
 }  // namespace
 
 // The owner (2026-10-29, then 2026-10-30 as a plugin): while the Debugging plugin is on, the TUI shows what it logs and
@@ -1007,6 +1225,8 @@ int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"the_screen_draws_text_boxes_and_gauges", the_screen_draws_text_boxes_and_gauges},
       {"the_debugging_notice_waits_for_y", the_debugging_notice_waits_for_y},
+      {"plugins_are_approved_and_switched", plugins_are_approved_and_switched},
+      {"the_plugins_view_fits_and_waits_for_its_changes", the_plugins_view_fits_and_waits_for_its_changes},
       {"an_uncalibrated_start_asks_to_calibrate_first", an_uncalibrated_start_asks_to_calibrate_first},
       {"charts_are_braille_or_blocks", charts_are_braille_or_blocks},
       {"only_the_changes_are_written", only_the_changes_are_written},

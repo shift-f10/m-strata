@@ -1,9 +1,9 @@
 #pragma once
 
 // strata-tui's application (spec docs/superpowers/specs/2026-10-28-server-tui-design.md): what the server answers (the
-// page's routes), the six views drawn from it - Monitor (the default: the graph dashboard), Models, Downloads, Settings,
-// Log, About - and the keys turned into the requests the page would send. No terminal and no network here: the program
-// (tui_main.cpp) runs the requests and writes the screen.
+// page's routes), the seven views drawn from it - Monitor (the default: the graph dashboard), Models, Downloads, Settings,
+// Log, About, Plugins (owner 2026-10-30, the page's Plugins tab) - and the keys turned into the requests the page would
+// send. No terminal and no network here: the program (tui_main.cpp) runs the requests and writes the screen.
 
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/tui_input.hpp"
@@ -19,7 +19,7 @@
 
 namespace secure_frontend::tui {
 
-enum class View { monitor, models, downloads, settings, log, about };
+enum class View { monitor, models, downloads, settings, log, about, plugins };
 
 // A request to the server: what for ("metrics", "models", ... or an action), its method, path and JSON body.
 struct Request final {
@@ -78,17 +78,20 @@ class App final {
   void draw_settings(Screen& screen, Rect area) const;
   void draw_log(Screen& screen, Rect area) const;
   void draw_about(Screen& screen, Rect area) const;
+  void draw_plugins(Screen& screen, Rect area) const;
   void draw_prompt(Screen& screen) const;
   // the keys
-  void show(View view);  // a view switch (1-6, Tab, Shift-Tab, F1-F6): the option focus off, Settings read again
+  void show(View view);  // a view switch (1-7, Tab, Shift-Tab, F1-F7): the option focus off, Settings and Plugins read again
   [[nodiscard]] Outcome models_key(const Key& key);
   [[nodiscard]] Outcome downloads_key(const Key& key);
   [[nodiscard]] Outcome settings_key(const Key& key);
   [[nodiscard]] Outcome log_key(const Key& key);
+  [[nodiscard]] Outcome plugins_key(const Key& key);
   [[nodiscard]] Outcome prompt_key(const Key& key);
   // the selected card and its options as the start body has them
   [[nodiscard]] const JsonValue* cards() const;
   [[nodiscard]] const JsonValue* selected_card() const;
+  [[nodiscard]] const JsonValue* selected_plugin() const;
   [[nodiscard]] std::string options_body(const JsonValue& card) const;
   void change_option(const JsonValue& card, int direction);
   // the status line: words said (an action's, or a poll's failure), an action's words cleared
@@ -116,6 +119,7 @@ class App final {
   std::optional<JsonValue> downloads_;
   std::optional<JsonValue> settings_;
   std::optional<JsonValue> about_;
+  std::optional<JsonValue> plugins_;
   std::map<std::string, std::deque<double>> history_;  // by series, the newest last
   std::optional<long long> history_time_;               // the time of the answer last recorded
   std::deque<std::string> log_;
@@ -137,14 +141,23 @@ class App final {
   bool show_key_{false};
   int log_scroll_{0};           // lines above the newest
   mutable int log_rows_{20};    // the lines the Log's box showed when last drawn (the scroll stops at its first page)
+  // Plugins: the selection; the list read again when shown, on r and after each change; a change made (it applies when
+  // the server starts again)
+  std::size_t plugin_{0};
+  bool plugins_stale_{true};
+  bool plugins_changed_{false};
+  // a change under way (as the page's buttons wait): sent, then answered, then over once the list is read again
+  enum class PluginChange { none, sent, answered };
+  PluginChange plugin_change_{PluginChange::none};
   // a one-line prompt: a text field (a setting's value, ROTATE) or a yes/no question (quit; stop one card and start
-  // another, or restart the running one, as the page asks)
-  enum class Prompt { none, quit, edit_setting, rotate, start, remove, calibrate_first };
+  // another, or restart the running one, as the page asks); a plugin's question is wrapped over as many lines as it takes
+  enum class Prompt { none, quit, edit_setting, rotate, start, remove, calibrate_first, plugin };
   Prompt prompt_{Prompt::none};
   std::string input_;
   std::optional<Request> confirm_;   // the start (or the card removal) a yes sends
   std::optional<Request> calibrate_;  // calibrate_first: the calibrate-then-start c sends (s sends confirm_)
   std::string question_;             // and its question
+  std::string question_title_;       // a plugin's question's box title
   std::optional<JsonValue> editing_;  // the setting the edit field was opened on (its key, type and range)
 };
 

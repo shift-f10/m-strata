@@ -189,12 +189,14 @@ void gauge_row(Screen& screen, const Rect area, const int line, const std::strin
   }
 }
 
-constexpr std::array<std::pair<View, std::string_view>, 6> kViews{{{View::monitor, "Monitor"},
+// (Plugins last, owner 2026-10-30: the views' keys 1-6 stay as they were)
+constexpr std::array<std::pair<View, std::string_view>, 7> kViews{{{View::monitor, "Monitor"},
                                                                    {View::models, "Models"},
                                                                    {View::downloads, "Downloads"},
                                                                    {View::settings, "Settings"},
                                                                    {View::log, "Log"},
-                                                                   {View::about, "About"}}};
+                                                                   {View::about, "About"},
+                                                                   {View::plugins, "Plugins"}}};
 
 std::size_t view_index(const View view) {
   for (std::size_t i = 0; i < kViews.size(); ++i) {
@@ -239,6 +241,106 @@ std::string its_card(const JsonValue& entry) {
   return card.empty() ? std::string{} : " (its card: " + card + ")";
 }
 
+// A text's paragraphs (split by a blank line), each line by line within `width`: a word longer than a line gets a line
+// of its own (clipped when drawn), and a blank line goes between paragraphs.
+std::vector<std::string> wrapped(const std::string_view words, const int width) {
+  std::vector<std::string> lines;
+  std::size_t start = 0;
+  while (start <= words.size()) {
+    const auto end = std::min(words.find("\n\n", start), words.size());
+    const std::string_view paragraph = words.substr(start, end - start);
+    if (!lines.empty()) lines.emplace_back();
+    std::string line;
+    std::size_t at = 0;
+    while (at < paragraph.size()) {
+      const auto space = std::min(paragraph.find_first_of(" \n", at), paragraph.size());
+      const std::string_view word = paragraph.substr(at, space - at);
+      at = space + 1U;
+      if (word.empty()) continue;
+      if (!line.empty() && text_width(line) + 1 + text_width(word) > width) {
+        lines.push_back(std::move(line));
+        line.clear();
+      }
+      if (!line.empty()) line += ' ';
+      line += word;
+    }
+    if (!line.empty()) lines.push_back(std::move(line));
+    start = end + 2U;
+  }
+  return lines;
+}
+
+bool flag(const JsonValue* value) { return value != nullptr && value->if_boolean() != nullptr && *value->if_boolean(); }
+
+// A plugin in the page's words (app.js: PLUGIN_KINDS, PLUGIN_STATES, pluginNow, diagnosticsNotice, approvalQuestion and
+// the card's button), so the TUI and the page say the same.
+std::string plugin_name(const JsonValue& plugin) {
+  const std::string name = text(member(&plugin, "name"));
+  return name.empty() ? text(member(&plugin, "id")) : name;
+}
+
+std::string plugin_kind_text(const std::string& kind) {
+  return kind == "engine" ? "engine family" : kind == "tool" || kind == "notifier" || kind == "diagnostics" ? kind : "not read";
+}
+
+std::string plugin_state_text(const std::string& state) {
+  return state == "on"        ? "On"
+         : state == "off"     ? "Off"
+         : state == "waiting" ? "Waiting for approval"
+         : state == "changed" ? "Changed since approved"
+         : state == "refused" ? "Refused"
+         : state.empty()      ? "-"
+                              : state;
+}
+
+std::string plugin_now(const JsonValue& plugin) {
+  const bool on = text(member(&plugin, "state")) == "on";
+  if (flag(member(&plugin, "running"))) return on ? "Running." : "Running until the server restarts.";
+  return on ? "Runs after the server restarts." : "Not running.";
+}
+
+// What a diagnostics plugin (the Debugging plugin) logs while it is on (the owner 2026-10-29: "when set on, it will tell
+// the user the implications of having this on and precautions to take"), said before it is turned on.
+std::string diagnostics_notice(const JsonValue& plugin) {
+  bool requests = false;
+  bool engine_output = false;
+  if (const auto* switches = member(&plugin, "switches"); switches != nullptr && switches->if_array() != nullptr) {
+    for (const auto& item : *switches->if_array()) {
+      requests = requests || text(&item) == "logging.requests";
+      engine_output = engine_output || text(&item) == "logging.engine_output";
+    }
+  }
+  std::vector<std::string> logs;
+  if (requests) logs.emplace_back("one line per request (never its text)");
+  if (engine_output) {
+    logs.emplace_back("the engine's own output, which can hold what the engine prints of your prompts and the paths of your model files");
+  }
+  std::string out;
+  if (!logs.empty()) out = "While it is on, the server logs " + (logs.size() == 2U ? logs[0] + " and " + logs[1] : logs[0]) + ". ";
+  return out + "Keep the server's log private, look through a log before you share it, and turn it off when you are done.";
+}
+
+std::string approval_question(const JsonValue& plugin) {
+  const std::string version = text(member(&plugin, "version"));
+  const std::string publisher = text(member(&plugin, "publisher"));
+  const std::string what = text(member(&plugin, "kind")) == "diagnostics"
+                               ? "It changes what this server logs and shows; it runs no code of its own. " + diagnostics_notice(plugin)
+                               : std::string{"Its code then runs on this PC, with this server's rights."};
+  return "Approve " + plugin_name(plugin) + (version.empty() ? std::string{} : " " + version) + " from " +
+         (publisher.empty() ? std::string{"an unnamed publisher"} : publisher) + "? " + what +
+         " Only the files there now are approved: their SHA-256s are kept, and a changed file waits for approval again.";
+}
+
+// What Enter does to a plugin (the page's button); none for one refused.
+std::string plugin_action(const JsonValue& plugin) {
+  const std::string state = text(member(&plugin, "state"));
+  return state == "waiting"   ? "Approve"
+         : state == "changed" ? "Approve again"
+         : state == "on"      ? "Turn off"
+         : state == "off"     ? "Turn on"
+                              : std::string{};
+}
+
 }  // namespace
 
 App::App(const Capabilities capabilities, std::optional<std::string> key)
@@ -271,14 +373,17 @@ void App::answer(const Request& request, const int status, const std::string_vie
   const auto parsed = parse_json(body, kAnswerLimits);
   const auto* value = std::get_if<JsonValue>(&parsed);
   const bool poll = request.purpose == "metrics" || request.purpose == "models" || request.purpose == "downloads" ||
-                    request.purpose == "settings" || request.purpose == "about";
+                    request.purpose == "settings" || request.purpose == "about" || request.purpose == "plugins";
   if (poll) {
+    if (request.purpose == "plugins" && plugin_change_ == PluginChange::answered) plugin_change_ = PluginChange::none;
     if (status != 200 || value == nullptr) {  // (kept: the last answer stays on screen)
       // (an answer still in flight from a view left since says nothing: its poll no longer runs to clear it)
       const auto running = polls();
       if (std::any_of(running.begin(), running.end(), [&request](const Request& r) { return r.purpose == request.purpose; })) {
         poll_failed(request.purpose, status, value);
       }
+      // (a server that does not serve the list to this client says so once: r asks again)
+      if (request.purpose == "plugins" && (status == 403 || status == 404)) plugins_stale_ = false;
       return;
     }
     poll_answered(request.purpose);
@@ -291,13 +396,26 @@ void App::answer(const Request& request, const int status, const std::string_vie
       downloads_ = *value;
     } else if (request.purpose == "about") {
       about_ = *value;
+    } else if (request.purpose == "plugins") {
+      plugins_ = *value;
+      plugins_stale_ = false;
+      // (a shorter list keeps the selection on its last plugin)
+      const auto* list = member(&*plugins_, "plugins");
+      const std::size_t count = list != nullptr && list->if_array() != nullptr ? list->if_array()->size() : 0U;
+      plugin_ = count == 0U ? 0U : std::min(plugin_, count - 1U);
     } else {
       settings_ = *value;
       settings_stale_ = false;
     }
     return;
   }
-  // an action's answer: said on the status line (the server's own words when it refused)
+  // an action's answer: said on the status line (the server's own words when it refused). A plugin's change reads the
+  // list again, a refused one too (the plugin may have changed since it was read).
+  const bool plugin_change = request.path.starts_with("/v1/strata/plugins/");
+  if (plugin_change) {
+    plugins_stale_ = true;
+    plugin_change_ = PluginChange::answered;
+  }
   if (status == 0) {
     say(request.purpose + ": the server did not answer", true);
     return;
@@ -313,6 +431,9 @@ void App::answer(const Request& request, const int status, const std::string_vie
       say("Settings saved; they apply when the server starts again", false);
     } else if (request.purpose == "rotate key") {
       say("A new API key was made; it applies when the server starts again (strata key show)", false);
+    } else if (plugin_change) {
+      plugins_changed_ = true;
+      say(request.purpose + ": done; it applies when the server starts again", false);
     } else {
       say(request.purpose + ": done", false);
     }
@@ -420,6 +541,7 @@ std::vector<Request> App::polls() const {
   if (view_ == View::downloads) out.push_back({"downloads", "GET", "/v1/strata/downloads", {}});
   if (view_ == View::settings && settings_stale_) out.push_back({"settings", "POST", "/v1/strata/config", "{}"});
   if (view_ == View::about && !about_) out.push_back({"about", "GET", "/v1/strata/about", {}});
+  if (view_ == View::plugins && plugins_stale_) out.push_back({"plugins", "POST", "/v1/strata/plugins", "{}"});
   return out;
 }
 
@@ -429,7 +551,8 @@ void App::show(const View view) {
   view_ = view;
   option_ = -1;
   if (view == View::settings) settings_stale_ = true;
-  // a failure of a poll this view no longer runs (another view's downloads, settings, About) goes with that view
+  if (view == View::plugins) plugins_stale_ = true;
+  // a failure of a poll this view no longer runs (another view's downloads, settings, About, plugins) goes with that view
   const auto running = polls();
   for (auto it = poll_problems_.begin(); it != poll_problems_.end();) {
     const std::string& purpose = it->first;
@@ -450,12 +573,12 @@ Outcome App::key(const Key& key) {
     prompt_ = Prompt::quit;
     return {};
   }
-  // the views: 1-6, Tab and Shift-Tab (from a card's list, not its options), F1-F6
-  if (key.kind == Key::Kind::character && key.text.size() == 1U && key.text[0] >= '1' && key.text[0] <= '6' && option_ < 0) {
+  // the views: 1-7, Tab and Shift-Tab (from a card's list, not its options), F1-F7
+  if (key.kind == Key::Kind::character && key.text.size() == 1U && key.text[0] >= '1' && key.text[0] <= '7' && option_ < 0) {
     show(kViews[static_cast<std::size_t>(key.text[0] - '1')].first);
     return {};
   }
-  if (key.kind == Key::Kind::function && key.number >= 1 && key.number <= 6) {
+  if (key.kind == Key::Kind::function && key.number >= 1 && key.number <= 7) {
     show(kViews[static_cast<std::size_t>(key.number - 1)].first);
     return {};
   }
@@ -473,6 +596,7 @@ Outcome App::key(const Key& key) {
     case View::downloads: return downloads_key(moved);
     case View::settings: return settings_key(moved);
     case View::log: return log_key(moved);
+    case View::plugins: return plugins_key(moved);
     case View::monitor:
     case View::about: break;
   }
@@ -493,13 +617,15 @@ Outcome App::prompt_key(const Key& key) {
     question_.clear();
     return out;
   }
-  if (prompt_ == Prompt::quit || prompt_ == Prompt::start || prompt_ == Prompt::remove) {
+  if (prompt_ == Prompt::quit || prompt_ == Prompt::start || prompt_ == Prompt::remove || prompt_ == Prompt::plugin) {
     const bool yes = key.kind == Key::Kind::character && (key.text == "y" || key.text == "Y");
     if (prompt_ == Prompt::quit) out.quit = yes;
     else if (yes && confirm_) out.requests.push_back(std::move(*confirm_));
+    if (prompt_ == Prompt::plugin && !out.requests.empty()) plugin_change_ = PluginChange::sent;
     prompt_ = Prompt::none;
     confirm_.reset();
     question_.clear();
+    question_title_.clear();
     return out;
   }
   if (key.kind == Key::Kind::escape) {
@@ -846,6 +972,57 @@ Outcome App::settings_key(const Key& key) {
   return out;
 }
 
+const JsonValue* App::selected_plugin() const {
+  const auto* list = member(plugins_ ? &*plugins_ : nullptr, "plugins");
+  if (list == nullptr || list->if_array() == nullptr || list->if_array()->empty()) return nullptr;
+  return &(*list->if_array())[std::min(plugin_, list->if_array()->size() - 1U)];
+}
+
+// The page's Plugins tab (owner 2026-10-30): Up/Down a plugin, Enter its action - Approve (asked first: its SHA-256s
+// pinned), Turn on (a diagnostics plugin says what it logs first) or Turn off - and r reads the list again.
+Outcome App::plugins_key(const Key& key) {
+  Outcome out;
+  const auto* list = member(plugins_ ? &*plugins_ : nullptr, "plugins");
+  const std::size_t count = list != nullptr && list->if_array() != nullptr ? list->if_array()->size() : 0U;
+  if (key.kind == Key::Kind::up && plugin_ > 0) --plugin_;
+  if (key.kind == Key::Kind::down && plugin_ + 1U < count) ++plugin_;
+  if (key.kind == Key::Kind::character && key.text == "r") plugins_stale_ = true;
+  const auto* plugin = selected_plugin();
+  if (key.kind != Key::Kind::enter || plugin == nullptr) return out;
+  const std::string name = plugin_name(*plugin);
+  const std::string state = text(member(plugin, "state"));
+  if (!plugin_action(*plugin).empty() && plugin_change_ != PluginChange::none) return out;  // (the last change first)
+  if (!plugin_action(*plugin).empty() && !flag(member(&*plugins_, "editable"))) {
+    say("The plugins cannot be changed here: this server keeps no choices", true);
+    return out;
+  }
+  const std::string id = json_string(text(member(plugin, "id")));
+  if (state == "waiting" || state == "changed") {
+    question_ = approval_question(*plugin);
+    question_title_ = "Approve the plugin";
+    confirm_ = Request{"approve " + name, "POST", "/v1/strata/plugins/approve", "{\"id\":" + id + "}"};
+    prompt_ = Prompt::plugin;
+  } else if (state == "on") {
+    out.requests.push_back({"turn off " + name, "POST", "/v1/strata/plugins/switch", "{\"id\":" + id + ",\"on\":false}"});
+    plugin_change_ = PluginChange::sent;
+  } else if (state == "off") {
+    Request on{"turn on " + name, "POST", "/v1/strata/plugins/switch", "{\"id\":" + id + ",\"on\":true}"};
+    if (text(member(plugin, "kind")) == "diagnostics") {
+      question_ = "Turn " + name + " on? " + diagnostics_notice(*plugin);
+      question_title_ = "Turn the plugin on";
+      confirm_ = std::move(on);
+      prompt_ = Prompt::plugin;
+    } else {
+      out.requests.push_back(std::move(on));
+      plugin_change_ = PluginChange::sent;
+    }
+  } else {
+    const std::string reason = text(member(plugin, "reason"));
+    say(name + " is refused" + (reason.empty() ? std::string{} : ": " + reason), true);
+  }
+  return out;
+}
+
 Outcome App::log_key(const Key& key) {
   // up to the oldest page the box shows, no further
   const int most = std::max(0, static_cast<int>(log_.size()) - log_rows_);
@@ -873,6 +1050,7 @@ void App::draw(Screen& screen, const std::time_t now) const {
     case View::settings: draw_settings(screen, body); break;
     case View::log: draw_log(screen, body); break;
     case View::about: draw_about(screen, body); break;
+    case View::plugins: draw_plugins(screen, body); break;
   }
   draw_keys(screen);
   if (prompt_ != Prompt::none) draw_prompt(screen);
@@ -903,13 +1081,20 @@ void App::draw_header(Screen& screen, const std::time_t now) const {
 
 void App::draw_tabs(Screen& screen) const {
   screen.fill(Rect{0, 1, screen.width(), 1}, U' ', Style{kText, kPanel});
+  // the labels a cell apart, or side by side where that does not fit (all seven on an 80-column terminal)
+  std::vector<std::string> labels;
+  int all = 1;
+  for (std::size_t i = 0; i < kViews.size(); ++i) {
+    labels.push_back(" " + std::to_string(i + 1) + " " + std::string{kViews[i].second} + " ");
+    all += text_width(labels.back()) + 1;
+  }
+  const int gap = all <= screen.width() ? 1 : 0;
   int x = 1;
   for (std::size_t i = 0; i < kViews.size(); ++i) {
     const bool on = kViews[i].first == view_;
-    const std::string label = " " + std::to_string(i + 1) + " " + std::string{kViews[i].second} + " ";
     const Style style = on ? Style{231, kAccent, true} : Style{kMuted, kPanel};
-    if (x + text_width(label) >= screen.width()) break;
-    x += screen.text(x, 1, label, style) + 1;
+    if (x + text_width(labels[i]) >= screen.width()) break;
+    x += screen.text(x, 1, labels[i], style) + gap;
   }
 }
 
@@ -925,6 +1110,14 @@ void App::draw_keys(Screen& screen) const {
     case View::downloads: keys.insert(keys.end(), {{"Enter", "Download"}, {"p", "Pause"}, {"x", "Cancel"}}); break;
     case View::settings: keys.insert(keys.end(), {{"Enter", "Edit"}, {"w", "Save"}, {"u", "Undo"}, {"k", "Key"}, {"R", "Rotate"}}); break;
     case View::log: keys.insert(keys.end(), {{"Up/Down", "Scroll"}, {"End", "Newest"}}); break;
+    case View::plugins: {
+      keys.emplace_back("Up/Down", "Plugin");
+      const auto* plugin = selected_plugin();
+      const bool can = plugin != nullptr && plugin_change_ == PluginChange::none && flag(member(&*plugins_, "editable"));
+      if (const std::string action = can ? plugin_action(*plugin) : std::string{}; !action.empty()) keys.emplace_back("Enter", action);
+      keys.emplace_back("r", "Refresh");
+      break;
+    }
     case View::monitor:
     case View::about: break;
   }
@@ -942,6 +1135,29 @@ void App::draw_keys(Screen& screen) const {
 
 void App::draw_prompt(Screen& screen) const {
   const int width = std::min(screen.width() - 4, 72);
+  if (prompt_ == Prompt::plugin) {
+    // the whole question, wrapped, then its keys: the box as tall as that takes, within the screen
+    const auto lines = wrapped(question_, std::max(1, width - 4));
+    const int height = std::max(5, std::min(static_cast<int>(lines.size()) + 5, screen.height() - 2));
+    const Rect box{(screen.width() - width) / 2, std::max(0, (screen.height() - height) / 2), width, height};
+    screen.fill(box, U' ', Style{kText, kPanel});
+    screen.box(box, question_title_, Style{kAccent, kPanel}, Style{kAccent, kPanel, true});
+    const Rect inner = box.inner();
+    auto shown = lines;
+    if (const auto room = static_cast<std::size_t>(std::max(0, inner.height - 3)); shown.size() > room) {
+      // (cut: its last lines say so, so a question is never answered as if read whole)
+      const auto note = wrapped("(the rest is cut: enlarge the terminal to read it all)", std::max(1, width - 4));
+      shown.resize(room > note.size() ? room - note.size() : 0U);
+      for (const auto& line : note) {
+        if (shown.size() < room) shown.push_back(line);
+      }
+    }
+    for (std::size_t i = 0; i < shown.size(); ++i) {
+      screen.field(inner.x + 1, inner.y + 1 + static_cast<int>(i), inner.width - 2, shown[i], Style{kText, kPanel});
+    }
+    screen.field(inner.x + 1, inner.y + inner.height - 1, inner.width - 2, "y / n", Style{kText, kPanel, true});
+    return;
+  }
   const bool calibrate_first = prompt_ == Prompt::calibrate_first;
   const Rect box{(screen.width() - width) / 2, screen.height() / 2 - 2, width, calibrate_first ? 7 : 5};
   screen.fill(box, U' ', Style{kText, kPanel});
@@ -1583,6 +1799,95 @@ void App::draw_log(Screen& screen, const Rect area) const {
   if (scroll > 0) screen.text(r.x + r.width - 18, area.y, " " + std::to_string(scroll) + " lines up ", Style{kYellow, kDefault});
 }
 
+// The page's Plugins tab (owner 2026-10-30): the folder, each plugin with its kind, version and state, and the selected
+// one's facts, about, reason, switches, whether it runs and its SHA-256s; a change applies when the server starts again.
+void App::draw_plugins(Screen& screen, const Rect area) const {
+  screen.box(area, "Plugins", kFrame, kTitle);
+  const Rect r = area.inner();
+  if (r.width < 4 || r.height < 1) return;
+  const JsonValue* document = plugins_ ? &*plugins_ : nullptr;
+  const auto* list = member(document, "plugins");
+  if (list == nullptr || list->if_array() == nullptr) {
+    // not read yet, or refused: said here as on the status line
+    const auto problem = poll_problems_.find("plugins");
+    if (problem != poll_problems_.end()) screen.field(r.x + 1, r.y, r.width - 2, problem->second, Style{kRed, kDefault});
+    else screen.field(r.x + 1, r.y, r.width - 2, "Reading the plugins ...", kDim);
+    return;
+  }
+  const bool editable = flag(member(document, "editable"));
+  screen.field(r.x + 1, r.y, r.width - 2,
+               "Folder: " + text(member(document, "folder"), "-") + (editable ? "" : " (read only: this server keeps no choices)"), kDim);
+  const auto& entries = *list->if_array();
+  if (entries.empty()) {
+    if (r.height > 2) {
+      screen.field(r.x + 1, r.y + 2, r.width - 2, "No plugins yet: each plugin is a folder holding its plugin.json, in the folder above.", kDim);
+    }
+    return;
+  }
+  // the list: as many rows as a third of the box gives (at least 3, and never the note's row), the selected one in view
+  const int first = 2;
+  const int rows = std::max(1, std::min({static_cast<int>(entries.size()), std::max(3, (r.height - 4) / 3), r.height - 3}));
+  const std::size_t selected_at = std::min(plugin_, entries.size() - 1U);
+  const std::size_t shown_from = selected_at >= static_cast<std::size_t>(rows) ? selected_at - static_cast<std::size_t>(rows) + 1U : 0U;
+  for (std::size_t i = shown_from; i < entries.size() && static_cast<int>(i - shown_from) < rows; ++i) {
+    const int y = r.y + first + static_cast<int>(i - shown_from);
+    if (y >= r.y + r.height) break;
+    const auto& plugin = entries[i];
+    const bool selected = i == selected_at;
+    const Style base = selected ? Style{231, kAccent, true} : kNormal;
+    screen.fill(Rect{r.x, y, r.width, 1}, U' ', selected ? base : Style{});
+    const auto cell = [&screen, &r, y](const int column, const int width, const std::string& words, const Style style) {
+      const int x = r.x + column;
+      if (x < r.x + r.width - 1) screen.field(x, y, std::min(width, r.x + r.width - 1 - x), words, style);
+    };
+    const std::string state = text(member(&plugin, "state"));
+    const int color = state == "on" ? kGreen : state == "off" ? kMuted : state == "refused" ? kRed : kYellow;
+    // the name as wide as the box allows (10-28 cells), then the kind, version, state and whether it runs
+    const int name_width = std::clamp(r.width - 59, 10, 28);
+    cell(1, name_width, plugin_name(plugin), base);
+    cell(2 + name_width, 14, plugin_kind_text(text(member(&plugin, "kind"))), selected ? base : kDim);
+    cell(17 + name_width, 10, text(member(&plugin, "version")), selected ? base : kDim);
+    cell(28 + name_width, 22, plugin_state_text(state), selected ? base : Style{color, kDefault, true});
+    if (flag(member(&plugin, "running"))) cell(51 + name_width, 7, "running", selected ? base : Style{kGreen, kDefault});
+  }
+  // the selected plugin, as the page's card says it
+  const auto& plugin = entries[selected_at];
+  int line = first + rows;
+  if (line < r.height - 1) screen.hline(r.x, r.y + line, r.width, kFrame);
+  ++line;
+  const auto put = [&screen, &r, &line](const std::string& words, const Style style) {
+    if (line < r.height - 1) screen.field(r.x + 1, r.y + line, r.width - 2, words, style);
+    ++line;
+  };
+  const std::string dot = " " + utf8(char32_t{0x00B7}) + " ";
+  std::string facts = text(member(&plugin, "id")) + dot + plugin_kind_text(text(member(&plugin, "kind")));
+  if (const std::string version = text(member(&plugin, "version")); !version.empty()) facts += dot + "version " + version;
+  if (const std::string publisher = text(member(&plugin, "publisher")); !publisher.empty()) facts += dot + "from " + publisher;
+  if (const std::string license = text(member(&plugin, "license")); !license.empty()) facts += dot + license;
+  if (flag(member(&plugin, "first_party"))) facts += dot + "built with this install";
+  put(facts, kNormal);
+  for (const auto& about : wrapped(text(member(&plugin, "about")), std::max(1, r.width - 2))) put(about, kNormal);
+  const std::string state = text(member(&plugin, "state"));
+  if (const std::string reason = text(member(&plugin, "reason")); !reason.empty()) {
+    put(reason, Style{state == "refused" ? kRed : kYellow, kDefault});
+  }
+  if (const auto* switches = member(&plugin, "switches"); switches != nullptr && switches->if_array() != nullptr && !switches->if_array()->empty()) {
+    put("Turns on: " + items_text(*switches), kDim);
+  }
+  put(plugin_now(plugin), kDim);
+  if (const std::string manifest = text(member(&plugin, "manifest_sha256")); !manifest.empty()) {
+    put("SHA-256s", kDim);
+    put("plugin.json  " + manifest, kDim);
+    if (const auto* files = member(&plugin, "files"); files != nullptr && files->if_array() != nullptr) {
+      for (const auto& file : *files->if_array()) put(text(member(&file, "path")) + "  " + text(member(&file, "sha256")), kDim);
+    }
+  }
+  if (r.height - 1 >= first + rows) {
+    screen.field(r.x + 1, r.y + r.height - 1, r.width - 2, "A change applies when the server starts again.",
+                 plugins_changed_ ? Style{kYellow, kDefault} : kDim);
+  }
+}
+
 void App::draw_about(Screen& screen, const Rect area) const {
   screen.box(area, "About", kFrame, kTitle);
   const Rect r = area.inner();
@@ -1621,30 +1926,7 @@ GateAnswer debugging_gate(const Key& key) noexcept {
 void draw_debugging_notice(Screen& screen, const std::string_view notice) {
   const int left = 2;
   const int width = std::max(1, screen.width() - 2 * left);
-  // each paragraph's words, line by line within the width (a word longer than a line gets a line of its own, clipped)
-  std::vector<std::string> lines;
-  std::size_t start = 0;
-  while (start <= notice.size()) {
-    const auto end = std::min(notice.find("\n\n", start), notice.size());
-    const std::string_view paragraph = notice.substr(start, end - start);
-    if (!lines.empty()) lines.emplace_back();
-    std::string line;
-    std::size_t at = 0;
-    while (at < paragraph.size()) {
-      const auto space = std::min(paragraph.find_first_of(" \n", at), paragraph.size());
-      const std::string_view word = paragraph.substr(at, space - at);
-      at = space + 1U;
-      if (word.empty()) continue;
-      if (!line.empty() && text_width(line) + 1 + text_width(word) > width) {
-        lines.push_back(std::move(line));
-        line.clear();
-      }
-      if (!line.empty()) line += ' ';
-      line += word;
-    }
-    if (!line.empty()) lines.push_back(std::move(line));
-    start = end + 2U;
-  }
+  const auto lines = wrapped(notice, width);
   (void)screen.text(left, 1, "Debugging is on", kTitle, width);
   const int keys_row = std::min(3 + static_cast<int>(lines.size()) + 1, screen.height() - 1);
   for (std::size_t i = 0; i < lines.size() && 3 + static_cast<int>(i) < keys_row; ++i) {

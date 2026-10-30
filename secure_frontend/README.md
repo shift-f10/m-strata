@@ -463,11 +463,14 @@ headless twin. It takes the server's own options, as the window does, through th
 child, the environment copy, `<data>/logs/server.log` without the login link, and the stop in order.
 
 - **The views.** Monitor first (charts of `/metrics`' history: decode tok/s, GPU use, CPU, GPU memory, temperature and
-  power, with the Engine, Machine and Last requests panels), then Models, Downloads, Settings, Log and About. They
-  poll the page's own routes every second over loopback with the key (`/metrics`, `/v1/strata/models`, and the view's
-  route), and the keys send the page's own requests (`models/start` with the card's edited options, `stop`,
-  `calibrate`, `calibrate/cancel`, `calibrate/auto`, `downloads/start|pause|cancel`, `config/settings`,
-  `key/rotate`). A refusal is shown in the server's own words on the status line.
+  power, with the Engine, Machine and Last requests panels), then Models, Downloads, Settings, Log, About and
+  Plugins (owner 2026-10-30: the page's Plugins tab, view 7 so the other keys stay). They poll the page's own routes
+  every second over loopback with the key (`/metrics`, `/v1/strata/models`, and the view's route; Settings and Plugins
+  are read when shown and after a change), and the keys send the page's own requests (`models/start` with the card's
+  edited options, `stop`, `calibrate`, `calibrate/cancel`, `calibrate/auto`, `downloads/start|pause|cancel`,
+  `config/settings`, `key/rotate`, `plugins/approve`, `plugins/switch`). An approval, and turning on a diagnostics
+  plugin, ask first in the page's words, the question wrapped whole in its box. A refusal is shown in the server's own
+  words on the status line.
 - **The screen.** `tui_screen` keeps a grid of cells (boxes, eighth-block gauges, braille charts or, on `TERM=linux`,
   block charts) and writes only the cells that changed between frames; `NO_COLOR` drops the colours. Controls in any
   text are drawn as spaces. `tui_input` decodes VT keys (arrows, Home/End, PageUp/Down, F1-F12, Shift-Tab, the SGR mouse

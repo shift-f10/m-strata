@@ -757,12 +757,13 @@ opens on the Monitor:
 
 | Key | What it does |
 | --- | --- |
-| `1`-`6`, Tab, Shift-Tab, F1-F6 | Monitor, Models, Downloads, Settings, Log, About |
+| `1`-`7`, Tab, Shift-Tab, F1-F7 | Monitor, Models, Downloads, Settings, Log, About, Plugins |
 | Up, Down, PageUp, PageDown | Move in a list; the mouse wheel scrolls the Log |
 | Models: Enter, `s`, `c`, `x`, `a`, Del | Start the card (a card never calibrated asks first: `c` calibrate, then start; `s` start without calibrating), stop the model, calibrate, cancel the calibration, recalibrate when settings change, remove the card (asked first; its model files stay, a running model is stopped first) |
 | Models: `o`, then Up/Down, Left/Right, Esc | The card's options: pick one, change it (a switch flips, a choice or number steps), back to the cards; `r` undoes the changes |
 | Downloads: Enter, `p`, `x` | Download (or resume), pause, cancel the selected one (a model already on this PC shows Downloaded or Locally provided, and its card, and is not downloaded again; Other version: another revision of its file is here, and Enter downloads the catalog's; installed without its card: Enter makes the card) |
 | Settings: Enter, `w`, `u`, `k`, `R` | Edit the setting (a switch flips; empty means its default), save the changes, undo them, show the API key, rotate it (type `ROTATE`) |
+| Plugins: Enter, `r` | The page's Plugins tab: each plugin with its state, and the selected one's facts, switches and SHA-256s. Enter approves one waiting (asked first: its SHA-256s are pinned, and a code plugin's code runs with the server's rights), or turns one on or off (turning on the Debugging plugin says what it logs first); `r` reads the list again. A change applies when the server starts again. |
 | `q` or Ctrl-C | Quit: it asks, then stops the model and the server in order and gives the terminal back |
 
 Saved settings apply when the server starts again, as on the page. The server's output is in the Log view and in

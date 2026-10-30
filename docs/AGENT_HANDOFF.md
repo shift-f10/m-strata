@@ -280,6 +280,49 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z51 (Windows box; owner-directed)
+
+The plugin platform, step 4: the TUI's Plugins view (the owner: "TUI Plugins view next"; spec section 8, "The same in
+the TUI: a Plugins view with the same list and keys"). Also the owner's new standing rule, committed on its own
+(3d6aa5ea): workers may be used, their work is checked, and each is checked on every ten minutes (`CLAUDE.md`, the
+resume document's rule 10).
+- **`tui_app`**: `View::plugins` is view 7 (`7`, F7, Tab after About), last so the keys 1-6 stay. It reads
+  `POST /v1/strata/plugins` when shown, on `r` and after each change (`plugins_stale_`). It draws the folder, a row per
+  plugin (name, kind, version, state, running), and the selected plugin's facts, about (wrapped), reason, switches,
+  whether it runs and its SHA-256s, in the page's words (`plugin_kind_text`, `plugin_state_text`, `plugin_now`). A
+  refused list read is shown in the view as on the status line.
+- **Enter** does the selected plugin's action (the keys row names it): Approve / Approve again asks first with the
+  page's `approvalQuestion`, then `plugins/approve`; Turn on of a diagnostics plugin asks first with the page's
+  `diagnosticsNotice`, then `plugins/switch`; Turn off and Turn on of any other kind ask nothing (as the page); a
+  refused plugin says why. A done change says "it applies when the server starts again" and reads the list again.
+- **The question box** (`Prompt::plugin`) wraps the whole question (`wrapped`, now shared with the Debugging notice's
+  screen) and is as tall as it takes, within the screen; one cut short says so in its last lines.
+- **A worker's review** (read-only, checked here before acting on it) found seven things, all confirmed and fixed with
+  tests first (`the_plugins_view_fits_and_waits_for_its_changes`, RED on each):
+  - the tab bar dropped "7 Plugins" at 80 columns: the labels now sit side by side when a cell apart does not fit;
+  - at 9-10 rows the list's third row lay under the note: the list never takes the note's row;
+  - a question taller than the screen was cut without a word: its last lines now say so;
+  - the refusal check passed from the status line alone: it now looks at the view's row;
+  - a shorter list re-read left the selection past its end: it is kept on the last plugin;
+  - wording: the page's "(read only: ...)", "-" for no folder, "No plugins yet: ...", and no Enter offered on a server
+    that keeps no choices;
+  - a change could be sent twice before the list was read again: Enter waits for the answer and the re-read (as the
+    page's buttons do); a 403/404 list is asked once (until `r`); the columns fit 80 columns, each state whole.
+- **Docs**: the README's TUI keys table (1-7, Plugins: Enter, `r`), the frontend README's TUI paragraph, and the out
+  folder's README.txt line.
+- **Proof**:
+  - `plugins_are_approved_and_switched` was RED against a stub `View::plugins` (18 failures), then GREEN; the review's
+    fixes were RED in `the_plugins_view_fits_and_waits_for_its_changes` (10) and the first case (1), then GREEN. All 12
+    TUI cases pass.
+  - MSVC: the whole tree built, no warnings; the whole suite 1433/1435 (the two release-only cases a test-hooks tree
+    fails). Linux gcc 13.3 and clang 18.1: the whole tree built, no warnings; the TUI, window-shell and plugin suites
+    47/47 each. Python `test_make.py`/`test_install.py` 42/42.
+  - Live: the shares-tree strata-tui on the x25 demo data (port 18091), the demo install given an unapproved Debugging
+    plugin, in a real Windows console (scratchpad `tui_drive.py`): 7 showed it waiting with "Enter Approve"; the
+    approval question was shown whole; y approved it ("Runs after the server restarts."); Enter turned it off with no
+    question; turning it on showed the notice whole and n left it off. The console stayed 120 columns (the driver's
+    resize did not take), so 80x24 is proved by the test only. The plugin and choices were moved out afterwards.
+
 ### Claude Code session, 2026-10-30 z50 (Windows box; owner-directed)
 
 The plugin platform, step 3: Debugging is the first plugin (the owner, 2026-10-30: "we should make the email,
