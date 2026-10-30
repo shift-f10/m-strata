@@ -68,6 +68,18 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   start of the model: flint and Gemma 4 take a few short starts, the large models (as upstream and Maya do) can take an
   hour or more. **Calibrate** also runs one on its own.
   MiniMax also measures how this PC reads prompts once, before its first start, as Maya does (a few minutes).
+- **A report for a bug report** when a calibration has an error: a trial whose engine does not start, ends before it is
+  ready or fails an answer. The report is Markdown, ready to paste into an issue, and lists:
+  - what failed, and every trial with its setting and speed;
+  - for each failed trial, the server's lines for its engine (how it ended, with its exit code) and the engine's own
+    last 40 lines;
+  - this PC's hardware: the CPU and its cores, the RAM and how much was free, each GPU with its driver, compute
+    capability, PCIe link and power limit, and the operating system;
+  - the engine folder's build.
+
+  It is saved in the logs folder (`data/logs/calibration-reports/`). The card offers **Show the report** (read, Copy,
+  Save) and the TUI says where it is. Paths in the model, data, engine and home folders are shortened; it holds no key,
+  user name or host name. Look it over before you share it.
 - **Add a model** from files already on this PC (a folder and its `.gguf`); the pack is built when the family needs one.
   A Qwen model whose folder holds its picture encoder (one `mmproj*.gguf`) gets a card that reads pictures, with a
   **Pictures** option (GPU, CPU or off).
@@ -217,7 +229,8 @@ slowly, when the drive is fast NVMe.
 What has been run, on which PC (status 2026-10-30). Each row is one PC and one model family: **Pass** when it
 loads, answers and its checks hold, **Fail** when it does not. So far every row is the development system above;
 the CUDA engines have not been run on Linux, on another GPU or with less memory yet (see
-[What this system could not test](#what-this-system-could-not-test)). Results from other PCs are welcome.
+[What this system could not test](#what-this-system-could-not-test)). Results from other PCs are welcome: a
+calibration with an error writes a report with the hardware lines this table needs.
 
 | OS | CPU | GPU Type | VRAM | RAM | Model Family | Pass | Fail | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -837,6 +850,7 @@ for a real install, which makes its own key at the first start.
 | A web-search answer is empty | It ran out of tokens while reasoning (`finish_reason` `length`): raise `max_tokens`. If every search found nothing, the search box says why; see "Web search through SearXNG" for more engines. |
 | An answer stops early, marked "Max tokens" (`length`), with room left in the context | It reached the longest answer the server allows (`limits.engine.generation_timeout_s`, half an hour by default; servers built before 2026-10-29 stopped at 120 s). Raise **Longest answer (minutes)** on the model's card, or **Longest answer (seconds)** in Settings → Limits and timeouts for every model, and restart the model or the server. |
 | The engine takes long to stop with a big model | Freeing tens of GB of pinned RAM takes time; the server waits, then reports it. |
+| A calibration fails, or some of its trials do | The card says **A report for a bug report was made**: **Show the report** reads, copies or saves it (it is also in `data/logs/calibration-reports/`). It says how each failed trial's engine ended and what it printed last, with this PC's hardware; look it over, then attach it to a bug report. |
 | A model does not start, or its calibration stops ("the engine did not start") | Build with `--debugging` (or set `logging.engine_output` to `true` in the config file), restart, try again, and read the `[engine]` lines in the log (the console, or the window app's Server log): the engine says why. After `engine generation N ended: crashed` the next line gives its exit code (`0xC0000005` an access violation, `0xC0000409` an abort). Turn it off afterwards. |
 | The Monitor shows no GPU load, memory, temperature or power | Its readings come from `nvidia-smi`. A field it cannot read only blanks that reading; when there is no reading at all, the GPU card's grey line quotes what `nvidia-smi` answered (for example `Failed to initialize NVML: ...`, usually a driver that needs a restart or reinstall). |
 | A Qwen3.6 card has no MTP draft layer to choose | Its draft layer is part of the model file: the card says whether the file has one. A file without one runs without MTP; an Unsloth Qwen3.6 GGUF carries it. |

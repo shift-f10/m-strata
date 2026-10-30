@@ -1419,6 +1419,12 @@ void App::draw_models(Screen& screen, const Rect area) const {
     }
     screen.field(r.x + 1, r.y + line++, r.width - 2, words, kDim);
   }
+  // the owner (2026-10-30): a calibration with an error made a report for a bug report, in the server's logs folder
+  if (const auto* report = member(calibration, "report"); report != nullptr && report->if_object() != nullptr && line < r.height) {
+    screen.field(r.x + 1, r.y + line++, r.width - 2,
+                 "Report for a bug report: logs/calibration-reports/" + text(member(report, "file")) + " (look it over first)",
+                 Style{kYellow, kDefault, false});
+  }
   const auto* automatic = member(calibration, "auto");
   if (line < r.height) {
     screen.field(r.x + 1, r.y + line, r.width - 2,

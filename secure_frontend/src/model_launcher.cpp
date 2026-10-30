@@ -3,6 +3,7 @@
 #include "secure_frontend/canonical_path.hpp"
 #include "secure_frontend/card_builder.hpp"
 #include "secure_frontend/config_file.hpp"
+#include "secure_frontend/crt_environment.hpp"
 #include "secure_frontend/engine_stdio_process.hpp"
 #include "secure_frontend/host_readings.hpp"
 #include "secure_frontend/launch_composition.hpp"
@@ -15,6 +16,7 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <deque>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -60,6 +62,39 @@ std::string calibration_file_name(const std::string_view card) {
   std::string name{card};
   std::replace(name.begin(), name.end(), ':', '_');
   return name + ".json";
+}
+
+// What a calibration trial's engine said (a report's, owner 2026-10-30): the supervisor's lines for it and the engine's
+// own last lines of output, each kept by the thread that sees it (the supervisor's, the stderr drain).
+struct TrialCapture final {
+  std::mutex mutex;
+  std::deque<std::string> events;
+  std::deque<std::string> tail;
+  void event(const std::string_view line) {
+    const std::lock_guard lock(mutex);
+    events.emplace_back(line);
+    if (events.size() > kReportEventLines) events.pop_front();
+  }
+  void engine(const std::string_view line) {
+    const std::lock_guard lock(mutex);
+    tail.emplace_back(line.substr(0, kReportLineChars + 1U));
+    if (tail.size() > kReportEngineLines) tail.pop_front();
+  }
+  void into(CalibrationTrialRecord& trial) {
+    const std::lock_guard lock(mutex);
+    trial.events.assign(events.begin(), events.end());
+    trial.engine_tail.assign(tail.begin(), tail.end());
+  }
+};
+
+// The user's home folder (a report shortens it to ~); empty when unknown.
+std::string home_folder() {
+#if defined(_WIN32)
+  const char* const home = crt_getenv("USERPROFILE");
+#else
+  const char* const home = crt_getenv("HOME");
+#endif
+  return home == nullptr ? std::string{} : std::string{home};
 }
 
 // MiniMax's prefill record beside it (<card>.prefill.json).
@@ -341,6 +376,7 @@ void ModelLauncher::erase_card(const std::size_t index) {
   // its calibration goes with it (spec 2026-10-27 §4.5): a later card of that name starts uncalibrated
   auto_recalibrate_.erase(name);
   calibration_errors_.erase(name);
+  calibration_reports_.erase(name);
 }
 
 void ModelLauncher::forget_card(const std::string& name) {
@@ -835,6 +871,11 @@ std::string ModelLauncher::calibration_json(const std::size_t index, const Model
          ",\"date\":" + (stored ? json_string(stored->date) : std::string{"null"}) + ",\"args\":[" + args + "]" +
          ",\"auto\":" + ((stored ? stored->auto_recalibrate : switched_on(card.name)) ? "true" : "false") +
          ",\"error\":" + (error == calibration_errors_.end() ? std::string{"null"} : json_string(error->second));
+  // a calibration's report for a bug report (owner 2026-10-30): its file in the logs folder, and when it was made
+  const auto report = calibration_reports_.find(card.name);
+  out += ",\"report\":" + (report == calibration_reports_.end()
+                                ? std::string{"null"}
+                                : "{\"file\":" + json_string(report->second.file) + ",\"date\":" + json_string(report->second.date) + "}");
   // MiniMax: its prefill calibration (null: never run here)
   if (card.profile == EngineProfile::minimax) {
     const auto prefill = read_prefill(card.name);
@@ -855,24 +896,58 @@ std::string ModelLauncher::calibration_json(const std::size_t index, const Model
 // §5.1: every candidate is one start of the card with those flags; the workload's median decode tok/s is its score.
 // The engine is stopped after each; a start that fails, a reply that is not one, or a cancel scores nothing.
 std::optional<double> ModelLauncher::measure(const ModelCard& card, const ModelOptionValues& values,
-                                             const std::vector<std::string>& args, const unsigned max_tokens) {
+                                             const std::vector<std::string>& args, const unsigned max_tokens,
+                                             CalibrationTrialRecord* const trial) {
   const auto stop_asked = [this] {
     std::lock_guard lock(mutex_);
     return shutting_down_ || cancel_calibration_.load();
   };
+  const auto failed = [trial](std::string why) {
+    if (trial != nullptr && trial->failure.empty()) trial->failure = std::move(why);
+  };
   const auto config = config_with(card, values, args);
-  if (config == nullptr) return std::nullopt;
+  if (config == nullptr) {
+    failed("the card's settings could not be made with this trial's");
+    return std::nullopt;
+  }
   auto composed = compose_model(*config, true);
   if (auto* failure = std::get_if<ComposeFailure>(&composed)) {
-    for (const auto& message : failure->messages) log("[strata] models: " + card.name + ": " + message);
+    std::string messages;
+    for (const auto& message : failure->messages) {
+      log("[strata] models: " + card.name + ": " + message);
+      messages += (messages.empty() ? "" : "; ") + message;
+    }
+    failed("the engine's start could not be composed: " + messages);
     return std::nullopt;
   }
   auto& model = std::get<ComposedModel>(composed);
-  if (!prepare_state_dir(*config->roots.state, *model.plan.environment)) return std::nullopt;
+  if (!prepare_state_dir(*config->roots.state, *model.plan.environment)) {
+    failed("the engine's state folder could not be prepared");
+    return std::nullopt;
+  }
   const std::string model_id = model.model_id;
   EngineLaunchPlan plan = std::move(model.plan);
+  // a report's (owner 2026-10-30): the engine's own last lines (still in the log too with logging.engine_output), and
+  // the supervisor's lines for this engine, which still go to stderr as they always do
+  const auto capture = std::make_shared<TrialCapture>();
+  SupervisorLog supervisor_log;
+  if (trial != nullptr) {
+    plan.command.stderr_lines = [capture, logged = std::move(plan.command.stderr_lines)](const std::string_view line) {
+      capture->engine(line);
+      if (logged) logged(line);
+    };
+    supervisor_log = [capture](const std::string_view line) {
+      capture->event(line);
+      std::cerr << line << '\n';
+      std::cerr.flush();
+    };
+  }
+  const auto collect = [trial, &capture] {
+    if (trial != nullptr) capture->into(*trial);
+  };
   ServeMonitor meter;
-  auto runtime = std::make_shared<ModelRuntime>(std::move(model), settings_.factory(std::move(plan)), settings_.gate, &meter);
+  auto runtime = std::make_shared<ModelRuntime>(std::move(model), settings_.factory(std::move(plan)), settings_.gate, &meter,
+                                                std::make_shared<SteadySupervisorClock>(), ProcessFactory{}, std::move(supervisor_log));
   {
     std::lock_guard lock(mutex_);
     measuring_ = runtime;
@@ -886,8 +961,12 @@ std::optional<double> ModelLauncher::measure(const ModelCard& card, const ModelO
     if (runtime->supervisor().engine_left_unreaped()) unreaped_ = true;
   };
   if (!runtime->supervisor().start()) {
-    std::lock_guard lock(mutex_);
-    measuring_.reset();
+    {
+      std::lock_guard lock(mutex_);
+      measuring_.reset();
+    }
+    failed("the engine's supervisor did not start");
+    collect();
     return std::nullopt;
   }
   bool ready = false;
@@ -902,6 +981,8 @@ std::optional<double> ModelLauncher::measure(const ModelCard& card, const ModelO
   }
   if (!ready) {
     finish();
+    if (!stop_asked()) failed("the engine ended before it was ready");
+    collect();
     return std::nullopt;
   }
   std::vector<double> speeds;
@@ -910,15 +991,20 @@ std::optional<double> ModelLauncher::measure(const ModelCard& card, const ModelO
     const auto result = runtime->chat().handle(calibration_body(card.profile, model_id, kCalibrationPrompts[i], i == 0U ? 16U : max_tokens), context);
     const auto* response = std::get_if<HttpResponse>(&result);
     if (response == nullptr || response->status != 200) {
-      log("[strata] models: " + card.name + ": a calibration reply failed (" +
-          (response != nullptr ? std::string{response->log_code} : std::string{"stream"}) + ")");
+      const std::string code = response != nullptr ? std::string{response->log_code} : std::string{"stream"};
+      log("[strata] models: " + card.name + ": a calibration reply failed (" + code + ")");
+      if (!stop_asked()) failed("a calibration answer failed (" + code + ")");
       break;
     }
     if (i == 0U) continue;  // the warm-up
     if (const auto speed = meter.last_decode_tok_s(); speed && std::isfinite(*speed) && *speed > 0.0) speeds.push_back(*speed);
   }
   finish();
-  if (speeds.size() + 1U < kCalibrationPrompts.size()) return std::nullopt;
+  collect();
+  if (speeds.size() + 1U < kCalibrationPrompts.size()) {
+    if (!stop_asked()) failed("too few answers were measured (" + std::to_string(speeds.size()) + ")");
+    return std::nullopt;
+  }
   std::sort(speeds.begin(), speeds.end());
   return speeds[speeds.size() / 2U];
 }
@@ -950,10 +1036,24 @@ bool ModelLauncher::run_calibration(const Job& job) {
     (void)run_prefill_calibration(job);
   }
   log("[strata] models: calibrating " + card.name + " (each candidate is one engine start)");
+  const std::string started = utc_now();
+  std::vector<CalibrationTrialRecord> trials;
   const auto outcome = run_sweep(
       sweep_plan(card.profile, machine_),
-      [this, &card, &job](const std::vector<std::string>& args, const unsigned max_tokens) {
-        return measure(card, job.values, args, max_tokens);
+      [this, &card, &job, &trials](const std::vector<std::string>& args, const unsigned max_tokens) {
+        CalibrationTrialRecord trial;
+        {
+          std::lock_guard lock(mutex_);
+          if (calibrating_.has_value()) {
+            trial.number = calibrating_->progress.trial;
+            trial.stage = calibrating_->progress.stage;
+          }
+        }
+        trial.args = args;
+        trial.max_tokens = max_tokens;
+        trial.tok_s = measure(card, job.values, args, max_tokens, &trial);
+        trials.push_back(std::move(trial));
+        return trials.back().tok_s;
       },
       [this, &card](const SweepProgress& progress) {
         {
@@ -970,6 +1070,19 @@ bool ModelLauncher::run_calibration(const Job& job) {
       sweep_keep_margin(card.profile));
   std::string_view failure;
   bool kept = false;
+  // a failed trial (not a cancel): its report for a bug report (owner 2026-10-30), told in the alerts
+  std::string report;
+  const auto report_line = [&report] {
+    return report.empty() ? std::string{} : " A report for a bug report is in the server's logs folder: calibration-reports/" + report + ".";
+  };
+  if (outcome.end != SweepOutcome::End::cancelled && report_needed(trials)) {
+    const std::string result =
+        outcome.end == SweepOutcome::End::failed
+            ? "the calibration failed: the engine did not start for the calibration with the engine's defaults"
+            : "the calibration finished at " + decimal_text(outcome.baseline_tok_s) + " -> " + decimal_text(outcome.best_tok_s) +
+                  " tok/s; the trials that failed were left out";
+    report = write_report(card, job.values, started, result, std::move(trials));
+  }
   if (outcome.end == SweepOutcome::End::done) {
     const auto before = read_calibration(card.name);
     std::optional<bool> switched;
@@ -989,7 +1102,8 @@ bool ModelLauncher::run_calibration(const Job& job) {
     if (kept) {
       alert("calibration_finished", card.name + " is calibrated",
             "Decode speed: " + decimal_text(outcome.baseline_tok_s) + " tok/s with the engine's defaults, " +
-                decimal_text(outcome.best_tok_s) + " tok/s" + (flags.empty() ? " (the defaults were fastest)." : " with" + flags + "."));
+                decimal_text(outcome.best_tok_s) + " tok/s" + (flags.empty() ? " (the defaults were fastest)." : " with" + flags + ".") +
+                report_line());
     }
   } else if (outcome.end == SweepOutcome::End::failed) {
     failure = kCalibrationFailed;
@@ -997,7 +1111,7 @@ bool ModelLauncher::run_calibration(const Job& job) {
   } else {
     log("[strata] models: " + card.name + ": the calibration was cancelled; nothing was kept");
   }
-  if (!failure.empty()) alert("calibration_failed", card.name + " was not calibrated", std::string{failure} + ".");
+  if (!failure.empty()) alert("calibration_failed", card.name + " was not calibrated", std::string{failure} + "." + report_line());
   std::lock_guard lock(mutex_);
   calibrating_.reset();
   cancel_calibration_.store(false);
@@ -1008,6 +1122,67 @@ bool ModelLauncher::run_calibration(const Job& job) {
     calibration_errors_[card.name] = std::string{failure};
   }
   return kept;
+}
+
+std::optional<ModelLauncher::CalibrationReportFile> ModelLauncher::calibration_report(const std::string_view name) const {
+  std::lock_guard lock(mutex_);
+  const auto found = calibration_reports_.find(name);
+  if (found == calibration_reports_.end()) return std::nullopt;
+  return found->second;
+}
+
+// The owner (2026-10-30): "it should create a detailed message of the errors encountered along with a detailed list of
+// the hardware, that way a user can submit this as a report for bug fixes". The card's model folder, the engine's
+// folder, the data folder and the home folder are shortened in every line of it.
+std::string ModelLauncher::write_report(const ModelCard& card, const ModelOptionValues& values, std::string started,
+                                        std::string outcome, std::vector<CalibrationTrialRecord> trials) {
+  if (!settings_.report_dir.has_value()) return {};
+  const auto text = [&card](const std::string_view key) -> std::string {
+    const auto found = card.config.entries.find(std::string{key});
+    const auto* value = found == card.config.entries.end() ? nullptr : std::get_if<std::string>(&found->second.value);
+    return value == nullptr ? std::string{} : *value;
+  };
+  const auto models = path_from_utf8(text("roots.models"));
+  const auto model = models / path_from_utf8(text("engine.model_id") + ".gguf");
+  std::vector<PathAlias> aliases{{text("roots.models"), "<model folder>"},
+                                 {path_to_utf8(path_from_utf8(text("engine.executable")).parent_path()), "<engine>"},
+                                 {home_folder(), "~"}};
+  // <data>/state/calibration and <data>/logs/calibration-reports
+  if (settings_.calibration_dir.has_value()) aliases.push_back({path_to_utf8(settings_.calibration_dir->parent_path().parent_path()), "<data>"});
+  aliases.push_back({path_to_utf8(settings_.report_dir->parent_path().parent_path()), "<data>"});
+  for (auto& trial : trials) {
+    trial.failure = scrub_paths(trial.failure, aliases);
+    for (auto& line : trial.events) line = scrub_paths(line, aliases);
+    for (auto& line : trial.engine_tail) line = scrub_paths(line, aliases);
+  }
+  CalibrationReport report;
+  report.date = utc_now();
+  report.card = card.name;
+  report.family = std::string{profile_name(card.profile)};
+  report.model_file = path_to_utf8(model.filename());
+  std::error_code ec;
+  if (const auto bytes = std::filesystem::file_size(model, ec); !ec) report.model_bytes = bytes;
+  report.options = options_fact(values);
+  report.started = std::move(started);
+  report.outcome = std::move(outcome);
+  report.trials = std::move(trials);
+  report.machine = settings_.report_machine ? settings_.report_machine()
+                                            : ReportMachine{hardware_facts(), physical_cores(), read_memory(), {}, std::nullopt};
+  const std::string markdown = render_calibration_report(report);
+  const std::string file = report_file_name(card.name, report.date);
+  auto root = open_root(*settings_.report_dir, RootPolicy::create_private);
+  const auto relative = parse_relative_path(file);
+  if (!std::holds_alternative<CanonicalRoot>(root) || !std::holds_alternative<RelativePath>(relative) ||
+      write_private_file(std::get<CanonicalRoot>(root), std::get<RelativePath>(relative), markdown, TokenStoreMode::replace).has_value()) {
+    log("[strata] models: " + card.name + ": the calibration's report could not be written");
+    return {};
+  }
+  {
+    std::lock_guard lock(mutex_);
+    calibration_reports_[card.name] = CalibrationReportFile{file, report.date, markdown};
+  }
+  log("[strata] models: " + card.name + ": a report for a bug report: " + path_to_utf8(*settings_.report_dir / path_from_utf8(file)));
+  return file;
 }
 
 void ModelLauncher::run_jobs() {

@@ -280,6 +280,62 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z42 (Windows box; owner-directed)
+
+The owner: "When calibrating a model and an error occurs, it should create a detailed message of the errors
+encountered along with a detailed list of the hardware, that way a user can submit this as a report for bug fixes,
+etc."
+
+- **What a report holds** (`calibration_report.{hpp,cpp}`, pure): Markdown for a GitHub issue, with:
+  - what happened: the card, family, model file name and size, options, start and outcome;
+  - a table of every trial: setting, answer length, speed or why it failed;
+  - each failed trial in full, at most 10: the supervisor's lines for its engine (its end and exit code, at most 20)
+    and the engine's own last 40 lines, each cut to 400 characters;
+  - the hardware: the CPU and its physical cores, the RAM and how much was free, and the OS;
+  - each GPU from a new nvidia-smi query: driver, compute capability, PCIe gen/width max and power limit;
+  - the engine folder's `build.json`.
+- **How it is made** (`ModelLauncher`):
+  - `measure()` fills a `CalibrationTrialRecord` per trial. Each way a trial fails is said: composed, state folder,
+    supervisor start, ended before ready, an answer failed, too few answers.
+  - A trial's engine stderr goes to a `TrialCapture`, and still to the log with `logging.engine_output`.
+  - The supervisor's lines go through a new `ModelRuntime` `supervisor_log` argument, still printed to stderr.
+  - When a trial failed (not on a cancel), `write_report` shortens the model, engine, data and home folders
+    (`scrub_paths`).
+  - It writes `<roots.logs>/calibration-reports/calibration-<card>-<UTC>.md` owner-only, and keeps it for
+    `calibration_report()`.
+  - The card's calibration JSON gains `"report": {"file", "date"} | null`. The calibration alerts say where the
+    report is.
+- **Route**: `POST /v1/strata/models/calibrate/report {"name"}` -> `{"name", "file", "date", "report"}`, or
+  `not_found`. It is a control route like `calibrate/auto`, served only while its handler is set.
+- **Page and TUI**:
+  - The page's calibration box says a report was made and offers **Show the report**: a dialog with the Markdown,
+    Copy and Save (the chat export's `saveText`).
+  - The TUI's Models view names the file under `logs/calibration-reports/`.
+- **README**: a feature bullet, a Troubleshooting row, and the compatibility table's pointer to it. The threat model
+  has the third stderr reader.
+- **Proof**: RED first: `calibration_report_tests` (6 cases), `a_failed_calibration_writes_a_report` (the fake ends
+  before ready with exit code 3) and the success test's "no report", the router's report route, the page check and the
+  TUI line. GREEN: see the end of this entry.
+- **Found by the first live report, fixed:** `physical_cores()` on Windows counted 11 of the Ryzen 9 3900X's 12 cores.
+  Its walk over `GetLogicalProcessorInformationEx` needed a whole `SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX` (sized for
+  its union's largest member) left in the buffer, so the last, shorter core record was never read. It now walks by each
+  record's own Size. The calibration sweeps plan their CPU-thread candidates from this count, so they were one core
+  short on Windows. RED then GREEN: `physical_cores_count_every_core` (Windows' older `GetLogicalProcessorInformation`,
+  Linux's `/proc/cpuinfo`).
+- **Live** (the shares tree's server on the demo data, the real Gemma 4 engine, port 18091):
+  - Expert VRAM 1024 GB did not fail (the engine clamps it); that calibration finished at 74.3 tok/s with no report,
+    as it should.
+  - GPUs "3" (this PC has only GPU 0) failed at once. The report came from the route and from
+    `logs/calibration-reports`, with:
+    - `engine generation 1 ended: error_exit` and `exit code 1`;
+    - the engine's own "CUDA error in stream: no CUDA-capable device is detected";
+    - the RTX 4080 SUPER with driver 610.88, compute capability 8.9 and PCIe gen 4 x16;
+    - the x25 build record.
+- **Not covered yet**:
+  - MiniMax's prompt-reading measurement (`run_prefill_calibration`, its own engine run before the sweep): a failure
+    there is logged, not reported.
+  - A report is kept for the card only until the server restarts; the file stays in the logs folder.
+
 ### Claude Code session, 2026-10-30 z41 (Windows box; owner-directed)
 
 The owner: "In the readme add a Compatibility Table that has the OS, CPU, GPU Type, VRAM, RAM, Model Family, Pass,

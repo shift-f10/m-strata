@@ -779,7 +779,8 @@ secure_frontend_add_library(secure_frontend_model_launcher
     SOURCES src/model_launcher.cpp
     LINKS secure_frontend_model_runtime secure_frontend_model_cards secure_frontend_model_options secure_frontend_api_router
           secure_frontend_engine_stdio_process secure_frontend_token_store secure_frontend_typed_config secure_frontend_launch
-          secure_frontend_calibration secure_frontend_subsystem_limits secure_frontend_card_builder)
+          secure_frontend_calibration secure_frontend_subsystem_limits secure_frontend_card_builder
+          secure_frontend_calibration_report)
 # GUI-first start-up (spec 2026-10-27 §5a): the optional email alerts - the SMTP dialogue, its TLS connection (SChannel
 # on Windows, OpenSSL elsewhere), the queue and the password - only with SECURE_FRONTEND_EMAIL_ALERTS.
 if(SECURE_FRONTEND_EMAIL_ALERTS OR SECURE_FRONTEND_WEB_SEARCH)
@@ -831,6 +832,9 @@ secure_frontend_add_library(secure_frontend_about_info SOURCES src/about_info.cp
 if(WIN32)
     target_link_libraries(secure_frontend_about_info PUBLIC advapi32)
 endif()
+# A calibration's report for a bug report (owner 2026-10-30): its trials, this PC's hardware and the build, as Markdown.
+secure_frontend_add_library(secure_frontend_calibration_report SOURCES src/calibration_report.cpp
+    LINKS secure_frontend_about_info secure_frontend_serve_monitor)
 # GUI-first start-up (spec 2026-10-27 §4): the page's card and folder routes (kModelCardRoutes) over the launcher.
 secure_frontend_add_library(secure_frontend_card_routes SOURCES src/card_routes.cpp
     LINKS secure_frontend_card_builder secure_frontend_local_folders secure_frontend_model_launcher secure_frontend_api_core
@@ -1977,7 +1981,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_minimax_card_measures_its_prompt_reading_first a_glm_card_calibrates a_failed_prefill_calibration_is_not_retried_by_itself
         a_prefill_calibration_falls_back_to_the_default_chunk
         a_calibration_can_be_cancelled
-        removing_a_card_removes_its_calibration failures_raise_alerts a_stop_waits_for_an_engine_still_ending
+        removing_a_card_removes_its_calibration failures_raise_alerts a_failed_calibration_writes_a_report
+        a_stop_waits_for_an_engine_still_ending
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
 
     # Model downloads (plan 2026-10-23-model-downloads Task 4): the download manager over a scripted child.
@@ -2167,7 +2172,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         the_sweep_keeps_only_clear_wins a_win_that_does_not_repeat_is_dropped a_failed_baseline_or_a_cancel_ends_it
         the_plan_follows_the_engine joint_steps_and_longer_answers a_step_ends_below_its_floor
         a_calibration_applies_flags_and_rows the_file_takes_every_sweeps_settings prefill_records_round_trip
-        results_round_trip_and_keys_compare
+        results_round_trip_and_keys_compare physical_cores_count_every_core
         the_key_reads_files_and_options
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
@@ -2275,6 +2280,14 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_about_info_tests tests/about_info_test.cpp secure_frontend_about_info)
     secure_frontend_add_cases(secure_frontend_about_info_tests
         the_build_record_is_read_and_checked this_pcs_hardware_is_named the_about_json_has_both this_pcs_gpus_are_listed
+        LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+
+    # A calibration's report for a bug report (owner 2026-10-30).
+    secure_frontend_add_test_executable(secure_frontend_calibration_report_tests tests/calibration_report_test.cpp
+        secure_frontend_calibration_report)
+    secure_frontend_add_cases(secure_frontend_calibration_report_tests
+        the_report_says_what_failed_and_on_what_hardware a_report_is_made_only_when_a_trial_failed paths_are_shortened
+        nvidia_smi_report_lines_are_read the_report_file_name_is_safe the_report_is_bounded
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     secure_frontend_add_test_executable(secure_frontend_server_cli_tests tests/server_cli_test.cpp

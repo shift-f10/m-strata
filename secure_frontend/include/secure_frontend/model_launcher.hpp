@@ -18,6 +18,7 @@
 #include "secure_frontend/api_errors.hpp"
 #include "secure_frontend/api_router.hpp"
 #include "secure_frontend/calibration.hpp"
+#include "secure_frontend/calibration_report.hpp"
 #include "secure_frontend/engine_supervisor.hpp"
 #include "secure_frontend/frontend_config.hpp"
 #include "secure_frontend/generation_gate.hpp"
@@ -83,6 +84,11 @@ struct LauncherSettings final {
   std::optional<std::filesystem::path> calibration_dir{};
   // The GPU's name and memory for the calibration key (the Monitor's newest reading); empty: unknown.
   std::function<std::string()> gpu_fact{};
+  // A calibration's report for a bug report (owner 2026-10-30): the folder a calibration with a failed trial writes it
+  // to (<roots.logs>/calibration-reports; unset: none is written), and this PC's hardware for it, read once per report
+  // on the calibration's thread (unset: the CPU, RAM and OS this process reads, with no GPU details).
+  std::optional<std::filesystem::path> report_dir{};
+  std::function<ReportMachine()> report_machine{};
   // GUI-first start-up (spec 2026-10-27 §5a): an alert (calibration_finished, calibration_failed, engine_stopped) with
   // its subject and text - the card's name and a fixed reason, never a path. Called outside the launcher's lock.
   std::function<void(std::string_view event, const std::string& subject, const std::string& body)> on_event{};
@@ -122,6 +128,14 @@ class ModelLauncher final {
   [[nodiscard]] std::optional<Refusal> cancel_calibration();
   // "Recalibrate when settings change" for card `name`: kept with its calibration (or with the next one).
   [[nodiscard]] std::optional<Refusal> set_auto_recalibrate(std::string_view name, bool on);
+  // Card `name`'s last calibration report since this server started (owner 2026-10-30: made when a trial failed):
+  // its file name in LauncherSettings::report_dir, when it was made, and its Markdown. nullopt: none.
+  struct CalibrationReportFile final {
+    std::string file;
+    std::string date;
+    std::string text;
+  };
+  [[nodiscard]] std::optional<CalibrationReportFile> calibration_report(std::string_view name) const;
   // A card made while the server runs (a prepared download's): listed at once, stopped. false:
   // a card of that name is already held, or kMaxLauncherCards are.
   [[nodiscard]] bool add_card(ModelCard card);
@@ -194,8 +208,15 @@ class ModelLauncher final {
   void run_start(const Job& job);
   // §5: the sweep, each candidate one engine start of the card with those flags; true when a result was kept.
   [[nodiscard]] bool run_calibration(const Job& job);
+  // `trial` (when given) is filled with how the start went: its speed, or why it failed, the server's lines for its
+  // engine and the engine's last lines of output (a report's, owner 2026-10-30).
   [[nodiscard]] std::optional<double> measure(const ModelCard& card, const ModelOptionValues& values,
-                                              const std::vector<std::string>& args, unsigned max_tokens);
+                                              const std::vector<std::string>& args, unsigned max_tokens,
+                                              CalibrationTrialRecord* trial = nullptr);
+  // A calibration with a failed trial: its report written to settings_.report_dir and kept for calibration_report;
+  // the file's name (empty: none written).
+  [[nodiscard]] std::string write_report(const ModelCard& card, const ModelOptionValues& values, std::string started,
+                                         std::string outcome, std::vector<CalibrationTrialRecord> trials);
   // MiniMax (Maya's tools/calibrate_mm3_prefill.py): one run of the engine's own --calibrate-prefill with the card's
   // start, over a real text's tokens; the engine keeps the result in the pack (prefill-tune.txt) and this server a record
   // of it (<card>.prefill.json beside the calibrations). True when the engine finished.
@@ -243,6 +264,7 @@ class ModelLauncher final {
   std::optional<CalibrationRun> calibrating_;
   std::atomic<bool> cancel_calibration_{false};
   std::map<std::string, std::string, std::less<>> calibration_errors_;
+  std::map<std::string, CalibrationReportFile, std::less<>> calibration_reports_;  // the last report per card
   std::map<std::string, bool, std::less<>> auto_recalibrate_;  // a switch set before the card's first calibration
   [[nodiscard]] bool write_calibration(const CalibrationResult& result);
   std::string cpu_fact_;

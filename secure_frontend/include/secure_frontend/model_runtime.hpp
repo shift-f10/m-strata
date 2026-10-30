@@ -87,8 +87,10 @@ class ModelRuntime final {
  public:
   // With model.vision, the encoder runs from `vision_factory` (empty: vision_process_factory) and the chat route reads
   // pictures through it; the caller starts it (start_vision) once the engine is up and stops it before the engine.
+  // `supervisor_log` takes the supervisor's lines (empty: stderr; a calibration trial keeps them for its report).
   ModelRuntime(ComposedModel model, ProcessFactory factory, GateLimits gate, ServeMonitor* monitor,
-               std::shared_ptr<SupervisorClock> clock = std::make_shared<SteadySupervisorClock>(), ProcessFactory vision_factory = {});
+               std::shared_ptr<SupervisorClock> clock = std::make_shared<SteadySupervisorClock>(), ProcessFactory vision_factory = {},
+               SupervisorLog supervisor_log = {});
   ModelRuntime(const ModelRuntime&) = delete;
   ModelRuntime& operator=(const ModelRuntime&) = delete;
 

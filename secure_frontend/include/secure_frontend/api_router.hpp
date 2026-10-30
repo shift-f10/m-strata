@@ -46,6 +46,8 @@ struct ModelControl final {
   std::function<RouteResult(std::string_view body, const RequestContext& context)> calibrate{};
   std::function<RouteResult(std::string_view body, const RequestContext& context)> cancel_calibration{};
   std::function<RouteResult(std::string_view body, const RequestContext& context)> auto_recalibrate{};
+  // A calibration's report for a bug report (owner 2026-10-30): POST /v1/strata/models/calibrate/report {"name"}.
+  std::function<RouteResult(std::string_view body, const RequestContext& context)> calibration_report{};
 };
 
 // The download routes' handler (kModelDownloadRoutes); empty: the routes are not served (404).

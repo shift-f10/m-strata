@@ -27,6 +27,7 @@ std::string_view route_name(const RouteId route) {
     case RouteId::strata_calibrate: return "strata_calibrate";
     case RouteId::strata_calibrate_cancel: return "strata_calibrate_cancel";
     case RouteId::strata_calibrate_auto: return "strata_calibrate_auto";
+    case RouteId::strata_calibrate_report: return "strata_calibrate_report";
     case RouteId::strata_login_link: return "strata_login_link";
     case RouteId::strata_alerts: return "strata_alerts";
     case RouteId::strata_alerts_settings: return "strata_alerts_settings";

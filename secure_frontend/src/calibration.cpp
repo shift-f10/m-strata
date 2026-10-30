@@ -7,6 +7,7 @@
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -221,9 +222,11 @@ unsigned physical_cores() {
     std::vector<unsigned char> buffer(length);
     if (GetLogicalProcessorInformationEx(RelationProcessorCore, reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()),
                                          &length) != FALSE) {
-      for (DWORD offset = 0; offset + sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX) <= length;) {
+      // each record is its own Size long - a core's is shorter than the struct (its union's largest member), so the
+      // walk needs only the header in the buffer (the whole struct missed the last core: 11 of a 3900X's 12)
+      for (DWORD offset = 0; offset + offsetof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, Processor) <= length;) {
         const auto* info = reinterpret_cast<const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buffer.data() + offset);
-        if (info->Size == 0U) break;
+        if (info->Size == 0U || offset + info->Size > length) break;
         if (info->Relationship == RelationProcessorCore) ++count;
         offset += info->Size;
       }

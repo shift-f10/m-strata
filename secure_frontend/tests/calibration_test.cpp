@@ -17,6 +17,13 @@
 #include <variant>
 #include <vector>
 
+#if defined(_WIN32)
+#include "secure_frontend/win32_prelude.hpp"
+#else
+#include <fstream>
+#include <set>
+#endif
+
 namespace {
 
 int failures = 0;
@@ -179,6 +186,42 @@ void the_plan_follows_the_engine() {
   const unsigned cores = secure_frontend::physical_cores();
   expect(cores >= 1U && cores <= std::max(1U, std::thread::hardware_concurrency()),
          "this machine's physical cores: " + std::to_string(cores));
+}
+
+// Every physical core is counted (2026-10-30: a calibration report said "11 physical cores" for a 12-core Ryzen 9 3900X -
+// the last core record of GetLogicalProcessorInformationEx was left out), checked against another count: Windows' older
+// GetLogicalProcessorInformation, /proc/cpuinfo's (physical id, core id) pairs on Linux.
+void physical_cores_count_every_core() {
+  unsigned expected = 0;
+#if defined(_WIN32)
+  DWORD length = 0;
+  (void)GetLogicalProcessorInformation(nullptr, &length);
+  std::vector<SYSTEM_LOGICAL_PROCESSOR_INFORMATION> records(length / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION) + 1U);
+  length = static_cast<DWORD>(records.size() * sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION));
+  if (GetLogicalProcessorInformation(records.data(), &length) != FALSE) {
+    for (std::size_t i = 0; i < length / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION); ++i) {
+      if (records[i].Relationship == RelationProcessorCore) ++expected;
+    }
+  }
+#else
+  std::ifstream cpuinfo("/proc/cpuinfo");
+  std::set<std::pair<std::string, std::string>> cores;
+  std::string package;
+  for (std::string line; std::getline(cpuinfo, line);) {
+    const auto colon = line.find(':');
+    if (colon == std::string::npos) continue;
+    const auto value = colon + 2U <= line.size() ? line.substr(colon + 2U) : std::string{};
+    if (line.rfind("physical id", 0) == 0U) package = value;
+    if (line.rfind("core id", 0) == 0U) cores.emplace(package, value);
+  }
+  expected = static_cast<unsigned>(cores.size());
+#endif
+  if (expected == 0U) {
+    std::cout << "SKIP: this machine's cores could not be counted another way\n";
+    return;
+  }
+  expect(secure_frontend::physical_cores() == expected,
+         "every core: " + std::to_string(secure_frontend::physical_cores()) + " of " + std::to_string(expected));
 }
 
 // upstream's expert tier: three flags set together, measured on longer answers (after the best so far is measured on
@@ -362,5 +405,6 @@ int main(int argc, char** argv) {
       {"prefill_records_round_trip", prefill_records_round_trip},
       {"results_round_trip_and_keys_compare", results_round_trip_and_keys_compare},
       {"the_key_reads_files_and_options", the_key_reads_files_and_options},
+      {"physical_cores_count_every_core", physical_cores_count_every_core},
   }, failures);
 }

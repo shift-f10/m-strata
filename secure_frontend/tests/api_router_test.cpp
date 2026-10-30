@@ -634,6 +634,17 @@ void web_ui_models_tab_calibrates() {
              js.find("p.state === \"failed\"") != std::string::npos && js.find("p.state === \"stale\"") != std::string::npos &&
              js.find("stage === \"prompt reading\"") != std::string::npos,
          "the first start and MiniMax's prompt reading are said in words");
+  // the owner (2026-10-30): a calibration with an error makes a report for a bug report - the card says so, and the
+  // report is shown from its route to read, copy and save
+  for (const char* id : {"id=\"model-calibration-report\"", "id=\"model-calibration-report-show\"", "id=\"calibration-report\"",
+                         "id=\"calibration-report-text\"", "id=\"calibration-report-copy\"", "id=\"calibration-report-save\"",
+                         "id=\"calibration-report-close\""}) {
+    expect(html.find(id) != std::string::npos, std::string{"the page has "} + id);
+  }
+  expect(js.find("api(\"/v1/strata/models/calibrate/report\", jsonPost({ name: name }))") != std::string::npos &&
+             js.find("$(\"model-calibration-report\").hidden = !report || !!run;") != std::string::npos &&
+             js.find("saveText(d.report, d.file)") != std::string::npos && js.find("navigator.clipboard.writeText(d.report)") != std::string::npos,
+         "a card with a report offers it, read from its route, copied or saved");
 }
 
 // The Settings tab (spec 2026-10-28-server-window-design, Part 1; the owner: "a configuration tab ... api key, etc"): the
@@ -1791,11 +1802,13 @@ void config_routes_need_their_handler_and_the_key() {
 }
 
 // GUI-first start-up (spec 2026-10-27 §5.3): the calibration routes are control routes - keyed, POST, a small JSON
-// body - served only while their handlers are set; a launcher without them (or with control off) answers 404.
+// body - served only while their handlers are set; a launcher without them (or with control off) answers 404. The
+// report route (owner 2026-10-30: a calibration's report for a bug report) is one of them.
 void calibration_routes_need_their_handlers_and_the_key() {
   std::vector<std::string> calls;
   auto plain = launcher_router(&calls);
-  for (const char* target : {"/v1/strata/models/calibrate", "/v1/strata/models/calibrate/cancel", "/v1/strata/models/calibrate/auto"}) {
+  for (const char* target : {"/v1/strata/models/calibrate", "/v1/strata/models/calibrate/cancel", "/v1/strata/models/calibrate/auto",
+                             "/v1/strata/models/calibrate/report"}) {
     expect(request(plain, "POST", target, "{}").status == 404, std::string{target} + " is no route without its handler");
   }
   secure_frontend::SecretBytes secret;
@@ -1819,6 +1832,7 @@ void calibration_routes_need_their_handlers_and_the_key() {
   handlers.calibrate = record("calibrate");
   handlers.cancel_calibration = record("cancel");
   handlers.auto_recalibrate = record("auto");
+  handlers.calibration_report = record("report");
   secure_frontend::ApiRouter router({
       .policy = secure_frontend::make_http_policy(*secure_frontend::parse_listener_address("127.0.0.1"), 8080, {}, {}),
       .validator = secure_frontend::make_bearer_validator(std::make_shared<const secure_frontend::TokenVerifier>(std::move(secret))),
@@ -1830,7 +1844,8 @@ void calibration_routes_need_their_handlers_and_the_key() {
   calls.clear();
   for (const auto& [target, what] : std::vector<std::pair<std::string, std::string>>{{"/v1/strata/models/calibrate", "calibrate"},
                                                                                       {"/v1/strata/models/calibrate/cancel", "cancel"},
-                                                                                      {"/v1/strata/models/calibrate/auto", "auto"}}) {
+                                                                                      {"/v1/strata/models/calibrate/auto", "auto"},
+                                                                                      {"/v1/strata/models/calibrate/report", "report"}}) {
     expect(request(router, "POST", target, "{\"name\":\"x\"}", false).status == 401, target + " needs the key");
     expect(request(router, "POST", target, "{\"name\":\"x\"}").status == 202 && !calls.empty() && calls.back() == what + " {\"name\":\"x\"}",
            target + " reaches its handler with the body");

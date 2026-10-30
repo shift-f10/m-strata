@@ -659,6 +659,35 @@ secure_frontend::HttpResponse auto_recalibrate_answer(secure_frontend::ModelLaun
   return json_answer(200, std::string{"{\"auto_recalibrate\":"} + (*on ? "true" : "false") + "}\n");
 }
 
+// A calibration's report for a bug report (owner 2026-10-30): POST /v1/strata/models/calibrate/report {"name"} ->
+// {"name", "file", "date", "report"} (its Markdown); not_found when the card has none since this server started.
+secure_frontend::HttpResponse calibration_report_answer(const secure_frontend::ModelLauncher& launcher, const std::string_view body) {
+  constexpr secure_frontend::JsonLimits kLimits{.max_bytes = secure_frontend::kModelControlBodyLimit, .max_depth = 2U,
+                                                .max_container_entries = 4U, .max_string_bytes = 256U};
+  const auto parsed = secure_frontend::parse_json(body, kLimits);
+  const auto* root = std::get_if<secure_frontend::JsonValue>(&parsed);
+  const auto* members = root == nullptr ? nullptr : root->if_object();
+  const std::string* name = nullptr;
+  if (members != nullptr) {
+    for (const auto& member : *members) {
+      if (member.key == "name" && member.value.if_string() != nullptr) name = member.value.if_string();
+      else return secure_frontend::make_error_response(secure_frontend::ApiError::invalid_request);
+    }
+  }
+  if (name == nullptr) return secure_frontend::make_error_response(secure_frontend::ApiError::invalid_request);
+  const auto report = launcher.calibration_report(*name);
+  if (!report.has_value()) return secure_frontend::make_error_response(secure_frontend::ApiError::not_found);
+  std::string text = "{\"name\":";
+  secure_frontend::append_json_string(&text, *name);
+  text += ",\"file\":";
+  secure_frontend::append_json_string(&text, report->file);
+  text += ",\"date\":";
+  secure_frontend::append_json_string(&text, report->date);
+  text += ",\"report\":";
+  secure_frontend::append_json_string(&text, report->text);
+  return json_answer(200, text + "}\n");
+}
+
 // Model downloads (plan 2026-10-23-model-downloads Task 4): the cards prepared downloads wrote
 // (<roots.state>/cards/*.json, by file name), each read and validated like a listed card; one
 // whose name is already held is refused by name.
@@ -852,6 +881,19 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
   if (config.models.control) {
     launcher_settings.calibration_dir = *config.roots.state / "calibration";
     if (monitor.has_value()) launcher_settings.gpu_fact = [&monitor] { return monitor->gpu_fact(); };
+    // A calibration's report for a bug report (owner 2026-10-30): <roots.logs>/calibration-reports, with this PC's
+    // hardware read when one is made (nvidia-smi as the Monitor runs it) and the engine folder's build record.
+    if (config.roots.logs.has_value()) launcher_settings.report_dir = *config.roots.logs / "calibration-reports";
+    launcher_settings.report_machine = [engine = config.models.default_engine.value_or(config.engine.executable.path()), &monitor] {
+      secure_frontend::ReportMachine machine{secure_frontend::hardware_facts(), secure_frontend::physical_cores(),
+                                             secure_frontend::read_memory(), {}, secure_frontend::read_engine_build(engine.parent_path())};
+      if (monitor.has_value()) machine.hardware.gpu = monitor->gpu_fact();
+      machine.gpus = secure_frontend::report_gpus({.executable = secure_frontend::nvidia_smi_path(),
+                                                   .arguments = secure_frontend::nvidia_smi_report_arguments(),
+                                                   .environment = secure_frontend::nvidia_smi_environment(),
+                                                   .no_new_privileges = true, .insert_serve = false});
+      return machine;
+    };
   }
   secure_frontend::ModelLauncher launcher(std::move(launcher_settings));
   // D2: model control for key holders on loopback; remote clients only with models.control_remote, and only from
@@ -898,6 +940,11 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
                                                     const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {
       if (!allowed(context)) return secure_frontend::make_error_response(secure_frontend::ApiError::control_not_allowed);
       return auto_recalibrate_answer(launcher, body);
+    };
+    control.calibration_report = [&launcher, allowed](const std::string_view body,
+                                                      const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {
+      if (!allowed(context)) return secure_frontend::make_error_response(secure_frontend::ApiError::control_not_allowed);
+      return calibration_report_answer(launcher, body);
     };
   }
   // Model downloads (O1-O4): every transfer and link lookup a `strata` child, the prepare step

@@ -295,11 +295,11 @@ bool prepare_state_dir(const std::filesystem::path& state_dir, const EngineEnvir
 }
 
 ModelRuntime::ModelRuntime(ComposedModel model, ProcessFactory factory, const GateLimits gate, ServeMonitor* monitor,
-                           std::shared_ptr<SupervisorClock> clock, ProcessFactory vision_factory)
+                           std::shared_ptr<SupervisorClock> clock, ProcessFactory vision_factory, SupervisorLog supervisor_log)
     : model_id_(model.model_id),
       aliases_(model.aliases),
       tokenizer_(std::move(model.tokenizer)),
-      supervisor_(model.supervisor, std::move(factory), std::move(clock)),
+      supervisor_(model.supervisor, std::move(factory), std::move(clock), std::move(supervisor_log)),
       port_(supervisor_),
       gate_(gate),
       vision_resident_(!model.vision.has_value() || model.vision->resident),

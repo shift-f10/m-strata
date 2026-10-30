@@ -272,7 +272,8 @@ const std::string kModels =
     R"({"name":"max_context","kind":"integer","label":"Context length","help":"","default":131072,"min":4096,"max":262144,"value":131072}],)"
     R"("calibration":{"state":"fresh","first_start":false,"running":null,"before":80.0,"after":96.0,"date":"2026-10-29T01:00:00Z","args":["--spec","6"],"auto":false,"error":null}},)"
     R"({"name":"MiniMax","profile":"minimax","state":"stopped","error":null,"options":[],)"
-    R"("calibration":{"state":"missing","first_start":false,"running":null,"args":[],"auto":false,"error":null,)"
+    R"("calibration":{"state":"missing","first_start":false,"running":null,"args":[],"auto":false,"error":"the engine did not start",)"
+    R"("report":{"file":"calibration-MiniMax-20261030-041646.md","date":"2026-10-30T04:16:46Z"},)"
     R"("prefill":{"state":"done","chunk":1024,"gemm":"blas","tok_s":14.9,"default_tok_s":14.9,"date":"2026-10-29T01:14:17Z"}}}]})";
 
 t::Key character(const std::string& text) { return t::Key{t::Key::Kind::character, text, 0}; }
@@ -637,6 +638,9 @@ void the_views_switch_and_keys_become_requests() {
   const std::string text = all_text(screen);
   expect(text.find("Prompt reading: chunks of 1024 tokens") != std::string::npos && text.find("Not calibrated") != std::string::npos,
          "the card's calibration and MiniMax's prompt reading are said");
+  // the owner (2026-10-30): a calibration with an error made a report for a bug report - where it is
+  expect(text.find("Report for a bug report: logs/calibration-reports/calibration-MiniMax-20261030-041646.md") != std::string::npos,
+         "where the calibration's report is: " + text);
   // an action's refusal is said in the server's words
   app.answer({"calibrate MiniMax", "POST", "/v1/strata/models/calibrate", {}}, 409,
              R"({"error":{"message":"another start or stop is in progress","type":"invalid_request_error","param":null,"code":"switch_in_progress"}})");

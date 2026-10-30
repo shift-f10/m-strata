@@ -5,6 +5,7 @@
 // remembered.
 #include "secure_frontend/api_errors.hpp"
 #include "secure_frontend/calibration.hpp"
+#include "secure_frontend/calibration_report.hpp"
 #include "secure_frontend/canonical_path.hpp"
 #include "secure_frontend/card_builder.hpp"
 #include "secure_frontend/config_file.hpp"
@@ -672,6 +673,18 @@ struct CalibrationFixture final {
     secure_frontend::LauncherSettings settings{.main = main, .cards = operator_cards ? cards : std::vector<secure_frontend::ModelCard>{},
                                                .operator_cards = operator_cards ? cards.size() : 0U, .memory_file = {}, .gate = {}};
     settings.calibration_dir = data.state / "calibration";
+    // a calibration's report for a bug report (owner 2026-10-30), with this fixed hardware
+    settings.report_dir = report_dir();
+    settings.report_machine = [] {
+      secure_frontend::ReportMachine machine;
+      machine.hardware.cpu = "Test CPU, 8 threads";
+      machine.hardware.os = "Test OS 1.0";
+      machine.physical_cores = 4U;
+      machine.memory = secure_frontend::MemoryReading{.used_bytes = 4ULL << 30U, .total_bytes = 16ULL << 30U};
+      machine.gpus = {{.index = 0U, .name = "Test GPU", .mem_total_bytes = 8192ULL << 20U, .mem_used_bytes = 512ULL << 20U,
+                       .driver = "999.1", .compute_cap = "8.9", .pcie_gen_max = 4U, .pcie_width_max = 16U, .power_limit_w = 200.0}};
+      return machine;
+    };
     settings.log = [](std::string_view) {};
     if (factory) settings.factory = std::move(factory);
     settings.on_event = [list = events](const std::string_view event, const std::string& subject, const std::string&) {
@@ -687,6 +700,16 @@ struct CalibrationFixture final {
   CalibrationFixture(const CalibrationFixture&) = delete;
   CalibrationFixture& operator=(const CalibrationFixture&) = delete;
   [[nodiscard]] std::filesystem::path result_file(const std::string& card) const { return data.state / "calibration" / (card + ".json"); }
+  [[nodiscard]] std::filesystem::path report_dir() const { return data.logs / "calibration-reports"; }
+  // the reports written so far
+  [[nodiscard]] std::vector<std::filesystem::path> reports() const {
+    std::vector<std::filesystem::path> found;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator entry(report_dir(), ec), end; !ec && entry != end; entry.increment(ec)) {
+      found.push_back(entry->path());
+    }
+    return found;
+  }
 };
 
 secure_frontend::JsonValue json_of(const std::string_view text) {
@@ -712,6 +735,9 @@ void calibration_finds_the_win_and_starts_with_it() {
          "the list shows the calibration: " + listed);
   expect(f.events->size() == 1U && f.events->front() == "calibration_finished: " + name + " is calibrated",
          "an alert says the calibration finished: " + (f.events->empty() ? std::string{"(none)"} : f.events->front()));
+  // no trial failed: no report
+  expect(f.reports().empty() && !f.launcher->calibration_report(name).has_value() && listed.find("\"report\":null") != std::string::npos,
+         "no report when nothing failed: " + listed);
 
   expect(!f.launcher->start(name, nullptr, false).has_value() && f.launcher->wait_until_settled(std::chrono::seconds(60)) &&
              f.launcher->state_of(name) == secure_frontend::CardState::running,
@@ -813,6 +839,39 @@ void failures_raise_alerts() {
          "a start of an operator card");
   expect(f.events->size() == 2U && f.events->back().rfind("engine_stopped: other-gemma-Q8_0", 0) == 0U,
          "whose engine ends before it is ready raises engine_stopped: " + (f.events->empty() ? std::string{"(none)"} : f.events->back()));
+}
+
+// The owner (2026-10-30): "When calibrating a model and an error occurs, it should create a detailed message of the
+// errors encountered along with a detailed list of the hardware, that way a user can submit this as a report for bug
+// fixes". A calibration whose engine ends before it is ready writes a report to <logs>/calibration-reports: the card,
+// its model file, each trial, the failed one with the server's lines for its engine (its exit code) and the engine's
+// own last lines, and the hardware. The list points to it and the launcher hands it out; no path of this PC's folders
+// is in it.
+void a_failed_calibration_writes_a_report() {
+  CalibrationFixture f({"--exit-before-ready=3"}, true);
+  const std::string name = "tiny-gemma-Q8_0";
+  expect(!f.launcher->calibrate(name, nullptr, false, std::nullopt, false).has_value(), "a calibration is accepted");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(60)), "it ends");
+  expect(f.launcher->state_of(name) == secure_frontend::CardState::failed, "the card failed");
+  const auto files = f.reports();
+  expect(files.size() == 1U, "one report: " + std::to_string(files.size()));
+  if (files.size() != 1U) return;
+  const std::string file = secure_frontend::path_to_utf8(files.front().filename());
+  expect(file.rfind("calibration-" + name + "-", 0) == 0U && file.ends_with(".md"), "its name: " + file);
+  const std::string text = secure_frontend_test::read_file(files.front());
+  for (const std::string& part : {std::string{"# M-Strata calibration report"}, name + " (gemma4)", std::string{"tiny-gemma-Q8_0.gguf, "},
+                                 std::string{"the calibration failed"}, std::string{"| 1 | defaults |"},
+                                 std::string{"failed: the engine ended before it was ready"}, std::string{"exit code 3"},
+                                 std::string{"diagnostic: private engine startup"}, std::string{"Test CPU, 8 threads (4 physical cores)"},
+                                 std::string{"GPU 0: Test GPU, 8192 MiB (512 MiB in use), driver 999.1"}, std::string{"Test OS 1.0"}}) {
+    expect(text.find(part) != std::string::npos, "the report has " + part + ": " + text);
+  }
+  expect(text.find(secure_frontend::path_to_utf8(f.root)) == std::string::npos, "no path of this PC's folders: " + text);
+  const auto handed = f.launcher->calibration_report(name);
+  expect(handed.has_value() && handed->file == file && handed->text == text, "the launcher hands it out");
+  const std::string listed = f.launcher->list_json();
+  expect(listed.find("\"report\":{\"file\":\"" + file + "\"") != std::string::npos, "the list points to it: " + listed);
+  expect(!f.launcher->calibration_report("other-gemma-Q8_0").has_value(), "none for a card that was not calibrated");
 }
 
 // §5.3: Cancel stops the sweep (the engine it started is stopped) and keeps nothing.
@@ -1444,6 +1503,7 @@ int main(int argc, char** argv) {
       {"removing_a_card_removes_its_calibration", removing_a_card_removes_its_calibration},
       {"a_stop_waits_for_an_engine_still_ending", a_stop_waits_for_an_engine_still_ending},
       {"failures_raise_alerts", failures_raise_alerts},
+      {"a_failed_calibration_writes_a_report", a_failed_calibration_writes_a_report},
       {"bad_card_refused_at_boot_and_main_rows_refused", bad_card_refused_at_boot_and_main_rows_refused},
   }, failures);
 }
