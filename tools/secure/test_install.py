@@ -3,6 +3,7 @@ download dependencies, install them then run the build"): what they pin is what 
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import shutil
 import subprocess
@@ -175,3 +176,77 @@ def test_the_window_question_defaults_to_no_without_a_display():
     sh = text("install.sh")
     assert 'if [ "$display" = 1 ]; then window_default=y; window_note=""; else window_default=n; window_note=" (no display here)"; fi' in sh
     assert '?" "$window_default"; then with="$with,window"; fi' in sh
+
+
+def linux_installer_host() -> bool:
+    os_release = Path("/etc/os-release")
+    return bool(sys.platform.startswith("linux") and os_release.is_file() and shutil.which("sh") and shutil.which("dpkg-query")
+                and re.search(r"^ID=\"?(ubuntu|debian)\"?$", os_release.read_text(encoding="utf-8"), re.MULTILINE))
+
+
+def test_install_sh_finds_gcc_13_before_installing_anything(tmp_path):
+    """The owner's Azure VM (2026-10-30, Ubuntu 22.04): install.sh installed the CUDA Toolkit (3.3 GB) and only then said
+    GCC 13 was missing. The compiler is looked at with everything else, before anything is installed: GCC 13 or newer
+    is used as it is; gcc-13/g++-13 beside an older gcc are what the build uses (CC, CXX, CUDAHOSTCXX - the system's gcc
+    stays); on Ubuntu 22.04 the plan installs them from Ubuntu's toolchain PPA; anywhere else an older GCC stops the
+    script at once. Run as a plan on a stand-in system: an os-release file (M_STRATA_OS_RELEASE) and a PATH whose gcc
+    is the one given."""
+    if not linux_installer_host():
+        pytest.skip("install.sh runs on Ubuntu or Debian")
+    real_bin = tmp_path / "real"
+    real_bin.mkdir()
+    # every command of this system but its compilers, which each case puts back as it needs
+    for folder in ("/usr/local/bin", "/usr/bin", "/bin"):
+        for entry in Path(folder).iterdir():
+            name = entry.name
+            if re.match(r"^(gcc|g\+\+|cc|c\+\+|x86_64-linux-gnu-(gcc|g\+\+))(-[0-9.]+)?$", name) or (real_bin / name).exists():
+                continue
+            (real_bin / name).symlink_to(entry)
+
+    def system(name: str, os_id: str, version: str, compilers: dict[str, str]) -> dict[str, str]:
+        root = tmp_path / name
+        (root / "bin").mkdir(parents=True)
+        for program, major in compilers.items():
+            fake = root / "bin" / program
+            fake.write_text(f"#!/bin/sh\n[ \"$1\" = -dumpversion ] && echo {major}.4.0\n", encoding="utf-8")
+            fake.chmod(0o755)
+        release = root / "os-release"
+        release.write_text(f'ID={os_id}\nVERSION_ID="{version}"\nPRETTY_NAME="{os_id} {version}"\n', encoding="utf-8")
+        return dict(os.environ, PATH=f"{root / 'bin'}:{real_bin}", M_STRATA_OS_RELEASE=str(release),
+                    XDG_CONFIG_HOME=str(root / "config"))
+
+    def run(env: dict[str, str]) -> subprocess.CompletedProcess:
+        env.pop("DISPLAY", None)
+        env.pop("WAYLAND_DISPLAY", None)
+        return subprocess.run(["sh", str(ROOT / "install.sh"), "--plan", "--yes", "--out", str(tmp_path / "out")],
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180, env=env, check=False,
+                              start_new_session=True)
+
+    # Ubuntu 22.04, GCC 11: the PPA's gcc-13 in the plan, the system's gcc kept
+    done = run(system("jammy", "ubuntu", "22.04", {"gcc": "11"}))
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "GCC 13: missing - will install gcc-13 and g++-13 from Ubuntu's toolchain PPA" in done.stdout
+    assert "sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test" in done.stdout and "sudo apt-get install -y gcc-13 g++-13" in done.stdout
+    assert "CC=gcc-13 CXX=g++-13 CUDAHOSTCXX=g++-13" in done.stdout, "the build is pointed at them"
+    # gcc-13 already beside GCC 11: used, nothing to install for it
+    done = run(system("jammy13", "ubuntu", "22.04", {"gcc": "11", "gcc-13": "13", "g++-13": "13"}))
+    assert done.returncode == 0 and "ppa:ubuntu-toolchain-r" not in done.stdout and "CC=gcc-13 CXX=g++-13" in done.stdout, done.stdout
+    # GCC 13 as gcc: used as it is
+    done = run(system("noble", "ubuntu", "24.04", {"gcc": "13"}))
+    assert done.returncode == 0 and "GCC: 13" in done.stdout and "CC=gcc-13" not in done.stdout, done.stdout
+    # no gcc yet on Ubuntu 24.04: build-essential brings 13
+    done = run(system("noble-bare", "ubuntu", "24.04", {}))
+    assert done.returncode == 0 and "comes with build-essential" in done.stdout, done.stdout
+    # Debian 12 (GCC 12): stopped at once, before the plan and before anything is installed
+    done = run(system("bookworm", "debian", "12", {"gcc": "12"}))
+    assert done.returncode != 0 and "GCC 13 or newer is needed (this system has GCC 12)" in done.stderr + done.stdout
+    assert "== The plan" not in done.stdout and "Installing" not in done.stdout
+
+
+def test_the_gcc_check_comes_before_any_install():
+    """In the script itself: the compiler is decided in step 1, and the toolchain PPA (when it is needed) is installed
+    before the CUDA Toolkit's download."""
+    sh = text("install.sh")
+    assert sh.index("GCC 13 or newer is needed") < sh.index("step 'The plan'")
+    assert sh.index("ppa:ubuntu-toolchain-r/test") < sh.index("step 'Installing the CUDA Toolkit 13.0'")
+    assert 'os_release=${M_STRATA_OS_RELEASE:-/etc/os-release}' in sh

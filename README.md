@@ -279,12 +279,12 @@ hand**. Either way you end with an *out folder*: everything M-Strata needs to ru
 
 | | Windows | Linux |
 | --- | --- | --- |
-| System | Windows 10 or 11, 64-bit | x86_64; the script knows Ubuntu 24.04+ and Debian (apt) |
+| System | Windows 10 or 11, 64-bit | x86_64; the script knows Ubuntu 22.04+ and Debian 13+ (apt) |
 | GPU | An NVIDIA GPU with a current driver (CUDA 13.0 needs driver 580 or newer); `nvidia-smi` shows it | the same |
 | Memory and disk | As much RAM as you can give the model (see [Models](#models)); about 20 GB free for the tools and the build, plus NVMe space for the model files | the same |
 | Git | [Git for Windows](https://git-scm.com/download/win) | `git` |
 | Python | 3.10 or newer ([python.org](https://www.python.org/downloads/) or the `py` launcher) | `python3`, `python3-venv` |
-| C++ compiler | Visual Studio 2022 **Build Tools with "Desktop development with C++"** (the MSVC v143 x64 compiler and a Windows SDK) | GCC 13+ (`build-essential` on Ubuntu 24.04) |
+| C++ compiler | Visual Studio 2022 **Build Tools with "Desktop development with C++"** (the MSVC v143 x64 compiler and a Windows SDK) | GCC 13+ (`build-essential` on Ubuntu 24.04; on Ubuntu 22.04 the script installs `gcc-13` from Ubuntu's toolchain PPA and builds with it) |
 | CUDA | CUDA Toolkit **13.0** (the tested version) | `cuda-toolkit-13-0` from NVIDIA's apt repository |
 | CMake and Ninja | CMake 3.28+ and Ninja (`pip install cmake ninja`) | the same |
 | Optional | The window (`--with window`): Microsoft's WebView2 SDK | email alerts: `libssl-dev`; the window: `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, `pkg-config` |
@@ -346,7 +346,9 @@ Running it again is safe: it skips what is there and builds into a new folder.
 
 ### Install with one script (Linux)
 
-On Ubuntu 24.04 or newer, or Debian, `install.sh` does the same with apt. It installs the CUDA Toolkit 13.0 from
+On Ubuntu 22.04 or newer, or Debian 13, `install.sh` does the same with apt. It checks the compiler first, before it
+installs anything: on Ubuntu 22.04, whose GCC is 11, it installs `gcc-13` and `g++-13` from Ubuntu's toolchain PPA
+(`ppa:ubuntu-toolchain-r/test`) and builds with them, leaving the system's `gcc` as it is. It installs the CUDA Toolkit 13.0 from
 NVIDIA's own repository and asks for your password for `sudo`:
 
 ```bash
