@@ -147,8 +147,11 @@
     modelsSubtab = name;
     $("models-pane-start").hidden = name !== "start";
     $("models-pane-download").hidden = name !== "download";
+    $("models-pane-compat").hidden = name !== "compat";
     $("models-subtab-start").setAttribute("aria-selected", name === "start" ? "true" : "false");
     $("models-subtab-download").setAttribute("aria-selected", name === "download" ? "true" : "false");
+    $("models-subtab-compat").setAttribute("aria-selected", name === "compat" ? "true" : "false");
+    if (name === "compat") { refreshCompat(); }
   }
 
   function showView(name) {
@@ -889,6 +892,128 @@
     link.click();
     document.body.removeChild(link);
     window.setTimeout(function () { URL.revokeObjectURL(link.href); }, 1000);
+  }
+
+  // ---------------------------------------------------------------- compatibility
+  // The owner (2026-10-30): "in the models section we create another tab, the same Compatibility Table we have on the
+  // readme based on the active calibrated models and have a copy/share so users can report their stats and notes on
+  // their system". A row per card calibrated here (Pass) or whose last calibration failed (Fail), this PC's hardware
+  // from /v1/strata/about, the user's notes (kept for this tab, as the chat is), and the Markdown the README's table
+  // takes, to paste into a GitHub issue (the page names no other server, so it links to none).
+  var COMPAT_HEADER = "| OS | CPU | GPU Type | VRAM | RAM | Model Family | Pass | Fail | Notes |";
+  var COMPAT_NOTES = "strata.compatNotes";
+  var COMPAT_PASS = "\u2705", COMPAT_FAIL = "\u274C";
+  var FAMILIES = { qwen: "Qwen", gemma4: "Gemma 4", glm53: "GLM-5.3", raon1: "Raon-1", deepseek: "DeepSeek-V4.1",
+                   minimax: "MiniMax-M3.1", flint: "flint" };
+  var compat = { about: null };
+  function compatNotes() {
+    var notes = load(COMPAT_NOTES, {});
+    return notes && typeof notes === "object" ? notes : {};
+  }
+  function saveCompatNote(card, text) {
+    var all = compatNotes();
+    if (text) { all[card] = text; } else { delete all[card]; }
+    save(COMPAT_NOTES, all);
+  }
+  function wholeGb(bytes) { return typeof bytes === "number" && bytes > 0 ? Math.round(bytes / 1073741824) + " GB" : "-"; }
+  function compatMachine() {
+    var h = (compat.about && compat.about.hardware) || {};
+    var gpus = Array.isArray(h.gpus) ? h.gpus : [];
+    return {
+      os: h.os || "-",
+      cpu: h.cpu || "-",
+      gpu: gpus.length ? gpus.map(function (g) { return g.name; }).join(" + ") : (h.gpu ? String(h.gpu).split(",")[0] : "-"),
+      vram: gpus.length ? gpus.map(function (g) { return wholeGb(g.mem_bytes); }).join(" + ") : "-",
+      ram: wholeGb(h.ram_bytes)
+    };
+  }
+  function compatRows() {
+    var d = launcher.data, notes = compatNotes();
+    return (d && Array.isArray(d.data) ? d.data : []).map(function (card) {
+      var cal = card.calibration && typeof card.calibration === "object" ? card.calibration : null;
+      if (!cal) { return null; }
+      var failed = typeof cal.error === "string" && cal.error !== "";
+      var measured = typeof cal.after === "number" && typeof cal.before === "number";
+      if (!failed && !measured) { return null; }
+      var speed = measured ? fmt(cal.after, 1) + " tok/s after calibration" + (cal.date ? " (" + String(cal.date).slice(0, 10) + ")" : "") +
+                             ", " + fmt(cal.before, 1) + " tok/s with the engine's defaults" +
+                             (Array.isArray(cal.args) && cal.args.length ? ", kept " + cal.args.join(" ") : "") : "";
+      // "(see the server log)" is for this PC's owner, not for a shared table
+      var auto = failed ? "Calibration failed: " + cal.error.replace(/ \(see the server log\)$/, "") +
+                          (cal.report && cal.report.file ? " (report: " + cal.report.file + ")" : "") +
+                          (speed ? "; earlier " + speed : "")
+                        : speed;
+      return { card: card.name, family: (FAMILIES[card.profile] || card.profile || "") + ": " + card.name, pass: !failed, auto: auto,
+               note: typeof notes[card.name] === "string" ? notes[card.name] : "" };
+    }).filter(function (row) { return row; });
+  }
+  function compatCell(text) { return String(text).replace(/\|/g, "\\|").replace(/[\r\n]+/g, " "); }
+  function compatMarkdown() {
+    var m = compatMachine();
+    var lines = [COMPAT_HEADER, "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"];
+    compatRows().forEach(function (row) {
+      var notes = row.auto + (row.note ? ". " + row.note : "");
+      lines.push("| " + [m.os, m.cpu, m.gpu, m.vram, m.ram, row.family, row.pass ? COMPAT_PASS : "", row.pass ? "" : COMPAT_FAIL, notes]
+        .map(compatCell).join(" | ") + " |");
+    });
+    var b = compat.about && compat.about.build;
+    return lines.join("\n") + "\n" + (b ? "\nM-Strata build " + (b.commit || "-") + " (" + (b.built || "-") + "), GPU targets " +
+                                         (b.cuda_arch || "-") + ".\n" : "");
+  }
+  async function refreshCompat() {
+    var d = null;
+    try {
+      var response = await api("/v1/strata/about");
+      if (response.ok) { d = JSON.parse(await response.text()); }
+    } catch (e) { d = null; }
+    compat.about = d;
+    renderCompat();
+  }
+  // Drawn when the sub-tab opens or Refresh is pressed - never by a poll, which would take a note being typed away.
+  function renderCompat() {
+    var table = $("compat-table");
+    clear(table);
+    var rows = compatRows(), m = compatMachine();
+    $("compat-empty").hidden = rows.length > 0;
+    table.hidden = !rows.length;
+    $("compat-result").textContent = "";
+    var b = compat.about && compat.about.build;
+    $("compat-build").textContent = b ? "M-Strata build " + (b.commit || "-") + " (" + (b.built || "-") + "), GPU targets " + (b.cuda_arch || "-") + "." : "";
+    if (!rows.length) { return; }
+    var labels = COMPAT_HEADER.split("|").map(function (c) { return c.trim(); }).filter(function (c) { return c; });
+    var head = el("tr");
+    labels.forEach(function (label) { head.appendChild(el("th", null, label)); });
+    var thead = el("thead");
+    thead.appendChild(head);
+    table.appendChild(thead);
+    var tbody = el("tbody");
+    rows.forEach(function (row) {
+      var tr = el("tr");
+      var cells = [m.os, m.cpu, m.gpu, m.vram, m.ram, row.family, row.pass ? COMPAT_PASS : "", row.pass ? "" : COMPAT_FAIL];
+      cells.forEach(function (text, i) {
+        var td = el("td", i === 6 || i === 7 ? "compat-mark" : null, text);
+        td.setAttribute("data-label", labels[i]);
+        tr.appendChild(td);
+      });
+      var notes = el("td", "compat-notes");
+      notes.setAttribute("data-label", labels[8]);
+      notes.appendChild(el("div", null, row.auto));
+      var input = el("input", "st-input");
+      input.type = "text";
+      input.value = row.note;
+      input.placeholder = "Your notes (kept for this tab)";
+      input.setAttribute("aria-label", "Your notes for " + row.card);
+      input.addEventListener("input", function () { saveCompatNote(row.card, input.value.trim()); });
+      notes.appendChild(input);
+      tr.appendChild(notes);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+  }
+  function copyCompat(then) {
+    if (!navigator.clipboard) { $("compat-result").textContent = "This browser cannot copy here: use Save."; return; }
+    navigator.clipboard.writeText(compatMarkdown()).then(function () { $("compat-result").textContent = then; },
+      function () { $("compat-result").textContent = "The table could not be copied: use Save."; });
   }
 
   // ---------------------------------------------------------------- sampling drawer
@@ -3741,6 +3866,10 @@
     $("tab-btn-models").addEventListener("click", function () { showView("models"); });
     $("models-subtab-start").addEventListener("click", function () { showModelsSubtab("start"); });
     $("models-subtab-download").addEventListener("click", function () { showModelsSubtab("download"); });
+    $("models-subtab-compat").addEventListener("click", function () { showModelsSubtab("compat"); });
+    $("compat-refresh").addEventListener("click", refreshCompat);
+    $("compat-copy").addEventListener("click", function () { copyCompat("Copied: paste it into an issue on the project's GitHub page."); });
+    $("compat-save").addEventListener("click", function () { saveText(compatMarkdown(), "m-strata-compatibility.md"); });
     $("tab-btn-settings").addEventListener("click", function () { showView("settings"); });
     $("key-show").addEventListener("click", function () { keyShown = !keyShown; renderKey(); });
     $("key-copy").addEventListener("click", function () { if (state.key) { copyText(state.key); } });

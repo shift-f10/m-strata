@@ -280,6 +280,36 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z44 (Windows box; owner-directed)
+
+The owner: "How about in the models section we create another tab, the same Compatibility Table we have on the readme
+based on the active calibrated models and have a copy/share so users can report their stats and notes on their system?"
+
+- **The page: a third Models sub-tab, Compatibility** (`models-subtab-compat`, `models-pane-compat`).
+  - It has the README's columns (`COMPAT_HEADER`, checked against README.md by
+    `tools/secure/test_compatibility_table.py`).
+  - There is one row per card. A Pass row is a stored calibration, with its speed after and with the defaults, its
+    date and kept flags. A Fail row is a calibration error, with the reason, the report's file name and any earlier
+    speed.
+  - The machine comes from `GET /v1/strata/about`: OS, CPU, GPU names, VRAM and RAM in whole GB.
+  - The user's notes per card are kept for the tab, through the page's guarded storage helpers (`strata.compatNotes`
+    in sessionStorage).
+  - **Copy** puts the Markdown on the clipboard, with the build line below it. **Save** downloads
+    `m-strata-compatibility.md`. Both are for pasting into a GitHub issue.
+  - **Not done as asked (a page rule):** the owner asked for "copy/share", and there is no Share link to GitHub, nor
+    notes kept in localStorage. `web_ui_assets_are_bundled_and_inert` requires that no page asset names another server
+    (no `http(s)://`) and that app.js never uses localStorage. A first version had both, and those checks failed. The
+    tests stand; the page says to paste the copy into an issue on the project's GitHub page.
+  - The table is drawn when the sub-tab opens or on Refresh, never by a poll, so a note being typed stays.
+- **Proof**:
+  - RED then GREEN: `web_ui_models_tab_shows_compatibility` and `test_the_page_copies_the_readmes_columns`.
+  - Live on a test server with the demo data, in the browser pane:
+    - the Gemma 4 row passed at 74.3 tok/s;
+    - a note typed there survived a reload of the tab;
+    - Copy, with the clipboard captured in the page (not the user's), gave a README-ready row and the build line;
+    - after a failing calibration (GPU "3"), the row turned to Fail with the report's name and the earlier speed.
+- **Not done**: the TUI has no such view (the page and the window app have it).
+
 ### Claude Code session, 2026-10-30 z43 (second Windows PC, RTX 5090; owner-directed)
 
 The owner, on a second PC: "pull the latest from origin, then work on the compatibility table of the readme for this
