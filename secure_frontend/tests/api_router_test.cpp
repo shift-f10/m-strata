@@ -897,6 +897,32 @@ void web_ui_email_is_the_email_plugins_card() {
          "a text list with choices is a checkbox per choice");
 }
 
+// Trust by key (plugin spec section 11; the owner's decision 8): the Plugins tab lists the keys the server trusts - the
+// install's own, and the publisher keys the owner added, each removable - with a form to add one, and each plugin card
+// says who signed it, or why its signature is not taken; one signed with a key the server does not trust offers to trust
+// that key. Adding or removing a key asks first, and applies when the server restarts.
+void web_ui_plugins_tab_trusts_publisher_keys() {
+  const std::string html{secure_frontend::find_web_asset("/")->body};
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  for (const char* id : {"id=\"plugins-keys-card\"", "id=\"plugins-keys\"", "id=\"plugins-key-name\"", "id=\"plugins-key-value\"",
+                         "id=\"plugins-key-add\""}) {
+    expect(html.find(id) != std::string::npos, std::string{"the keys card has "} + id);
+  }
+  expect(html.find("signed with a key it trusts") != std::string::npos, "the tab says a signed plugin runs");
+  expect(js.find("api(\"/v1/strata/plugins/keys\", jsonPost({ add: key, name: name }))") != std::string::npos &&
+             js.find("api(\"/v1/strata/plugins/keys\", jsonPost({ remove: k.key }))") != std::string::npos,
+         "the keys route adds and removes");
+  expect(js.find("if (!window.confirm(trustKeyQuestion(name, key))) { return; }") != std::string::npos &&
+             js.find("if (!window.confirm(\"Stop trusting \" + k.name + \"'s key?") != std::string::npos,
+         "trusting or dropping a key asks first");
+  expect(js.find("if (k.install) { row.appendChild(el(\"span\", \"st-badge\", \"this install's key\")); }") != std::string::npos,
+         "the install's own key is marked, and has no Remove");
+  expect(js.find("if (s.signer) { return el(\"p\", \"muted small\", \"Signed by \" + s.signer + \".\"); }") != std::string::npos &&
+             js.find("\"Its signature is not taken: \" + String(s.problem || \"-\") + \".\"") != std::string::npos &&
+             js.find("el(\"button\", \"st-btn st-btn--secondary st-btn--sm\", \"Trust this publisher's key\")") != std::string::npos,
+         "a card says who signed it, or why not, and offers to trust an untrusted publisher's key");
+}
+
 // Owner 2026-10-28: the searches in a box, as the thinking is ("they look out of place"), the round limit said as
 // upstream's page says it, and About's engines in a table ("messy especially when it wraps").
 void web_ui_search_box_limit_note_and_engine_table() {
@@ -1821,7 +1847,8 @@ void plugin_routes_need_their_handler_and_the_key() {
       {"/v1/strata/plugins/switch", secure_frontend::RouteId::strata_plugins_switch},
       {"/v1/strata/plugins/settings", secure_frontend::RouteId::strata_plugins_settings},
       {"/v1/strata/plugins/try", secure_frontend::RouteId::strata_plugins_try},
-      {"/v1/strata/plugins/test", secure_frontend::RouteId::strata_plugins_test}};
+      {"/v1/strata/plugins/test", secure_frontend::RouteId::strata_plugins_test},
+      {"/v1/strata/plugins/keys", secure_frontend::RouteId::strata_plugins_keys}};
   const auto make = [](std::vector<std::string>* calls, const bool on) {
     secure_frontend::SecretBytes secret;
     (void)secret.assign(kRouterToken);
@@ -2014,6 +2041,7 @@ int main(int argc, char** argv) {
       {"web_ui_models_tab_calibrates", web_ui_models_tab_calibrates},
       {"web_ui_models_tab_shows_compatibility", web_ui_models_tab_shows_compatibility},
       {"web_ui_email_is_the_email_plugins_card", web_ui_email_is_the_email_plugins_card},
+      {"web_ui_plugins_tab_trusts_publisher_keys", web_ui_plugins_tab_trusts_publisher_keys},
       {"web_ui_has_server_settings", web_ui_has_server_settings},
       {"web_ui_has_a_plugins_tab", web_ui_has_a_plugins_tab},
       {"web_ui_claims_a_login_link_at_load_and_on_hashchange", web_ui_claims_a_login_link_at_load_and_on_hashchange},

@@ -21,6 +21,9 @@
 //                                       Plugins tab's "Try", which replaced the page's test search)
 //   POST /v1/strata/plugins/test     {"id"} -> {"ok", "reply"}   (a running notifier plugin's "Send a test" through the
 //                                       server's notifier host, which replaced the page's test email)
+//   POST /v1/strata/plugins/keys     {"add": "<64 hex>", "name"} or {"remove": "<64 hex>"} -> {"keys": [...],
+//                                       "restart_needed": true}   (the publisher keys the owner trusts, plugins.json; spec
+//                                       section 11)
 // Each listed plugin also has its "settings" ({"name", "kind", "label", "help", "required", "default", "min"/"max",
 // "choices", "max_items", and "value", or a secret's "set"}), "presets", "network" (its words, the values filled in),
 // "settings_problem" (what keeps it from running, or null) and "tools" (a running tool plugin's, each {"name",
@@ -49,6 +52,7 @@ struct PluginRouteSettings final {
   std::filesystem::path plugins_dir;                // <install>/plugins
   std::optional<std::filesystem::path> state_dir{}; // <roots.state>: the choices file's folder (unset: read-only)
   std::vector<FirstPartyPlugin> first_party{};      // engine/build.json's
+  std::string install_key{};                        // engine/build.json's signing_key (empty: none)
   std::set<std::string> running{};                  // the plugins on when the server started
   std::optional<std::filesystem::path> config_file{}; // where plugins.<id>.<name> live (unset: settings read-only)
   std::optional<std::filesystem::path> secret_dir{};  // roots.secret: a secret setting's folder (unset: none kept)
@@ -76,6 +80,7 @@ class PluginRoutes final {
   [[nodiscard]] HttpResponse save_settings(std::string_view body);
   [[nodiscard]] HttpResponse try_tool(std::string_view body);
   [[nodiscard]] HttpResponse test_notifier(std::string_view body);
+  [[nodiscard]] HttpResponse keys(std::string_view body);
   [[nodiscard]] std::optional<PluginChoices> choices() const;
   [[nodiscard]] bool save(const PluginChoices& choices);
 

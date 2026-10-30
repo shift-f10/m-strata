@@ -1,0 +1,9 @@
+m-strata.plugin-signature/1
+key d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a
+id signedtool
+platform linux
+manifest 750d80313833317d867bafeefa5094d19203275c5d4a6bdaed3af52079a4864c
+file signed-tool 11331c5312f8a8e5b75353a729a5c42f64cab2b151b025602df2e82a2cc89f5e
+
+--STRATA-SIGNATURE-V1
++UdPp9fq5RGBlkUnMxpyAG1Eod68do6rfLBGIlXSf9nR4sSU9t3VGFzWtWUg5cobq6tG/FKah5j7gzCD79NaAA==

@@ -59,6 +59,8 @@ class Options:
     cmake: str
     plan: bool
     debugging: bool = False
+    signing_key: Path | None = None   # this PC's plugin signing key (None: the user's own, plugin_signing.default_key_path)
+    signing_passphrase: bool = False  # the key is (or, new, will be) sealed with a passphrase, asked for
 
 
 def host_platform() -> str:
@@ -156,6 +158,11 @@ def parse_args(argv: list[str], platform: str | None = None) -> Options:
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--cmake", default=os.environ.get("CMAKE", ""), help="the cmake executable (default: on PATH)")
     ap.add_argument("--plan", action="store_true", help="print the commands and stop")
+    ap.add_argument("--signing-key", type=Path, default=None,
+                    help="this PC's plugin signing key (default: the user's own, outside every install and data folder); "
+                         "make creates it when there is none and signs the plugins it builds with it")
+    ap.add_argument("--signing-passphrase", action="store_true",
+                    help="the signing key is sealed with a passphrase (asked for; a new key is sealed with the one typed)")
     ap.add_argument("--debugging", action="store_true",
                     help="ship the Debugging plugin turned on: a server that logs verbosely, to find out why a model "
                          "does not start or calibrate (it says what that logs and what to take care of)")
@@ -179,7 +186,8 @@ def parse_args(argv: list[str], platform: str | None = None) -> Options:
                    cuda_runtime=not args.no_cuda_runtime,
                    build_dir=build_dir,
                    engine_build_dir=(args.engine_build_dir or build_dir / "engine").absolute(), jobs=max(1, args.jobs),
-                   cmake=args.cmake, plan=args.plan, debugging=args.debugging)
+                   cmake=args.cmake, plan=args.plan, debugging=args.debugging,
+                   signing_key=args.signing_key.absolute() if args.signing_key else None, signing_passphrase=args.signing_passphrase)
 
 
 def _on_off(flag: bool) -> str:
@@ -267,8 +275,9 @@ def required_files(opts: Options, platform: str) -> list[str]:
     # plugin in every folder, with --with search the Web search plugin and strata-search, the MCP server the server
     # runs for it, and with --with email the Email alerts plugin and strata-email, the notifier the server runs for it
     # (the frontend's install puts each program there)
+    # each signed with this PC's plugin signing key (plugin.sig; spec section 11)
     plugins = [f"plugins/{plugin}/{name}" for plugin in first_party_plugins(opts)
-               for name in ["plugin.json", *plugin_files(plugin, platform)]]
+               for name in ["plugin.json", "plugin.sig", *plugin_files(plugin, platform)]]
     return ([f"strata-unified-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
              "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin", "engine/data/draft_vocab.bin",
              "engine/build.json",
@@ -307,6 +316,73 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+# ---- trust by key (spec 2026-10-30 section 11; the owner's decision 8: "when we run the install to build everything, it
+# generates a private key", and the plugins make builds are signed with it) ---------------------------------------------
+
+_SIGNING = None
+
+
+def _plugin_signing():
+    """scripts/plugin_signing.py: the key, the statement and the signature (the RFC 8032 reference signer)."""
+    global _SIGNING
+    if _SIGNING is None:
+        spec = importlib.util.spec_from_file_location("plugin_signing", ROOT / "scripts" / "plugin_signing.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["plugin_signing"] = module
+        spec.loader.exec_module(module)
+        _SIGNING = module
+    return _SIGNING
+
+
+def signing_key_path(opts: Options, platform: str) -> Path:
+    return opts.signing_key or _plugin_signing().default_key_path(platform)
+
+
+def _ask_passphrase(creating: bool) -> str:
+    import getpass
+    first = getpass.getpass("plugin signing key passphrase: ")
+    if creating and getpass.getpass("again: ") != first:
+        raise SystemExit("make: the passphrases differ")
+    return first
+
+
+def signing_key(opts: Options, platform: str):
+    """This PC's plugin signing key, created when there is none (and whether it was). It is kept as the PC running make
+    keeps secrets (DPAPI, or a 0600 file), whatever platform the folder is for."""
+    del platform  # (the folder's; the key is this PC's)
+    signing = _plugin_signing()
+    path = signing_key_path(opts, host_platform())
+    passphrase = _ask_passphrase(not path.exists()) if opts.signing_passphrase else None
+    try:
+        return signing.load_or_create_key(path, host_platform(), passphrase)
+    except signing.SigningKeyError as error:
+        raise SystemExit("make: " + str(error)) from None
+
+
+def sign_staged_plugins(opts: Options, platform: str, stage: Path, key) -> None:
+    """plugins/<id>/plugin.sig for each first-party plugin, as staged: its manifest's and files' SHA-256s, signed."""
+    for plugin in first_party_plugins(opts):
+        _plugin_signing().sign_plugin(stage / "plugins" / plugin, platform, key)
+
+
+def signing_command(argv: list[str]) -> int | None:
+    """make.py --sign-plugin FOLDER [--platform P] / --signing-key-show, with --signing-key and --signing-passphrase:
+    signing a plugin made later, and the key's public half (for another install's owner to add). None: not one."""
+    if "--sign-plugin" not in argv and "--signing-key-show" not in argv:
+        return None
+    ap = argparse.ArgumentParser(prog="make", description="Sign a plugin folder with this PC's plugin signing key.")
+    ap.add_argument("--sign-plugin", type=Path, default=None, help="the plugin folder to sign")
+    ap.add_argument("--signing-key-show", action="store_true", help="print the signing key's public half")
+    ap.add_argument("--platform", choices=("windows", "linux"), default=host_platform(), help="the platform the folder is for")
+    ap.add_argument("--signing-key", type=Path, default=None)
+    ap.add_argument("--signing-passphrase", action="store_true")
+    args = ap.parse_args(argv)
+    forwarded = (["--key", str(args.signing_key)] if args.signing_key else []) + (["--passphrase"] if args.signing_passphrase else [])
+    if args.signing_key_show:
+        return _plugin_signing().main(["--show", *forwarded])
+    return _plugin_signing().main(["--sign", str(args.sign_plugin), "--platform", args.platform, *forwarded])
+
+
 def plugin_records(opts: Options, platform: str, stage: Path) -> list[dict]:
     """engine/build.json's plugins: each first-party plugin's manifest SHA-256 and each of its files' (as staged), and
     whether it starts on. A file the install did not put there is left out; the layout check names it."""
@@ -337,7 +413,8 @@ def _cmake_value(relative: str, pattern: str) -> str:
     return found.group(1) if found else "?"
 
 
-def build_record(opts: Options, platform: str, stage: Path, commit: str | None = None, built: str | None = None) -> dict:
+def build_record(opts: Options, platform: str, stage: Path, commit: str | None = None, built: str | None = None,
+                 signing_key: str = "") -> dict:
     """What engine/build.json holds: when and from which commit this folder was built, the pinned ggml, the GPU targets
     and features, and each family library in it - the models it runs and the source it is built from, as the tree says
     at build time (engine/CMakeLists.txt's engine version, cmake/multiengine.cmake's family engine version,
@@ -374,10 +451,14 @@ def build_record(opts: Options, platform: str, stage: Path, commit: str | None =
         engines.append({"library": program, "models": "pictures for the Qwen3.8-Flash family and Qwen3.6",
                         "source": "upstream Strata tools/vision, llama.cpp's mtmd at the pinned ggml",
                         "bytes": path.stat().st_size if path.is_file() else 0})
-    return {"schema_version": 1, "built": built, "commit": commit,
-            "ggml": (_tree_text("engine/third_party/ggml/VERSION.txt").split() or ["?"])[0][:12],
-            "cuda_arch": opts.cuda_arch, "features": list(opts.with_features),
-            "engines": engines, "plugins": plugin_records(opts, platform, stage)}
+    record = {"schema_version": 1, "built": built, "commit": commit,
+              "ggml": (_tree_text("engine/third_party/ggml/VERSION.txt").split() or ["?"])[0][:12],
+              "cuda_arch": opts.cuda_arch, "features": list(opts.with_features),
+              "engines": engines, "plugins": plugin_records(opts, platform, stage)}
+    if signing_key:
+        # the public half of the key that signed this folder's plugins: the server trusts plugins signed with it
+        record["signing_key"] = signing_key
+    return record
 
 
 def _cuda_runtime_patterns(platform: str) -> list[str]:
@@ -653,7 +734,11 @@ def run(command: list[str], env: dict[str, str], plan: bool) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     platform = host_platform()
-    opts = parse_args(sys.argv[1:] if argv is None else argv, platform)
+    arguments = sys.argv[1:] if argv is None else argv
+    signed = signing_command(arguments)
+    if signed is not None:
+        return signed
+    opts = parse_args(arguments, platform)
     if opts.out.exists() and (not opts.out.is_dir() or any(opts.out.iterdir())):
         raise SystemExit(f"make: {opts.out} already exists and is not empty; choose a new folder (make never deletes)")
     env = build_environment(platform) if not opts.plan else dict(os.environ)
@@ -696,8 +781,14 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("LICENSE", "NOTICE.md"):
         shutil.copyfile(ROOT / name, stage / name)
     stage_plugins(opts, stage)
-    (stage / "engine" / "build.json").write_text(json.dumps(build_record(opts, platform, stage), indent=2) + "\n",
-                                                 encoding="utf-8", newline="\n")
+    key, created = signing_key(opts, platform)
+    if created:
+        print(f"make: created this PC's plugin signing key at {key.path} (public key {key.public_hex}). It signs the "
+              "plugins make builds, and any you sign later with make.py --sign-plugin; keep it private and back it up.",
+              flush=True)
+    sign_staged_plugins(opts, platform, stage, key)
+    (stage / "engine" / "build.json").write_text(
+        json.dumps(build_record(opts, platform, stage, signing_key=key.public_hex), indent=2) + "\n", encoding="utf-8", newline="\n")
     problems = layout_problems(stage, opts, platform)
     if problems:
         print("make: the staged folder is not a clean runtime folder (" + str(stage) + "):", file=sys.stderr)

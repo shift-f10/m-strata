@@ -295,12 +295,12 @@ def stage(tmp_path: Path, platform: str, extra: tuple[str, ...] = (), skip: tupl
     files = [f"strata-unified-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
              f"engine/strata-vision{exe}", "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin",
              "engine/data/draft_vocab.bin", "engine/build.json", "README.txt", "config.example.json", "LICENSE", "NOTICE.md",
-             "plugins/debugging/plugin.json"] + ["engine/profiles/" + p for p in MAYA_PROFILES] + \
+             "plugins/debugging/plugin.json", "plugins/debugging/plugin.sig"] + ["engine/profiles/" + p for p in MAYA_PROFILES] + \
         list(MINIMAX_FILES)
     if search:   # --with search: the Web search plugin, its manifest and strata-search, which the install puts there
-        files += ["plugins/search/plugin.json", f"plugins/search/strata-search{exe}"]
+        files += ["plugins/search/plugin.json", "plugins/search/plugin.sig", f"plugins/search/strata-search{exe}"]
     if email:   # --with email: the Email alerts plugin, its manifest and strata-email, which the install puts there
-        files += ["plugins/email/plugin.json", f"plugins/email/strata-email{exe}"]
+        files += ["plugins/email/plugin.json", "plugins/email/plugin.sig", f"plugins/email/strata-email{exe}"]
     files += ["engine/" + lib(n) for n in ("multiengine_strata", "multiengine_gemma4", "multiengine_flint",
                                            "multiengine_raon1", "multiengine_maya", "multiengine_maya_ds4",
                                            "multiengine_maya_mm3", "strata_kq")]
@@ -655,3 +655,70 @@ def test_email_is_a_first_party_plugin_with_its_program_in_its_folder(tmp_path):
         for opts in (plain, mailing, both, options("--with", "search", platform=platform)):
             held = make.readme_text(opts, platform).split("The Settings tab holds ", 1)[1].split(".", 1)[0]
             assert held == "the API key, the server's settings and the model folders", held
+
+
+# ---- trust by key (spec 2026-10-30 section 11; the owner's decision 8) ---------------------------------------------------
+
+def _signing():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("plugin_signing", ROOT / "scripts" / "plugin_signing.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["plugin_signing"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_make_signs_the_plugins_it_builds(tmp_path):
+    """The owner (2026-10-30, decision 8): "when we run the install to build everything, it generates a private key"
+    and make signs the plugins it builds. make takes this PC's signing key (--signing-key, else the user's own, outside
+    every install and data folder), creates it when there is none, writes plugins/<id>/plugin.sig for each first-party
+    plugin it stages - the statement of its manifest's and files' SHA-256s, signed - and the key's public half into
+    engine/build.json (signing_key), which the server trusts. A folder without a plugin's signature is incomplete."""
+    signing = _signing()
+    key_path = tmp_path / "keys" / "plugin-signing-key.json"
+    for platform, program in (("windows", "strata-search.exe"), ("linux", "strata-search")):
+        opts = options("--with", "search,email", "--signing-key", str(key_path), platform=platform)
+        assert opts.signing_key == key_path and opts.signing_passphrase is False
+        folder = stage(tmp_path / platform, platform, search=True, email=True)
+        make.stage_plugins(opts, folder)
+        key, _ = make.signing_key(opts, platform)
+        assert key_path.is_file() and key.public_hex == signing.load_key(key_path).public_hex
+        make.sign_staged_plugins(opts, platform, folder, key)
+        for plugin in ("debugging", "search", "email"):
+            target = folder / "plugins" / plugin
+            assert signing.verify_plugin(target, bytes.fromhex(key.public_hex)), plugin
+            assert (target / "plugin.sig").read_bytes().partition(signing.FRAMING)[0] == \
+                signing.folder_statement(target, platform, key.public_hex), f"{plugin}: the statement of its folder as staged"
+        assert f"\nfile {program} " in (folder / "plugins" / "search" / "plugin.sig").read_text(encoding="utf-8"), "its program's line"
+        record = make.build_record(opts, platform, folder, commit="c", built="b", signing_key=key.public_hex)
+        assert record["signing_key"] == key.public_hex
+        assert "signing_key" not in make.build_record(opts, platform, folder, commit="c", built="b")
+        required = make.required_files(opts, platform)
+        assert {"plugins/debugging/plugin.sig", "plugins/search/plugin.sig", "plugins/email/plugin.sig"} <= set(required)
+        assert make.layout_problems(folder, opts, platform) == []
+        (folder / "plugins" / "debugging" / "plugin.sig").unlink()
+        assert "plugins/debugging/plugin.sig: missing" in make.layout_problems(folder, opts, platform)
+    assert make.parse_args(["--out", "x", "--ggml-dir", "g", "--cuda-root", "c"]).signing_key is None, "default: the user's own"
+    assert make.signing_key_path(options(platform="windows"), "windows") == signing.default_key_path("windows")
+    assert make.parse_args(["--out", "x", "--ggml-dir", "g", "--cuda-root", "c", "--signing-passphrase"]).signing_passphrase is True
+
+
+def test_make_py_signs_a_later_plugin_and_shows_the_key(tmp_path, capsys):
+    """decision 8: "they can build new plugins later by specifying the private key". make.py --sign-plugin FOLDER signs a
+    plugin folder made later with the same key (needing no build options), and --signing-key-show prints its public
+    half, for another install's owner to add."""
+    signing = _signing()
+    key_path = tmp_path / "plugin-signing-key.json"
+    platform = make.host_platform()
+    folder = tmp_path / "lookup"
+    folder.mkdir()
+    program = "lookup.exe" if platform == "windows" else "lookup"
+    (folder / "plugin.json").write_text(json.dumps({"schema": "m-strata.plugin/1", "id": "lookup", "kind": "tool",
+                                                    "files": {"windows": ["lookup.exe"], "linux": ["lookup"]}}), encoding="utf-8")
+    (folder / program).write_bytes(b"lookup")
+    assert make.main(["--sign-plugin", str(folder), "--signing-key", str(key_path)]) == 0
+    key = signing.load_key(key_path)
+    assert signing.verify_plugin(folder, bytes.fromhex(key.public_hex))
+    capsys.readouterr()
+    assert make.main(["--signing-key-show", "--signing-key", str(key_path)]) == 0
+    assert capsys.readouterr().out.strip() == key.public_hex

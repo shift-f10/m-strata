@@ -1179,6 +1179,31 @@ const std::string kMailer =
     R"({"label":"This PC","values":{"host":"localhost","port":25,"security":"none","on_finish":true,"to":["root"]}}],)"
     R"("network":"the mail server smtp.example.com","settings_problem":"its setting token is required: set it in the Plugins tab"})";
 
+// Trust by key (plugin spec section 11): the selected plugin's details say who signed it, or why its signature is not
+// taken, as the page's card does.
+void the_plugins_view_says_who_signed_a_plugin() {
+  const t::Request list{"plugins", "POST", "/v1/strata/plugins", "{}"};
+  const auto with = [](std::string json, const std::string& from, const std::string& to) {
+    json.replace(json.find(from), from.size(), to);
+    return json;
+  };
+  for (const bool trusted : {true, false}) {
+    const std::string signature = trusted ? R"("signature":{"key":")" + std::string(64U, 'a') + R"(","signer":"Example Labs","problem":null},)"
+                                          : R"("signature":{"key":")" + std::string(64U, 'a') +
+                                                R"(","signer":null,"problem":"it is signed with a key this server does not trust"},)";
+    const std::string listed = with(kPlugins, R"("plugins":[)", R"("plugins":[)" + with(kMailer, R"("network":)", signature + R"("network":)") + ",");
+    t::App app(t::Capabilities{}, std::nullopt);
+    app.server_state("http://127.0.0.1:8080", true);
+    (void)app.key(character("7"));
+    app.answer(list, 200, listed);
+    auto screen = std::make_unique<t::Screen>(120, 40);
+    app.draw(*screen, 0);
+    const std::string text = all_text(*screen);
+    const std::string words = trusted ? "Signed by Example Labs." : "Its signature is not taken: it is signed with a key this server does not trust.";
+    expect(text.find(words) != std::string::npos, "the view shows: " + words + "\n" + text);
+  }
+}
+
 // The owner (2026-10-30, decision 6): a tool's or notifier's settings are set in the Plugins view as on the page's card -
 // o focuses them, Enter changes the one in focus (a switch flips, a choice moves on, the others in the text field, a
 // secret typed unseen), c puts it back to its default (a secret: removed), p fills in a preset, w saves them as one plugin
@@ -1447,6 +1472,7 @@ int main(int argc, char** argv) {
       {"plugins_are_approved_and_switched", plugins_are_approved_and_switched},
       {"the_plugins_view_fits_and_waits_for_its_changes", the_plugins_view_fits_and_waits_for_its_changes},
       {"the_plugins_settings_are_edited_then_saved", the_plugins_settings_are_edited_then_saved},
+      {"the_plugins_view_says_who_signed_a_plugin", the_plugins_view_says_who_signed_a_plugin},
       {"an_uncalibrated_start_asks_to_calibrate_first", an_uncalibrated_start_asks_to_calibrate_first},
       {"charts_are_braille_or_blocks", charts_are_braille_or_blocks},
       {"only_the_changes_are_written", only_the_changes_are_written},

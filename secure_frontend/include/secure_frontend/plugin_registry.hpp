@@ -6,14 +6,17 @@
 // checked (plugin_manifest.hpp), its manifest and this platform's files hashed, and given a state:
 //   refused  its manifest or its folder is not one this server takes (other users of this PC can change the folder, a
 //            file it names is missing), or this server does not run its kind yet - the reason says which
-//   on, off  trusted: a first-party plugin whose SHA-256s are its build record's, or one the owner approved whose
-//            SHA-256s are still the approved ones; on unless turned off (a first-party one starts as its record says)
+//   on, off  trusted: a first-party plugin whose SHA-256s are its build record's, one signed with a key this server
+//            trusts whose signature is for this folder as it is (plugin_signature.hpp; spec section 11), or one the owner
+//            approved whose SHA-256s are still the approved ones; on unless turned off (a first-party one starts as its
+//            record says)
 //   changed  approved once, but its manifest or a file changed since: it waits to be approved again
 //   waiting  never approved
 // The owner's approvals and on/off live in <roots.state>/plugins.json (PluginChoices). What runs is decided when the
 // server starts.
 
 #include "secure_frontend/plugin_manifest.hpp"
+#include "secure_frontend/plugin_signature.hpp"
 
 #include <filesystem>
 #include <map>
@@ -34,11 +37,16 @@ struct PluginPin final {
   bool operator==(const PluginPin&) const = default;
 };
 
-// The owner's choices: the plugins approved (with what was approved) and each one's on/off.
+// The owner's choices: the plugins approved (with what was approved), each one's on/off, and the publisher keys the owner
+// trusts (each public key, 64 hex, with the name the owner gave it; at most 16).
 struct PluginChoices final {
   std::map<std::string, PluginPin> approved;
   std::map<std::string, bool> enabled;
+  std::map<std::string, std::string> keys{};
 };
+inline constexpr std::size_t kMaxPublisherKeys = 16U;
+// A name the owner gives a publisher key: 1-64 printable ASCII characters.
+[[nodiscard]] bool valid_key_name(std::string_view name) noexcept;
 [[nodiscard]] std::string render_plugin_choices(const PluginChoices& choices);
 // Strict, bounded: nullopt for anything that is not such a file.
 [[nodiscard]] std::optional<PluginChoices> parse_plugin_choices(std::string_view text);
@@ -60,6 +68,7 @@ struct PluginEntry final {
   std::optional<PluginManifest> manifest;  // nullopt: refused before it could be read
   PluginPin pin;                           // its SHA-256s now
   bool first_party{false};
+  std::optional<PluginSignature> signature{};  // its plugin.sig, checked (nullopt: it has none)
   PluginState state{PluginState::refused};
   std::string reason;                      // refused, changed or waiting: why, in words
 };
@@ -67,10 +76,13 @@ struct PluginEntry final {
 // The kinds this server runs (more as their phases land).
 [[nodiscard]] bool plugin_kind_runs(PluginKind kind) noexcept;
 
-// Every plugin in `plugins_dir`, by id; an entry that is not a folder holding a plugin.json is not one.
+// Every plugin in `plugins_dir`, by id; an entry that is not a folder holding a plugin.json is not one. The keys trusted:
+// `install_key` (the install's own, engine/build.json's signing_key; empty: none) and the owner's in `choices`.
 [[nodiscard]] std::vector<PluginEntry> discover_plugins(const std::filesystem::path& plugins_dir,
                                                         const std::vector<FirstPartyPlugin>& first_party,
-                                                        const PluginChoices& choices);
+                                                        const PluginChoices& choices, std::string_view install_key = {});
+// The keys a server with `install_key` and `choices` trusts, the install's own first.
+[[nodiscard]] std::vector<TrustedKey> trusted_keys(std::string_view install_key, const PluginChoices& choices);
 
 // What the diagnostics plugins that are on switch on, together (the owner, 2026-10-30: "we should make the email,
 // websearch, debugging all plugins as well"; the Debugging plugin has each switch a make --debugging build had).

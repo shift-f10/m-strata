@@ -120,6 +120,8 @@ struct ServerOptions final {
   std::vector<Plugin> plugins{};
   // <state>/plugins.json written before the start (the owner's choices: approvals, on or off); empty: none.
   std::string plugin_choices{};
+  // build.json's signing_key (the install's own plugin signing key, 64 hex); empty: none (plugin spec section 11).
+  std::string signing_key{};
 };
 
 // strata-unified-server as a test child: fixture models (fake-model.gguf, 0600)

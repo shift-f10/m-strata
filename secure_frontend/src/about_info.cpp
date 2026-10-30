@@ -191,6 +191,11 @@ std::optional<EngineBuild> read_engine_build(const std::filesystem::path& engine
       build.engines.push_back(std::move(library));
     }
   }
+  // the public half of the key make signed this folder's plugins with (plugin spec section 11)
+  if (const JsonValue* key = member(*root, "signing_key")) {
+    if (key->if_string() == nullptr || !hex64(*key->if_string())) return std::nullopt;
+    build.signing_key = *key->if_string();
+  }
   // the first-party plugins (owner 2026-10-30, decision 4: trusted through this record): what make built, and whether
   // each starts on
   if (const JsonValue* plugins = member(*root, "plugins")) {

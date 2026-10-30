@@ -159,9 +159,11 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   timeouts, the download folders, and the model folders (as they are, or on network shares - experimental), and -
   while the Debugging plugin is on - **Troubleshooting** (the engine's own output in the server log).
 - **Plugins tab** (being built; Debugging, Web search and Email alerts so far): every plugin in the install's `plugins` folder,
-  with what it is, its state and its SHA-256s. A plugin runs only when this install was built with it or you approved
-  it, and only with the files you approved: a changed file waits for your approval again. Approve, and turn on or off,
-  from the tab; a tool's or notifier's settings are in its card too (a password or key is kept protected and never
+  with what it is, its state and its SHA-256s. A plugin runs only when this install was built with it, it is signed with
+  a key this server trusts, or you approved it, and only with the files that were built, signed or approved: a changed
+  file waits for your approval again. The keys are this install's own (make creates it and signs the plugins it builds)
+  and any publisher's key you add under **Publisher keys**; a card says who signed its plugin, and one signed with a key
+  the server does not trust offers to trust that key. Approve, and turn on or off, from the tab; a tool's or notifier's settings are in its card too (a password or key is kept protected and never
   shown again); a running tool plugin's card lists its tools with **Try** (one call, with the arguments you type), and
   a running notifier's has **Send a test**. A change applies when the server restarts.
 - **Model folders on network shares - experimental, off by default:** a model folder may be on an SMB/CIFS share
@@ -474,6 +476,10 @@ python3 -m venv .venv-dev && .venv-dev/bin/python -m pip install cmake ninja
 | `--jobs N` | Parallel compile jobs (default: the CPU count). |
 | `--build-dir DIR` | Where the builds are kept (default `out/make-build`). |
 | `--plan` | Print the commands only. |
+| `--signing-key PATH` | This PC's plugin signing key (default: `%APPDATA%\M-Strata\plugin-signing-key.json` on Windows, `~/.config/m-strata/plugin-signing-key.json` elsewhere - never inside an out or data folder). make creates it at its first build when there is none (the seed protected with DPAPI on Windows, a 0600 file elsewhere), signs each plugin it builds with it (`plugins/<id>/plugin.sig`) and writes its public half into `engine/build.json`, so the server trusts what it signed. Keep it private, and back it up: a new key means plugins signed with the old one need your approval again. |
+| `--signing-passphrase` | The signing key is also sealed with a passphrase, asked for (twice for a new key). |
+| `make.py --sign-plugin FOLDER [--platform windows\|linux]` | Signs a plugin folder made later with the same key (its manifest's and each file's SHA-256 for that platform), so an install built here trusts it without approval. |
+| `make.py --signing-key-show` | Prints the key's public half: give it to another install's owner to add under Publisher keys. |
 | `--debugging` | Ships the Debugging plugin turned on (every folder has it, `plugins/debugging`, off otherwise; the Plugins tab turns it on or off later, with no new build), to find out why a model does not start or calibrate: while it is on, the server logs one line per request (never its text) and the engine's own output (`logging.requests`, `logging.engine_output`) unless the config turns them off, and warns of it at every start. `strata-window` opens with a pop-up saying so and starts the server only on **Yes** (No, the default, exits); `strata-tui` shows the same on a screen of its own and starts the server only on **y** (any other key quits). The engine's output can hold what the engine prints of your prompts and the paths of your model files: run it on your own PC, keep the server's log private, look through a log before you share it, and turn the plugin off for everyday use. make prints this before and after the build and puts it in the folder's README.txt; `install.sh --debugging` and `install.bat -Debugging` pass it on, and their questions ask for it. Settings > Troubleshooting shows only while the plugin is on and turns the engine's output off alone; without it, `logging.engine_output` in the config file does that. |
 
 The first build compiles the CUDA engine and takes a while; later builds are incremental (`out/make-build`). The out
@@ -481,7 +487,8 @@ folder holds only what runs:
 - `strata-unified-server` and `strata`;
 - `strata-window` (with `--with window`) and `strata-tui` (with `--with tui`);
 - `plugins/`: `debugging/` (every folder), `search/` (with `--with search`: the Web search plugin, its manifest and
-  `strata-search`) and `email/` (with `--with email`: the Email alerts plugin, its manifest and `strata-email`);
+  `strata-search`) and `email/` (with `--with email`: the Email alerts plugin, its manifest and `strata-email`), each
+  with its signature, `plugin.sig`;
 - `engine/`: the launcher, one library per family, `strata-prepare`, `strata-vision` (upstream's picture encoder, built
   from `upstream/tools/vision` with the same pinned llama.cpp), the bundled cuBLAS, the expert profiles and, with the
   Maya families, `templates/minimax-m3.1/`;

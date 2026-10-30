@@ -6,7 +6,9 @@
 #include "support/test_support.hpp"
 
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -47,8 +49,9 @@ struct Plugins final {
     secure_frontend_test::write_file(dir / id / "plugin.json", manifest);
   }
   [[nodiscard]] std::vector<secure_frontend::PluginEntry> find(const std::vector<secure_frontend::FirstPartyPlugin>& first_party,
-                                                               const secure_frontend::PluginChoices& choices) const {
-    return secure_frontend::discover_plugins(dir, first_party, choices);
+                                                               const secure_frontend::PluginChoices& choices,
+                                                               const std::string& install_key = {}) const {
+    return secure_frontend::discover_plugins(dir, first_party, choices, install_key);
   }
 };
 
@@ -211,12 +214,19 @@ void the_choices_round_trip() {
   choices.approved["debugging"] = {.manifest = std::string(64U, 'a'), .files = {{"bin/x.dll", std::string(64U, 'b')}}};
   choices.enabled["debugging"] = false;
   choices.enabled["search"] = true;
+  choices.keys[std::string(64U, 'c')] = "Example Labs";
   const auto text = secure_frontend::render_plugin_choices(choices);
   const auto back = secure_frontend::parse_plugin_choices(text);
-  expect(back.has_value() && back->approved == choices.approved && back->enabled == choices.enabled, "round trip: " + text);
+  expect(back.has_value() && back->approved == choices.approved && back->enabled == choices.enabled && back->keys == choices.keys,
+         "round trip: " + text);
+  const auto older = secure_frontend::parse_plugin_choices(R"({"schema":"m-strata.plugin-choices/1","approved":{},"enabled":{"search":true}})");
+  expect(older.has_value() && older->keys.empty() && older->enabled.at("search"), "a file from before publisher keys still reads");
   for (const char* bad : {"", "{}", "[]", R"({"schema":"m-strata.plugin-choices/1","approved":{"Bad":{}},"enabled":{}})",
                           R"({"schema":"m-strata.plugin-choices/1","approved":{},"enabled":{"debugging":"yes"}})",
-                          R"({"schema":"m-strata.plugin-choices/1","approved":{"x":{"manifest":"nothex","files":{}}},"enabled":{}})"}) {
+                          R"({"schema":"m-strata.plugin-choices/1","approved":{"x":{"manifest":"nothex","files":{}}},"enabled":{}})",
+                          R"({"schema":"m-strata.plugin-choices/1","approved":{},"enabled":{},"keys":{"ABC":"x"}})",
+                          R"({"schema":"m-strata.plugin-choices/1","approved":{},"enabled":{},"keys":{"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc":""}})",
+                          R"({"schema":"m-strata.plugin-choices/1","approved":{},"enabled":{},"keys":[]})"}) {
     expect(!secure_frontend::parse_plugin_choices(bad).has_value(), std::string{"refused: "} + bad);
   }
 }
@@ -245,6 +255,66 @@ void the_diagnostics_that_are_on_are_combined() {
   expect(both.log_requests && both.log_engine_output && both.troubleshooting, "both on: what either switches on");
 }
 
+// Trust by key (plugin spec section 11; the owner's decision 8): a plugin signed with a key this server trusts - the
+// install's own (engine/build.json) or a publisher key the owner added - runs without its own approval, and says who
+// signed it; one signed with another key waits, saying why; a file changed since it was signed is no longer trusted by
+// the signature, but an approval still stands on its own pins. (The fixtures are scripts/plugin_signing.py's, signed with
+// RFC 8032's TEST 1 key.)
+std::string fixture(const std::string& name) {
+  std::ifstream in(std::string{SECURE_FRONTEND_PLUGIN_FIXTURES} + "/signedtool/" + name, std::ios::binary);
+  return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+void a_plugin_signed_with_a_trusted_key_runs() {
+  const std::string rfc_key = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+  Plugins plugins;
+  plugins.add("signedtool", fixture("plugin.json"));
+#if defined(_WIN32)
+  const auto program = plugins.dir / "signedtool" / "signed-tool.exe";
+  secure_frontend_test::write_file(program, fixture("program"));
+  secure_frontend_test::write_file(plugins.dir / "signedtool" / "plugin.sig", fixture("plugin.sig.windows"));
+#else
+  const auto program = plugins.dir / "signedtool" / "signed-tool";
+  secure_frontend_test::write_file(program, fixture("program"), 0700);
+  secure_frontend_test::write_file(plugins.dir / "signedtool" / "plugin.sig", fixture("plugin.sig.linux"));
+#endif
+  const auto state = [&plugins](const secure_frontend::PluginChoices& choices, const std::string& install_key = {}) {
+    const auto entries = plugins.find({}, choices, install_key);
+    return entries.size() == 1U ? entries[0] : secure_frontend::PluginEntry{};
+  };
+  const auto untrusted = state({});
+  expect(untrusted.state == secure_frontend::PluginState::waiting && untrusted.signature.has_value() && untrusted.signature->key == rfc_key &&
+             untrusted.signature->signer.empty() && untrusted.signature->problem.find("does not trust") != std::string::npos &&
+             untrusted.reason.find("does not trust") != std::string::npos,
+         "signed with a key this server does not trust: it waits, and says why: " + untrusted.reason);
+  secure_frontend::PluginChoices publisher;
+  publisher.keys[rfc_key] = "Example Labs";
+  const auto by_publisher = state(publisher);
+  expect(by_publisher.state == secure_frontend::PluginState::on && by_publisher.signature && by_publisher.signature->signer == "Example Labs" &&
+             !by_publisher.first_party && by_publisher.reason.empty(),
+         "signed with a publisher key the owner added: it runs, on, signed by that name");
+  secure_frontend::PluginChoices off = publisher;
+  off.enabled["signedtool"] = false;
+  expect(state(off).state == secure_frontend::PluginState::off, "and the owner can turn it off");
+  const auto by_install = state({}, rfc_key);
+  expect(by_install.state == secure_frontend::PluginState::on && by_install.signature && by_install.signature->signer == "this install's key",
+         "signed with the install's own key: it runs");
+  // a file changed since it was signed: the signature no longer stands for it; an approval of the old files does not either
+  secure_frontend_test::write_file(program, "changed program");
+  const auto changed = state(publisher);
+  expect(changed.state == secure_frontend::PluginState::waiting && changed.signature &&
+             changed.signature->problem.find("changed since it was signed") != std::string::npos &&
+             changed.reason.find("approve it to use it as it is now") != std::string::npos &&
+             changed.reason.find("trust its publisher's key") == std::string::npos,
+         "changed since it was signed: it waits, and the key is not the answer: " + changed.reason);
+  secure_frontend::PluginChoices approved = publisher;
+  approved.approved["signedtool"] = changed.pin;
+  expect(state(approved).state == secure_frontend::PluginState::on, "the owner may still approve it as it is now");
+  // no plugin.sig: no signature at all
+  std::filesystem::remove(plugins.dir / "signedtool" / "plugin.sig");
+  expect(!state(publisher).signature.has_value(), "an unsigned plugin has no signature");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -255,5 +325,6 @@ int main(int argc, char** argv) {
       {"a_first_party_plugin_is_trusted_by_its_build_record", a_first_party_plugin_is_trusted_by_its_build_record},
       {"refusals_say_why", refusals_say_why},
       {"the_choices_round_trip", the_choices_round_trip},
+      {"a_plugin_signed_with_a_trusted_key_runs", a_plugin_signed_with_a_trusted_key_runs},
   }, failures);
 }

@@ -391,6 +391,52 @@ The server runs it as it runs strata-search today:
 **Third-party tools and notifiers** run like these two once approved. The approval question says that the code runs on
 this PC with the server's rights, and what network it says it uses.
 
+### 11. Trust by key (decision 8; the owner, 2026-10-30)
+
+A plugin signed by a key the server trusts runs without being approved one by one; unsigned plugins keep approval with
+SHA-256 pinning, and make's build record keeps trusting what make built.
+
+**The signature.** `plugins/<id>/plugin.sig` beside `plugin.json`: the release envelope's form (`release_manifest.hpp`) -
+a signed statement, the line `--STRATA-SIGNATURE-V1`, and the base64 Ed25519 signature over exactly the statement's
+bytes. The statement is text, one item a line, each line ending in LF:
+
+    m-strata.plugin-signature/1
+    key <the signing key's public key, 64 lowercase hex>
+    id <the plugin's id>
+    platform <windows or linux>
+    manifest <plugin.json's SHA-256>
+    file <a file the manifest lists for that platform> <its SHA-256>     (one line each, sorted by name)
+
+It holds what the trust pins today (the manifest and each file of this platform), so a signature is for one platform's
+folder; a folder for the other platform is signed again. The server reads at most 16 KiB of it.
+
+**Keys.** A key is an Ed25519 key pair. The server trusts:
+- the install's own key, whose public half make writes into `engine/build.json` (`signing_key`);
+- each publisher key the owner adds in the Plugins tab (`POST /v1/strata/plugins/keys`), kept in `plugins.json` with a
+  name (at most 16).
+A key is trusted only from those two places, never from a plugin or a request.
+
+**The order of trust.** For each plugin: (1) make's build record, if its SHA-256s match; (2) its signature, if it
+verifies under a trusted key and its statement names this plugin, this platform and its SHA-256s now; (3) the owner's
+approval, if its SHA-256s are still the approved ones. Otherwise it waits (or, approved once, it changed). A plugin
+trusted by its signature starts on, as an approved one does, and the tab says who signed it. A signature that does not
+verify, names an untrusted key, or does not match the folder is shown with why, and the plugin falls through to (3).
+
+**The private key** stays out of the install and the data folder: `%APPDATA%\M-Strata\plugin-signing-key.json` on
+Windows, `$XDG_CONFIG_HOME/m-strata/plugin-signing-key.json` (else `~/.config/...`) elsewhere, or `--signing-key PATH`.
+On Windows the seed is protected with DPAPI for this user; elsewhere the file is 0600 in a 0700 folder. With
+`--signing-passphrase` it is also sealed with a passphrase (scrypt, n=2^14, r=8, p=1; the seed XORed with the first 32
+bytes of the derived key, the last 32 an HMAC-SHA256 key over the salt and the sealed seed, so a wrong passphrase is
+refused). make creates the key at its first build when there is none, signs each first-party plugin it stages, and
+writes the public key into the build record; `make.py --sign-plugin FOLDER` signs a plugin made later with the same key,
+and `make.py --signing-key-show` prints its public key for another install's owner to add.
+
+**The code.** No new crypto dependency (the project's rule since the release trust chain, PROVENANCE "Vendored crypto"):
+the server verifies with `secure_frontend_ed25519`, its own RFC 8032 verifier (verification only), and make signs with
+`scripts/release/sign.py`, the RFC 8032 section 6 reference code. This replaces decision 8's "through Monocypher":
+Monocypher would have been a second Ed25519 implementation beside a tested one. The reference signer is not
+constant-time; it signs on the owner's own PC, where no one times it.
+
 ## Proof (decision 3)
 
 - **(a) Recommended: re-package flint as a plugin.** flint is the smallest family: GGUF in, no pack, the strata_0143
@@ -427,7 +473,7 @@ Either way, the tests are:
    - The tool host, and search as a tool plugin, its rows moved.
    - The notifier host, and email as a notifier plugin (strata-email), its rows moved.
    - make and the installers build them as plugins; third-party tools and notifiers run once approved.
-5c. **Key-signed trust** (decision 8): after 5b.
+5c. **Key-signed trust** (decision 8, section 11): after 5b.
 6. **The SDK and the guide.**
    - `strata_family_runtime` and the skeleton family.
    - `make.py --sdk` / `--plugin`.
@@ -451,7 +497,8 @@ Either way, the tests are:
    install makes a key pair; make signs the plugins it builds (a signature over the manifest and each file's SHA-256);
    the server trusts plugins signed by a key it lists (the install's own, and any publisher the owner adds); later
    plugins are signed with the private key, which stays out of the install and the data folder (DPAPI or 0600,
-   optionally a passphrase). Ed25519 through Monocypher (vendored, recorded in PROVENANCE). Unsigned plugins keep
+   optionally a passphrase). Ed25519 through Monocypher (vendored, recorded in PROVENANCE; built with the repository's own
+   verifier and the RFC's reference signer instead, section 11). Unsigned plugins keep
    approval with SHA-256 pinning. Built after 5b.
 
 **One folder for every kind** (2026-10-30, with decisions 4 and 5). Every plugin is `<install>/plugins/<id>/` with

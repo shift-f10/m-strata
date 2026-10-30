@@ -80,15 +80,26 @@ struct Trust final {
   std::string reason;
 };
 
+// The order of trust (spec section 11): make's build record, a signature under a trusted key that is this folder's, the
+// owner's approval.
 Trust trust_of(const PluginEntry& entry, const std::vector<FirstPartyPlugin>& first_party, const PluginChoices& choices) {
   const auto built = std::find_if(first_party.begin(), first_party.end(), [&entry](const FirstPartyPlugin& plugin) { return plugin.id == entry.id; });
   if (built != first_party.end() && built->pin == entry.pin) {
     return {.trusted = true, .first_party = true, .default_on = built->on, .state = PluginState::off, .reason = {}};
   }
+  if (entry.signature && !entry.signature->signer.empty()) {
+    return {.trusted = true, .first_party = false, .default_on = true, .state = PluginState::off, .reason = {}};
+  }
   if (const auto approved = choices.approved.find(entry.id); approved != choices.approved.end()) {
     if (approved->second == entry.pin) return {.trusted = true, .first_party = false, .default_on = true, .state = PluginState::off, .reason = {}};
     return {.trusted = false, .first_party = false, .default_on = false, .state = PluginState::changed,
             .reason = "its manifest or a file changed since it was approved: approve it again to use it"};
+  }
+  if (entry.signature && !entry.signature->problem.empty()) {
+    return {.trusted = false, .first_party = false, .default_on = false, .state = PluginState::waiting,
+            .reason = entry.signature->problem + (entry.signature->problem.find("does not trust") != std::string::npos
+                                                      ? ": trust its publisher's key in the Plugins tab, or approve it"
+                                                      : ": approve it to use it as it is now")};
   }
   return {.trusted = false, .first_party = false, .default_on = false, .state = PluginState::waiting,
           .reason = built != first_party.end() ? "its files are not the ones this install was built with: approve it to use it"
@@ -142,16 +153,30 @@ std::string render_plugin_choices(const PluginChoices& choices) {
     append_json_string(&out, id);
     out += on ? ":true" : ":false";
   }
+  out += "},\"keys\":{";
+  first = true;
+  for (const auto& [key, name] : choices.keys) {
+    out += first ? "" : ",";
+    first = false;
+    append_json_string(&out, key);
+    out += ":";
+    append_json_string(&out, name);
+  }
   return out + "}}\n";
 }
 
 std::optional<PluginChoices> parse_plugin_choices(const std::string_view text) {
   const auto parsed = parse_json(text, kChoiceLimits);
   const auto* root = std::get_if<JsonValue>(&parsed);
-  if (root == nullptr || root->if_object() == nullptr || root->if_object()->size() != 3U) return std::nullopt;
+  // (a file from before publisher keys has no "keys")
+  if (root == nullptr || root->if_object() == nullptr || root->if_object()->size() < 3U || root->if_object()->size() > 4U) return std::nullopt;
   const JsonValue* schema = member(*root, "schema");
   const JsonValue* approved = member(*root, "approved");
   const JsonValue* enabled = member(*root, "enabled");
+  const JsonValue* keys = member(*root, "keys");
+  if (root->if_object()->size() == 4U && (keys == nullptr || keys->if_object() == nullptr || keys->if_object()->size() > kMaxPublisherKeys)) {
+    return std::nullopt;
+  }
   if (schema == nullptr || schema->if_string() == nullptr || *schema->if_string() != kChoicesSchema || approved == nullptr ||
       approved->if_object() == nullptr || enabled == nullptr || enabled->if_object() == nullptr) {
     return std::nullopt;
@@ -174,6 +199,12 @@ std::optional<PluginChoices> parse_plugin_choices(const std::string_view text) {
   for (const auto& [id, value] : *enabled->if_object()) {
     if (!valid_plugin_id(id) || value.if_boolean() == nullptr) return std::nullopt;
     choices.enabled[id] = *value.if_boolean();
+  }
+  if (keys != nullptr) {
+    for (const auto& [key, name] : *keys->if_object()) {
+      if (!valid_signing_key(key) || name.if_string() == nullptr || !valid_key_name(*name.if_string())) return std::nullopt;
+      choices.keys[key] = *name.if_string();
+    }
   }
   return choices;
 }
@@ -202,8 +233,22 @@ bool write_plugin_choices(const std::filesystem::path& state_dir, const PluginCh
               .has_value();
 }
 
+bool valid_key_name(const std::string_view name) noexcept {
+  return !name.empty() && name.size() <= 64U && std::all_of(name.begin(), name.end(), [](const char c) { return c >= 0x20 && c < 0x7f; });
+}
+
+std::vector<TrustedKey> trusted_keys(const std::string_view install_key, const PluginChoices& choices) {
+  std::vector<TrustedKey> keys;
+  if (valid_signing_key(install_key)) keys.push_back({.key = std::string{install_key}, .name = "this install's key", .install = true});
+  for (const auto& [key, name] : choices.keys) {
+    if (key != install_key) keys.push_back({.key = key, .name = name, .install = false});
+  }
+  return keys;
+}
+
 std::vector<PluginEntry> discover_plugins(const std::filesystem::path& plugins_dir, const std::vector<FirstPartyPlugin>& first_party,
-                                          const PluginChoices& choices) {
+                                          const PluginChoices& choices, const std::string_view install_key) {
+  const auto keys = trusted_keys(install_key, choices);
   std::vector<std::filesystem::path> folders;
   std::error_code ec;
   for (std::filesystem::directory_iterator item(plugins_dir, ec), end; !ec && item != end; item.increment(ec)) {
@@ -258,6 +303,13 @@ std::vector<PluginEntry> discover_plugins(const std::filesystem::path& plugins_d
     if (!missing.empty()) {
       refuse("a file its plugin.json names is missing or cannot be read: " + missing);
       continue;
+    }
+    // its signature, if it has one (spec section 11), checked against the keys this server trusts
+    std::error_code sig_kind;
+    if (std::filesystem::symlink_status(folder / kPluginSignatureFile, sig_kind).type() != std::filesystem::file_type::not_found) {
+      const auto envelope = read_bytes(folder / kPluginSignatureFile, kMaxPluginSignatureBytes);
+      entry.signature = envelope ? check_plugin_signature(*envelope, entry.id, entry.pin.manifest, entry.pin.files, keys)
+                                 : PluginSignature{.key = {}, .signer = {}, .problem = "its plugin.sig could not be read (or is larger than 16 KiB)"};
     }
     const Trust trust = trust_of(entry, first_party, choices);
     entry.first_party = trust.first_party;

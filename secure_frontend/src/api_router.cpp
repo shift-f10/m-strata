@@ -404,7 +404,8 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
       case RouteId::strata_plugins_switch:
       case RouteId::strata_plugins_settings:
       case RouteId::strata_plugins_try:
-      case RouteId::strata_plugins_test: {
+      case RouteId::strata_plugins_test:
+      case RouteId::strata_plugins_keys: {
         RouteResult result = config_.plugins.handle(decision.route, body, context);
         if (auto* complete = std::get_if<HttpResponse>(&result)) {
           response = std::move(*complete);

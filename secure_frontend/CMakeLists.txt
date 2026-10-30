@@ -821,8 +821,11 @@ if(WIN32)
     target_link_libraries(secure_frontend_about_info PUBLIC advapi32)
 endif()
 # Plugins (owner 2026-10-30; docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md): manifests.
-secure_frontend_add_library(secure_frontend_plugins SOURCES src/plugin_manifest.cpp src/plugin_registry.cpp
-    LINKS secure_frontend_json secure_frontend_sha256 secure_frontend_paths secure_frontend_token_store)
+secure_frontend_add_library(secure_frontend_plugins SOURCES src/plugin_manifest.cpp src/plugin_registry.cpp src/plugin_signature.cpp
+    LINKS secure_frontend_json secure_frontend_sha256 secure_frontend_paths secure_frontend_token_store
+          secure_frontend_release_manifest)
+# trust by key (plugin spec section 11): plugin.sig is the release envelope's form, verified with secure_frontend_ed25519
+target_include_directories(secure_frontend_plugins PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # The Plugins tab's server half (plugin_routes.hpp): the list, an approval, on/off, in <roots.state>/plugins.json.
 secure_frontend_add_library(secure_frontend_plugin_routes SOURCES src/plugin_routes.cpp
     LINKS secure_frontend_plugins secure_frontend_token_store secure_frontend_api_core secure_frontend_paths
@@ -1541,7 +1544,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         config_routes_need_their_handler_and_the_key plugin_routes_need_their_handler_and_the_key
         web_ui_cards_from_this_pc_and_the_danger_zone web_ui_downloads_go_to_a_chosen_folder
         web_ui_downloads_say_what_is_on_this_pc web_ui_downloads_groups_are_accordions web_ui_downloads_destination_is_a_panel
-        web_ui_models_tab_calibrates web_ui_models_tab_shows_compatibility web_ui_email_is_the_email_plugins_card web_ui_has_server_settings web_ui_has_a_plugins_tab web_ui_claims_a_login_link_at_load_and_on_hashchange web_ui_opens_the_view_its_address_names
+        web_ui_models_tab_calibrates web_ui_models_tab_shows_compatibility web_ui_email_is_the_email_plugins_card web_ui_plugins_tab_trusts_publisher_keys web_ui_has_server_settings web_ui_has_a_plugins_tab web_ui_claims_a_login_link_at_load_and_on_hashchange web_ui_opens_the_view_its_address_names
         web_ui_has_model_folder_setting
         web_ui_monitor_shows_stopped_and_the_model web_ui_monitor_is_even_and_shows_memory_disk_and_cache
         web_ui_about_lists_the_engines_and_this_pc
@@ -2215,13 +2218,15 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_notifier_server_tests tests/notifier_server_test.cpp
         secure_frontend_test_support secure_frontend_api_core secure_frontend_socket_io secure_frontend_api_client)
     secure_frontend_test_paths(secure_frontend_notifier_server_tests)
-    target_compile_definitions(secure_frontend_notifier_server_tests PRIVATE FAKE_NOTIFIER_PATH="$<TARGET_FILE:secure_frontend_fake_notifier>")
+    target_compile_definitions(secure_frontend_notifier_server_tests PRIVATE FAKE_NOTIFIER_PATH="$<TARGET_FILE:secure_frontend_fake_notifier>"
+        SECURE_FRONTEND_PLUGIN_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/plugins")
     add_dependencies(secure_frontend_notifier_server_tests secure_frontend_fake_notifier)
     if(WIN32)
         target_link_libraries(secure_frontend_notifier_server_tests PRIVATE ws2_32)
     endif()
     secure_frontend_add_cases(secure_frontend_notifier_server_tests
         a_notifier_plugin_hears_the_start_and_answers_a_test old_email_rows_move_to_the_plugin
+        a_plugin_signed_with_the_install_key_runs
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
     add_executable(secure_frontend_fake_mcp_tool tests/fake_mcp_tool_main.cpp)
     target_link_libraries(secure_frontend_fake_mcp_tool PRIVATE secure_frontend_json)
@@ -2328,7 +2333,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         the_screen_draws_text_boxes_and_gauges charts_are_braille_or_blocks only_the_changes_are_written
         keys_decode_from_vt_sequences the_monitor_draws_the_servers_readings the_views_switch_and_keys_become_requests
         settings_are_edited_then_saved quitting_asks_first downloads_say_what_is_on_this_pc the_debugging_notice_waits_for_y plugins_are_approved_and_switched
-        the_plugins_settings_are_edited_then_saved
+        the_plugins_settings_are_edited_then_saved the_plugins_view_says_who_signed_a_plugin
         the_plugins_view_fits_and_waits_for_its_changes
         an_uncalibrated_start_asks_to_calibrate_first)
 
@@ -2364,9 +2369,11 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_tool_manifest_says_how_its_program_runs a_wrong_run_block_is_refused_by_name values_are_checked_against_the_settings a_code_plugin_names_this_platforms_files a_wrong_manifest_is_refused_by_name
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_test_executable(secure_frontend_plugin_registry_tests tests/plugin_registry_test.cpp secure_frontend_plugins)
+    target_compile_definitions(secure_frontend_plugin_registry_tests PRIVATE
+        SECURE_FRONTEND_PLUGIN_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/plugins")
     secure_frontend_add_cases(secure_frontend_plugin_registry_tests
         the_diagnostics_that_are_on_are_combined a_new_plugin_waits_then_runs_once_approved a_changed_plugin_waits_again a_first_party_plugin_is_trusted_by_its_build_record
-        refusals_say_why the_choices_round_trip
+        refusals_say_why the_choices_round_trip a_plugin_signed_with_a_trusted_key_runs
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # An install's plugins as its server runs them (owner 2026-10-30, decisions 6 and 7).
     secure_frontend_add_test_executable(secure_frontend_install_plugins_tests tests/install_plugins_test.cpp
@@ -2375,6 +2382,13 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_tool_runs_with_its_settings_filled_in a_tool_whose_settings_do_not_fit_is_left_out
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # A tool's or notifier's secret settings (owner 2026-10-30, decision 6).
+    # trust by key (plugin spec section 11): the Python signer's committed fixtures, verified here
+    secure_frontend_add_test_executable(secure_frontend_plugin_signature_tests tests/plugin_signature_test.cpp secure_frontend_plugins)
+    target_compile_definitions(secure_frontend_plugin_signature_tests PRIVATE
+        SECURE_FRONTEND_PLUGIN_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/plugins")
+    secure_frontend_add_cases(secure_frontend_plugin_signature_tests
+        the_statement_is_the_signers a_signature_under_a_trusted_key_is_taken every_other_signature_says_why
+        LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_test_executable(secure_frontend_smtp_password_tests tests/smtp_password_test.cpp secure_frontend_smtp_password)
     secure_frontend_add_cases(secure_frontend_smtp_password_tests
         the_old_password_moves_to_the_email_plugin a_password_the_plugin_has_stays
@@ -2387,7 +2401,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_plugin_routes secure_frontend_http_request_handler)
     secure_frontend_add_cases(secure_frontend_plugin_routes_tests
         the_plugins_are_listed approval_and_switching_are_kept refusals_say_why settings_are_listed_and_saved
-        tools_are_listed_and_tried notifiers_are_tested
+        tools_are_listed_and_tried notifiers_are_tested publisher_keys_are_listed_added_and_removed
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # A calibration's report for a bug report (owner 2026-10-30).

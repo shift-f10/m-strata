@@ -926,6 +926,15 @@ was fetched from the RFC's own §7.1/§7.2 listings and cryptographically
 re-derived with the RFC's own code before being committed — no hex in this
 repository's crypto tests is hand-transcribed.
 
+Plugin signatures (2026-10-30, plugin spec section 11) reuse both halves, adding
+no crypto: `scripts/plugin_signing.py` signs with `scripts/release/sign.py`'s RFC
+code (loaded, never copied) and the server verifies with `secure_frontend_ed25519`.
+Its test fixtures (`secure_frontend/tests/fixtures/plugins/signedtool/`) are signed
+with the RFC's own section 7.1 TEST 1 key, public test material, and
+`tools/secure/test_plugin_signing.py` re-derives them byte for byte. The signing key's
+passphrase sealing uses the standard library's `hashlib.scrypt` and `hmac` (Python),
+and Windows DPAPI.
+
 License of the source material: RFC 8032 (and RFCs generally) is published
 under the IETF Trust's legal provisions (Simplified BSD-style for the code
 components); no copyright restriction conflicts with this repository's AGPL-3.0.

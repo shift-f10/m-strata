@@ -280,6 +280,67 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z57 (Windows box; owner-directed)
+
+The plugin platform, step 5c: trust by key (decision 8; the design's new section 11), which the owner asked for after
+search and email ("implement it after you finish the current task", then "Continue until it is completed").
+- **The design** (spec section 11): `plugins/<id>/plugin.sig` is the release envelope's form over a statement of the
+  folder (`m-strata.plugin-signature/1`, key, id, platform, manifest SHA-256, each file's). The server trusts the
+  install's own key (`engine/build.json`'s `signing_key`) and publisher keys the owner adds (`plugins.json`'s `keys`, with
+  names, at most 16), never one from a plugin or a request. Trust order: make's record, a signature under a trusted key
+  that is this folder's as it is, the owner's approval. **No Monocypher**: decision 8 named it, but the repository
+  already has its own RFC 8032 verifier (`secure_frontend_ed25519`, verify only) and the RFC's reference signer
+  (`scripts/release/sign.py`), and PROVENANCE's rule is no new crypto dependency; the spec says so.
+- **Signing** (`scripts/plugin_signing.py`, standard library only): the key file `m-strata.signing-key/1` at
+  `%APPDATA%\M-Strata\plugin-signing-key.json` (seed under DPAPI) or `~/.config/m-strata/...` (0600 in a 0700 folder),
+  never in an install or data folder; optionally sealed with a passphrase (scrypt n=2^14, the seed XORed with the
+  derived key's first half, an HMAC-SHA256 check with its second, a wrong passphrase refused). `make` creates the key at
+  its first build (`--signing-key`, `--signing-passphrase`; the key follows the PC running make, whatever the target
+  platform), signs each first-party plugin it stages and writes the public half into `build.json`; every plugin's
+  `plugin.sig` is a required file. `make.py --sign-plugin FOLDER [--platform]` signs a later plugin and
+  `make.py --signing-key-show` prints the public key.
+- **Verifying** (`plugin_signature.{hpp,cpp}`, in `secure_frontend_plugins`): the statement read strictly, the
+  envelope split by the release code (`split_signed_envelope`, now exported), verified with `ed25519_verify`, then the
+  key, the id, the platform and the SHA-256s checked; every refusal says which. `discover_plugins` reads `plugin.sig`
+  (16 KiB at most) and `PluginEntry` carries its `signature`; a signed plugin under a trusted key starts on, as an
+  approved one does; one signed with an untrusted key waits with that reason.
+- **The routes**: the list adds each plugin's `signature` and the trusted `keys`; `POST /v1/strata/plugins/keys`
+  (`RouteId::strata_plugins_keys`, `kPluginRoutes` of 7) adds (again to rename) or removes a publisher key, refusing the
+  install's own key, a key or name that is not one, an unknown key and a seventeenth.
+- **The page and the TUI**: a Publisher keys card (the install's key marked; added ones removable; a form to add one,
+  asking first) and, on each card, who signed it or why not, with "Trust this publisher's key" for an untrusted signer.
+  The TUI's Plugins view shows the same signature line (adding keys stays on the page).
+- **Docs**: the README (the Plugins tab, make's signing options and commands, the out folder), the frontend README (the
+  trust-by-key paragraph), the threat model (a trusted key is the power to run code without a question; where the
+  private key lives; the residual), PROVENANCE (the signer and verifier reused; the RFC TEST 1 key in the fixtures).
+- **Proof**:
+  - RED first, then GREEN: the Python signer (8 RED against a stub of the module; then 8), make's signing (9 RED, then
+    with the rest of test_make 44 in all, on Windows and in WSL; it first failed on Linux - the key took the target's
+    protection - fixed to follow the host), the C++ check against the committed fixtures (RED against a stub; then 3),
+    the registry (RED; then 10 with the signature cases), the build record's key and the keys route (RED; then GREEN -
+    the route test's first loop made keys ending past `f`, which the route rightly refused; the test was fixed), the page
+    (10 RED), the TUI (2 RED), the changed-file hint (1 RED), and the end-to-end case through the real server (RED with the install key not handed on).
+  - The interlock: the C++ verifier accepts the Python signer's fixtures, which `test_the_cpp_fixtures_are_this_signers`
+    re-derives byte for byte (`tests/fixtures/**` is `-text`).
+  - MSVC: the whole tree built, no warnings; the whole suite 1469/1471 (the two release-only cases a test-hooks tree
+    fails); after the last changes (the changed-file reason, the test's loop) the plugin, notifier, record, router, TUI,
+    release and Ed25519 suites 150/150. Linux gcc 13.3 and clang 18.1: both compilers refused a test loop that copied each string
+    (-Wrange-loop-construct, which MSVC lacks), fixed to a reference; then both whole trees built, no warnings, and the
+    suites this touches (plugins, signatures, the record, router, server, TUI, release, Ed25519, egress) passed but for the
+    parallel-only listener and connection-scan cases (gcc 380/381, clang 378/381), which passed alone three times out of
+    three on each. Python `tools/secure`: 168 passed, 4 skipped.
+  - Live: a shares-tree server on the x25 demo data (port 18091): the search plugin staged without a build record,
+    signed by `make.py --sign-plugin` with a scratch key: it waited, its card saying the key is not trusted, with
+    "Trust this publisher's key"; from the page that asked first (the question names the key's start and what trusting it
+    means), added the key under the plugin's publisher name and showed the restart note; after a restart the plugin was
+    on and running, "signed by M-Strata", and Try answered from the owner's test SearXNG; a byte appended to its manifest
+    then made it wait again ("changed since it was signed" - its hint, which first said to trust the key, now says to
+    approve it, test first). The demo config and build.json were put back byte for byte; no key was made in this user's
+    profile.
+- **Known gaps**: the TUI cannot add or remove keys; a key cannot be revoked other than by removing it (and, for the
+  install's own, by building with a new key); `--signing-passphrase` asks on the console, so `install.bat`/`install.sh`
+  do not offer it yet.
+
 ### Claude Code session, 2026-10-30 z56 (Windows box; owner-directed)
 
 The plugin platform, step 5b-3: the notifier host, and email alerts as a notifier plugin (the design's section 10; the

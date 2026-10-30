@@ -62,7 +62,7 @@ struct Fixture final {
   std::vector<std::string> tried;   // each Try's id, tool and arguments, as the hub got them
   std::vector<std::string> tested;  // each notifier test's id, as the notifier host got it
   explicit Fixture(std::set<std::string> running = {}, std::vector<secure_frontend::FirstPartyPlugin> first_party = {},
-                   const bool with_tools = false, const bool with_notifiers = false) {
+                   const bool with_tools = false, const bool with_notifiers = false, std::string install_key = {}) {
     secure_frontend_test::make_private_directory(plugins);
     secure_frontend_test::make_private_directory(state);
     secure_frontend_test::make_private_directory(secret);
@@ -85,6 +85,7 @@ struct Fixture final {
 #endif
     secure_frontend::PluginRouteSettings settings{.plugins_dir = plugins, .state_dir = state, .first_party = std::move(first_party),
                                                   .running = std::move(running), .config_file = config, .secret_dir = secret};
+    settings.install_key = std::move(install_key);
     settings.log = [this](const std::string_view line) { logged.emplace_back(line); };
     if (with_tools) {
       // the tool hub's side: search runs and lists web_search; a call answers what it was given
@@ -259,6 +260,52 @@ void tools_are_listed_and_tried() {
   expect(nothing.status == 422 && has(nothing, "runs no tool plugins"), "no hub: " + shown(nothing));
 }
 
+// Trust by key (plugin spec section 11; the owner's decision 8): the list names the keys this server trusts - the
+// install's own, which cannot be removed, and the publisher keys the owner added - and each plugin's signature (whose key,
+// signed by whom, or why it is not taken); the keys route adds a publisher key with a name, renames or removes one, kept
+// in plugins.json, applying when the server restarts; a key that is not one, a name that is not one, the install's own
+// key, an unknown key to remove and a seventeenth key are refused; another PC is refused.
+void publisher_keys_are_listed_added_and_removed() {
+  const std::string install_key(64U, 'e');
+  const std::string publisher(64U, 'f');
+  Fixture f({}, {}, false, false, install_key);
+  const auto listed = f.post(RouteId::strata_plugins, "{}");
+  expect(has(listed, R"("keys":[{"key":")" + install_key + R"(","name":"this install's key","install":true}])"),
+         "the install's own key is listed: " + listed.body);
+  expect(has(listed, R"("id":"mailer")") && has(listed, R"("signature":null)"), "an unsigned plugin has no signature");
+  const auto added = f.post(RouteId::strata_plugins_keys, R"({"add":")" + publisher + R"(","name":"Example Labs"})");
+  expect(added.status == 200 && has(added, R"({"key":")" + publisher + R"(","name":"Example Labs","install":false})") &&
+             has(added, R"("restart_needed":true)"),
+         "a publisher key is added: " + shown(added));
+  const auto choices = secure_frontend::read_plugin_choices(f.state);
+  expect(choices && choices->keys.size() == 1U && choices->keys.at(publisher) == "Example Labs", "kept in plugins.json");
+  expect(f.post(RouteId::strata_plugins_keys, R"({"add":")" + publisher + R"(","name":"Example Labs GmbH"})").status == 200 &&
+             secure_frontend::read_plugin_choices(f.state)->keys.at(publisher) == "Example Labs GmbH",
+         "adding it again renames it");
+  const auto refused = [&f](const std::string& body, const std::string& why) {
+    const auto answer = f.post(RouteId::strata_plugins_keys, body);
+    expect(answer.status == 422 && has(answer, "\"code\":\"plugin_refused\"") && has(answer, why), body + " refused for " + why + ": " + shown(answer));
+  };
+  refused(R"({"add":"abc","name":"x"})", "64 lowercase hex");
+  refused(R"({"add":")" + std::string(64U, 'F') + R"(","name":"x"})", "64 lowercase hex");
+  refused(R"({"add":")" + std::string(64U, '1') + R"(","name":""})", "name");
+  refused(R"({"add":")" + install_key + R"(","name":"mine"})", "install's own");
+  refused(R"({"remove":")" + install_key + R"("})", "install's own");
+  refused(R"({"remove":")" + std::string(64U, '2') + R"("})", "not one");
+  for (const char c : std::string_view{"0123456789abcde"}) {  // 15 more: 16 in all with the one above
+    expect(f.post(RouteId::strata_plugins_keys, R"({"add":")" + std::string(63U, '3') + std::string(1U, c) + R"(","name":"k"})").status == 200,
+           "a key is added");
+  }
+  refused(R"({"add":")" + std::string(64U, '4') + R"(","name":"one more"})", "at most 16");
+  expect(f.post(RouteId::strata_plugins_keys, "{}").status == 400 && f.post(RouteId::strata_plugins_keys, R"({"add":"x"})").status == 400 &&
+             f.post(RouteId::strata_plugins_keys, R"({"remove":"x","add":"y","name":"z"})").status == 400,
+         "a body that is not one");
+  expect(f.post(RouteId::strata_plugins_keys, R"({"remove":")" + publisher + R"("})", false).status == 403, "another PC is refused");
+  const auto removed = f.post(RouteId::strata_plugins_keys, R"({"remove":")" + publisher + R"("})");
+  expect(removed.status == 200 && !has(removed, publisher) && !secure_frontend::read_plugin_choices(f.state)->keys.contains(publisher),
+         "a publisher key is removed: " + shown(removed));
+}
+
 // The Plugins tab's "Send a test" (plugin spec section 10; it replaced the page's test email): one test through the
 // server's notifier host, its answer as the plugin gave it; one not in the folder, not a notifier, or a body that is not
 // one is refused, and so is a server that runs no notifier plugins.
@@ -291,5 +338,6 @@ int main(int argc, char** argv) {
       {"settings_are_listed_and_saved", settings_are_listed_and_saved},
       {"tools_are_listed_and_tried", tools_are_listed_and_tried},
       {"notifiers_are_tested", notifiers_are_tested},
+      {"publisher_keys_are_listed_added_and_removed", publisher_keys_are_listed_added_and_removed},
   }, failures);
 }

@@ -22,6 +22,7 @@ namespace secure_frontend {
 struct InstallPlugins final {
   std::filesystem::path folder;               // <install>/plugins
   std::vector<FirstPartyPlugin> first_party;  // the engine folder's build.json's (none without one)
+  std::string install_key{};                  // its signing_key: the install's own plugin signing key (empty: none)
   std::vector<PluginEntry> entries;           // each with its state; none when plugins.json cannot be read
   bool choices_read{true};                    // false: plugins.json is there but is not one this server reads
 };

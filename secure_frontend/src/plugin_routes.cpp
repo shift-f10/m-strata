@@ -226,6 +226,18 @@ std::string tools_json(const std::vector<McpTool>* tools) {
   return out + "]";
 }
 
+// The keys this server trusts, as the list and the keys route answer them.
+std::string keys_json(const std::vector<TrustedKey>& keys) {
+  std::string out = "[";
+  bool first = true;
+  for (const auto& key : keys) {
+    out += (first ? "" : ",") + std::string{"{\"key\":"} + json_text(key.key) + ",\"name\":" + json_text(key.name) +
+           ",\"install\":" + (key.install ? "true" : "false") + "}";
+    first = false;
+  }
+  return out + "]";
+}
+
 std::string entry_json(const PluginEntry& entry, const bool running, const std::map<std::string, PluginValue>& values,
                        const std::set<std::string>& secrets_set, const std::vector<McpTool>* tools) {
   const auto* manifest = entry.manifest ? &*entry.manifest : nullptr;
@@ -239,6 +251,13 @@ std::string entry_json(const PluginEntry& entry, const bool running, const std::
   out += std::string{",\"first_party\":"} + (entry.first_party ? "true" : "false");
   out += ",\"state\":" + json_text(plugin_state_name(entry.state)) + ",\"reason\":" + json_or_null(entry.reason);
   out += std::string{",\"running\":"} + (running ? "true" : "false");
+  // its signature (spec section 11): whose key, signed by whom, or why it is not taken
+  if (entry.signature) {
+    out += ",\"signature\":{\"key\":" + json_or_null(entry.signature->key) + ",\"signer\":" + json_or_null(entry.signature->signer) +
+           ",\"problem\":" + json_or_null(entry.signature->problem) + "}";
+  } else {
+    out += ",\"signature\":null";
+  }
   out += ",\"manifest_sha256\":" + json_or_null(entry.pin.manifest) + ",\"files\":[";
   bool first = true;
   for (const auto& [path, sum] : entry.pin.files) {
@@ -270,6 +289,7 @@ HttpResponse PluginRoutes::answer(const RouteId route, const std::string_view bo
     case RouteId::strata_plugins_settings: return save_settings(body);
     case RouteId::strata_plugins_try: return try_tool(body);
     case RouteId::strata_plugins_test: return test_notifier(body);
+    case RouteId::strata_plugins_keys: return keys(body);
     default: return make_error_response(ApiError::not_found);
   }
 }
@@ -295,7 +315,7 @@ HttpResponse PluginRoutes::list() const {
   }
   const auto listed = settings_.tools ? settings_.tools() : std::map<std::string, std::vector<McpTool>>{};
   bool first = true;
-  for (const auto& entry : discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen)) {
+  for (const auto& entry : discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen, settings_.install_key)) {
     std::set<std::string> secrets_set;
     if (settings_.secret_dir && entry.manifest && entry.manifest->run) {
       for (const auto& setting : entry.manifest->run->settings) {
@@ -307,7 +327,7 @@ HttpResponse PluginRoutes::list() const {
                                            tools != listed.end() ? &tools->second : nullptr);
     first = false;
   }
-  return json_answer(200, out + "]}\n");
+  return json_answer(200, out + "],\"keys\":" + keys_json(trusted_keys(settings_.install_key, *chosen)) + "}\n");
 }
 
 HttpResponse PluginRoutes::approve(const std::string_view body) {
@@ -317,7 +337,7 @@ HttpResponse PluginRoutes::approve(const std::string_view body) {
   const std::scoped_lock lock(file_);
   auto chosen = choices();
   if (!chosen) return unreadable_choices();
-  const auto entries = discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen);
+  const auto entries = discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen, settings_.install_key);
   const auto entry = std::find_if(entries.begin(), entries.end(), [&request](const PluginEntry& item) { return item.id == request->id; });
   if (entry == entries.end()) return refused("there is no plugin " + request->id.substr(0, 64) + " in the plugins folder");
   if (entry->state == PluginState::on || entry->state == PluginState::off) {
@@ -340,7 +360,7 @@ HttpResponse PluginRoutes::change(const std::string_view body) {
   const std::scoped_lock lock(file_);
   auto chosen = choices();
   if (!chosen) return unreadable_choices();
-  const auto entries = discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen);
+  const auto entries = discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen, settings_.install_key);
   const auto entry = std::find_if(entries.begin(), entries.end(), [&request](const PluginEntry& item) { return item.id == request->id; });
   if (entry == entries.end()) return refused("there is no plugin " + request->id.substr(0, 64) + " in the plugins folder");
   if (entry->state == PluginState::waiting || entry->state == PluginState::changed) return refused("approve it first: " + entry->reason);
@@ -378,7 +398,7 @@ HttpResponse PluginRoutes::save_settings(const std::string_view body) {
   const std::scoped_lock lock(file_);
   const auto chosen = choices();
   if (!chosen) return unreadable_choices();
-  const auto entries = discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen);
+  const auto entries = discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen, settings_.install_key);
   const auto entry = std::find_if(entries.begin(), entries.end(), [&id](const PluginEntry& e) { return e.id == id; });
   if (entry == entries.end()) return refused("there is no plugin " + id + " in the plugins folder");
   if (!entry->manifest || !entry->manifest->run || entry->manifest->run->settings.empty()) return refused(id + " has no settings");
@@ -476,7 +496,7 @@ HttpResponse PluginRoutes::try_tool(const std::string_view body) {
   const std::string& name = *id->if_string();
   const auto chosen = choices();
   if (!chosen) return unreadable_choices();
-  const auto entries = discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen);
+  const auto entries = discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen, settings_.install_key);
   const auto entry = std::find_if(entries.begin(), entries.end(), [&name](const PluginEntry& e) { return e.id == name; });
   if (entry == entries.end()) return refused("there is no plugin " + name + " in the plugins folder");
   if (!entry->manifest || entry->manifest->kind != PluginKind::tool) return refused(name + " is not a tool plugin");
@@ -497,7 +517,7 @@ HttpResponse PluginRoutes::test_notifier(const std::string_view body) {
   if (!request) return make_error_response(ApiError::invalid_request);
   const auto chosen = choices();
   if (!chosen) return unreadable_choices();
-  const auto entries = discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen);
+  const auto entries = discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen, settings_.install_key);
   const auto entry = std::find_if(entries.begin(), entries.end(), [&request](const PluginEntry& e) { return e.id == request->id; });
   if (entry == entries.end()) return refused("there is no plugin " + request->id + " in the plugins folder");
   if (!entry->manifest || entry->manifest->kind != PluginKind::notifier) return refused(request->id + " is not a notifier plugin");
@@ -506,6 +526,44 @@ HttpResponse PluginRoutes::test_notifier(const std::string_view body) {
   }
   const NotifierTest result = settings_.test_notifier(request->id);
   return json_answer(200, std::string{"{\"ok\":"} + (result.ok ? "true" : "false") + ",\"reply\":" + json_text(result.reply) + "}\n");
+}
+
+}  // namespace secure_frontend
+
+namespace secure_frontend {
+
+HttpResponse PluginRoutes::keys(const std::string_view body) {
+  // {"add": "<64 hex>", "name"} or {"remove": "<64 hex>"}, nothing else
+  const auto parsed = parse_json(body, kBodyLimits);
+  const auto* root = std::get_if<JsonValue>(&parsed);
+  const auto* members = root == nullptr ? nullptr : root->if_object();
+  const JsonValue* add = members != nullptr && members->size() == 2U ? member_of(*root, "add") : nullptr;
+  const JsonValue* name = add != nullptr ? member_of(*root, "name") : nullptr;
+  const JsonValue* remove = members != nullptr && members->size() == 1U ? member_of(*root, "remove") : nullptr;
+  const bool adding = add != nullptr && add->if_string() != nullptr && name != nullptr && name->if_string() != nullptr;
+  const bool removing = remove != nullptr && remove->if_string() != nullptr;
+  if (!adding && !removing) return make_error_response(ApiError::invalid_request);
+  if (!settings_.state_dir) return refused("this server keeps no choices: start it with a state folder to trust a publisher's key");
+  const std::string key = adding ? *add->if_string() : *remove->if_string();
+  if (!valid_signing_key(key)) return refused("a key is its public half, 64 lowercase hex characters");
+  if (key == settings_.install_key) {
+    return refused(adding ? "that is the install's own key: it is trusted already" : "the install's own key cannot be removed here");
+  }
+  auto chosen = choices();
+  if (!chosen) return unreadable_choices();
+  if (adding) {
+    if (!valid_key_name(*name->if_string())) return refused("the name must be 1-64 printable characters");
+    if (!chosen->keys.contains(key) && chosen->keys.size() >= kMaxPublisherKeys) return refused("at most 16 publisher keys can be trusted");
+    chosen->keys[key] = *name->if_string();
+  } else {
+    if (chosen->keys.erase(key) == 0U) return refused("that key is not one this server trusts");
+  }
+  if (!save(*chosen)) return refused("plugins.json could not be written");
+  if (settings_.log) {
+    settings_.log(adding ? "[strata] plugins: the publisher key " + key.substr(0, 16) + "... (" + *name->if_string() + ") is trusted"
+                         : "[strata] plugins: the publisher key " + key.substr(0, 16) + "... is no longer trusted");
+  }
+  return json_answer(200, "{\"keys\":" + keys_json(trusted_keys(settings_.install_key, *chosen)) + ",\"restart_needed\":true}\n");
 }
 
 }  // namespace secure_frontend

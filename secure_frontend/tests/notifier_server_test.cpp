@@ -1,7 +1,8 @@
 // Notifier plugins through the real server (plugin spec 2026-10-30, section 10; email alerts first): a notifier plugin in
 // the plugins folder - here the fake notifier program, first-party - is started with the server, told of its start as
 // one JSON line, shown as running in the Plugins tab, and answers the tab's "Send a test" from its own folder; a config's
-// old alerts.email.* rows are moved to the email plugin's settings at the start, alerts.email.enabled to its choice.
+// old alerts.email.* rows are moved to the email plugin's settings at the start, alerts.email.enabled to its choice. And
+// trust by key (section 11): a plugin signed with the install's own key runs without approval.
 #include "secure_frontend/config_file.hpp"
 #include "support/server_harness.hpp"
 #include "support/test_support.hpp"
@@ -119,11 +120,53 @@ void old_email_rows_move_to_the_plugin() {
          "plugins.json holds the choice");
 }
 
+// Trust by key (plugin spec section 11; the owner's decision 8): a third-party plugin signed with the install's own key
+// (build.json's signing_key) runs, the Plugins tab saying so; without that key it waits, saying why; and a publisher key
+// is added through the real router. (The fixture is scripts/plugin_signing.py's, signed with RFC 8032's TEST 1 key.)
+void a_plugin_signed_with_the_install_key_runs() {
+  const std::string rfc_key = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+  const std::filesystem::path fixtures = std::filesystem::path{SECURE_FRONTEND_PLUGIN_FIXTURES} / "signedtool";
+#if defined(_WIN32)
+  const std::string program = "signed-tool.exe";
+  const std::string sig = "plugin.sig.windows";
+#else
+  const std::string program = "signed-tool";
+  const std::string sig = "plugin.sig.linux";
+#endif
+  for (const bool keyed : {true, false}) {
+    test_support::ServerOptions options;
+    options.model_cards = {test_support::CardOptions{.name = "Qwen", .profile = "qwen"}};
+    options.plugins = {{.id = "signedtool", .manifest = secure_frontend_test::read_file(fixtures / "plugin.json"), .on = true,
+                        .files = {{program, fixtures / "program"}, {"plugin.sig", fixtures / sig}}, .first_party = false}};
+    options.signing_key = keyed ? rfc_key : std::string{};
+    options.config_literals = {{"models.control", "true"}};
+    auto server = test_support::ServerProcess::start(options);
+    const bool listening = server != nullptr && server->wait_until_listening(20s);
+    expect(listening, "the launcher boots" + (server ? ": " + server->stderr_text() : std::string{}));
+    if (!listening) continue;
+    const auto listed = test_support::http_request(server->port(), "POST", "/v1/strata/plugins", "{}", 30s);
+    const std::string body = listed ? listed->body : std::string{"(no answer)"};
+    if (keyed) {
+      expect(has(body, R"("id":"signedtool")") && has(body, R"("state":"on")") && has(body, R"("signer":"this install's key")") &&
+                 has(body, R"("keys":[{"key":")" + rfc_key + R"(","name":"this install's key","install":true}])"),
+             "signed with the install's key: it is on, signed by that key: " + body.substr(0, 600));
+      const auto added = test_support::http_request(server->port(), "POST", "/v1/strata/plugins/keys",
+                                                    R"({"add":")" + std::string(64U, 'f') + R"(","name":"Example Labs"})", 10s);
+      expect(added && added->status == 200 && has(added->body, R"("name":"Example Labs","install":false)"),
+             "a publisher key is added through the router: " + (added ? added->body : std::string{"(no answer)"}));
+    } else {
+      expect(has(body, R"("state":"waiting")") && has(body, "does not trust") && has(body, R"("signer":null)"),
+             "without the key: it waits, saying why: " + body.substr(0, 600));
+    }
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"a_notifier_plugin_hears_the_start_and_answers_a_test", a_notifier_plugin_hears_the_start_and_answers_a_test},
       {"old_email_rows_move_to_the_plugin", old_email_rows_move_to_the_plugin},
+      {"a_plugin_signed_with_the_install_key_runs", a_plugin_signed_with_the_install_key_runs},
   }, failures);
 }

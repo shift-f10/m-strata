@@ -2174,6 +2174,14 @@ void App::draw_plugins(Screen& screen, const Rect area) const {
   if (const std::string reason = text(member(&plugin, "reason")); !reason.empty()) {
     details.emplace_back(reason, Style{state == "refused" ? kRed : kYellow, kDefault});
   }
+  // who signed it, or why its signature is not taken (plugin spec section 11)
+  if (const auto* signature = member(&plugin, "signature"); signature != nullptr && signature->if_object() != nullptr) {
+    if (const std::string signer = text(member(signature, "signer")); !signer.empty()) {
+      details.emplace_back("Signed by " + signer + ".", kDim);
+    } else {
+      details.emplace_back("Its signature is not taken: " + text(member(signature, "problem")) + ".", Style{kYellow, kDefault});
+    }
+  }
   if (const auto* switches = member(&plugin, "switches"); switches != nullptr && switches->if_array() != nullptr && !switches->if_array()->empty()) {
     details.emplace_back("Turns on: " + items_text(*switches), kDim);
   }

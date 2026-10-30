@@ -60,6 +60,11 @@ struct ReleaseManifest final {
 
 using ReleaseVerifyResult = std::variant<ReleaseManifest, ReleaseIssue>;
 
+// The envelope's framing alone, for another signed text in the same form (a plugin's plugin.sig; plugin spec 2026-10-30
+// section 11): the bytes before the single marker, and the strictly decoded signature after it; nullopt on success.
+[[nodiscard]] std::optional<ReleaseIssue> split_signed_envelope(std::string_view envelope, std::string_view* signed_bytes,
+                                                                std::array<std::uint8_t, 64>* signature) noexcept;
+
 // Verify `envelope` against an explicit key. Key material arrives pinned in
 // production; tests use this entry point to pin wrong/right keys explicitly.
 [[nodiscard]] ReleaseVerifyResult verify_release_manifest(std::string_view envelope,

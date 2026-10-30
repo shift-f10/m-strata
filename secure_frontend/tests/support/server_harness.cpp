@@ -404,7 +404,8 @@ std::unique_ptr<ServerProcess> ServerProcess::start(const ServerOptions& options
     }
     secure_frontend_test::write_file(bin / "build.json",
                                      R"({"schema_version": 1, "built": "x", "commit": "c", "ggml": "g", "cuda_arch": "a", )"
-                                     R"("engines": [], "plugins": [)" + listed + "]}",
+                                     R"("engines": [], "plugins": [)" + listed + "]" +
+                                         (options.signing_key.empty() ? std::string{} : R"(, "signing_key": ")" + options.signing_key + "\"") + "}",
                                      0600);
   }
   server->port_ = secure_frontend_test::pick_free_port();  // SP1's helper (support/http_client.hpp)

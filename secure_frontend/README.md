@@ -457,7 +457,20 @@ config reader takes these rows, bounded, and `--check` prints them); a secret go
 `plugin-<id>-<name>` (DPAPI on Windows, 0600 elsewhere), is never answered again (the card shows set or not set) and is
 removed by a null. The list says what each plugin connects to (`network`, its values filled in) and what keeps it from
 running (`settings_problem`: a required setting missing, a value its manifest refuses); presets fill a card in. A change
-applies when the server restarts. A running tool plugin's entry lists its `tools` (each name, description and string
+applies when the server restarts.
+
+**Trust by key** (decision 8; spec section 11): a plugin may also carry `plugin.sig`, the release envelope's form over a
+statement of its folder's SHA-256s (its manifest's and each of this platform's files', with its id, the platform and the
+signing key's public half), made by `scripts/plugin_signing.py` (the RFC 8032 reference signer `make` uses). The server
+trusts the keys in `engine/build.json`'s `signing_key` (the install's own) and in `plugins.json`'s `keys` (each publisher
+key the owner added, with a name; at most 16), and verifies with its own Ed25519 verifier. A plugin whose signature
+verifies under a trusted key and is this folder's as it is runs without approval, after make's build record and before
+an approval; the list gives each plugin's `signature` (`key`, `signer`, or the `problem`: an untrusted key, a file changed
+since it was signed, another plugin or platform, a signature that does not verify) and the trusted `keys`, and `POST
+/v1/strata/plugins/keys` adds (`{"add", "name"}`, again to rename) or removes (`{"remove"}`) a publisher key; the
+install's own cannot be either.
+
+A running tool plugin's entry lists its `tools` (each name, description and string
 parameters), and its card's **Try** calls one through the server's tool hub (`POST /v1/strata/plugins/try {"id", "tool",
 "arguments": {...}}` -> `{"ok", "text", "truncated", "ms"}`), starting the program first if no chat has. A running
 notifier plugin's card has "Send a test" (`POST /v1/strata/plugins/test {"id"}` -> `{"ok", "reply"}`: its program's

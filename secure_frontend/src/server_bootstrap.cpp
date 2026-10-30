@@ -1174,6 +1174,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
     // a tool's or notifier's settings: the config file (plugins.<id>.<name>) and the secret folder (its secrets)
     secure_frontend::PluginRouteSettings settings{
         .plugins_dir = plugins.folder, .state_dir = config.roots.state, .first_party = plugins.first_party,
+        .install_key = plugins.install_key,
         .config_file = config_file,
         .secret_dir = config.roots.secret ? std::optional<std::filesystem::path>{config.roots.secret->path()} : std::nullopt,
         .client_allowed = files_allowed};

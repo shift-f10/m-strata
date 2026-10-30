@@ -3318,6 +3318,7 @@
     if (p.reason) { card.appendChild(el("p", "muted small", p.reason)); }
     if (Array.isArray(p.switches) && p.switches.length) { card.appendChild(el("p", "muted small", "Turns on: " + p.switches.join(", "))); }
     card.appendChild(el("p", "muted small", pluginNow(p)));
+    if (p.signature) { card.appendChild(pluginSignatureNote(p)); }
     if (p.network) { card.appendChild(el("p", "muted small", "Connects to " + p.network + ".")); }
     if (p.settings_problem) { card.appendChild(el("p", "msg-warn small", "Not ready: " + p.settings_problem)); }
     if (Array.isArray(p.settings) && p.settings.length) { card.appendChild(pluginSettingsForm(p)); }
@@ -3618,10 +3619,74 @@
     if (answer.error) { showPluginsError(answer.error); } else { t.result = answer.body || { ok: false, text: "" }; }
     renderPlugins();
   }
+  // Trust by key (plugin spec section 11; the owner's decision 8): who signed a plugin, or why its signature is not
+  // taken; one signed with a key this server does not trust offers to trust that key (its publisher's).
+  function pluginSignatureNote(p) {
+    var s = p.signature;
+    if (s.signer) { return el("p", "muted small", "Signed by " + s.signer + "."); }
+    var box = el("div", "plugin-signature");
+    box.appendChild(el("p", "msg-warn small", "Its signature is not taken: " + String(s.problem || "-") + "."));
+    var editable = !!(plugins.data && plugins.data.editable);
+    if (editable && s.key && String(s.problem || "").indexOf("does not trust") >= 0) {
+      var trust = el("button", "st-btn st-btn--secondary st-btn--sm", "Trust this publisher's key");
+      trust.type = "button";
+      trust.disabled = plugins.acting;
+      trust.addEventListener("click", function () { trustPluginKey(s.key, String(p.publisher || p.name || p.id)); });
+      box.appendChild(trust);
+    }
+    return box;
+  }
+  function trustKeyQuestion(name, key) {
+    return "Trust every plugin signed with " + name + "'s key (" + String(key).slice(0, 16) + "...)? Each one then runs on this PC " +
+      "with the server's rights without being approved one by one, as long as its files are the ones signed. It applies when " +
+      "the server restarts.";
+  }
+  async function trustPluginKey(key, name) {
+    if (plugins.acting) { return; }
+    if (!window.confirm(trustKeyQuestion(name, key))) { return; }
+    await pluginChange(api("/v1/strata/plugins/keys", jsonPost({ add: key, name: name })));
+  }
+  async function addPluginKey() {
+    var name = $("plugins-key-name").value.trim();
+    var key = $("plugins-key-value").value.trim().toLowerCase();
+    if (!name || !key) { showPluginsError("Type the publisher's name and its public key first."); return; }
+    await trustPluginKey(key, name);
+    if (!$("plugins-error").textContent) { $("plugins-key-name").value = ""; $("plugins-key-value").value = ""; }
+  }
+  async function removePluginKey(k) {
+    if (plugins.acting) { return; }
+    if (!window.confirm("Stop trusting " + k.name + "'s key? Plugins signed only with it wait for your approval after the server restarts.")) { return; }
+    await pluginChange(api("/v1/strata/plugins/keys", jsonPost({ remove: k.key })));
+  }
+  function renderPluginKeys(d) {
+    var box = $("plugins-keys");
+    clear(box);
+    var keys = d && Array.isArray(d.keys) ? d.keys : null;
+    $("plugins-keys-card").hidden = !keys;
+    if (!keys) { return; }
+    var editable = !!d.editable;
+    $("plugins-key-add").disabled = !editable || plugins.acting;
+    if (!keys.length) { box.appendChild(el("p", "muted small", "No key yet: this install was built before plugins were signed.")); }
+    keys.forEach(function (k) {
+      var row = el("div", "plugin-key");
+      row.appendChild(el("span", "plugin-key__name", String(k.name)));
+      if (k.install) { row.appendChild(el("span", "st-badge", "this install's key")); }
+      row.appendChild(el("code", "plugin-key__value", String(k.key)));
+      if (!k.install) {
+        var remove = el("button", "st-btn st-btn--secondary st-btn--sm", "Remove");
+        remove.type = "button";
+        remove.disabled = !editable || plugins.acting;
+        remove.addEventListener("click", function () { removePluginKey(k); });
+        row.appendChild(remove);
+      }
+      box.appendChild(row);
+    });
+  }
   function renderPlugins() {
     var list = $("plugins-list");
     clear(list);
     var d = plugins.data;
+    renderPluginKeys(d);
     $("plugins-folder").textContent = d ? "Folder: " + String(d.folder || "-") + (d.editable ? "" : " (read only: this server keeps no choices)") : "";
     if (!d) { return; }
     var all = Array.isArray(d.plugins) ? d.plugins : [];
@@ -4140,6 +4205,7 @@
     $("tab-btn-settings").addEventListener("click", function () { showView("settings"); });
     $("tab-btn-plugins").addEventListener("click", function () { showView("plugins"); });
     $("plugins-refresh").addEventListener("click", refreshPlugins);
+    $("plugins-key-add").addEventListener("click", addPluginKey);
     $("key-show").addEventListener("click", function () { keyShown = !keyShown; renderKey(); });
     $("key-copy").addEventListener("click", function () { if (state.key) { copyText(state.key); } });
     $("key-rotate").addEventListener("click", rotateKey);

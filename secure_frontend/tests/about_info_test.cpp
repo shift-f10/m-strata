@@ -83,11 +83,20 @@ void the_build_record_lists_first_party_plugins() {
          "the second, its file, off");
   secure_frontend_test::write_file(folder / "build.json", kRecord);
   expect(secure_frontend::read_engine_build(folder)->plugins.empty(), "a record without plugins has none");
+  expect(secure_frontend::read_engine_build(folder)->signing_key.empty(), "nor a signing key");
+  // trust by key (plugin spec section 11): the public half of the key make signed this folder's plugins with
+  const std::string key(64U, 'd');
+  secure_frontend_test::write_file(folder / "build.json", R"({"schema_version": 1, "built": "x", "commit": "c", "ggml": "g",
+    "cuda_arch": "a", "engines": [], "plugins": [], "signing_key": ")" + key + R"("})");
+  expect(secure_frontend::read_engine_build(folder).has_value() && secure_frontend::read_engine_build(folder)->signing_key == key,
+         "the install's signing key is read");
   std::vector<std::string> bads;
   bads.push_back("\"plugins\": [{\"id\": \"Bad\", \"manifest\": \"" + sum_a + "\", \"files\": {}, \"on\": true}]");
   bads.push_back("\"plugins\": [{\"id\": \"x\", \"manifest\": \"short\", \"files\": {}, \"on\": true}]");
   bads.push_back("\"plugins\": [{\"id\": \"x\", \"manifest\": \"" + sum_a + "\", \"files\": {}, \"on\": \"yes\"}]");
   bads.push_back("\"plugins\": [{\"id\": \"x\", \"manifest\": \"" + sum_a + "\", \"files\": {}, \"on\": true, \"more\": 1}]");
+  bads.push_back("\"signing_key\": \"not a key\"");
+  bads.push_back("\"signing_key\": 7");
   for (const std::string& bad : bads) {
     secure_frontend_test::write_file(folder / "build.json",
                                      R"({"schema_version": 1, "built": "x", "commit": "c", "ggml": "g", "cuda_arch": "a", "engines": [], )" + bad + "}");

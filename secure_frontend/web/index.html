@@ -455,12 +455,30 @@
           <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="plugins-refresh">
             <svg class="st-icon st-icon--sm"><use href="/ui/sprite.svg#i-refresh"/></svg>Refresh</button></div>
         <p class="muted small">Plugins add engine families, tools, notifiers and diagnostics. One runs only when this install was
-          built with it or you approved it, and only with the files you approved: a changed file waits for your approval again.
-          A change applies when the server restarts.</p>
+          built with it, signed with a key it trusts, or you approved it, and only with the files that were built, signed or
+          approved: a changed file waits for your approval again. A change applies when the server restarts.</p>
         <p class="muted small" id="plugins-folder"></p>
         <p class="msg-error" id="plugins-error" role="alert" hidden></p>
       </div>
       <div class="plugins-list" id="plugins-list"></div>
+      <div class="st-card alerts-settings" id="plugins-keys-card" hidden>
+        <div class="models-head"><span class="card-title">Publisher keys</span></div>
+        <p class="muted small">A plugin signed with one of these keys runs without being approved one by one, as long as its
+          files are the ones signed. This install's own key signs the plugins make builds, and any you sign later with
+          make.py --sign-plugin. Trust a publisher's key only if you trust everything that publisher signs: its plugins run
+          on this PC with the server's rights. A change applies when the server restarts.</p>
+        <div class="plugin-keys" id="plugins-keys"></div>
+        <div class="config-grid">
+          <label class="config-field"><span class="st-label">Name</span>
+            <input class="st-input" id="plugins-key-name" type="text" spellcheck="false" autocapitalize="off" placeholder="The publisher's name"></label>
+          <label class="config-field"><span class="st-label">Public key</span>
+            <input class="st-input" id="plugins-key-value" type="text" spellcheck="false" autocapitalize="off"
+                   placeholder="64 hex characters (make.py --signing-key-show on their PC)"></label>
+        </div>
+        <div class="model-actions">
+          <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="plugins-key-add">Trust this key</button>
+        </div>
+      </div>
     </div>
   </section>
 

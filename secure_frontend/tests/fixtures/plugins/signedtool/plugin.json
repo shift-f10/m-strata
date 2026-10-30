@@ -1,0 +1,4 @@
+{"schema": "m-strata.plugin/1", "id": "signedtool", "kind": "tool", "name": "Signed tool", "version": "1.0.0",
+  "publisher": "Example Labs", "license": "MIT", "about": "A signed stand-in.",
+  "files": {"windows": ["signed-tool.exe"], "linux": ["signed-tool"]},
+  "tool": {"program": {"windows": "signed-tool.exe", "linux": "signed-tool"}}}

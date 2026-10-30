@@ -211,6 +211,11 @@ std::optional<ReleaseIssue> check_schema(const JsonValue& root, ReleaseManifest*
 
 }  // namespace
 
+std::optional<ReleaseIssue> split_signed_envelope(const std::string_view envelope, std::string_view* signed_bytes,
+                                                  std::array<std::uint8_t, 64>* signature) noexcept {
+  return split_envelope(envelope, signed_bytes, signature);
+}
+
 ReleaseVerifyResult verify_release_manifest(std::string_view envelope,
                                             const std::array<std::uint8_t, 32>& public_key) noexcept {
   std::string_view manifest;
