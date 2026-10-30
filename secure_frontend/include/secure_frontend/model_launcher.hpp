@@ -105,8 +105,11 @@ class ModelLauncher final {
     std::string param{};
   };
   // Validates and accepts a start of card `name` with `options` (the body's "options" object;
-  // nullptr = the remembered values, else the card's defaults). nullopt: accepted (202).
-  [[nodiscard]] std::optional<Refusal> start(std::string_view name, const JsonValue* options, bool remote_client);
+  // nullptr = the remembered values, else the card's defaults). nullopt: accepted (202). `may_calibrate` false (owner
+  // 2026-10-29: the page's "Start without calibrating") starts it without the calibration a first start or a settings
+  // change would run first.
+  [[nodiscard]] std::optional<Refusal> start(std::string_view name, const JsonValue* options, bool remote_client,
+                                             bool may_calibrate = true);
   // Stops the running model (or the one starting, once its start is done). nullopt: accepted.
   [[nodiscard]] std::optional<Refusal> stop(bool remote_client);
   // GUI-first start-up (spec 2026-10-27 §5): calibrates card `name` at `options` (as start's): the running model is

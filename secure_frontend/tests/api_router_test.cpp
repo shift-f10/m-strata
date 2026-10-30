@@ -497,6 +497,23 @@ void web_ui_models_tab_starts_stops_and_polls() {
          "number inputs carry the card's bounds");
   expect(js.find("window.confirm(") != std::string::npos && js.find("if (running && !window.confirm(") != std::string::npos,
          "Start asks before a running model is stopped");
+  // The owner (2026-10-29): "starting an uncalibrated server recommend calibrating first and when answered yes, it will
+  // calibrate. However, during calibration, allow users to cancel calibration if they choose to."
+  // Start on a card never calibrated asks: calibrate, then start (recommended), start without, or cancel; a calibration
+  // shows its Cancel, and a cancelled "calibrate, then start" offers the start without it.
+  const std::string html{secure_frontend::find_web_asset("/")->body};
+  expect(html.find("<dialog class=\"st-card key-once\" id=\"calibrate-first\"") != std::string::npos &&
+             html.find("id=\"calibrate-first-yes\">Calibrate, then start (recommended)<") != std::string::npos &&
+             html.find("id=\"calibrate-first-no\">Start without calibrating<") != std::string::npos &&
+             html.find("id=\"calibrate-first-cancel\">Cancel<") != std::string::npos,
+         "the question and its three answers");
+  expect(js.find("cal.state === \"missing\"") != std::string::npos && js.find("var choice = await askCalibrateFirst(card, running);") != std::string::npos &&
+             js.find("options: collected.values, calibrate: false") != std::string::npos &&
+             js.find("options: collected.values, then_start: true") != std::string::npos,
+         "a card never calibrated is asked about; the answers post calibrate false or then_start true");
+  expect(js.find("$(\"model-calibrate-cancel\").hidden = !run;") != std::string::npos &&
+             js.find("Start it now without calibrating?") != std::string::npos,
+         "a calibration has its Cancel; a cancelled calibrate-then-start offers the start without it");
   expect(js.find("parsed.error.param") != std::string::npos && js.find("$(\"model-start-error\").textContent") != std::string::npos,
          "a refusal is shown beside Start, naming the option");
   expect(js.find("launcher.timer = window.setTimeout(pollLauncher, 2000);") != std::string::npos &&

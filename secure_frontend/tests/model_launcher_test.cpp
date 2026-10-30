@@ -738,6 +738,38 @@ void a_first_start_calibrates_first() {
   expect(has_pair(dumped_argv(f.dump), "--cpu-threads", f.winner), "and runs with the result: " + joined(dumped_argv(f.dump)));
 }
 
+// The owner (2026-10-29): "starting an uncalibrated server recommend calibrating first and when answered yes, it will
+// calibrate. However, during calibration, allow users to cancel calibration if they choose to."
+// The answer "Start without calibrating" is a start told not to (calibrate false): a card that would calibrate before
+// its first start (Gemma 4) starts at once, with nothing measured.
+void a_start_without_calibrating_starts_at_once() {
+  CalibrationFixture f;
+  const std::string name = "other-gemma-Q8_0";
+  expect(!f.launcher->start(name, nullptr, false, false).has_value(), "the start is accepted");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(120)), "it ends");
+  expect(f.launcher->state_of(name) == secure_frontend::CardState::running, "the card runs");
+  expect(!std::filesystem::exists(f.result_file(name)), "nothing was calibrated");
+  expect(!has_pair(dumped_argv(f.dump), "--cpu-threads", f.winner), "it runs on the card's own settings: " + joined(dumped_argv(f.dump)));
+}
+
+// The start route takes that answer as "calibrate": false, and nothing but a boolean there.
+void the_start_route_takes_calibrate_false() {
+  ServerOptions options;
+  options.model_cards = {CardOptions{.name = "Plain", .profile = "qwen"}};
+  options.config_literals = {{"models.control", "true"}};
+  auto server = ServerProcess::start(options);
+  expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots");
+  if (!server) return;
+  const auto refused = call(*server, "POST", "/v1/strata/models/start", R"({"name":"Plain","calibrate":"no"})");
+  expect(refused && refused->status == 400, "calibrate is a boolean: " + shown(refused));
+  const auto started = call(*server, "POST", "/v1/strata/models/start", R"({"name":"Plain","calibrate":false})");
+  expect(started && started->status == 202, "a start without calibrating is accepted: " + shown(started));
+  expect(wait_for_card(*server, "Plain", "running"), "Plain runs: " + server->stderr_text());
+  expect(server->stderr_text().find("start Plain") != std::string::npos &&
+             server->stderr_text().find("calibrate, then start Plain") == std::string::npos,
+         "started, not calibrated: " + server->stderr_text());
+}
+
 // §5a: alerts - a calibration whose engine never starts raises calibration_failed; a start of a card that does not
 // calibrate first (an operator card) whose engine ends before it is ready raises engine_stopped.
 void failures_raise_alerts() {
@@ -1372,6 +1404,8 @@ int main(int argc, char** argv) {
       {"a_qwen36_card_reads_its_tokenizer_from_the_gguf", a_qwen36_card_reads_its_tokenizer_from_the_gguf},
       {"calibration_finds_the_win_and_starts_with_it", calibration_finds_the_win_and_starts_with_it},
       {"a_first_start_calibrates_first", a_first_start_calibrates_first},
+      {"a_start_without_calibrating_starts_at_once", a_start_without_calibrating_starts_at_once},
+      {"the_start_route_takes_calibrate_false", the_start_route_takes_calibrate_false},
       {"a_minimax_card_measures_its_prompt_reading_first", a_minimax_card_measures_its_prompt_reading_first},
       {"a_glm_card_calibrates", a_glm_card_calibrates},
       {"a_failed_prefill_calibration_is_not_retried_by_itself", a_failed_prefill_calibration_is_not_retried_by_itself},

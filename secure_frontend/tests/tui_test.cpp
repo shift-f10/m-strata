@@ -270,7 +270,7 @@ const std::string kModels =
     R"({"name":"thinking","kind":"choice","label":"Thinking","help":"","default":"high","choices":["none","low","high"],"value":"high"},)"
     R"({"name":"web_search","kind":"boolean","label":"Web search","help":"","default":true,"value":true},)"
     R"({"name":"max_context","kind":"integer","label":"Context length","help":"","default":131072,"min":4096,"max":262144,"value":131072}],)"
-    R"("calibration":{"state":"missing","first_start":false,"running":null,"before":null,"after":null,"date":null,"args":[],"auto":false,"error":null}},)"
+    R"("calibration":{"state":"fresh","first_start":false,"running":null,"before":80.0,"after":96.0,"date":"2026-10-29T01:00:00Z","args":["--spec","6"],"auto":false,"error":null}},)"
     R"({"name":"MiniMax","profile":"minimax","state":"stopped","error":null,"options":[],)"
     R"("calibration":{"state":"missing","first_start":false,"running":null,"args":[],"auto":false,"error":null,)"
     R"("prefill":{"state":"done","chunk":1024,"gemm":"blas","tok_s":14.9,"default_tok_s":14.9,"date":"2026-10-29T01:14:17Z"}}}]})";
@@ -962,10 +962,47 @@ void a_debugging_build_waits_for_y() {
   expect(row_with(screen, "y: start") > row_with(screen, "read it before"), "the keys under the text: " + shown);
 }
 
+// The owner (2026-10-29): "starting an uncalibrated server recommend calibrating first and when answered yes, it will
+// calibrate. However, during calibration, allow users to cancel calibration if they choose to."
+// Enter on a card never calibrated asks: c calibrates, then starts (recommended); s starts without (calibrate false);
+// any other key starts nothing. x cancels a calibration.
+void an_uncalibrated_start_asks_to_calibrate_first() {
+  t::App app(t::Capabilities{}, std::nullopt);
+  app.server_state("http://127.0.0.1:8080", true);
+  (void)app.key(character("2"));
+  app.answer({"models", "GET", "/v1/strata/models", {}}, 200, kModels);
+  const auto shown = [&app] {
+    t::Screen screen(140, 30);
+    app.draw(screen, 0);
+    return all_text(screen);
+  };
+  (void)app.key(plain(t::Key::Kind::down));  // MiniMax, not calibrated (Qwen3.8 runs)
+  auto out = app.key(plain(t::Key::Kind::enter));
+  expect(out.requests.empty() && shown().find("Stop Qwen3.8 and start MiniMax? It is not calibrated") != std::string::npos &&
+             shown().find("c: calibrate, then start (recommended)") != std::string::npos &&
+             shown().find("s: start without calibrating") != std::string::npos,
+         "Enter asks first: " + shown());
+  out = app.key(character("c"));
+  expect(out.requests.size() == 1U && out.requests[0].path == "/v1/strata/models/calibrate" &&
+             out.requests[0].body == R"({"name":"MiniMax","options":{},"then_start":true})",
+         "c calibrates, then starts: " + (out.requests.empty() ? std::string{} : out.requests[0].body));
+  (void)app.key(plain(t::Key::Kind::enter));
+  out = app.key(character("s"));
+  expect(out.requests.size() == 1U && out.requests[0].path == "/v1/strata/models/start" &&
+             out.requests[0].body == R"({"name":"MiniMax","options":{},"calibrate":false})",
+         "s starts without calibrating: " + (out.requests.empty() ? std::string{} : out.requests[0].body));
+  (void)app.key(plain(t::Key::Kind::enter));
+  expect(app.key(character("n")).requests.empty() && shown().find("It is not calibrated") == std::string::npos,
+         "any other key starts nothing");
+  out = app.key(character("x"));
+  expect(out.requests.size() == 1U && out.requests[0].path == "/v1/strata/models/calibrate/cancel", "x cancels a calibration");
+}
+
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"the_screen_draws_text_boxes_and_gauges", the_screen_draws_text_boxes_and_gauges},
       {"a_debugging_build_waits_for_y", a_debugging_build_waits_for_y},
+      {"an_uncalibrated_start_asks_to_calibrate_first", an_uncalibrated_start_asks_to_calibrate_first},
       {"charts_are_braille_or_blocks", charts_are_braille_or_blocks},
       {"only_the_changes_are_written", only_the_changes_are_written},
       {"keys_decode_from_vt_sequences", keys_decode_from_vt_sequences},

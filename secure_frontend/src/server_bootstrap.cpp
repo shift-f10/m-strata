@@ -571,7 +571,8 @@ secure_frontend::HttpResponse refusal_answer(const secure_frontend::ModelLaunche
   return secure_frontend::make_error_response(refusal.error, {.param = refusal.param});
 }
 
-// POST /v1/strata/models/start: {"name": "<card>", "options": {...}} (options optional).
+// POST /v1/strata/models/start: {"name": "<card>", "options": {...}, "calibrate": false} (options optional; calibrate
+// false: start without calibrating first, owner 2026-10-29).
 secure_frontend::HttpResponse start_answer(secure_frontend::ModelLauncher& launcher, const std::string_view body, const bool remote) {
   constexpr secure_frontend::JsonLimits kStartLimits{.max_bytes = secure_frontend::kModelControlBodyLimit, .max_depth = 3U,
                                                      .max_container_entries = 64U, .max_string_bytes = 256U, .allow_fractions = true};
@@ -582,13 +583,15 @@ secure_frontend::HttpResponse start_answer(secure_frontend::ModelLauncher& launc
   if (members == nullptr) return secure_frontend::make_error_response(secure_frontend::ApiError::invalid_request);
   const std::string* name = nullptr;
   const secure_frontend::JsonValue* options = nullptr;
+  bool may_calibrate = true;  // "calibrate": false - the page's "Start without calibrating" (owner 2026-10-29)
   for (const auto& member : *members) {
     if (member.key == "name" && member.value.if_string() != nullptr) name = member.value.if_string();
     else if (member.key == "options" && member.value.if_object() != nullptr) options = &member.value;
+    else if (member.key == "calibrate" && member.value.if_boolean() != nullptr) may_calibrate = *member.value.if_boolean();
     else return secure_frontend::make_error_response(secure_frontend::ApiError::invalid_request);
   }
   if (name == nullptr) return secure_frontend::make_error_response(secure_frontend::ApiError::invalid_request);
-  if (const auto refused = launcher.start(*name, options, remote)) return refusal_answer(*refused);
+  if (const auto refused = launcher.start(*name, options, remote, may_calibrate)) return refusal_answer(*refused);
   std::string text = "{\"state\":\"starting\",\"name\":";
   secure_frontend::append_json_string(&text, *name);
   return json_answer(202, text + "}\n");

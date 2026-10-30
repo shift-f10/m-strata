@@ -139,10 +139,11 @@ class App final {
   mutable int log_rows_{20};    // the lines the Log's box showed when last drawn (the scroll stops at its first page)
   // a one-line prompt: a text field (a setting's value, ROTATE) or a yes/no question (quit; stop one card and start
   // another, or restart the running one, as the page asks)
-  enum class Prompt { none, quit, edit_setting, rotate, start, remove };
+  enum class Prompt { none, quit, edit_setting, rotate, start, remove, calibrate_first };
   Prompt prompt_{Prompt::none};
   std::string input_;
   std::optional<Request> confirm_;   // the start (or the card removal) a yes sends
+  std::optional<Request> calibrate_;  // calibrate_first: the calibrate-then-start c sends (s sends confirm_)
   std::string question_;             // and its question
   std::optional<JsonValue> editing_;  // the setting the edit field was opened on (its key, type and range)
 };

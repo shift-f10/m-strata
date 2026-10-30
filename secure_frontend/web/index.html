@@ -77,6 +77,19 @@
     </div>
   </dialog>
 
+  <!-- ======================= Calibrate first? ======================= -->
+  <!-- Owner 2026-10-29: Start on a card never calibrated on this PC asks first - calibrate, then start (recommended),
+       start without calibrating, or cancel. -->
+  <dialog class="st-card key-once" id="calibrate-first" aria-labelledby="calibrate-first-title">
+    <span class="login-card__title key-once__title" id="calibrate-first-title">Calibrate first?</span>
+    <p id="calibrate-first-text"></p>
+    <div class="key-once__actions calibrate-first__actions">
+      <button type="button" class="st-btn" id="calibrate-first-cancel">Cancel</button>
+      <button type="button" class="st-btn" id="calibrate-first-no">Start without calibrating</button>
+      <button type="button" class="st-btn st-btn--primary" id="calibrate-first-yes">Calibrate, then start (recommended)</button>
+    </div>
+  </dialog>
+
   <!-- ======================= Folders on this PC (models.control) ======================= -->
   <!-- GUI-first start-up: the server's folder browser (this PC's drives, one folder's sub-folders and .gguf files), for a
        model file to add, a card's moved folder, or where downloads go. Paths are shown as text only. -->

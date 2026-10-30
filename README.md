@@ -60,8 +60,11 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   - DeepSeek-V4.1 and MiniMax-M3.1: Maya's CPU-thread step;
   - flint and Gemma 4: their engines' CPU lane, PCIe share and threads.
 
-  flint and Gemma 4 calibrate before a new card's first start (a few short starts). The large models calibrate when you
-  press Calibrate, as upstream and Maya do: each candidate is a start of the model, so it can take an hour or more.
+  **Start** on a card never calibrated on this PC asks first: **Calibrate, then start** (recommended), **Start without
+  calibrating**, or **Cancel**. A calibration shows its progress and a **Cancel** button (the TUI: `x`); a cancelled
+  calibration keeps nothing, and one you asked for before a start offers that start without it. Each candidate is a
+  start of the model: flint and Gemma 4 take a few short starts, the large models (as upstream and Maya do) can take an
+  hour or more. **Calibrate** also runs one on its own.
   MiniMax also measures how this PC reads prompts once, before its first start, as Maya does (a few minutes).
 - **Add a model** from files already on this PC (a folder and its `.gguf`); the pack is built when the family needs one.
   A Qwen model whose folder holds its picture encoder (one `mmproj*.gguf`) gets a card that reads pictures, with a
@@ -635,7 +638,7 @@ opens on the Monitor:
 | --- | --- |
 | `1`-`6`, Tab, Shift-Tab, F1-F6 | Monitor, Models, Downloads, Settings, Log, About |
 | Up, Down, PageUp, PageDown | Move in a list; the mouse wheel scrolls the Log |
-| Models: Enter, `s`, `c`, `x`, `a`, Del | Start the card, stop the model, calibrate, cancel the calibration, recalibrate when settings change, remove the card (asked first; its model files stay, a running model is stopped first) |
+| Models: Enter, `s`, `c`, `x`, `a`, Del | Start the card (a card never calibrated asks first: `c` calibrate, then start; `s` start without calibrating), stop the model, calibrate, cancel the calibration, recalibrate when settings change, remove the card (asked first; its model files stay, a running model is stopped first) |
 | Models: `o`, then Up/Down, Left/Right, Esc | The card's options: pick one, change it (a switch flips, a choice or number steps), back to the cards; `r` undoes the changes |
 | Downloads: Enter, `p`, `x` | Download (or resume), pause, cancel the selected one (a model already on this PC shows Downloaded or Locally provided, and its card, and is not downloaded again; Other version: another revision of its file is here, and Enter downloads the catalog's; installed without its card: Enter makes the card) |
 | Settings: Enter, `w`, `u`, `k`, `R` | Edit the setting (a switch flips; empty means its default), save the changes, undo them, show the API key, rotate it (type `ROTATE`) |
