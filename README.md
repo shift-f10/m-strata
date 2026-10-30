@@ -13,6 +13,7 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 - [What is in the repository](#what-is-in-the-repository)
 - [Models](#models)
 - [Development system](#development-system)
+- [Compatibility](#compatibility)
 - [What this system could not test](#what-this-system-could-not-test)
 - [Install](#install)
 - [Configure](#configure)
@@ -190,8 +191,8 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 | **Raon-1-mini** (KRAFTON, Q8_0) | `multiengine_raon1.dll` | **Works, verified** against KRAFTON's llama.cpp (mean KL 0.0009, top-1 100% on short prompts); 74 tok/s short, 52 tok/s at 9K context; 256K context. |
 | **Gemma 4 26B-A4B** (UD-Q8_K_XL) | `multiengine_gemma4.dll` | **Works:** KL 0.040 against llama.cpp, 47-60 tok/s. |
 | **flint** (RecursiveSI, Q8_0) | `multiengine_flint.dll` | **Works:** about 49-53 tok/s decode, checked against llama.cpp's flint. |
-| DeepSeek-V4.1-Flash | `multiengine_maya_ds4.dll` | Built and wired into the server (prompt, tokenizer, cards, downloads); not run end to end (its GGUFs are 277-508 GB). |
-| MiniMax-M3.1-Flash (Maya-XS, Maya-S) | `multiengine_maya_mm3.dll` | Built and wired into the server (prompt, tokenizer, cards, downloads; MiniMax Community License, see below); not run end to end yet (Maya-XS is 93 GB). |
+| DeepSeek-V4.1-Flash | `multiengine_maya_ds4.dll` | **Runs** from a page card (Maya-XS): 11.6 tok/s, Maya's own engine 11.3 (2026-10-29). |
+| MiniMax-M3.1-Flash (Maya-XS, Maya-S) | `multiengine_maya_mm3.dll` | **Runs** from a page card (Maya-S): 3.9 tok/s, Maya's own engine 4.0 (2026-10-29; MiniMax Community License, see below). |
 
 ## Development system
 
@@ -211,6 +212,24 @@ A model larger than VRAM keeps its experts in RAM (and reads the rest from disk)
 (about 84 GB) or a GLM-5.3-Flash Maya-S pack (about 96 GB) runs with most experts in RAM. Smaller systems work, more
 slowly, when the drive is fast NVMe.
 
+## Compatibility
+
+What has been run, on which PC (status 2026-10-30). Each row is one PC and one model family: **Pass** when it
+loads, answers and its checks hold, **Fail** when it does not. So far every row is the development system above;
+the CUDA engines have not been run on Linux, on another GPU or with less memory yet (see
+[What this system could not test](#what-this-system-could-not-test)). Results from other PCs are welcome.
+
+| OS | CPU | GPU Type | VRAM | RAM | Model Family | Pass | Fail | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows 11 Pro (build 26200) | AMD Ryzen 9 3900X, 12 cores / 24 threads | NVIDIA RTX 4080 SUPER (Ada, 8.9) | 16 GB | 96 GB | Qwen3.8-Flash-Next (IQ3_S) | ✅ | | 94 tok/s with its MTP draft layer (upstream's own engine: 89), 59 without it. Pictures work (encoder on the GPU). |
+| Windows 11 Pro (build 26200) | AMD Ryzen 9 3900X, 12 cores / 24 threads | NVIDIA RTX 4080 SUPER (Ada, 8.9) | 16 GB | 96 GB | Qwen3.6-35B-A3B (Q8_0) | ✅ | | About 29 tok/s. Web search checked end to end; pictures not tried yet. |
+| Windows 11 Pro (build 26200) | AMD Ryzen 9 3900X, 12 cores / 24 threads | NVIDIA RTX 4080 SUPER (Ada, 8.9) | 16 GB | 96 GB | GLM-5.3-Flash (Maya-S v2) | ✅ | | 9.8 tok/s with the card's RAM headroom at 6 GB (Maya's own engine: 9.7); 3.9 at the default 16 GB. |
+| Windows 11 Pro (build 26200) | AMD Ryzen 9 3900X, 12 cores / 24 threads | NVIDIA RTX 4080 SUPER (Ada, 8.9) | 16 GB | 96 GB | DeepSeek-V4.1-Flash (Maya-XS) | ✅ | | 11.6 tok/s (Maya's own engine: 11.3). With 96 GB of RAM most experts are read from disk. |
+| Windows 11 Pro (build 26200) | AMD Ryzen 9 3900X, 12 cores / 24 threads | NVIDIA RTX 4080 SUPER (Ada, 8.9) | 16 GB | 96 GB | MiniMax-M3.1-Flash (Maya-S) | ✅ | | 3.9 tok/s (Maya's own engine: 4.0). |
+| Windows 11 Pro (build 26200) | AMD Ryzen 9 3900X, 12 cores / 24 threads | NVIDIA RTX 4080 SUPER (Ada, 8.9) | 16 GB | 96 GB | Raon-1-mini (Q8_0) | ✅ | | Verified against KRAFTON's llama.cpp (mean KL 0.0009); 74 tok/s short, 52 tok/s at 9K context. |
+| Windows 11 Pro (build 26200) | AMD Ryzen 9 3900X, 12 cores / 24 threads | NVIDIA RTX 4080 SUPER (Ada, 8.9) | 16 GB | 96 GB | Gemma 4 26B-A4B (UD-Q8_K_XL) | ✅ | | 73-78 tok/s after calibration (2026-10-29); KL 0.040 against llama.cpp. |
+| Windows 11 Pro (build 26200) | AMD Ryzen 9 3900X, 12 cores / 24 threads | NVIDIA RTX 4080 SUPER (Ada, 8.9) | 16 GB | 96 GB | flint (Q8_0) | ✅ | | 49-53 tok/s; checked against llama.cpp's flint. |
+
 ## What this system could not test
 
 One Windows desktop with one NVIDIA GPU cannot check everything the code supports. These parts are built and covered
@@ -220,7 +239,7 @@ by the server's tests (with fake engines where a GPU would be needed), but have 
 | --- | --- |
 | **Several GPUs** | The GPUs choice on the cards, Qwen's layer split, GLM-5.3's and Raon-1-mini's split, DeepSeek-V4.1's tensor-parallel pairs and MiniMax-M3.1's GPU list are composed as upstream and Project Maya compose them, and checked argument by argument, but never run: the development system has one GPU. Upstream's card order for a split (the faster card last) is not done yet. |
 | **Pictures (vision)** | Checked on Qwen3.8-Flash-Next IQ3_S with its encoder on the GPU (a red square and a blue circle, named and placed correctly, about 4 s). Not yet run: Qwen3.6, the encoder on the CPU, several pictures in one question, and pictures through the page's attach button (the check used the API). |
-| **DeepSeek-V4.1 and MiniMax-M3.1** | Built and wired, not run end to end yet. Their GGUFs are large (DeepSeek's 277-508 GB, MiniMax's from 93 GB): with 96 GB of RAM most of their experts would come from disk, so a run here shows whether they work, not how fast they can be. |
+| **DeepSeek-V4.1 and MiniMax-M3.1** | Run here once each (Maya-XS and Maya-S, 2026-10-29), at Maya's own engine's speed. Their GGUFs are large (DeepSeek's 277-508 GB, MiniMax's from 93 GB): with 96 GB of RAM most of their experts come from disk, so these runs show that they work, not how fast they can be on a PC with more RAM. |
 | **Other GPU makers** | Only NVIDIA CUDA builds are made and run. Upstream's AMD (HIP) and Intel (SYCL) paths are in the tree but neither built nor tested here. |
 | **Other NVIDIA generations** | Every speed and every run is from one RTX 4080 SUPER (compute capability 8.9). Every engine compiles for Turing, Ampere, Ada, Hopper and Blackwell (`--cuda-arch compatible`, built here 2026-10-29), but no other generation has been run here; nor have GPUs with less than 16 GB, or PCs with less than 96 GB of RAM. |
 | **Linux** | Every change is written for Linux and Windows. Since 2026-10-28 the frontend is built and tested here on Linux too: GCC 13.3 and Clang 18.1 (CI's compilers) in a WSL 2 Ubuntu 24.04, with the whole test suite (1401 of 1402 pass with GCC on 2026-10-28, the one left only when run in parallel; tests that need a second user, real model packs or SearXNG skip). The CUDA engines have not been built or run on Linux here, so neither have the models. |

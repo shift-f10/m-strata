@@ -280,6 +280,19 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z41 (Windows box; owner-directed)
+
+The owner: "In the readme add a Compatibility Table that has the OS, CPU, GPU Type, VRAM, RAM, Model Family, Pass,
+Fail, Notes. Fill it initially with our status from our dev machine." README.md has a new section, "Compatibility",
+after "Development system": one row per model family on the development system, all eight passing. The figures come
+from:
+- the Qwen3.8 MTP A/B and the Maya A/B (GLM, DeepSeek and MiniMax) of 2026-10-29;
+- the Raon-1-mini and flint checks against llama.cpp;
+- the Gemma 4 calibration taken for the screenshots.
+
+The Models table and "What this system could not test" still said DeepSeek-V4.1 and MiniMax-M3.1 had not run end to
+end. Both ran here on 2026-10-29 through our engine; those rows now say so, with their speeds.
+
 ### Claude Code session, 2026-10-29 z40 (Windows box; owner-directed)
 
 The owner: "add some screenshots on the readme for the system tray version and tui". Five PNGs in `docs/images/`,
