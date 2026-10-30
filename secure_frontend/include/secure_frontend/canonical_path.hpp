@@ -126,7 +126,19 @@ class CanonicalFile final {
 // open like any root (links below it are still refused), but its owner and
 // write access are not checked, neither for the root nor for directories
 // created below it. Used only for bundle source and target directories.
-enum class RootPolicy { existing, create_private, external };
+// model_folder (owner 2026-10-29, experimental: "support SMB shares or CIFS shares or NFS shares for models"): a model
+// folder. On this PC's own drives it is checked as `existing`; on a network share - a UNC path \\server\share\..., a
+// mapped network drive, a Linux NFS/CIFS/SMB mount - it opens like `external` (the share's permissions are not
+// checked: this PC cannot vouch for them) while network_shares() allows it, held under its \\server\share name on
+// Windows. Without the opt-in Windows refuses a share (network_location) and Linux checks a mount as any folder.
+enum class RootPolicy { existing, create_private, external, model_folder };
+
+// roots.allow_network_shares (experimental, off by default): whether a model_folder root may be on a network share.
+// Set once at config load.
+void set_network_shares(bool on) noexcept;
+[[nodiscard]] bool network_shares() noexcept;
+// A Linux statfs f_type that is a network file system: NFS, SMB, CIFS, SMB2 (pure: tested on every platform).
+[[nodiscard]] bool is_network_file_system(unsigned long long type) noexcept;
 
 // Owner opt-in (roots.allow_untrusted_media): tolerate model/engine files on exFAT/FAT or junction-mounted
 // volumes by skipping owner-only / not-shared-writable / reparse checks. Set once at config load; opt-in only.
@@ -160,10 +172,11 @@ enum class ExecutableWriters { standard, also_trusted_installer };
 
 // Pure string checks, compiled on every platform so they are tested everywhere.
 // Accepts only drive-absolute X:\... roots; rejects drive-relative C:foo,
-// rooted \foo, UNC \\server\share, \\?\, \\.\, \??\, streams and reserved names.
-[[nodiscard]] std::optional<PathError> check_windows_root_form(std::wstring_view text);
-// GetFinalPathNameByHandleW output -> X:\... ; \\?\UNC\... is network_location.
-[[nodiscard]] std::variant<std::wstring, PathError> classify_final_path(std::wstring_view final_path);
+// rooted \foo, UNC \\server\share, \\?\, \\.\, \??\, streams and reserved names. allow_unc (a model folder
+// while network shares are allowed): \\server\share[\...] too, in backslashes, its names checked as a drive path's.
+[[nodiscard]] std::optional<PathError> check_windows_root_form(std::wstring_view text, bool allow_unc = false);
+// GetFinalPathNameByHandleW output -> X:\... ; \\?\UNC\... is network_location, or \\server\share\... with allow_unc.
+[[nodiscard]] std::variant<std::wstring, PathError> classify_final_path(std::wstring_view final_path, bool allow_unc = false);
 
 enum class OpenKind { regular_file, directory };
 enum class FileTrust { any, not_shared_writable, owner_only };

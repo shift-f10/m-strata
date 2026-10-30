@@ -65,7 +65,8 @@ std::variant<OpenedFile, PathError> open_beneath(const CanonicalRoot& root, cons
     if (ws::is_reparse_point(raw)) {
       return path_error(PathErrorCode::symlink_not_allowed, "a path component is a symbolic link, junction or other reparse point");
     }
-    const auto final_path = classify_final_path(ws::final_path_for_handle(raw));
+    // below a share's folder (a root held as \\server\share\...) each name resolves on the share too
+    const auto final_path = classify_final_path(ws::final_path_for_handle(raw), root.path().wstring().rfind(L"\\\\", 0) == 0);
     const auto* final_text = std::get_if<std::wstring>(&final_path);
     if (final_text == nullptr || !is_within(root.path(), std::filesystem::path{*final_text})) {
       return path_error(PathErrorCode::escapes_root, "the path resolves outside the root");
@@ -108,7 +109,9 @@ namespace detail {
 std::variant<CanonicalRoot, PathError> open_existing_root(const std::filesystem::path& requested, const RootPolicy policy,
                                                           const bool also_trusted_installer) {
   const std::wstring text = requested.wstring();
-  if (auto error = check_windows_root_form(text)) return *error;
+  // a model folder may be on a network share while that is allowed (experimental)
+  const bool shares = policy == RootPolicy::model_folder && network_shares();
+  if (auto error = check_windows_root_form(text, shares)) return *error;
   std::wstring full(32768, L'\0');
   const DWORD length = GetFullPathNameW(text.c_str(), static_cast<DWORD>(full.size()), full.data(), nullptr);
   if (length == 0U || length >= full.size()) return path_error(PathErrorCode::root_unavailable, "the root cannot be resolved");
@@ -133,11 +136,14 @@ std::variant<CanonicalRoot, PathError> open_existing_root(const std::filesystem:
       (tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0U) {
     return path_error(PathErrorCode::not_directory, "the root is not a directory");
   }
-  auto classified = classify_final_path(ws::final_path_for_handle(handle));
+  auto classified = classify_final_path(ws::final_path_for_handle(handle), shares);
   if (auto* error = std::get_if<PathError>(&classified)) return *error;
+  // a share (a UNC path, or a mapped drive that resolves to one) is held under its \\server\share name; its
+  // permissions are the share's, which this PC cannot vouch for, so it is not checked (as an external root)
+  const bool network = std::get<std::wstring>(classified).rfind(L"\\\\", 0) == 0;
   // External roots (bundle directories) skip this: FAT/exFAT volumes have no ACLs, so
   // Trust::unreadable is accepted there too.
-  if (policy != RootPolicy::external) {
+  if (policy != RootPolicy::external && !network) {
     switch (ws::write_access_is_private(handle, also_trusted_installer)) {
       case ws::Trust::trusted: break;
       case ws::Trust::untrusted_owner:
@@ -150,7 +156,7 @@ std::variant<CanonicalRoot, PathError> open_existing_root(const std::filesystem:
   }
   // Ownership moves to the CanonicalRoot.
   return PathFactory::root(std::filesystem::path{std::get<std::wstring>(classified)}, guard.release(), 0U,
-                           policy == RootPolicy::external);
+                           policy == RootPolicy::external || network);
 }
 
 }  // namespace detail

@@ -368,7 +368,16 @@ std::optional<DraftLayerSlot> draft_layer_slot(const ModelCard& card) {
   const auto has = [args](const std::string_view flag) {
     return args != nullptr && std::find(args->begin(), args->end(), flag) != args->end();
   };
-  // a Qwen3.8 pack's card runs --pack; a Qwen3.6 GGUF's (--mtp 2: the model's own layer) does not
+  // a Qwen3.6 GGUF's card (no --pack, its MTP switch): the draft layer is the model file's own MTP block (upstream's
+  // Qwen3.6 engine reads blk.<n> with --mtp 2), so there is no folder to point at - only whether the file carries one
+  // (the owner, 2026-10-29: "it did not prompt for the mtp layer and the card has no browse folder for it")
+  const bool switch_listed = std::any_of(card.options.begin(), card.options.end(), [](const ModelOptionLimits& limit) {
+    return limit.spec != nullptr && limit.spec->name == "mtp";
+  });
+  if (card.profile == EngineProfile::qwen && !has("--pack") && switch_listed) {
+    return DraftLayerSlot{.folder = false, .path = std::nullopt, .inside = true, .in_file = has("--mtp")};
+  }
+  // a Qwen3.8 pack's card runs --pack
   if (!(card.profile == EngineProfile::qwen && has("--pack")) && card.profile != EngineProfile::gemma4) return std::nullopt;
   DraftLayerSlot slot{.folder = card.profile == EngineProfile::qwen, .path = std::nullopt};
   if (args != nullptr) {
@@ -379,6 +388,7 @@ std::optional<DraftLayerSlot> draft_layer_slot(const ModelCard& card) {
 }
 
 std::string draft_layer_json(const DraftLayerSlot& slot) {
+  if (slot.inside) return std::string{"{\"kind\":\"inside\",\"in_file\":"} + (slot.in_file ? "true" : "false") + ",\"path\":null}";
   std::string out = std::string{"{\"kind\":\""} + (slot.folder ? "folder" : "file") + "\",\"path\":";
   if (slot.path) {
     append_json_string(&out, *slot.path);

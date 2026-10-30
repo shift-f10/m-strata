@@ -722,6 +722,22 @@ asks quoted there.
   question names the switch, and such a client can already add and delete models), and applies at the next start. It
   already relaxed the engine executable's check (`open_executable`, for a build folder others may write) before
   2026-10-27; that is unchanged.
+- **Model folders on network shares** (2026-10-29, **experimental**, owner opt-in `roots.allow_network_shares`, off by
+  default; the owner: "support SMB shares or CIFS shares or NFS shares for models", "we should mark that as
+  experimental"): a new root policy, `RootPolicy::model_folder`, opens every model folder (the main config's
+  `roots.models` and `roots.tokenizer_pack`, every card's, a card's side files and MTP draft layer, a pack beside its
+  model, the folders the page names). On this PC's own drives it is exactly `existing`. On a network share - a UNC
+  path `\\server\share\...`, a mapped drive that resolves to one, a Linux NFS/CIFS/SMB mount (`statfs` type) - it
+  opens like `external` (canonical, held open, links below still refused, but owner and write access not checked:
+  this PC cannot vouch for a share's permissions) only while the switch is on; Windows holds it under its
+  `\\server\share` name (the walk below it compares the share's final paths), and without the switch Windows refuses it
+  (`network_location`) as before and Linux checks a mount as any folder. Only model folders: the server's own folders,
+  the config file, downloads (`existing`/`create_private`) and the engine executable never take a share. The server keeps no
+  share password: the share is connected or mounted with the OS's own tools, as the user the server runs as. The page's
+  folder picker lists network drives (and, on Linux, NFS/CIFS/SMB mounts) and takes a typed `\\server\share\...` only
+  while the switch is on, and never makes a share's folder private or makes a private folder on a share. The switch is
+  Settings > Model folders' second one, saved by the same keyed `POST /v1/strata/folders/sharing` (`{"network": bool}`)
+  for the same clients, in force after a restart; the server warns at every start while it is on.
 - **Make private with a model's pack** (2026-10-28, the owner's raon1 and Maya folders): the folder may hold the
   folders a model's tools put beside its files (`pack`, `pack-<name>`, `maya-ds4`, `maya-ds4-<name>`, `maya-mm3`,
   `maya-mm3-<name>`, Hugging Face's `.cache`); each is walked without following anything (a link anywhere refuses the folder; at most 4096 entries in
@@ -986,6 +1002,16 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
   folders keep their checks, so the API key, cards and config are not exposed by the switch.
   Mitigations: off by default, set only by the owner (config file, or the switch on this PC's
   page) and in force only after a restart.
+- **Network shares residual (2026-10-29, experimental, accepted by the owner, opt-in):** with
+  `roots.allow_network_shares` on, anyone who can write to the share - another PC, another account on the file
+  server, the file server itself - can replace or change a model's GGUF, tokenizer or pack files, and the frontend's
+  readers and the engine then parse them as the server's user (the residual above, widened from this PC's users to
+  the share's); the files cross the network as the share's protocol carries them (SMB signing and encryption, NFS
+  over Kerberos or not, are the share's settings, not M-Strata's). A model's first load streams it over the network,
+  and an engine reading a file mapped from the share fails (`EXCEPTION_IN_PAGE_ERROR`, `SIGBUS`) if the share drops
+  while it reads. Mitigations: off by default and marked experimental wherever it is set (the row, the Settings
+  switch, the README, the start-up warning); model folders only; links below a share's folder still refused; the
+  server's own folders, keys and config never on a share.
 - Model outputs can be harmful or unreliable. Prompt injection is not solved by
   transport security; the default build has no tool execution surface.
 - GPU drivers, inference libraries, and upstream engine vulnerabilities remain

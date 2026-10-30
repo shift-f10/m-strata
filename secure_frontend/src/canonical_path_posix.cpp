@@ -10,6 +10,9 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/vfs.h>
+#endif
 
 #if defined(__linux__)
 #include <sys/syscall.h>
@@ -190,7 +193,16 @@ std::variant<CanonicalRoot, PathError> open_existing_root(const std::filesystem:
     ::close(fd);
     return path_error(PathErrorCode::not_directory, "the root is not a directory");
   }
-  if (policy != RootPolicy::external) {
+  // a model folder on an NFS/CIFS/SMB mount while network shares are allowed (experimental): its permissions are the
+  // share's, which this PC cannot vouch for, so it is not checked (as an external root)
+  bool network = false;
+#if defined(__linux__)
+  if (policy == RootPolicy::model_folder && network_shares()) {
+    struct statfs info {};
+    network = ::fstatfs(fd, &info) == 0 && is_network_file_system(static_cast<unsigned long long>(info.f_type));
+  }
+#endif
+  if (policy != RootPolicy::external && !network) {
     if (st.st_uid != ::geteuid() && st.st_uid != 0) {
       ::close(fd);
       return path_error(PathErrorCode::untrusted_owner, "the root must be owned by the current user or root");
@@ -200,7 +212,8 @@ std::variant<CanonicalRoot, PathError> open_existing_root(const std::filesystem:
       return path_error(PathErrorCode::shared_writable, "the root must not be writable by group or others");
     }
   }
-  return PathFactory::root(std::filesystem::path{canonical}, fd, static_cast<std::uint64_t>(st.st_dev), policy == RootPolicy::external);
+  return PathFactory::root(std::filesystem::path{canonical}, fd, static_cast<std::uint64_t>(st.st_dev),
+                           policy == RootPolicy::external || network);
 }
 
 }  // namespace detail

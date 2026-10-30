@@ -547,6 +547,19 @@ void web_ui_cards_from_this_pc_and_the_danger_zone() {
   expect(html.find("<dialog class=\"st-card folder-picker\" id=\"folder-picker\"") != std::string::npos &&
              html.find("<dialog class=\"st-card delete-dialog\" id=\"delete-dialog\"") != std::string::npos,
          "the folder picker and the delete steps are dialogs");
+  // The owner (2026-10-29: "it did not prompt for the mtp layer and the card has no browse folder for it"): a Qwen3.6
+  // card's draft layer is in its model file - the card says whether the file has one and offers no folder for it, a
+  // file without one shows no MTP switch, and Add a model asks to point at a draft layer only where one is a folder or file.
+  expect(html.find("id=\"model-draft-help\"") != std::string::npos && js.find("var inside = draft !== null && draft.kind === \"inside\";") != std::string::npos &&
+             js.find("In the model file: the card drafts with it") != std::string::npos &&
+             js.find("This model file has no MTP draft layer") != std::string::npos &&
+             js.find("$(\"model-draft-change\").hidden = inside;") != std::string::npos,
+         "a Qwen3.6 card says where its draft layer is, with no Choose");
+  expect(js.find("o.name === \"mtp\" && card.draft && card.draft.kind === \"inside\" && card.draft.in_file === false") != std::string::npos,
+         "a file without a draft layer shows no MTP switch");
+  expect(js.find("draft && draft.kind !== \"inside\" && draft.path === null") != std::string::npos &&
+             js.find("its draft layer is in the model file") != std::string::npos,
+         "Add a model asks to point only where a draft layer is apart, and says when it is in the file");
   expect(html.find("<details class=\"danger-zone\" id=\"danger-zone\" hidden>") != std::string::npos &&
              html.find("<summary>Danger zone</summary>") != std::string::npos,
          "a collapsed Danger zone, hidden unless the card is the page's");
@@ -831,7 +844,7 @@ void web_ui_has_model_folder_setting() {
   const std::string html{secure_frontend::find_web_asset("/")->body};
   const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
   for (const char* id : {"id=\"folders-settings\"", "id=\"folders-shared\"", "id=\"folders-save\"", "id=\"folders-state\"",
-                         "id=\"folders-result\"", "id=\"folders-error\""}) {
+                         "id=\"folders-result\"", "id=\"folders-error\"", "id=\"folders-network\"", "id=\"folders-network-state\""}) {
     expect(html.find(id) != std::string::npos, std::string{"the model folder setting has "} + id);
   }
   expect(html.find("<div class=\"st-card alerts-settings\" id=\"folders-settings\" hidden>") != std::string::npos,
@@ -840,8 +853,13 @@ void web_ui_has_model_folder_setting() {
              html.find("other users of this PC can read or change") != std::string::npos,
          "the page says what the switch does and what it allows");
   expect(js.find("api(\"/v1/strata/folders/sharing\", jsonPost({}))") != std::string::npos &&
-             js.find("api(\"/v1/strata/folders/sharing\", jsonPost({ shared: $(\"folders-shared\").checked }))") != std::string::npos,
+             js.find("api(\"/v1/strata/folders/sharing\", jsonPost({ shared: $(\"folders-shared\").checked, network: $(\"folders-network\").checked }))") != std::string::npos,
          "it reads and saves over its route");
+  // The owner (2026-10-29): model folders on network shares, "mark that as experimental" - its own switch in the card,
+  // marked so, saying what it allows
+  expect(html.find("Use model folders on network shares (SMB/CIFS, NFS)") != std::string::npos &&
+             html.find("Experimental") != std::string::npos && html.find("anyone who can write to the share") != std::string::npos,
+         "the shares switch says it is experimental and what it allows");
   expect(js.find("$(\"folders-settings\").hidden = !folders.built;") != std::string::npos, "the section shows only when served");
   expect(js.find("Use model folders as they are") != std::string::npos, "the private-folder question names the switch");
   // owner 2026-10-27 ("0.0 GB · 3 files"): a download card whose size is not pinned says when it is known instead

@@ -146,6 +146,8 @@ struct PackedCardRequest final {
 struct DraftLayerSlot final {
   bool folder{false};   // a folder (Qwen3.8's rt), else a file (Gemma 4's)
   std::optional<std::string> path;
+  bool inside{false};
+  bool in_file{false};
 };
 [[nodiscard]] std::optional<DraftLayerSlot> draft_layer_slot(const ModelCard& card);
 // The model list's and the add answer's "draft": {"kind": "folder" | "file", "path": <text> | null}.

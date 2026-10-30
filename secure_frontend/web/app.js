@@ -1258,7 +1258,11 @@
     launcher.formFor = card.name;
     launcher.controls = [];
     launcher.limits = [];
-    var options = Array.isArray(card.options) ? card.options.filter(function (o) { return o && typeof o.name === "string"; }) : [];
+    var options = Array.isArray(card.options) ? card.options.filter(function (o) {
+      // a Qwen3.6 file without its own draft layer: its MTP switch would switch nothing
+      return o && typeof o.name === "string" &&
+             !(o.name === "mtp" && card.draft && card.draft.kind === "inside" && card.draft.in_file === false);
+    }) : [];
     if (!options.length) { box.appendChild(el("p", "muted small", "This card has no options to set.")); }
     options.forEach(function (option) {
       var control = optionControl(option, option.value === undefined || option.value === null ? option.default : option.value);
@@ -1347,9 +1351,18 @@
     $("model-folder-path").textContent = pageCard && typeof card.folder === "string" ? card.folder : "";
     $("model-folder-change").disabled = launcher.acting || card.state === "starting";
     var draft = pageCard && card.draft && typeof card.draft === "object" ? card.draft : null;
+    // owner 2026-10-29: a Qwen3.6 card's draft layer is in its model file (kind "inside"): said, never chosen
+    var inside = draft !== null && draft.kind === "inside";
     $("model-draft").hidden = !draft;
-    $("model-draft-path").textContent = draft ? (typeof draft.path === "string" ? draft.path : "None found: the model runs without one") : "";
+    $("model-draft-path").textContent = !draft ? "" : inside
+      ? (draft.in_file === true ? "In the model file: the card drafts with it (the MTP switch below turns it off)"
+                                : "This model file has no MTP draft layer, so the card runs without one")
+      : (typeof draft.path === "string" ? draft.path : "None found: the model runs without one");
+    $("model-draft-change").hidden = inside;
     $("model-draft-change").disabled = launcher.acting || card.state === "starting";
+    $("model-draft-help").textContent = inside
+      ? "This model's draft layer is part of its model file (a Qwen3.6 GGUF from Unsloth carries one): there is no folder to point at."
+      : "The model's draft layer guesses tokens ahead, so answers come faster. Kept somewhere else? Point the card at it.";
     $("danger-zone").hidden = !pageCard;
     // Owner 2026-10-28: the card can be taken off the list, its files kept - the running one too (stopped first)
     $("model-remove-box").hidden = !pageCard;
@@ -2683,7 +2696,11 @@
     showModelsSubtab("start");
     // a model that drafts with a draft layer of its own, none found beside it: point to it now
     var draft = answer.body && answer.body.draft;
-    if (draft && draft.path === null && window.confirm(name + " can guess tokens ahead with an MTP draft layer, which makes its " +
+    if (draft && draft.kind === "inside") {
+      toast("info", name + " added", draft.in_file === true ? "MTP: its draft layer is in the model file, and the card drafts with it."
+                                                       : "MTP: this model file has no draft layer, so the card runs without one.");
+    }
+    if (draft && draft.kind !== "inside" && draft.path === null && window.confirm(name + " can guess tokens ahead with an MTP draft layer, which makes its " +
                                                        "answers faster, but none was found beside it.\n\nPoint to its draft layer now?")) {
       await pointDraft(findCard(name));
     }
@@ -3152,10 +3169,14 @@
   function showFoldersError(text) { $("folders-error").textContent = text; $("folders-error").hidden = !text; }
   function fillFolders(d) {
     $("folders-shared").checked = d.shared === true;
+    // owner 2026-10-29 (experimental): model folders on network shares
+    $("folders-network").checked = d.network === true;
+    $("folders-network-state").textContent = d.network_running === true ? "This server takes model folders on network shares." :
+      "This server takes model folders on this PC's own drives only.";
     $("folders-state").textContent = d.running === true ? "This server uses model folders as they are." :
       "This server uses only model folders other users of this PC cannot change.";
     var editable = d.editable !== false;
-    ["folders-save", "folders-shared"].forEach(function (id) { $(id).disabled = !editable; });
+    ["folders-save", "folders-shared", "folders-network"].forEach(function (id) { $(id).disabled = !editable; });
     if (!editable) { $("folders-result").textContent = "This server was started without a config file it can write; edit the file by hand."; }
   }
   async function refreshFolders() {
@@ -3170,7 +3191,7 @@
   }
   async function saveFolders() {
     showFoldersError("");
-    var answer = await downloadsAnswer(api("/v1/strata/folders/sharing", jsonPost({ shared: $("folders-shared").checked })));
+    var answer = await downloadsAnswer(api("/v1/strata/folders/sharing", jsonPost({ shared: $("folders-shared").checked, network: $("folders-network").checked })));
     if (answer.signedOut) { return; }
     if (answer.error) { showFoldersError(answer.error); return; }
     $("folders-result").textContent = "Saved. It applies when the server restarts.";

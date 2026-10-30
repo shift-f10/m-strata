@@ -13,6 +13,14 @@ namespace secure_frontend {
 
 static std::atomic<bool>& relaxed_paths_flag() { static std::atomic<bool> f{false}; return f; }
 void set_relaxed_paths(bool on) noexcept { relaxed_paths_flag().store(on, std::memory_order_relaxed); }
+static std::atomic<bool>& network_shares_flag() { static std::atomic<bool> f{false}; return f; }
+void set_network_shares(bool on) noexcept { network_shares_flag().store(on, std::memory_order_relaxed); }
+bool network_shares() noexcept { return network_shares_flag().load(std::memory_order_relaxed); }
+bool is_network_file_system(const unsigned long long type) noexcept {
+  // linux/magic.h: NFS_SUPER_MAGIC, SMB_SUPER_MAGIC, CIFS_SUPER_MAGIC, SMB2_SUPER_MAGIC (f_type is 32 bits of meaning)
+  const auto low = static_cast<std::uint32_t>(type & 0xFFFFFFFFULL);
+  return low == 0x6969U || low == 0x517BU || low == 0xFF534D42U || low == 0xFE534D42U;
+}
 bool relaxed_paths() noexcept { return relaxed_paths_flag().load(std::memory_order_relaxed); }
 
 namespace {
@@ -134,7 +142,7 @@ std::variant<CanonicalRoot, PathError> open_root(const std::filesystem::path& re
       if (auto failure = create_directory_within(std::get<CanonicalRoot>(parent), std::get<RelativePath>(name))) return *failure;
     }
   }
-  return detail::open_existing_root(requested, policy == RootPolicy::external ? RootPolicy::external : RootPolicy::existing);
+  return detail::open_existing_root(requested, policy == RootPolicy::create_private ? RootPolicy::existing : policy);
 }
 
 std::variant<std::filesystem::path, PathError> check_creatable_root(const std::filesystem::path& requested) {
@@ -155,25 +163,36 @@ std::variant<std::filesystem::path, PathError> check_creatable_root(const std::f
   return std::get<CanonicalRoot>(parent).path() / requested.filename();
 }
 
-std::optional<PathError> check_windows_root_form(const std::wstring_view text) {
+std::optional<PathError> check_windows_root_form(const std::wstring_view text, const bool allow_unc) {
   const auto is_separator = [](const wchar_t c) { return c == L'\\' || c == L'/'; };
   if (text.empty()) return detail::path_error(PathErrorCode::empty, "the root path is empty");
+  std::size_t start = 3U;  // the first name after X:\ (or after \\server\share\)
   if (text.size() >= 2U && is_separator(text[0]) && is_separator(text[1])) {
-    return detail::path_error(PathErrorCode::unsupported_root_form, "UNC, device and \\\\?\\ paths are not accepted as roots");
+    // a share's folder (experimental): \\server\share[\...], in backslashes; never \\?\ or \\.\ (their "server")
+    const auto server_end = text.find(L'\\', 2U);
+    const auto share_end = server_end == std::wstring_view::npos ? server_end : std::min(text.find(L'\\', server_end + 1U), text.size());
+    const std::wstring_view server = text.substr(2U, server_end == std::wstring_view::npos ? 0U : server_end - 2U);
+    const bool unc = allow_unc && text[0] == L'\\' && text[1] == L'\\' && text.find(L'/') == std::wstring_view::npos &&
+                     !server.empty() && server != L"?" && server != L"." && share_end > server_end + 1U;
+    if (!unc) {
+      return detail::path_error(PathErrorCode::unsupported_root_form, "UNC, device and \\\\?\\ paths are not accepted as roots");
+    }
+    start = 2U;  // the server's and the share's names are checked as the folders below them
   }
   if (text.substr(0, 4) == L"\\??\\") {
     return detail::path_error(PathErrorCode::unsupported_root_form, "NT object paths are not accepted as roots");
   }
-  if (is_separator(text[0])) {
-    return detail::path_error(PathErrorCode::not_absolute, "a rooted path without a drive letter depends on the current drive");
+  if (start == 3U) {
+    if (is_separator(text[0])) {
+      return detail::path_error(PathErrorCode::not_absolute, "a rooted path without a drive letter depends on the current drive");
+    }
+    const bool drive_letter = text.size() >= 2U && ((text[0] >= L'A' && text[0] <= L'Z') || (text[0] >= L'a' && text[0] <= L'z')) &&
+                              text[1] == L':';
+    if (!drive_letter) return detail::path_error(PathErrorCode::not_absolute, "roots must be absolute (X:\\...)");
+    if (text.size() == 2U || !is_separator(text[2])) {
+      return detail::path_error(PathErrorCode::not_absolute, "a drive-relative path (C:foo) depends on the current directory");
+    }
   }
-  const bool drive_letter = text.size() >= 2U && ((text[0] >= L'A' && text[0] <= L'Z') || (text[0] >= L'a' && text[0] <= L'z')) &&
-                            text[1] == L':';
-  if (!drive_letter) return detail::path_error(PathErrorCode::not_absolute, "roots must be absolute (X:\\...)");
-  if (text.size() == 2U || !is_separator(text[2])) {
-    return detail::path_error(PathErrorCode::not_absolute, "a drive-relative path (C:foo) depends on the current directory");
-  }
-  std::size_t start = 3U;
   while (start < text.size()) {
     std::size_t end = start;
     while (end < text.size() && !is_separator(text[end])) ++end;
@@ -191,8 +210,9 @@ std::optional<PathError> check_windows_root_form(const std::wstring_view text) {
   return std::nullopt;
 }
 
-std::variant<std::wstring, PathError> classify_final_path(const std::wstring_view final_path) {
+std::variant<std::wstring, PathError> classify_final_path(const std::wstring_view final_path, const bool allow_unc) {
   if (final_path.substr(0, 8) == L"\\\\?\\UNC\\") {
+    if (allow_unc && final_path.size() > 8U) return L"\\\\" + std::wstring{final_path.substr(8)};  // \\server\share\...
     return detail::path_error(PathErrorCode::network_location,
                               "the folder resolves to a network share or a redirected folder (for example OneDrive "
                               "or a roaming profile); choose a local folder on this computer");

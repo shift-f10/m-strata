@@ -440,9 +440,75 @@ void external_root_skips_ownership_checks() {
 }
 }  // namespace
 
+// The owner (2026-10-29): "support SMB shares or CIFS shares or NFS shares for models" - "we should mark that as
+// experimental". The pure rules, on every platform: a UNC root \\server\share\... is a form only a model folder takes
+// while network shares are allowed (never \\?\, \\.\ or a share's bare name), its final path \\?\UNC\... reads back as
+// \\server\share\..., and a Linux mount's file system type says whether it is NFS, CIFS or SMB.
+void network_share_roots_are_a_model_folders_opt_in() {
+  expect(secure_frontend::check_windows_root_form(L"\\\\server\\share\\models").has_value(), "a UNC root is refused by default");
+  for (const wchar_t* text : {L"\\\\server\\share\\models", L"\\\\nas.lan\\Models\\Qwen 3.8", L"\\\\server\\share"}) {
+    expect(!secure_frontend::check_windows_root_form(text, true).has_value(), "a share's folder is taken when allowed");
+  }
+  for (const wchar_t* text : {L"\\\\?\\C:\\x", L"\\\\.\\C:\\x", L"\\\\?\\UNC\\server\\share", L"\\\\server", L"\\\\server\\",
+                              L"\\\\\\share\\x", L"\\\\server\\share\\CON", L"\\\\server\\share\\x:stream", L"//server/share/x"}) {
+    expect(secure_frontend::check_windows_root_form(text, true).has_value(), "still refused with shares allowed");
+  }
+  const auto refused = secure_frontend::classify_final_path(L"\\\\?\\UNC\\server\\share\\models");
+  expect(std::holds_alternative<secure_frontend::PathError>(refused), "a share's final path is refused by default");
+  const auto taken = secure_frontend::classify_final_path(L"\\\\?\\UNC\\server\\share\\models", true);
+  const auto* text = std::get_if<std::wstring>(&taken);
+  expect(text != nullptr && *text == L"\\\\server\\share\\models", "and read back as \\\\server\\share\\... when allowed");
+  for (const unsigned long long type : {0x6969ULL, 0x517BULL, 0xFF534D42ULL, 0xFE534D42ULL}) {
+    expect(secure_frontend::is_network_file_system(type), "NFS, SMB, CIFS and SMB2 are network file systems");
+  }
+  for (const unsigned long long type : {0xEF53ULL, 0x58465342ULL, 0x9123683EULL, 0x4D44ULL, 0x01021994ULL}) {
+    expect(!secure_frontend::is_network_file_system(type), "ext4, xfs, btrfs, FAT and tmpfs are not");
+  }
+}
+
+// On this PC: a model folder reached as \\localhost\C$\... (where the admin share answers; elsewhere the case says so
+// and passes) opens only as a model folder while shares are allowed - held under its \\server\share name, with a file
+// below it read through it - and never as any other root.
+void a_model_folder_on_a_share_opens_only_when_allowed() {
+#if defined(_WIN32)
+  const auto local = secure_frontend_test::make_scratch_directory() / "share-models";
+  secure_frontend_test::make_private_directory(local);
+  secure_frontend_test::write_file(local / "model.gguf", "GGUF");
+  const std::wstring text = local.wstring();
+  std::error_code ec;
+  if (text.size() < 3U || (text[0] != L'C' && text[0] != L'c') ||
+      !std::filesystem::exists(std::filesystem::path{L"\\\\localhost\\C$\\" + text.substr(3U)} / "model.gguf", ec)) {
+    std::cerr << "note: \\\\localhost\\C$ does not answer here; nothing to open\n";
+    return;
+  }
+  const std::filesystem::path share{L"\\\\localhost\\C$\\" + text.substr(3U)};
+  secure_frontend::set_network_shares(false);
+  expect(std::holds_alternative<secure_frontend::PathError>(secure_frontend::open_root(share, secure_frontend::RootPolicy::model_folder)),
+         "off: a share is refused");
+  expect(std::holds_alternative<secure_frontend::CanonicalRoot>(secure_frontend::open_root(local, secure_frontend::RootPolicy::model_folder)),
+         "a model folder on this PC opens as before");
+  secure_frontend::set_network_shares(true);
+  const auto opened = secure_frontend::open_root(share, secure_frontend::RootPolicy::model_folder);
+  const auto* root = std::get_if<secure_frontend::CanonicalRoot>(&opened);
+  expect(root != nullptr, "on: the share opens as a model folder");
+  if (root != nullptr) {
+    expect(root->external() && root->path().wstring().rfind(L"\\\\localhost\\", 0) == 0,
+           "held under its share name, its permissions the share's: " + secure_frontend::path_to_utf8(root->path()));
+    const auto name = secure_frontend::parse_relative_path("model.gguf");
+    const auto file = secure_frontend::open_beneath(*root, std::get<secure_frontend::RelativePath>(name), {});
+    expect(std::holds_alternative<secure_frontend::OpenedFile>(file), "a file below it opens through it");
+  }
+  expect(std::holds_alternative<secure_frontend::PathError>(secure_frontend::open_root(share, secure_frontend::RootPolicy::existing)),
+         "only a model folder takes a share");
+  secure_frontend::set_network_shares(false);
+#endif
+}
+
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"relative_path_accepts_portable_forms", relative_path_accepts_portable_forms},
+      {"network_share_roots_are_a_model_folders_opt_in", network_share_roots_are_a_model_folders_opt_in},
+      {"a_model_folder_on_a_share_opens_only_when_allowed", a_model_folder_on_a_share_opens_only_when_allowed},
       {"cfg02_rejects_traversal_and_absolute", cfg02_rejects_traversal_and_absolute},
       {"cfg02_rejects_nul_and_control_bytes", cfg02_rejects_nul_and_control_bytes},
       {"cfg04_rejects_reserved_and_device_names", cfg04_rejects_reserved_and_device_names},

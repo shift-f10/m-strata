@@ -201,6 +201,8 @@ struct Roots final {
   // Owner opt-in (roots.allow_untrusted_media): roots.models and roots.tokenizer_pack were opened with
   // RootPolicy::external (no owner/shared-writable check) for model data on exFAT/FAT media.
   bool allow_untrusted_media{false};
+  // roots.allow_network_shares (experimental): model folders may be on a network share (RootPolicy::model_folder).
+  bool allow_network_shares{false};
 };
 // SP5 M1 Task 5 (parity rows reasoning_*): the pin's config family. Kinds and defaults at
 // frontend_config.cpp's rows; the pin keeps these as service-object values (serve/server.py:8015,
