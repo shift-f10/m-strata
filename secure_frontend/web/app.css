@@ -36,6 +36,12 @@ main { flex: 1; min-height: 0; display: flex; }
                    font-family: var(--st-font-mono, monospace); word-break: break-all; user-select: all; }
 .key-once__actions { display: flex; gap: var(--st-s-3); justify-content: flex-end; }
 .calibrate-first__actions { flex-wrap: wrap; }
+/* a calibration's report (owner 2026-10-30) */
+.calibration-report { max-width: min(920px, 94vw); }
+.calibration-report__text { margin: 0; max-height: 55vh; overflow: auto; padding: 10px 14px; border-radius: var(--st-r-md);
+                            background: var(--st-surface-2, rgba(127, 127, 127, .12)); font-family: var(--st-font-mono, monospace);
+                            font-size: .85em; white-space: pre-wrap; word-break: break-word; }
+.model-calibration__report { display: flex; flex-wrap: wrap; align-items: center; gap: var(--st-s-3); }
 
 /* ---------------------------------------------------------------- chat */
 .chat-scroll { flex: 1; min-height: 0; overflow-y: auto; }

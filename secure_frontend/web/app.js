@@ -878,9 +878,13 @@
     var text = "# Strata chat\n\n" + state.history.map(function (m) {
       return (m.role === "user" ? "## You\n\n" : "## " + (state.model || "Assistant") + "\n\n") + m.content;
     }).join("\n\n") + "\n";
+    saveText(text, "strata-chat.md");
+  }
+  // A Markdown text saved as a file (the browser's download).
+  function saveText(text, name) {
     var link = el("a");
     link.href = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
-    link.download = "strata-chat.md";
+    link.download = name;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1435,6 +1439,12 @@
     prefill.hidden = !("prefill" in cal);
     prefill.textContent = "prefill" in cal ? prefillText(card, cal.prefill) : "";
     var run = cal.running;
+    // a calibration's report for a bug report (owner 2026-10-30): made when one of its trials failed
+    var report = cal.report && typeof cal.report === "object" && typeof cal.report.file === "string" ? cal.report : null;
+    $("model-calibration-report").hidden = !report || !!run;
+    $("model-calibration-report-text").textContent = !report ? "" : cal.error
+      ? "A report for a bug report was made: what failed and this PC's hardware."
+      : "Some trials failed and were left out; a report for a bug report was made.";
     $("model-calibration-progress").hidden = !run;
     $("model-calibration-bar").style.width = run && run.trials ? Math.min(100, (100 * run.trial) / run.trials) + "%" : "0%";
     $("model-calibrate").textContent = cal.state === "missing" ? "Calibrate" : "Recalibrate";
@@ -1442,6 +1452,33 @@
     $("model-calibrate-cancel").hidden = !run;
     $("model-calibration-auto").checked = cal.auto === true;
     $("model-calibration-auto").disabled = launcher.acting;
+  }
+  // Owner 2026-10-30: the selected card's calibration report, read from the server, to read, copy or save.
+  async function showCalibrationReport() {
+    var card = findCard(launcher.selected);
+    if (!card) { return; }
+    var name = card.name;
+    var response, text;
+    try { response = await api("/v1/strata/models/calibrate/report", jsonPost({ name: name })); text = await response.text(); } catch (e) {
+      toast("error", "The server did not answer");
+      return;
+    }
+    var d = null;
+    try { d = JSON.parse(text); } catch (e) { d = null; }
+    if (!response.ok || !d || typeof d.report !== "string" || typeof d.file !== "string") {
+      toast("error", "This card has no calibration report");
+      return;
+    }
+    var dialog = $("calibration-report");
+    $("calibration-report-file").textContent = "calibration-reports/" + d.file;
+    $("calibration-report-text").textContent = d.report;
+    $("calibration-report-copy").textContent = "Copy";
+    $("calibration-report-copy").onclick = function () {
+      if (navigator.clipboard) { navigator.clipboard.writeText(d.report).then(function () { $("calibration-report-copy").textContent = "Copied"; }); }
+    };
+    $("calibration-report-save").onclick = function () { saveText(d.report, d.file); };
+    $("calibration-report-close").onclick = function () { $("calibration-report-text").textContent = ""; dialog.close(); };
+    if (typeof dialog.showModal === "function") { dialog.showModal(); }
   }
   // `thenStart` true: the calibrate-first question's "Calibrate, then start" (it said a running model stops); a click on
   // Calibrate passes its event.
@@ -3736,6 +3773,7 @@
     $("model-calibrate").addEventListener("click", calibrateModel);
     $("model-calibrate-cancel").addEventListener("click", cancelCalibration);
     $("model-calibration-auto").addEventListener("change", setAutoRecalibrate);
+    $("model-calibration-report-show").addEventListener("click", showCalibrationReport);
     $("delete-next").addEventListener("click", deleteNext);
     $("delete-cancel").addEventListener("click", closeDelete);
     $("delete-dialog").addEventListener("cancel", function () { closeDelete(); });

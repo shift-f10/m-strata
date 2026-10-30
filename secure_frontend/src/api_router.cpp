@@ -139,7 +139,8 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
       // the calibration routes only while their handlers are set
       if ((entry.id == RouteId::strata_calibrate && !config_.control.calibrate) ||
           (entry.id == RouteId::strata_calibrate_cancel && !config_.control.cancel_calibration) ||
-          (entry.id == RouteId::strata_calibrate_auto && !config_.control.auto_recalibrate)) {
+          (entry.id == RouteId::strata_calibrate_auto && !config_.control.auto_recalibrate) ||
+          (entry.id == RouteId::strata_calibrate_report && !config_.control.calibration_report)) {
         continue;
       }
       allow = entry.method;
@@ -216,7 +217,7 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
                          std::any_of(kConfigRoutes.begin(), kConfigRoutes.end(),
                                      [&decision](const RouteEntry& entry) { return entry.id == decision.route; });
   const bool calibration_post = decision.route == RouteId::strata_calibrate || decision.route == RouteId::strata_calibrate_cancel ||
-                                decision.route == RouteId::strata_calibrate_auto;
+                                decision.route == RouteId::strata_calibrate_auto || decision.route == RouteId::strata_calibrate_report;
   if (decision.route == RouteId::strata_start || decision.route == RouteId::strata_stop || download_post || card_post ||
       calibration_post) {
     const auto types = head.values("content-type");
@@ -352,10 +353,12 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
       // GUI-first start-up (spec 2026-10-27 §5.3): keyed above; served only while set.
       case RouteId::strata_calibrate:
       case RouteId::strata_calibrate_cancel:
-      case RouteId::strata_calibrate_auto: {
+      case RouteId::strata_calibrate_auto:
+      case RouteId::strata_calibrate_report: {
         const auto& handler = decision.route == RouteId::strata_calibrate          ? config_.control.calibrate
                               : decision.route == RouteId::strata_calibrate_cancel ? config_.control.cancel_calibration
-                                                                                   : config_.control.auto_recalibrate;
+                              : decision.route == RouteId::strata_calibrate_auto   ? config_.control.auto_recalibrate
+                                                                                   : config_.control.calibration_report;
         RouteResult result = handler(body, context);
         if (auto* complete = std::get_if<HttpResponse>(&result)) {
           response = std::move(*complete);

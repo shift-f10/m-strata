@@ -376,7 +376,21 @@ Trust boundaries:
   other build neither lists nor saves it through `POST /v1/strata/config*`
   (refused by name), the page hides the card, and its start-up notice names
   the config row to turn it off (`troubleshooting_is_offered_only_in_a_
-  debugging_build`). With the row off,
+  debugging_build`). A calibration's report (owner 2026-10-30) is the third
+  reader, for calibration trials only: each trial's engine stderr goes to
+  the same drain whatever the row says, its last 40 lines (each as
+  `printable_stderr_line` made it, cut to 400 characters) are kept in memory
+  with the supervisor's lines for that engine, and only when a trial fails
+  are they written, with this PC's hardware (the About tab's facts and
+  nvidia-smi's driver, compute capability, PCIe and power limit), into
+  `<roots.logs>/calibration-reports/<file>.md` (owner-only, as the logs
+  folder) and handed to `POST /v1/strata/models/calibrate/report` (the
+  control routes' clients). A calibration's prompts are the server's own
+  fixed text, never a user's; the model, data, engine and home folders are
+  replaced by placeholders in every line (`scrub_paths`), and the report
+  has no key, login link, user or host name. It says to look it over
+  before sharing it (`a_failed_calibration_writes_a_report`,
+  `paths_are_shortened`). With the row off,
   nothing above changes: the exception before this one is the only reader
   (`stderr_lines_reach_the_sink_when_asked`,
   `engine_output_reaches_the_log_only_when_asked`).

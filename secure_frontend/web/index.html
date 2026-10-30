@@ -90,6 +90,22 @@
     </div>
   </dialog>
 
+  <!-- ======================= A calibration's report ======================= -->
+  <!-- Owner 2026-10-30: a calibration with an error makes a report (what failed and this PC's hardware) to send with a
+       bug report; read here, copied or saved. -->
+  <dialog class="st-card key-once calibration-report" id="calibration-report" aria-labelledby="calibration-report-title">
+    <span class="login-card__title key-once__title" id="calibration-report-title">Calibration report</span>
+    <p>For a bug report: what failed, each trial, this PC's hardware and the build. Look it over before you share it: it
+      holds the model's file name and the engine's own output. It is also in the server's logs folder
+      (<code id="calibration-report-file"></code>).</p>
+    <pre class="calibration-report__text" id="calibration-report-text"></pre>
+    <div class="key-once__actions">
+      <button type="button" class="st-btn" id="calibration-report-copy">Copy</button>
+      <button type="button" class="st-btn" id="calibration-report-save">Save</button>
+      <button type="button" class="st-btn st-btn--primary" id="calibration-report-close">Close</button>
+    </div>
+  </dialog>
+
   <!-- ======================= Folders on this PC (models.control) ======================= -->
   <!-- GUI-first start-up: the server's folder browser (this PC's drives, one folder's sub-folders and .gguf files), for a
        model file to add, a card's moved folder, or where downloads go. Paths are shown as text only. -->
@@ -233,6 +249,10 @@
           <div class="model-calibration__head"><span class="st-label">Calibration</span><span id="model-calibration-state"></span></div>
           <p class="muted small" id="model-calibration-text"></p>
           <p class="muted small" id="model-calibration-prefill" hidden></p>
+          <p class="muted small model-calibration__report" id="model-calibration-report" hidden>
+            <span id="model-calibration-report-text"></span>
+            <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-calibration-report-show">Show the report</button>
+          </p>
           <div class="st-progress" id="model-calibration-progress" hidden><div class="st-progress__bar" id="model-calibration-bar"></div></div>
           <div class="model-actions">
             <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-calibrate"

@@ -26,7 +26,7 @@ namespace secure_frontend {
 // plan 2026-10-23-model-downloads Task 4).
 enum class RouteId {
   health, models, model, chat, other, web, metrics, strata_models, strata_start, strata_stop,
-  strata_calibrate, strata_calibrate_cancel, strata_calibrate_auto,
+  strata_calibrate, strata_calibrate_cancel, strata_calibrate_auto, strata_calibrate_report,
   strata_downloads, strata_download_start, strata_download_pause, strata_download_cancel, strata_download_link,
   strata_login_link,
   strata_alerts, strata_alerts_settings, strata_alerts_password, strata_alerts_test,
@@ -63,14 +63,15 @@ inline constexpr std::array<RouteEntry, 6> kRouteTable{{
 // cards with models.control on, keyed like kRouteTable, and outside it (kRouteTable stays the API
 // every server serves).
 // GUI-first start-up (spec 2026-10-27 §5.3): calibrate a card, cancel it, and its "recalibrate when settings change"
-// switch - served only while their handlers are set.
-inline constexpr std::array<RouteEntry, 6> kModelControlRoutes{{
+// switch - served only while their handlers are set; and (owner 2026-10-30) a calibration's report for a bug report.
+inline constexpr std::array<RouteEntry, 7> kModelControlRoutes{{
     {"GET", "/v1/strata/models", false, RouteId::strata_models},
     {"POST", "/v1/strata/models/start", false, RouteId::strata_start},
     {"POST", "/v1/strata/models/stop", false, RouteId::strata_stop},
     {"POST", "/v1/strata/models/calibrate", false, RouteId::strata_calibrate},
     {"POST", "/v1/strata/models/calibrate/cancel", false, RouteId::strata_calibrate_cancel},
     {"POST", "/v1/strata/models/calibrate/auto", false, RouteId::strata_calibrate_auto},
+    {"POST", "/v1/strata/models/calibrate/report", false, RouteId::strata_calibrate_report},
 }};
 // Model downloads (plan 2026-10-23-model-downloads Task 4): served only with models.downloads,
 // keyed like kRouteTable. Every POST body is a small JSON object ({"id"} or {"url"}).
