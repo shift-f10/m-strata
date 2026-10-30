@@ -22,7 +22,7 @@
 // context, --gpu as the visible GPUs.
 //
 // An engine family plugin (docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md) is named instead:
-// `--family <id> --family-sha256 <hex>` first loads families/<id>/'s library after its checks (family_plugin.hpp).
+// `--family <id> --family-sha256 <hex>` first loads ../plugins/<id>/'s library after its checks (family_plugin.hpp).
 #include "family_plugin.hpp"
 
 #include <cstdint>
@@ -473,7 +473,7 @@ int main(int argc, char** argv) {
             return 0;
         }
     }
-    // an engine family plugin (families/<id>/, sdk/include/strata/family_abi.h): named, never guessed from the argv
+    // an engine family plugin (../plugins/<id>/, sdk/include/strata/family_abi.h): named, never guessed from the argv
     const auto plugin = multiengine::parse_plugin_request(argc, argv);
     if (const auto* why = std::get_if<std::string>(&plugin)) {
         std::fprintf(stderr, "multiengine: %s\n", why->c_str());

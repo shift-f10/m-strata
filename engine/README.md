@@ -24,7 +24,8 @@ its own sources, so no family, and no update of one, changes what another comput
 | `multiengine_flint.dll` | flint (RecursiveSI's Flint, `--native` of its GGUF, any shard) | `src/flint`, ours, on Gemma 4's pieces (its GGUF reader, its frozen core library `g4core`) |
 
 **Family plugins** (in progress: `docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md`). A family
-can also be a plugin: `families/<id>/multiengine_<id>.dll` (`libmultiengine_<id>.so`) beside the launcher, built
+can also be a plugin: `plugins/<id>/multiengine_<id>.dll` (`libmultiengine_<id>.so`) in the install's plugins
+folder, beside the engine folder (`<engine>/../plugins/`), built
 against `sdk/include/strata/family_abi.h`. Such a family is never guessed from the command line. It is named, as
 `multiengine --family <id> --family-sha256 <hex> <its own arguments>`, and the launcher runs it only after these checks:
 - the library's bytes have that SHA-256, hashed through a handle that keeps the file unchanged until it loads;

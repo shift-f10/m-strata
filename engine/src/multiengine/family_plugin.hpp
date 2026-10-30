@@ -4,10 +4,11 @@
 //
 //   multiengine --family <id> --family-sha256 <hex> <the family's own arguments ...>
 //
-// loads <engine folder>/families/<id>/multiengine_<id>.dll (libmultiengine_<id>.so) only when its bytes have that
-// SHA-256 - hashed through a handle that keeps the file from changing until it is loaded (Windows: no write sharing;
-// Linux: the loaded file checked to be the open one hashed, by device and inode) - and its strata_family_info() says
-// this ABI major and that id; then runs strata_family_main() with argv[0] and the family's own arguments.
+// loads <engine folder>/../plugins/<id>/multiengine_<id>.dll (libmultiengine_<id>.so; the install's one plugins
+// folder, which every plugin kind shares) only when its bytes have that SHA-256 - hashed through a handle that keeps
+// the file from changing until it is loaded (Windows: no write sharing; Linux: the loaded file checked to be the open
+// one hashed, by device and inode) - and its strata_family_info() says this ABI major and that id; then runs
+// strata_family_main() with argv[0] and the family's own arguments.
 #pragma once
 
 #include <string>

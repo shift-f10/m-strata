@@ -280,6 +280,28 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z47 (Windows box; owner-directed)
+
+The owner: "we also need to have a plugin management tab to manage these", then "now that I think about it, we should
+make the email, websearch, debugging all plugins as well".
+
+- **The spec** (`2026-10-30-engine-family-plugins-design.md`) gains section 8, "Plugin kinds and the Plugins tab":
+  - four kinds: `engine`, `tool` (an MCP server: web search), `notifier` (server events as JSON lines: email) and
+    `diagnostics` (manifest only: debugging);
+  - the rule that no plugin runs inside the server. Engine plugins run in the engine process; the others are sandboxed
+    children;
+  - declared settings and secrets;
+  - a top-level Plugins tab (and a TUI view): list, approve, on/off, settings, remove;
+  - `make --with` and `--debugging` building first-party plugins.
+- **The owner's decisions 4 and 5:**
+  - first-party plugins are trusted through `engine/build.json`'s SHA-256; third-party ones need approval;
+  - the order is the platform and the Plugins tab first (proven with debugging as a manifest-only plugin), then search
+    and email, then the engine-family phases ending with flint.
+- **One plugins folder:** every plugin is `<install>/plugins/<id>/plugin.json`. The launcher now looks for an engine
+  plugin's library in `<engine folder>/../plugins/<id>/`. That changes `family_plugin.cpp`, the ABI header's comment,
+  the test's scratch layout (`engine/` and `plugins/`) and `engine/README.md`.
+- `multiengine_family_test` passes again: MSVC (release engine tree), and Linux gcc and clang.
+
 ### Claude Code session, 2026-10-30 z46 (Windows box; owner-directed)
 
 Engine family plugins, phase 1, the engine half: the published ABI and the launcher's `--family` (design z45).

@@ -4,8 +4,9 @@
  * and create a library that we can just add later on and it will seamlessly integrate along with cards, settings, etc."
  * Design: docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md.
  *
- * A family plugin is one library in <engine folder>/families/<id>/: multiengine_<id>.dll on Windows,
- * libmultiengine_<id>.so on Linux, beside its family.json. The launcher runs it as
+ * A family plugin is one library in the install's plugins folder, <engine folder>/../plugins/<id>/:
+ * multiengine_<id>.dll on Windows, libmultiengine_<id>.so on Linux, beside its plugin.json (kind "engine"). The launcher
+ * runs it as
  *
  *     multiengine --family <id> --family-sha256 <the library's SHA-256> <the family's own arguments ...>
  *

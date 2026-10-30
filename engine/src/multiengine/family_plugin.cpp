@@ -45,7 +45,7 @@ std::wstring library_path(const std::string& id) {
     const size_t cut = dir.find_last_of(L"\\/");
     dir = cut == std::wstring::npos ? std::wstring(L".") : dir.substr(0, cut);
     const std::wstring wide(id.begin(), id.end());   // an id is ASCII
-    return dir + L"\\families\\" + wide + L"\\multiengine_" + wide + L".dll";
+    return dir + L"\\..\\plugins\\" + wide + L"\\multiengine_" + wide + L".dll";
 }
 #else
 std::string library_path(const std::string& id) {
@@ -54,7 +54,7 @@ std::string library_path(const std::string& id) {
     std::string dir = n <= 0 ? std::string(".") : std::string(buf.data(), static_cast<size_t>(n));
     const size_t cut = dir.find_last_of('/');
     dir = cut == std::string::npos ? std::string(".") : dir.substr(0, cut);
-    return dir + "/families/" + id + "/libmultiengine_" + id + ".so";
+    return dir + "/../plugins/" + id + "/libmultiengine_" + id + ".so";
 }
 #endif
 
@@ -102,7 +102,7 @@ int run_plugin(const PluginRequest& request, const int argc, char** argv, void (
     // read sharing only: the file cannot be written, renamed or deleted until it is loaded and this handle is closed
     const HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
                                     nullptr);
-    if (file == INVALID_HANDLE_VALUE) return refuse(request.id, "cannot open its library in families\\<id>\\");
+    if (file == INVALID_HANDLE_VALUE) return refuse(request.id, "cannot open its library in plugins\\<id>\\");
     for (;;) {
         DWORD got = 0;
         if (!ReadFile(file, block.data(), static_cast<DWORD>(block.size()), &got, nullptr)) {
@@ -124,7 +124,7 @@ int run_plugin(const PluginRequest& request, const int argc, char** argv, void (
 #else
     const std::string path = library_path(request.id);
     const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return refuse(request.id, "cannot open its library in families/<id>/");
+    if (fd < 0) return refuse(request.id, "cannot open its library in plugins/<id>/");
     for (;;) {
         const ssize_t got = read(fd, block.data(), block.size());
         if (got < 0) {

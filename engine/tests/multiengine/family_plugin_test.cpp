@@ -4,7 +4,7 @@
 //
 // usage: multiengine_family_test <multiengine> <testfam lib> <badabi lib> <wrongid lib> <nosym lib>
 //
-// A scratch engine folder holds a copy of the launcher and families/<id>/multiengine_<id> copies of the fake plugin
+// A scratch install holds a copy of the launcher in engine/ and plugins/<id>/multiengine_<id> copies of the fake plugin
 // (tests/multiengine/fake_family.cpp); each case runs the launcher there and reads its exit code and output:
 //   - a plugin with the right SHA-256 runs, handed only its own arguments, after the launcher's process steps (--gpu);
 //   - a wrong SHA-256, another ABI major, another id, no strata_family_info, no such plugin, an id that is not a plain
@@ -99,13 +99,14 @@ int main(int argc, char** argv) {
   std::error_code ec;
   fs::remove_all(folder, ec);
   fs::create_directories(folder);
-  const fs::path launcher = folder / fs::path(argv[1]).filename();
+  fs::create_directories(folder / "engine");
+  const fs::path launcher = folder / "engine" / fs::path(argv[1]).filename();
   fs::copy_file(argv[1], launcher);
   const std::vector<std::pair<std::string, const char*>> plugins{
       {"testfam", argv[2]}, {"badabi", argv[3]}, {"wrongid", argv[4]}, {"nosym", argv[5]}};
   std::vector<std::string> sums;
   for (const auto& [id, library] : plugins) {
-    const fs::path into = folder / "families" / id;
+    const fs::path into = folder / "plugins" / id;
     fs::create_directories(into);
     const fs::path copy = into / (std::string{kLibraryPrefix} + id + kLibrarySuffix);
     fs::copy_file(library, copy);

@@ -211,8 +211,8 @@ A new model nearly always ships a Jinja chat template in its GGUF. Two ways to s
 A plugin is code that runs as the user, with the model files and the GPU. That is a trust decision, recorded in
 `docs/security/threat-model.md`.
 
-- **(a) Recommended: approve each plugin.** Settings > Engines lists every plugin found under `engine/families/` with
-  its name, publisher, version, licence, the library's SHA-256 and what it declares (architectures, flags, downloads).
+- **(a) Recommended: approve each plugin.** The Plugins tab (section 8) lists every plugin found, with its name,
+  publisher, version, licence, the library's SHA-256 and what it declares (architectures, flags, downloads).
   None is used until the owner approves it; approval pins the library's and the manifest's SHA-256 in `config.json`.
   - A plugin whose library or manifest changed is refused until it is approved again.
   - Its folder must be owner-only, as `open_executable` already requires of the engine.
@@ -233,7 +233,53 @@ A plugin is code that runs as the user, with the model files and the GPU. That i
 - `build.json` lists each plugin with its version and SHA-256, and the About tab shows them.
 - `make.py --sdk DIR` installs the SDK for authors who build outside this repository.
 
-### 8. The authoring guide (`docs/ENGINE_PLUGINS.md`)
+### 8. Plugin kinds and the Plugins tab (the owner, 2026-10-30)
+
+The owner: "we also need to have a plugin management tab to manage these", then "now that I think about it, we should
+make the email, websearch, debugging all plugins as well". So a plugin has a **kind**, and one tab manages them all.
+
+**The rule for every kind: a plugin never runs inside the server.**
+- An engine family runs in the engine's process, as today.
+- Every other kind runs as a child process of the server, under the sandboxing the server already gives its children:
+  the job object or process group, no new privileges, a closed environment, and stdio only.
+- So a plugin can never reach the API key, the listener, the config file or another plugin's secrets.
+- The server asks for a plugin's work over a small, declared protocol, and stays the security boundary.
+
+| Kind | What it is | First-party plugin made from today's code |
+| --- | --- | --- |
+| `engine` | a model family (sections 1-8) | flint first (the proof), then the other families over time |
+| `tool` | an MCP server the chat's tool loop calls (`tools/list`, `tools/call`) | **web search**: `strata-search` already is one; its SearXNG settings move into its manifest |
+| `notifier` | told of the server's events (download finished, calibration finished or failed, engine stopped, server started) as one JSON line each on stdin | **email alerts**: the SMTP sender (Schannel / OpenSSL) moves out of the server into `strata-email` |
+| `diagnostics` | a manifest only, no code: switches on what a `--debugging` build does today | **debugging**: verbose logs (`logging.requests`, `logging.engine_output`), the start-up warnings, the window's and TUI's notice, and Settings > Troubleshooting |
+
+Every manifest declares its **settings**: name, kind, label, help, bounds and default, as card options are declared.
+- The Plugins tab draws a plugin's settings, and the server saves them under `plugins.<id>.*` in `config.json`.
+- A secret, such as the SMTP password, is declared as one. The server keeps it in the data folder's key store (as the
+  alerts password is kept today), never shows it again, and hands it only to that plugin's process.
+- A `tool` or `notifier` declares the network it needs (for example the SearXNG address, or the SMTP host and port).
+  The owner sees that before approving it.
+
+**The Plugins tab** (a top-level tab, beside Settings):
+- **List:** every plugin found, by kind. For each: its name, publisher, version and licence, its state (on, off,
+  waiting for approval, changed since approval, refused, with the reason), and what it declares.
+- **Actions:** Approve (pins the SHA-256), Turn on / Turn off, its settings, and Remove. Remove asks first; it takes
+  the plugin's folder away and keeps the models that the plugin's downloads fetched.
+- **The same in the TUI:** a Plugins view with the same list and keys.
+
+**First-party plugins** are the ones `make` builds from this repository: email, search, debugging, and the families once
+they are plugins.
+- `make` writes their SHA-256 into `engine/build.json` (the owner-only install folder). The server trusts a
+  first-party plugin whose SHA-256 matches its build record, and needs no separate approval for it.
+- Each is still off until its settings are filled in, and debugging stays off unless turned on.
+- A plugin from anyone else needs the owner's approval (decision 2).
+
+**Building:**
+- `make --with email,search` builds those plugins into the out folder instead of compiling them into the server.
+- `--debugging` ships the debugging plugin turned on.
+- The installers' questions stay: they choose which plugins to build in.
+- A build without a plugin can have it added later: drop in its folder and approve it in the Plugins tab.
+
+### 9. The authoring guide (`docs/ENGINE_PLUGINS.md`)
 
 Written for developers and agents, as a blueprint:
 1. What a family is.
@@ -267,6 +313,8 @@ Either way, the tests are:
 
 ## Phases (each its own commit, TDD, Windows and Linux)
 
+0. **Done:** the engine ABI and the launcher's `--family` (5beb6a12).
+
 1. **The contract.**
    - The ABI header and the launcher's `--family` (ABI, id and SHA-256 checks).
    - The manifest schema and its validator.
@@ -276,7 +324,12 @@ Either way, the tests are:
    - Then manifest-driven descriptors for plugins: cards, options, arguments, calibration, Monitor, capabilities.
 3. **Prompt format.** The declarative template renderer, if decision 1 is (a), with its refusal tests.
 4. **Downloads.** Plugin entries in Download models, `prepare: plugin`, and the MTP and picture files.
-5. **Trust.** Settings > Engines, approval and pinning, the launcher's SHA-256 check, and the threat model.
+5. **Trust and the Plugins tab.** Discovery of every kind, approval and pinning, first-party trust through the build
+   record, the Plugins tab and the TUI's view, and the threat model.
+5b. **Feature plugins.**
+   - The plugin host for `tool` and `notifier` children, and plugin settings and secrets.
+   - Then debugging as a diagnostics plugin, search as a tool plugin, and email as a notifier plugin, one commit each.
+   - make and the installers build them as plugins.
 6. **The SDK and the guide.**
    - `strata_family_runtime` and the skeleton family.
    - `make.py --sdk` / `--plugin`.
@@ -287,5 +340,13 @@ Either way, the tests are:
 
 1. Prompt format: **(a) a declarative template in the manifest** ("Declarative template"). No model-provided template
    runs.
-2. Trust: **(a) approve each plugin in Settings, with SHA-256 pinning** ("Approve each").
+2. Trust: **(a) approve each plugin, with SHA-256 pinning** ("Approve each"), in the Plugins tab (section 8).
 3. Proof: **(a) re-package flint as a plugin first** ("Re-package flint").
+4. First-party plugins: **trusted through the build record** ("Trusted by build"). Third-party ones need approval.
+5. Order: **the platform and the Plugins tab first** ("Platform + tab first"), proven with debugging as a manifest-only
+   plugin; then search and email; then the engine-family phases, ending with flint.
+
+**One folder for every kind** (2026-10-30, with decisions 4 and 5). Every plugin is `<install>/plugins/<id>/` with
+`plugin.json` (schema `m-strata.plugin/1`, its `kind` one of engine, tool, notifier, diagnostics). An engine plugin's
+library lives there too, and the launcher finds it as `<engine folder>/../plugins/<id>/multiengine_<id>`. The
+`family.json` and `engine/families/<id>/` of sections 1-3 read as `plugin.json` and `plugins/<id>/`.
