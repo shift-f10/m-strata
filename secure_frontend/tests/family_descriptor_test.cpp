@@ -130,10 +130,13 @@ void each_family_launches_as_before() {
     expect(family.reads_conversation_cache == qwen, id + ": the conversation cache");
     expect(family.download_template_card == qwen, id + ": a download's card template");
     expect(family.checks_mtp_side_file == (profile == EngineProfile::gemma4), id + ": the --mtp side-file check");
-    const std::optional<std::string_view> shipped = profile == EngineProfile::glm53     ? std::optional<std::string_view>{"expert-profile-glm.bin"}
-                                                    : profile == EngineProfile::minimax ? std::optional<std::string_view>{"expert-profile-mm3.bin"}
-                                                                                        : std::nullopt;
-    expect(family.shipped_expert_profile == shipped, id + ": Maya's shipped expert profile");
+    // (no optional built by a ternary: GCC's optimiser takes its copy for maybe uninitialized)
+    const char* const shipped = profile == EngineProfile::glm53     ? "expert-profile-glm.bin"
+                                : profile == EngineProfile::minimax ? "expert-profile-mm3.bin"
+                                                                    : nullptr;
+    expect(shipped == nullptr ? !family.shipped_expert_profile.has_value()
+                              : family.shipped_expert_profile.has_value() && *family.shipped_expert_profile == shipped,
+           id + ": Maya's shipped expert profile");
   }
 }
 
