@@ -29,9 +29,8 @@ enum class RouteId {
   strata_calibrate, strata_calibrate_cancel, strata_calibrate_auto, strata_calibrate_report,
   strata_downloads, strata_download_start, strata_download_pause, strata_download_cancel, strata_download_link,
   strata_login_link,
-  strata_alerts, strata_alerts_settings, strata_alerts_password, strata_alerts_test,
   strata_config, strata_config_settings, strata_key_rotate,
-  strata_plugins, strata_plugins_approve, strata_plugins_switch, strata_plugins_settings, strata_plugins_try,
+  strata_plugins, strata_plugins_approve, strata_plugins_switch, strata_plugins_settings, strata_plugins_try, strata_plugins_test,
   strata_folders, strata_folder_private, strata_folder_new, strata_card_add, strata_card_folder, strata_card_delete_begin, strata_card_delete,
   strata_card_remove,
   strata_folder_sharing,
@@ -99,14 +98,6 @@ inline constexpr std::array<RouteEntry, 10> kModelCardRoutes{{
     {"POST", "/v1/strata/cards/delete", false, RouteId::strata_card_delete},
     {"POST", "/v1/strata/cards/remove", false, RouteId::strata_card_remove},
 }};
-// GUI-first start-up (spec 2026-10-27 §5a): the page's email alert settings - read, save, the password, a test email.
-// Served only in a build with SECURE_FRONTEND_EMAIL_ALERTS and with models.control; keyed; POST, small JSON bodies.
-inline constexpr std::array<RouteEntry, 4> kAlertRoutes{{
-    {"POST", "/v1/strata/alerts", false, RouteId::strata_alerts},
-    {"POST", "/v1/strata/alerts/settings", false, RouteId::strata_alerts_settings},
-    {"POST", "/v1/strata/alerts/password", false, RouteId::strata_alerts_password},
-    {"POST", "/v1/strata/alerts/test", false, RouteId::strata_alerts_test},
-}};
 
 // The page's Settings tab (spec 2026-10-28-server-window-design, Part 1): the server's settings - read, save - and the API
 // key rotated in its store. Served with models.control (every build); keyed; POST, small JSON bodies.
@@ -116,14 +107,15 @@ inline constexpr std::array<RouteEntry, 3> kConfigRoutes{{
     {"POST", "/v1/strata/key/rotate", false, RouteId::strata_key_rotate},
 }};
 // The page's Plugins tab (owner 2026-10-30; plugin_routes.hpp): the install's plugins, an approval, on/off, a plugin's
-// settings, a tool's "Try" (it replaced web search's own settings routes). Served with models.control (every build);
-// keyed; POST, small JSON bodies.
-inline constexpr std::array<RouteEntry, 5> kPluginRoutes{{
+// settings, a tool's "Try" and a notifier's "Send a test" (they replaced web search's and email's own settings routes).
+// Served with models.control (every build); keyed; POST, small JSON bodies.
+inline constexpr std::array<RouteEntry, 6> kPluginRoutes{{
     {"POST", "/v1/strata/plugins", false, RouteId::strata_plugins},
     {"POST", "/v1/strata/plugins/approve", false, RouteId::strata_plugins_approve},
     {"POST", "/v1/strata/plugins/switch", false, RouteId::strata_plugins_switch},
     {"POST", "/v1/strata/plugins/settings", false, RouteId::strata_plugins_settings},
     {"POST", "/v1/strata/plugins/try", false, RouteId::strata_plugins_try},
+    {"POST", "/v1/strata/plugins/test", false, RouteId::strata_plugins_test},
 }};
 // The largest start or stop body the control routes read (and the download and card routes').
 inline constexpr std::size_t kModelControlBodyLimit = 4096;

@@ -371,8 +371,8 @@ struct ModelsConfig final {
   std::optional<std::filesystem::path> default_root{};      // models.default_root
 };
 
-// GUI-first start-up (spec 2026-10-27 §5a): email alerts (alerts.email.*), read only in a build with
-// SECURE_FRONTEND_EMAIL_ALERTS. The password is not a row: it is kept in roots.secret like the API key.
+// GUI-first start-up (spec 2026-10-27 §5a): email alerts' old rows (alerts.email.*), read in every build so the first
+// start can move them to the email plugin's settings (plugin spec 2026-10-30, section 10). The password was never a row.
 enum class SmtpSecurity { ssl, starttls };  // implicit TLS (465) or STARTTLS (587); never plain text
 inline constexpr std::array<std::string_view, 6> kAlertEvents{"download_finished",    "download_failed", "calibration_finished",
                                                               "calibration_failed",   "engine_stopped",  "server_started"};
@@ -393,14 +393,6 @@ struct AlertsConfig final {
 [[nodiscard]] bool is_valid_email_address(std::string_view text) noexcept;
 // The alerts.email.* rows of a draft alone, by validate()'s own rules (the page's settings, before they are written).
 [[nodiscard]] std::variant<AlertsConfig, ConfigErrors> alerts_from_draft(const FrontendConfigDraft& draft);
-// Whether this build has email alerts (SECURE_FRONTEND_EMAIL_ALERTS).
-[[nodiscard]] constexpr bool email_alerts_built() noexcept {
-#if defined(SECURE_FRONTEND_EMAIL_ALERTS)
-  return true;
-#else
-  return false;
-#endif
-}
 
 // Web search (docs/superpowers/specs/2026-10-27-web-search-design.md §2): search.*, read only in a build with
 // SECURE_FRONTEND_WEB_SEARCH (any other build refuses the rows by name).
@@ -418,10 +410,12 @@ struct SearchConfig final {
 // each plugin's manifest when it starts. A secret is never here (roots.secret).
 // The rows the plugins took over (plugin spec 2026-10-30, section 10; the owner's decision 6), moved once when the
 // server starts: search.url, .results and .timeout_s become plugins.search.*, search.max_rounds becomes tools.max_rounds
-// (one the config sets already stays), and search.enabled is handed back as what the search plugin's on or off becomes.
+// (one the config sets already stays), alerts.email.* becomes plugins.email.*, and search.enabled and
+// alerts.email.enabled are handed back as what their plugin's on or off becomes.
 struct MovedPluginRows final {
   std::vector<std::string> moved{};       // the old rows moved or dropped, by name, in order
   std::optional<bool> search_enabled{};   // search.enabled, when the config had it
+  std::optional<bool> email_enabled{};    // alerts.email.enabled, when the config had it
 };
 [[nodiscard]] MovedPluginRows move_plugin_rows(FrontendConfigDraft& draft);
 

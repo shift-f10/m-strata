@@ -91,19 +91,21 @@ Trust boundaries:
   the Models tab may start a `strata pull` of a catalog card or a confirmed
   Hugging Face `.gguf` link. The server itself still holds no network code; the
   pull runs as a separate confined `strata` child (below, "Model downloads").
-  A second owner-accepted exception (2026-10-27): a server **built with**
-  `SECURE_FRONTEND_EMAIL_ALERTS` (off by default) and with `alerts.email.enabled`
-  set connects to the configured SMTP host itself to send alerts (below, "GUI-first
-  start-up"). A default build has no mail code, and no build connects anywhere
-  until alerts are enabled in config.
+  A second owner-accepted exception (2026-10-27; a notifier plugin since 2026-10-30):
+  with the Email alerts plugin on (a folder built `--with email` ships it) and its
+  settings filled in, the server runs its program `strata-email` from
+  `<install>/plugins/email`, which connects to the configured SMTP host to send
+  alerts (below, "Email alerts"). The server process holds no mail code in any
+  build.
   A third owner-accepted exception (2026-10-27; a tool plugin since 2026-10-30): with
   the Web search plugin on (a folder built `--with search` ships it) and
   `plugins.search.url` set, the server runs its program `strata-search` from
   `<install>/plugins/search`, which connects to the configured SearXNG instance for the
   model's searches (below, "Web search"). A fourth (owner 2026-10-30: third-party tool
   plugins run now): a tool plugin the owner approved runs the same way, and connects
-  wherever its program does (below, "Extensions and MCP"). The server process itself
-  gains no resolver or outbound connection for either.
+  wherever its program does (below, "Extensions and MCP"), and so does a notifier
+  plugin the owner approved. The server process itself gains no resolver or outbound
+  connection for any of them.
 - Privacy-relevant behavior is build-time auditable: the release manifest lists
   enabled network-capable components, and CI tests prove that a normal service
   lifecycle makes no outbound network connection.
@@ -769,11 +771,11 @@ asks quoted there.
   all) before the whole tree is made owner-only. Any other sub-folder still refuses it, so a general folder (Documents,
   a drive's root) cannot be locked by mistake.
 - **The settings from the LAN** (2026-10-28, owner: the email and MCP sections were missing on a page opened from
-  another PC): the email alerts and the Plugins tab's routes follow the same rule as the file routes -
-  `model_files_allowed`: this PC, or a listed host or subnet with `models.control_remote`, never `control_remote`
-  alone. A listed client can therefore change where alerts go and which SearXNG answers searches (the Web search
-  plugin's settings), run one call of a running tool plugin's tool (Try), and set the SMTP password (written to the
-  secret folder, never shown back). That password then crosses the LAN in the request body,
+  another PC): the Plugins tab's routes follow the same rule as the file routes - `model_files_allowed`: this PC, or a
+  listed host or subnet with `models.control_remote`, never `control_remote` alone. A listed client can therefore
+  change where alerts go and which SearXNG answers searches (the Email alerts and Web search plugins' settings), run
+  one call of a running tool plugin's tool (Try), send a running notifier's test, and set the SMTP password (the email
+  plugin's secret, written to the secret folder, never shown back). That password then crosses the LAN in the request body,
   as the API key already does on a plain-HTTP listener.
 - **About** (`GET /v1/strata/about`, 2026-10-28): keyed like every API route. It tells a key holder the engine folder's
   build record (`engine/build.json`, read once, schema 1, at most 64 KiB, known fields only, printable text) and this
@@ -833,19 +835,22 @@ asks quoted there.
   card's tokenizer. Its kill on cancel and its hour bound are the supervisor's job-object kill,
   and its result is read as bounded strict JSON. The engine writes its own `prefill-tune.txt`
   into the card's pack folder (the model folder the page already owns), as Maya's engine does.
-- **Email alerts (built only with `SECURE_FRONTEND_EMAIL_ALERTS`).** The server's only
-  outbound connection, to the configured SMTP host and port, made only when
-  `alerts.email.enabled`. TLS is mandatory (implicit TLS on 465, or STARTTLS on 587 required
-  before AUTH; AUTH is never sent in clear), TLS 1.2 at least, the certificate checked against
-  the system's trust store and the host name (Windows: SChannel; elsewhere: OpenSSL). The SMTP
-  password is a secret like the API key (`roots.secret/smtp-password`: DPAPI on Windows, 0600
-  elsewhere), set on the page, never shown, logged or returned again. Messages are short plain
-  text naming the event and the card, never a path, prompt or key. Header values have line
-  breaks removed and the body is dot-stuffed. Sending happens on a background queue: at most
-  16 waiting, one per kind per minute, no retry. A build without the option refuses every
-  `alerts.*` key by name and serves no alert route. The static import check knows the choice: a
-  default build imports no resolver at all; an email build imports `getaddrinfo` and nothing else
-  on the forbidden list.
+- **Email alerts (the Email alerts notifier plugin since 2026-10-30; its program built only
+  with `SECURE_FRONTEND_EMAIL_ALERTS`).** `strata-email`, not the server, connects to the
+  configured SMTP host and port, and only while the plugin is on and its settings are filled
+  in. TLS is mandatory (implicit TLS on 465, or STARTTLS on 587 required before AUTH; AUTH is
+  never sent in clear), TLS 1.2 at least, the certificate checked against the system's trust
+  store and the host name (Windows: SChannel; elsewhere: OpenSSL). The SMTP password is the
+  plugin's secret (`roots.secret/plugin-email-password`: DPAPI on Windows, 0600 elsewhere; an
+  older install's `smtp-password` moves there at the first start), set in the Plugins tab,
+  never shown, logged or returned again, and handed to `strata-email` only as its
+  `SMTP_PASSWORD`. The server's events are short plain text naming the event and the card,
+  never a path, prompt or key; header values have line breaks removed and the body is
+  dot-stuffed. The notifier host queues at most 16 for each plugin and drops what comes while
+  its program is down; `strata-email` sends one per kind per minute, with no retry. The static
+  import check knows the split: the server binary imports no resolver in any build;
+  `strata-email` imports `getaddrinfo` and nothing else on the forbidden list
+  (`egress_strata_email_is_the_mail_client`).
 
 ### Web search (2026-10-27; the Web search tool plugin since 2026-10-30)
 
@@ -1010,10 +1015,15 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`; as a plugin,
   (`tools_are_listed_and_tried`, `a_third_party_tool_plugin_runs_once_approved`).
 - Remote command execution is absent. MCP and tool execution are only the
   tool plugins' (above), which no request, model, card or configuration key
-  can add; a card or a request can only turn tools off. A notifier or engine
-  plugin runs nothing yet: enabling one requires its own reviewed step, and
-  none can be enabled through a model manifest, HTTP request, or unrecognized
-  configuration key.
+  can add; a card or a request can only turn tools off. A notifier plugin
+  (owner 2026-10-30) runs like a tool plugin - trusted the same way, its own
+  folder, its closed environment, unconfined once it runs - and is told only
+  the server's events (an event names a card or a model and what happened,
+  never a path, a prompt or a key); what it answers is shown as text, cut at
+  400 characters (`a_notifier_plugin_hears_the_start_and_answers_a_test`). An
+  engine plugin runs nothing yet: enabling one requires its own reviewed step,
+  and none can be enabled through a model manifest, HTTP request, or
+  unrecognized configuration key.
 
 ## Out of scope and residual risks
 
@@ -1052,8 +1062,8 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`; as a plugin,
   provider and the recipients when downloads, calibrations and engine stops happen, and the
   card names involved. A compromised SMTP account can read them. The SMTP password sits beside
   the API key and is as exposed as it is. A mail host the operator mistypes receives the login
-  attempt (TLS and host-name checks still apply). The server process now carries TLS and
-  resolver code (the owner chose this over a curl child).
+  attempt (TLS and host-name checks still apply). Since 2026-10-30 the TLS and resolver code is
+  `strata-email`'s, a child, no longer the server process's.
 - **Web search residual (2026-10-27, search builds only):** the SearXNG instance, and the
   engines it asks, see what the model searches for, which comes from the conversation; an
   http URL to another host exposes the queries on the network (loopback or https is the

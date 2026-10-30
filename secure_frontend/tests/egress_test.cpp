@@ -70,14 +70,8 @@ void egress_server_imports_no_resolver_or_http_client() {
   const auto forbidden = test_support::forbidden_imports(report, ordinal_names);
   std::string list;
   for (const auto& f : forbidden) list += f + " ";
-#if defined(SECURE_FRONTEND_EMAIL_ALERTS)
-  // The owner's choice (2026-10-27): email alerts are built into the server, which opens the SMTP connection
-  // itself. A build with them may resolve the mail host - getaddrinfo and nothing else; no HTTP client, no
-  // other resolver. A build without them (the default) keeps the rule below.
-  expect(forbidden == std::vector<std::string>{"getaddrinfo"}, "only the SMTP host lookup (getaddrinfo) is imported: " + list);
-#else
+  // (email alerts were the server's own SMTP connection until 2026-10-30; the email plugin's strata-email is it now)
   expect(forbidden.empty(), "no resolver, HTTP client or outbound-connect import: " + list);
-#endif
 }
 
 // Web search (spec 2026-10-27-web-search-design §2-§3): strata-search, not the server, is the search connection - it
@@ -100,6 +94,27 @@ void egress_strata_search_is_the_search_client() {
     else other = true;
   }
   expect(resolver && !other, "the instance's host lookup (getaddrinfo) and nothing else: " + list);
+}
+
+// Email alerts as a notifier plugin (plugin spec 2026-10-30, section 10): strata-email, not the server, is the mail
+// connection - it resolves the mail server (getaddrinfo) and speaks SMTP itself, with no HTTP client and no other resolver.
+void egress_strata_email_is_the_mail_client() {
+  const auto report = test_support::read_binary_imports(secure_frontend_test::extra_arguments().at(0));
+  expect(report.ok, "strata-email has an import table: " + report.error);
+  test_support::OrdinalNames ordinal_names;
+#if defined(_WIN32)
+  ordinal_names = system_ws2_32_ordinal_names();
+#endif
+  const auto forbidden = test_support::forbidden_imports(report, ordinal_names);
+  std::string list;
+  bool resolver = false;
+  bool other = false;
+  for (const auto& f : forbidden) {
+    list += f + " ";
+    if (f.find("getaddrinfo") != std::string::npos) resolver = true;
+    else other = true;
+  }
+  expect(resolver && !other, "the mail server's host lookup (getaddrinfo) and nothing else: " + list);
 }
 
 // Little-endian writers for the synthetic images (ruling R-I: they go through the real parsers).
@@ -331,6 +346,7 @@ int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"egress_server_imports_no_resolver_or_http_client", egress_server_imports_no_resolver_or_http_client},
       {"egress_strata_search_is_the_search_client", egress_strata_search_is_the_search_client},
+      {"egress_strata_email_is_the_mail_client", egress_strata_email_is_the_mail_client},
       {"egress_static_tripwire_fails_on_binary_without_dynamic_section", egress_static_tripwire_fails_on_binary_without_dynamic_section},
       {"egress_interposer_self_test", egress_interposer_self_test},
       {"egress_interposer_records_nothing_during_lifecycle", egress_interposer_records_nothing_during_lifecycle},

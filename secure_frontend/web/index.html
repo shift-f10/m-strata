@@ -443,54 +443,6 @@
         <p class="muted small" id="folders-result" role="status" aria-live="polite"></p>
         <p class="msg-error" id="folders-error" role="alert" hidden></p>
       </div>
-      <div class="st-card alerts-settings" id="alerts-settings" hidden>
-        <div class="models-head"><span class="card-title">Email alerts</span></div>
-        <p class="muted small">The server can email you when a download finishes or fails, a calibration ends, a model's engine
-          stops, or the server starts. It sends over TLS only (SSL/TLS on 465, or STARTTLS on 587), from its own mailbox.
-          These settings apply when the server restarts.</p>
-        <label class="model-calibration__auto"><input type="checkbox" id="alerts-enabled"> Send email alerts</label>
-        <div class="alerts-grid">
-          <label class="st-label" for="alerts-host">Mail server</label>
-          <input class="st-input" id="alerts-host" type="text" spellcheck="false" autocapitalize="off" placeholder="smtp.ionos.com">
-          <label class="st-label" for="alerts-port">Port</label>
-          <input class="st-input" id="alerts-port" type="number" min="1" max="65535" step="1">
-          <label class="st-label" for="alerts-security">Security</label>
-          <select class="st-input" id="alerts-security">
-            <option value="ssl">SSL/TLS (port 465)</option>
-            <option value="starttls">STARTTLS (port 587)</option>
-          </select>
-          <label class="st-label" for="alerts-username">User name</label>
-          <input class="st-input" id="alerts-username" type="text" spellcheck="false" autocapitalize="off" autocomplete="off"
-                 placeholder="The mailbox's full address">
-          <label class="st-label" for="alerts-from">From</label>
-          <input class="st-input" id="alerts-from" type="text" spellcheck="false" autocapitalize="off" placeholder="The same mailbox">
-          <label class="st-label" for="alerts-to">To</label>
-          <input class="st-input" id="alerts-to" type="text" spellcheck="false" autocapitalize="off"
-                 placeholder="Up to five addresses, separated by commas">
-        </div>
-        <fieldset class="alerts-events" id="alerts-events">
-          <legend class="st-label">Which alerts</legend>
-          <label><input type="checkbox" data-event="download_finished"> A download finished</label>
-          <label><input type="checkbox" data-event="download_failed"> A download failed</label>
-          <label><input type="checkbox" data-event="calibration_finished"> A calibration finished</label>
-          <label><input type="checkbox" data-event="calibration_failed"> A calibration failed</label>
-          <label><input type="checkbox" data-event="engine_stopped"> A model's engine stopped</label>
-          <label><input type="checkbox" data-event="server_started"> The server started</label>
-        </fieldset>
-        <div class="model-actions">
-          <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="alerts-ionos">Fill in IONOS</button>
-          <button type="button" class="st-btn st-btn--primary st-btn--sm" id="alerts-save">Save</button>
-          <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="alerts-test">Send a test email</button>
-        </div>
-        <label class="st-label" for="alerts-password">Mailbox password</label>
-        <div class="model-folder__row">
-          <input class="st-input" id="alerts-password" type="password" autocomplete="new-password" spellcheck="false">
-          <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="alerts-password-save">Save password</button>
-        </div>
-        <p class="muted small" id="alerts-password-state"></p>
-        <p class="muted small" id="alerts-result" role="status" aria-live="polite"></p>
-        <p class="msg-error" id="alerts-error" role="alert" hidden></p>
-      </div>
     </div>
   </section>
 

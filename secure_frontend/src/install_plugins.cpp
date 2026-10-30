@@ -53,7 +53,7 @@ std::vector<PluginProgram> plugin_programs(
     }
     const auto& values = std::get<std::map<std::string, PluginValue>>(checked);
     PluginProgram program{.id = entry.id, .run = run, .program = plugins.folder / entry.id / path_from_utf8(run.program),
-                          .arguments = {}, .environment = environment(entry.id)};
+                          .arguments = {}, .environment = environment(entry.id), .values = values};
     // (a setting an argument names always has a value: the manifest reader made sure)
     for (const auto& argument : run.arguments) {
       program.arguments.push_back(argument.setting.empty() ? argument.text : value_text(values.at(argument.setting)));

@@ -420,23 +420,18 @@ constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 
      "Absolute path of the engine (multiengine) the cards the page writes use; with it the server also serves with no card yet. The first start sets it to the engine beside the server."},
     {"models.default_root", T::string, false, 0, 0, 0, false, "", "",
      "Absolute folder the page offers first for a download or a model's files (the first start's data/models)."},
-    // GUI-first start-up (spec 2026-10-27 §5a): email alerts, read only in a build with SECURE_FRONTEND_EMAIL_ALERTS.
+    // Email alerts' old rows (spec 2026-10-27 §5a): read in every build, and moved at the first start to the email plugin's
+    // settings (plugins.email.*; plugin spec 2026-10-30, section 10).
     {"alerts.email.enabled", T::boolean, false, 0, 0, 0, false, "", "",
-     "Send email alerts (a build with SECURE_FRONTEND_EMAIL_ALERTS only; any other build refuses alerts.*). The password is kept in roots.secret (smtp-password), never in this file."},
-    {"alerts.email.host", T::string, false, 0, 0, 0, false, "", "",
-     "The SMTP server, a DNS name (IONOS: smtp.ionos.com, or the account's regional host). Needed with alerts.email.enabled."},
-    {"alerts.email.port", T::integer, false, 1, 65535, 465, false, "", "",
-     "The SMTP port: 465 with ssl (IONOS's primary), 587 with starttls."},
-    {"alerts.email.security", T::string, false, 0, 0, 0, false, "ssl", "",
-     "ssl (TLS from the first byte) or starttls (STARTTLS before AUTH); never plain text; TLS 1.2 or later."},
-    {"alerts.email.username", T::string, false, 0, 0, 0, false, "", "",
-     "The SMTP user name (IONOS: the full mailbox address). Needed with alerts.email.enabled."},
-    {"alerts.email.from", T::string, false, 0, 0, 0, false, "", "",
-     "The From address (IONOS: the mailbox the user name logs in to). Needed with alerts.email.enabled."},
-    {"alerts.email.to", T::string_array, false, 0, 0, 0, false, "", "",
-     "1-5 addresses the alerts go to. Needed with alerts.email.enabled."},
+     "Moved at the first start: the email plugin's on or off (the Plugins tab); the password in roots.secret (smtp-password) becomes the plugin's secret."},
+    {"alerts.email.host", T::string, false, 0, 0, 0, false, "", "", "Moved at the first start to plugins.email.host: the SMTP server, a DNS name."},
+    {"alerts.email.port", T::integer, false, 1, 65535, 465, false, "", "", "Moved at the first start to plugins.email.port (465 with ssl, 587 with starttls)."},
+    {"alerts.email.security", T::string, false, 0, 0, 0, false, "ssl", "", "Moved at the first start to plugins.email.security (ssl or starttls)."},
+    {"alerts.email.username", T::string, false, 0, 0, 0, false, "", "", "Moved at the first start to plugins.email.username."},
+    {"alerts.email.from", T::string, false, 0, 0, 0, false, "", "", "Moved at the first start to plugins.email.from."},
+    {"alerts.email.to", T::string_array, false, 0, 0, 0, false, "", "", "Moved at the first start to plugins.email.to (1-5 addresses)."},
     {"alerts.email.events", T::string_array, false, 0, 0, 0, false, "", "",
-     "Which alerts are sent: download_finished, download_failed, calibration_finished, calibration_failed, engine_stopped, server_started (absent: all)."},
+     "Moved at the first start to plugins.email.events: download_finished, download_failed, calibration_finished, calibration_failed, engine_stopped, server_started (absent: all)."},
     // Web search's old rows (spec 2026-10-27-web-search-design §2): read in every build, and moved at the first start to
     // the search plugin's settings (plugins.search.*) and tools.max_rounds (plugin spec 2026-10-30, section 10).
     {"search.enabled", T::boolean, false, 0, 0, 0, false, "", "",
@@ -810,14 +805,6 @@ AlertsConfig read_alerts(DraftReader& read, const FrontendConfigDraft& draft, Co
   if (draft.entries.contains("alerts.email.to") && email.to.empty()) {
     add(errors, "alerts.email.to", ConfigIssueCode::invalid_value, "needs 1-5 addresses");
   }
-  if (!email_alerts_built()) {
-    for (const auto& [path, entry] : draft.entries) {
-      if (path.rfind("alerts.", 0) == 0U) {
-        add(errors, path, ConfigIssueCode::invalid_value, "this build has no email alerts (built without SECURE_FRONTEND_EMAIL_ALERTS)");
-      }
-    }
-    return {};
-  }
   if (email.enabled) {
     for (const std::string_view row : {"alerts.email.host", "alerts.email.username", "alerts.email.from", "alerts.email.to"}) {
       if (!draft.entries.contains(row)) add(errors, std::string{row}, ConfigIssueCode::missing_required, "is needed with alerts.email.enabled");
@@ -1002,17 +989,26 @@ bool plugin_setting_path(const std::string_view path) noexcept {
 
 MovedPluginRows move_plugin_rows(FrontendConfigDraft& draft) {
   MovedPluginRows out;
-  // (old row, its new place; empty: none - search.enabled becomes the plugin's on or off, handed back)
-  constexpr std::array<std::pair<std::string_view, std::string_view>, 5> kMoves{{{"search.enabled", ""},
-                                                                                 {"search.max_rounds", "tools.max_rounds"},
-                                                                                 {"search.results", "plugins.search.results"},
-                                                                                 {"search.timeout_s", "plugins.search.timeout_s"},
-                                                                                 {"search.url", "plugins.search.url"}}};
+  // (old row, its new place; empty: none - search.enabled and alerts.email.enabled become their plugin's on or off,
+  // handed back)
+  constexpr std::array<std::pair<std::string_view, std::string_view>, 13> kMoves{{{"alerts.email.enabled", ""},
+                                                                                  {"alerts.email.events", "plugins.email.events"},
+                                                                                  {"alerts.email.from", "plugins.email.from"},
+                                                                                  {"alerts.email.host", "plugins.email.host"},
+                                                                                  {"alerts.email.port", "plugins.email.port"},
+                                                                                  {"alerts.email.security", "plugins.email.security"},
+                                                                                  {"alerts.email.to", "plugins.email.to"},
+                                                                                  {"alerts.email.username", "plugins.email.username"},
+                                                                                  {"search.enabled", ""},
+                                                                                  {"search.max_rounds", "tools.max_rounds"},
+                                                                                  {"search.results", "plugins.search.results"},
+                                                                                  {"search.timeout_s", "plugins.search.timeout_s"},
+                                                                                  {"search.url", "plugins.search.url"}}};
   for (const auto& [old_row, new_row] : kMoves) {
     const auto found = draft.entries.find(old_row);
     if (found == draft.entries.end()) continue;
     if (new_row.empty()) {
-      if (const auto* on = std::get_if<bool>(&found->second.value)) out.search_enabled = *on;
+      if (const auto* on = std::get_if<bool>(&found->second.value)) (old_row == "search.enabled" ? out.search_enabled : out.email_enabled) = *on;
     } else if (!draft.entries.contains(new_row)) {
       draft.entries.emplace(std::string{new_row}, found->second);
     }
@@ -1928,22 +1924,6 @@ std::string describe(const FrontendConfig& c) {
        c.models.download_engine_card.has_value() ? json_quoted(*c.models.download_engine_card) : std::string{"(unset)"});
   line("models.default_engine", path_line(c.models.default_engine));
   line("models.default_root", path_line(c.models.default_root));
-  if (email_alerts_built()) {
-    const auto& email = c.alerts.email;
-    const auto list = [](const std::vector<std::string>& items) {
-      std::string text = "[";
-      for (std::size_t i = 0; i < items.size(); ++i) text += (i == 0U ? "" : ",") + json_quoted(items[i]);
-      return text + "]";
-    };
-    line("alerts.email.enabled", email.enabled ? "true" : "false");
-    line("alerts.email.host", email.host.empty() ? std::string{"(unset)"} : json_quoted(email.host));
-    line("alerts.email.port", std::to_string(email.port));
-    line("alerts.email.security", email.security == SmtpSecurity::ssl ? "ssl" : "starttls");
-    line("alerts.email.username", email.username.empty() ? std::string{"(unset)"} : json_quoted(email.username));
-    line("alerts.email.from", email.from.empty() ? std::string{"(unset)"} : json_quoted(email.from));
-    line("alerts.email.to", list(email.to));
-    line("alerts.email.events", list(email.events));
-  }
   line("glm.tokenizer", c.glm.tokenizer.has_value() ? json_quoted(*c.glm.tokenizer) : std::string{"(unset)"});
   line("glm.model_name", c.glm.model_name.has_value() ? json_quoted(*c.glm.model_name) : std::string{"(unset)"});
   line("engine.fit_max_tokens", c.engine.fit_max_tokens ? "true" : "false");

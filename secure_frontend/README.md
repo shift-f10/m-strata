@@ -6,12 +6,11 @@ protected-file token reading on Linux and Windows, exact Host/Origin/CORS policy
 bounded in-memory HTTP request gate, and a portable engine-process supervisor.
 It includes a deliberately limited socket-listener executable for smoke testing
 and a native, serial inference listener. It does not connect to the legacy
-service, download artifacts, or open outbound sockets (one exception, in a build
-with the optional email alerts: the SMTP connection, made only once
-`alerts.email.enabled` is set; see "Install" below. A tool plugin - web search
-first - is a program the server runs as a private child from `<install>/plugins/<id>`,
-and it alone connects to what its manifest names: the Web search plugin's
-`strata-search` to the SearXNG instance `plugins.search.url` names).
+service, download artifacts, or open outbound sockets. A tool or notifier plugin -
+web search and email alerts first - is a program the server runs as a private child
+from `<install>/plugins/<id>`, and it alone connects to what it needs: the Web search
+plugin's `strata-search` to the SearXNG instance `plugins.search.url` names, the Email
+alerts plugin's `strata-email` to the mail server `plugins.email.host` names.
 
 ## Token-source metadata
 
@@ -160,12 +159,24 @@ engine launchers give the child only the allowlisted environment, with no
 `PATH`, so a dynamically linked MSYS2 binary could not find its runtime DLLs
 when it is started as an engine.
 
-**Email alerts are a build option**, `SECURE_FRONTEND_EMAIL_ALERTS`, **off by
-default**. A build without it has no SMTP or TLS code, refuses every `alerts.*`
-config key by name and serves no alert route. The `linux-gcc`, `linux-clang`
-and `windows-msvc` presets (our own builds) turn it on; `make.py --with email`
-builds it into an out folder. On Linux it links the system's OpenSSL
-(`find_package(OpenSSL)`); on Windows it uses SChannel.
+**Email alerts are a notifier plugin** (since 2026-10-30, plugin spec section 10; first built into the server, spec
+2026-10-27 §5a). The build option `SECURE_FRONTEND_EMAIL_ALERTS` (**off by default**; the `linux-gcc`, `linux-clang` and
+`windows-msvc` presets turn it on) builds its program, `strata-email`, installed in `plugins/email/` beside the plugin's
+manifest; `make.py --with email` puts the plugin into an out folder, on. The server itself holds no SMTP or TLS code in
+any build. `strata-email` is the SMTP client over TLS (on Linux the system's OpenSSL, `find_package(OpenSSL)`; on
+Windows SChannel): it reads the server's events, mails each (at most one per kind a minute), and answers the tab's test
+with the mail server's reply; its settings come as arguments, the password as `SMTP_PASSWORD`. A config's old
+`alerts.email.*` rows move to `plugins.email.*` at its first start (`alerts.email.enabled` to the plugin's choice in
+`plugins.json`), and `roots.secret/smtp-password` becomes the plugin's secret `plugin-email-password`; the log says so.
+
+**Notifier plugins** (plugin spec section 10): each notifier plugin that is on and whose settings fit is started with the
+server (in launcher mode), in its own folder `<roots.state>/plugins/<id>` with its manifest's arguments and environment
+and no new privileges, and is told of the server's events - a download or a calibration finished or failed, an engine
+stopped unexpectedly, the server started - as one JSON line each on stdin, `{"event", "subject", "body", "server",
+"time"}`: the events its `events` setting names, or all. Events wait in a queue of at most 16 for each plugin; one raised
+while its program is down (it is started again a minute after it ended) is dropped and logged. The tab's "Send a test"
+writes `{"test": true, "server"}` and waits up to a minute for `{"ok", "reply"}`; a notifier may answer an event with
+`{"event", "ok", "reply"}`, which the log shows (`[strata] plugins: <id>: <event>: <reply>`).
 
 **Web search is a tool plugin** (since 2026-10-30, plugin spec
 [`docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md`](../docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md),
@@ -290,10 +301,10 @@ Spec: [`docs/superpowers/specs/2026-10-27-gui-first-install-design.md`](../docs/
 `install.bat` / `install.sh` at the repository root install what the build needs and then run this (the root
 README's Install section lists every dependency and the same steps by hand).
 
-`--with email,search` adds email alerts and web search (each is off otherwise). `--without maya,raon1` leaves those
+`--with email,search` adds the Email alerts and Web search plugins (each is off otherwise). `--without maya,raon1` leaves those
 engine families out (strata, Gemma 4 and flint are always built). `--no-cuda-runtime` skips bundling cuBLAS; `--jobs N`
 sets the compile jobs; `--plan` prints the commands only. The folder gets `strata-unified-server`, `strata`,
-`plugins/` (`debugging/`, and `search/` with `strata-search` with `search`), `engine/` (the `multiengine` launcher, one library per family, `strata-prepare`, the
+`plugins/` (`debugging/`, `search/` with `strata-search` with `search`, `email/` with `strata-email` with `email`), `engine/` (the `multiengine` launcher, one library per family, `strata-prepare`, the
 expert profiles, MiniMax's template in `templates/minimax-m3.1/` and, by default, NVIDIA's cuBLAS), `README.txt`,
 `config.example.json`, `LICENSE` and `NOTICE.md`, and it is made owner-only.
 
@@ -421,14 +432,8 @@ The Settings tab's sections (all but the key's rotation) answer the clients the 
 serve: a browser on this PC, and the hosts and subnets `models.control_remote_networks` lists; from any other PC they
 do not show.
 
-**Email alerts** (builds with email alerts only): the SMTP server, port and security (SSL/TLS on 465 or STARTTLS
-on 587; TLS 1.2 or later, certificate checked, never plain text), the user name, From and To (1-5 addresses), and
-which alerts to send (downloads finished or failed, calibrations finished or failed, the engine stopped unexpectedly,
-the server started). "IONOS" fills in `smtp.ionos.com`, 465 SSL/TLS and the mailbox address as the user name. The
-password is saved on its own into the secret folder (DPAPI on Windows, 0600 elsewhere) and never shown again. "Send a
-test email" reports the mail server's answer. Saved settings are written to the config file and apply at the next start.
-Web search's settings are its plugin's (the Plugins tab, below); the tab's limits hold `tools.max_rounds` ("Tool calls
-per answer"). A chat reply notes what it searched for.
+Email alerts' and web search's settings are their plugins' (the Plugins tab, below); the tab's limits hold
+`tools.max_rounds` ("Tool calls per answer"). A chat reply notes what it searched for.
 
 **Plugins** (every build with model control; owner 2026-10-30, spec
 `docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md`, section 8): the top-level Plugins tab lists each
@@ -436,7 +441,9 @@ folder of `<install>/plugins` that holds a `plugin.json` (`POST /v1/strata/plugi
 SHA-256s there now (`/approve`), and Turn on / Turn off (`/switch`). The owner's choices are kept in
 `<roots.state>/plugins.json`; what runs is decided when the server starts. A plugin `make` built is trusted through
 `engine/build.json` and needs no approval. The plugins so far: **Web search** (`plugins/search`, kind `tool`, in a
-folder built `--with search`; above), and **Debugging** (`plugins/debugging`, kind
+folder built `--with search`; above), **Email alerts** (`plugins/email`, kind `notifier`, in a folder built `--with
+email`: the SMTP server, port, security, user name, From, To, which alerts, the password as a secret, IONOS a preset),
+and **Debugging** (`plugins/debugging`, kind
 `diagnostics`, in every folder `make` builds; `make --debugging` ships it on): while it is on, the logging rows a config
 leaves unset (`logging.requests`, `logging.engine_output`) are on, every start says so, Settings shows
 Troubleshooting, and strata-window and strata-tui say what it logs before they start the server. Turning it on in the
@@ -444,7 +451,7 @@ tab says the same first.
 
 A tool's or notifier's settings (owner 2026-10-30, decision 6; the spec's section 10) are declared in its manifest
 (`text`, `url`, `secret`, `integer`, `boolean`, `choice`, `text_list`, each with its label, help, default and bounds),
-drawn in its card and saved through `POST /v1/strata/plugins/settings {"id", "values": {name: value or null}}`: each
+drawn in its card (a text list whose manifest names its choices as a checkbox for each) and saved through `POST /v1/strata/plugins/settings {"id", "values": {name: value or null}}`: each
 value is checked against the manifest; every one but a secret is kept in the config file as `plugins.<id>.<name>` (the
 config reader takes these rows, bounded, and `--check` prints them); a secret goes to the secret folder as
 `plugin-<id>-<name>` (DPAPI on Windows, 0600 elsewhere), is never answered again (the card shows set or not set) and is
@@ -452,7 +459,9 @@ removed by a null. The list says what each plugin connects to (`network`, its va
 running (`settings_problem`: a required setting missing, a value its manifest refuses); presets fill a card in. A change
 applies when the server restarts. A running tool plugin's entry lists its `tools` (each name, description and string
 parameters), and its card's **Try** calls one through the server's tool hub (`POST /v1/strata/plugins/try {"id", "tool",
-"arguments": {...}}` -> `{"ok", "text", "truncated", "ms"}`), starting the program first if no chat has.
+"arguments": {...}}` -> `{"ok", "text", "truncated", "ms"}`), starting the program first if no chat has. A running
+notifier plugin's card has "Send a test" (`POST /v1/strata/plugins/test {"id"}` -> `{"ok", "reply"}`: its program's
+own answer, the email plugin's the mail server's reply).
 
 ### strata-window: the server in a window with a tray icon (2026-10-28)
 
@@ -565,10 +574,10 @@ rejected.
 Remote/wildcard binds are rejected unless the corresponding explicit flags are
 provided. CORS remains disabled, and the executable neither sends outbound
 traffic nor starts MCP, telemetry, analytics, update checks, or downloads
-(downloads run as `strata` children; a build with email alerts sends mail to the
-configured SMTP server only when they are enabled; MCP is only the tool plugins'
-servers, each a child the server runs from its plugin folder: web search's `strata-search`, and a
-third-party one only once the owner approved it).
+(downloads run as `strata` children; mail is the Email alerts plugin's `strata-email`,
+a notifier child; MCP is only the tool plugins' servers, each a child the server runs
+from its plugin folder: web search's `strata-search`, and a third-party one only once
+the owner approved it).
 
 ## Configuration
 
@@ -757,14 +766,14 @@ Every key (generated from the schema; `readme_config_table_matches_schema` keeps
 | `models.download_engine_card` | string | unset | - | - | The qwen card whose engine (executable, library folders, GPU, options) a prepared download's card uses. |
 | `models.default_engine` | string | unset | - | - | Absolute path of the engine (multiengine) the cards the page writes use; with it the server also serves with no card yet. The first start sets it to the engine beside the server. |
 | `models.default_root` | string | unset | - | - | Absolute folder the page offers first for a download or a model's files (the first start's data/models). |
-| `alerts.email.enabled` | boolean | `false` | - | - | Send email alerts (a build with SECURE_FRONTEND_EMAIL_ALERTS only; any other build refuses alerts.*). The password is kept in roots.secret (smtp-password), never in this file. |
-| `alerts.email.host` | string | unset | - | - | The SMTP server, a DNS name (IONOS: smtp.ionos.com, or the account's regional host). Needed with alerts.email.enabled. |
-| `alerts.email.port` | integer | `465` | 1-65535 | - | The SMTP port: 465 with ssl (IONOS's primary), 587 with starttls. |
-| `alerts.email.security` | string | `ssl` | - | - | ssl (TLS from the first byte) or starttls (STARTTLS before AUTH); never plain text; TLS 1.2 or later. |
-| `alerts.email.username` | string | unset | - | - | The SMTP user name (IONOS: the full mailbox address). Needed with alerts.email.enabled. |
-| `alerts.email.from` | string | unset | - | - | The From address (IONOS: the mailbox the user name logs in to). Needed with alerts.email.enabled. |
-| `alerts.email.to` | string array | `[]` | - | - | 1-5 addresses the alerts go to. Needed with alerts.email.enabled. |
-| `alerts.email.events` | string array | `[]` | - | - | Which alerts are sent: download_finished, download_failed, calibration_finished, calibration_failed, engine_stopped, server_started (absent: all). |
+| `alerts.email.enabled` | boolean | `false` | - | - | Moved at the first start: the email plugin's on or off (the Plugins tab); the password in roots.secret (smtp-password) becomes the plugin's secret. |
+| `alerts.email.host` | string | unset | - | - | Moved at the first start to plugins.email.host: the SMTP server, a DNS name. |
+| `alerts.email.port` | integer | `465` | 1-65535 | - | Moved at the first start to plugins.email.port (465 with ssl, 587 with starttls). |
+| `alerts.email.security` | string | `ssl` | - | - | Moved at the first start to plugins.email.security (ssl or starttls). |
+| `alerts.email.username` | string | unset | - | - | Moved at the first start to plugins.email.username. |
+| `alerts.email.from` | string | unset | - | - | Moved at the first start to plugins.email.from. |
+| `alerts.email.to` | string array | `[]` | - | - | Moved at the first start to plugins.email.to (1-5 addresses). |
+| `alerts.email.events` | string array | `[]` | - | - | Moved at the first start to plugins.email.events: download_finished, download_failed, calibration_finished, calibration_failed, engine_stopped, server_started (absent: all). |
 | `search.enabled` | boolean | `false` | - | - | Moved at the first start: the web search plugin's on or off (the Plugins tab). |
 | `search.url` | string | unset | - | - | Moved at the first start to plugins.search.url: the SearXNG instance, http(s)://host[:port][/path], with the JSON format on. |
 | `search.results` | integer | `5` | 1-10 | - | Moved at the first start to plugins.search.results (1-10). |
@@ -2196,8 +2205,7 @@ download pause and resume functionality". Spec
 }
 ```
 
-- **What runs:** the server holds no download code (and, unless built with email alerts, no network client at
-  all). Every transfer is a child,
+- **What runs:** the server holds no download code, and no network client at all. Every transfer is a child,
   `strata --config <the server's config> pull --manifest <m> --trust-manifest sha256:<d> --yes
   --progress-lines` (SP4's confined pull: the downloader child, HTTPS, the host rules, every
   file's size and SHA-256 fixed before a byte moves), and every link lookup

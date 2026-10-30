@@ -8,10 +8,6 @@
 #include "secure_frontend/about_info.hpp"
 #include "secure_frontend/card_routes.hpp"
 #include "secure_frontend/login_link.hpp"
-#if defined(SECURE_FRONTEND_EMAIL_ALERTS)
-#include "secure_frontend/alert_routes.hpp"
-#include "secure_frontend/email_alerts.hpp"
-#endif
 #include "secure_frontend/api_errors.hpp"
 #include "secure_frontend/api_router.hpp"
 #include "secure_frontend/chat_execution.hpp"
@@ -40,11 +36,13 @@
 #include "secure_frontend/model_cards.hpp"
 #include "secure_frontend/model_launcher.hpp"
 #include "secure_frontend/model_runtime.hpp"
+#include "secure_frontend/notifier_hub.hpp"
 #include "secure_frontend/privilege_check.hpp"
 #include "secure_frontend/process_defaults.hpp"
 #include "secure_frontend/request_log.hpp"
 #include "secure_frontend/serve_monitor.hpp"
 #include "secure_frontend/shutdown_signal.hpp"
+#include "secure_frontend/smtp_password.hpp"
 #include "secure_frontend/subsystem_limits.hpp"
 #include "secure_frontend/test_hooks.hpp"
 #include "secure_frontend/token_store.hpp"
@@ -68,6 +66,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -225,19 +224,25 @@ std::map<std::string, std::string, std::less<>> download_environment(const std::
   return environment;
 }
 
-// Tool plugins (owner 2026-10-30; plugin spec section 10): each tool plugin that is on and whose settings fit, as the
-// tool hub runs it - in the downloads' closed environment with its own owner-only temp folder, <roots.state>/plugins/<id>.
-// One left out is logged with why.
-std::vector<secure_frontend::ToolPlugin> tool_plugins(const FrontendConfig& config, const secure_frontend::InstallPlugins& plugins) {
-  std::vector<secure_frontend::ToolPlugin> tools;
-  if (!config.roots.state.has_value()) return tools;
+// A plugin's own owner-only folder under the state root: its working folder and its temp folder.
+std::filesystem::path plugin_folder(const FrontendConfig& config, const std::string_view id) {
+  return *config.roots.state / "plugins" / secure_frontend::path_from_utf8(id);
+}
+
+// The tool or notifier plugins that run (owner 2026-10-30; plugin spec section 10): each on and with settings that fit,
+// in the downloads' closed environment with its own folder, <roots.state>/plugins/<id>, made owner-only. One left out is
+// logged with why.
+std::vector<secure_frontend::PluginProgram> running_programs(const FrontendConfig& config, const secure_frontend::InstallPlugins& plugins,
+                                                             const secure_frontend::PluginKind kind) {
+  std::vector<secure_frontend::PluginProgram> running;
+  if (!config.roots.state.has_value()) return running;
   std::vector<std::pair<std::string, std::string>> left_out;
   std::set<std::string, std::less<>> no_folder;
-  const auto programs = secure_frontend::plugin_programs(
-      plugins, secure_frontend::PluginKind::tool, config.plugins,
+  auto programs = secure_frontend::plugin_programs(
+      plugins, kind, config.plugins,
       config.roots.secret ? std::optional<std::filesystem::path>{config.roots.secret->path()} : std::nullopt,
       [&config, &no_folder](const std::string_view id) {
-        const auto temp = *config.roots.state / "plugins" / secure_frontend::path_from_utf8(id);
+        const auto temp = plugin_folder(config, id);
         for (const auto& folder : {temp.parent_path(), temp}) {
           if (const auto opened = secure_frontend::open_root(folder, secure_frontend::RootPolicy::create_private);
               const auto* failure = std::get_if<secure_frontend::PathError>(&opened)) {
@@ -250,13 +255,36 @@ std::vector<secure_frontend::ToolPlugin> tool_plugins(const FrontendConfig& conf
       },
       &left_out);
   for (const auto& [id, why] : left_out) std::cerr << "[strata] plugins: " << id << " does not run: " << why << '\n';
-  for (const auto& program : programs) {
-    if (no_folder.contains(program.id)) continue;
-    tools.push_back({.id = program.id, .program = program.program, .arguments = program.arguments, .environment = program.environment,
-                     .note = program.run.note, .call_timeout = program.run.call_timeout,
-                     .working_directory = *config.roots.state / "plugins" / secure_frontend::path_from_utf8(program.id)});
+  for (auto& program : programs) {
+    if (!no_folder.contains(program.id)) running.push_back(std::move(program));
+  }
+  return running;
+}
+
+// The tool hub's plugins (tool_hub.hpp).
+std::vector<secure_frontend::ToolPlugin> tool_plugins(const FrontendConfig& config, const secure_frontend::InstallPlugins& plugins) {
+  std::vector<secure_frontend::ToolPlugin> tools;
+  for (auto& program : running_programs(config, plugins, secure_frontend::PluginKind::tool)) {
+    tools.push_back({.id = program.id, .program = std::move(program.program), .arguments = std::move(program.arguments),
+                     .environment = std::move(program.environment), .note = program.run.note, .call_timeout = program.run.call_timeout,
+                     .working_directory = plugin_folder(config, program.id)});
   }
   return tools;
+}
+
+// The notifier host's plugins (notifier_hub.hpp), each told of the events its `events` setting names, or all.
+std::vector<secure_frontend::NotifierPlugin> notifier_plugins(const FrontendConfig& config, const secure_frontend::InstallPlugins& plugins) {
+  std::vector<secure_frontend::NotifierPlugin> notifiers;
+  for (auto& program : running_programs(config, plugins, secure_frontend::PluginKind::notifier)) {
+    secure_frontend::NotifierPlugin notifier{.id = program.id, .program = std::move(program.program), .arguments = std::move(program.arguments),
+                                             .environment = std::move(program.environment),
+                                             .working_directory = plugin_folder(config, program.id)};
+    if (const auto events = program.values.find("events"); events != program.values.end()) {
+      if (const auto* list = std::get_if<std::vector<std::string>>(&events->second)) notifier.events = *list;
+    }
+    notifiers.push_back(std::move(notifier));
+  }
+  return notifiers;
 }
 
 // The hub's log is the server's; a plugin's stderr reaches it only while the server logs its engines' own output
@@ -268,17 +296,24 @@ secure_frontend::ToolHubSettings hub_settings(const FrontendConfig& config, std:
           .log_stderr = config.logging.logs_engine_output()};
 }
 
-// A config's old search.enabled (move_old_search_rows) becomes the search plugin's on or off, once: a choice the owner
-// has made in the Plugins tab already stands.
-void hand_search_choice(const std::filesystem::path& state, const bool on) {
-  auto choices = secure_frontend::read_plugin_choices(state);
-  if (!choices || choices->enabled.contains("search")) return;
-  choices->enabled["search"] = on;
-  if (!secure_frontend::write_plugin_choices(state, *choices)) {
-    std::cerr << "[strata] plugins: search.enabled could not be kept as the search plugin's choice (plugins.json was not written)\n";
-    return;
+// A config's old search.enabled and alerts.email.enabled (move_old_plugin_rows) become their plugin's on or off, once:
+// a choice the owner has made in the Plugins tab already stands. The old SMTP password becomes the email plugin's.
+void hand_old_choices(const FrontendConfig& config, const secure_frontend::OldPluginChoices& old) {
+  for (const auto& [id, row, on] : {std::tuple{std::string_view{"search"}, std::string_view{"search.enabled"}, old.search},
+                                    std::tuple{std::string_view{"email"}, std::string_view{"alerts.email.enabled"}, old.email}}) {
+    if (!on.has_value()) continue;
+    auto choices = secure_frontend::read_plugin_choices(*config.roots.state);
+    if (!choices || choices->enabled.contains(std::string{id})) continue;
+    choices->enabled[std::string{id}] = *on;
+    if (!secure_frontend::write_plugin_choices(*config.roots.state, *choices)) {
+      std::cerr << "[strata] plugins: " << row << " could not be kept as the " << id << " plugin's choice (plugins.json was not written)\n";
+      continue;
+    }
+    std::cerr << "[strata] plugins: the " << id << " plugin is " << (*on ? "on" : "off") << ", as " << row << " was\n";
   }
-  std::cerr << "[strata] plugins: the search plugin is " << (on ? "on" : "off") << ", as search.enabled was\n";
+  if (config.roots.secret.has_value()) {
+    if (const auto moved = secure_frontend::move_smtp_password(config.roots.secret->path())) std::cerr << *moved << '\n';
+  }
 }
 
 // Owner 2026-10-29: a server that copies its engines' own output into this log says so at every start, with what that
@@ -336,12 +371,12 @@ void warn_of_engine_output(const FrontendConfig& config, const secure_frontend::
             << ", keep this log private, and look through it before you share it.\n";
 }
 
-int server_run_impl(const FrontendConfig& config, const bool expert, const std::optional<bool> search_on) {
+int server_run_impl(const FrontendConfig& config, const bool expert, const secure_frontend::OldPluginChoices& old) {
   // Ruling T13-c: server-grade process defaults, also when serve arrives
   // through the strata CLI (install_process_defaults is idempotent).
   secure_frontend::install_process_defaults();
   if (!state_dir_is_usable(config)) return EXIT_FAILURE;
-  if (search_on.has_value()) hand_search_choice(*config.roots.state, *search_on);
+  hand_old_choices(config, old);
   const secure_frontend::InstallPlugins plugins = start_plugins(config);
   // roots.logs / roots.cache: validate() only checked them, so --check stays
   // side-effect free; serve creates a missing one here, before bind or spawn.
@@ -806,7 +841,7 @@ std::optional<secure_frontend::DownloadCardTemplate> download_card_template(cons
 
 
 int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const std::optional<std::filesystem::path>& config_file,
-                      const std::optional<bool> search_on) {
+                      const secure_frontend::OldPluginChoices& old) {
   // Ruling T13-c: server-grade process defaults (idempotent).
   secure_frontend::install_process_defaults();
   auto usable = usable_cards(main);
@@ -814,7 +849,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
   const std::shared_ptr<const FrontendConfig> server_config = usable->server;
   const FrontendConfig& config = *server_config;
   if (!state_dir_is_usable(config)) return EXIT_FAILURE;
-  if (search_on.has_value()) hand_search_choice(*config.roots.state, *search_on);
+  hand_old_choices(config, old);
   const secure_frontend::InstallPlugins plugins = start_plugins(config);
   if (const auto issues = secure_frontend::create_runtime_roots(config); !issues.empty()) {
     for (const auto& issue : issues) std::cerr << "Configuration error: " << secure_frontend::format_issue(issue) << '\n';
@@ -915,18 +950,22 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       .memory_file = *config.roots.state / "model-options.json",
       .gate = {.max_queued = config.limits.concurrency.max_queued_generations, .queue_timeout = config.limits.concurrency.queue_timeout},
       .monitor = monitor.has_value() ? &*monitor : nullptr};
-  // GUI-first start-up (spec 2026-10-27 §5a): email alerts, in a build that has them and when they are on.
-#if defined(SECURE_FRONTEND_EMAIL_ALERTS)
-  std::optional<secure_frontend::EmailAlerts> alerts;
-  if (config.alerts.email.enabled && config.roots.secret.has_value()) {
-    alerts.emplace(secure_frontend::AlertSettings{.config = config.alerts.email, .secret_dir = config.roots.secret->path(),
-                                                  .server_name = secure_frontend::server_display_name()});
+  // Notifier plugins (owner 2026-10-30; plugin spec section 10; email alerts first): each notifier plugin that runs, told of
+  // the server's events (downloads, calibrations, an engine that stopped, the start). Started here, before the first event.
+  std::optional<secure_frontend::NotifierHub> notifier_hub;  // outlives the launcher and the downloads
+  std::set<std::string, std::less<>> notifier_ids;           // the plugins it runs (the Plugins tab's "running")
+  if (auto notifiers = notifier_plugins(config, plugins); !notifiers.empty()) {
+    for (const auto& notifier : notifiers) notifier_ids.insert(notifier.id);
+    notifier_hub.emplace(secure_frontend::NotifierHubSettings{
+        .plugins = std::move(notifiers),
+        .server_name = secure_frontend::server_display_name(),
+        .log = [](const std::string_view line) { std::cerr << line << '\n' << std::flush; },
+        .log_stderr = config.logging.logs_engine_output()});
   }
-  const auto raise_alert = [&alerts](const std::string_view event, const std::string& subject, const std::string& body) {
-    if (alerts.has_value()) (void)alerts->raise(event, subject, body);
+  const auto raise_event = [&notifier_hub](const std::string_view event, const std::string& subject, const std::string& body) {
+    if (notifier_hub.has_value()) notifier_hub->raise(event, subject, body);
   };
-  launcher_settings.on_event = raise_alert;
-#endif
+  launcher_settings.on_event = raise_event;
   // Tool plugins (owner 2026-10-30; plugin spec section 10): the tools of each tool plugin that runs, for every started
   // model.
   std::optional<secure_frontend::ToolHub> tool_hub;  // outlives the launcher
@@ -1051,9 +1090,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
     // owner 2026-10-28: the list says which entries are already on this PC (a card from the download, or one from a folder)
     settings.cards = [&launcher] { return launcher.cards(); };
     settings.log = [](const std::string_view line) { std::cerr << line << '\n' << std::flush; };
-#if defined(SECURE_FRONTEND_EMAIL_ALERTS)
-    settings.on_event = raise_alert;
-#endif
+    settings.on_event = raise_event;
     settings.seams = secure_frontend::production_download_seams();
     downloads.emplace(std::move(settings));
     download_routes.handle = [&manager = *downloads, allowed](const secure_frontend::RouteId route, const std::string_view body,
@@ -1108,20 +1145,6 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       return routes.answer(route, body, context);
     };
   }
-  // GUI-first start-up (spec 2026-10-27 §5a): the page's alert settings, with model control (files_allowed's clients).
-  secure_frontend::ModelCardRoutes alert_route_handler;
-#if defined(SECURE_FRONTEND_EMAIL_ALERTS)
-  std::optional<secure_frontend::AlertRoutes> alert_routes;
-  if (config.models.control && config.roots.secret.has_value()) {
-    alert_routes.emplace(secure_frontend::AlertRouteSettings{.config_file = config_file, .secret_dir = config.roots.secret->path(),
-                                                             .server_name = secure_frontend::server_display_name(),
-                                                             .client_allowed = files_allowed});
-    alert_route_handler.handle = [&routes = *alert_routes](const secure_frontend::RouteId route, const std::string_view body,
-                                                           const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {
-      return routes.answer(route, body, context);
-    };
-  }
-#endif
   // The Settings tab (spec 2026-10-28-server-window-design, Part 1): the server's settings and the key, with model control
   // (files_allowed's clients; rotation this PC only). The key can be rotated only where this server reads it from its
   // store (a file: token.source), not a --token-env start.
@@ -1156,7 +1179,9 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
         .client_allowed = files_allowed};
     for (const auto& entry : plugins.entries) {
       if (entry.state != secure_frontend::PluginState::on || !entry.manifest) continue;
-      if (entry.manifest->kind == secure_frontend::PluginKind::diagnostics || tool_ids.contains(entry.id)) settings.running.insert(entry.id);
+      if (entry.manifest->kind == secure_frontend::PluginKind::diagnostics || tool_ids.contains(entry.id) || notifier_ids.contains(entry.id)) {
+        settings.running.insert(entry.id);
+      }
     }
     settings.log = [](const std::string_view line) { std::cerr << line << '\n'; };
     if (tool_hub.has_value()) {
@@ -1168,6 +1193,10 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       settings.try_tool = [&hub = *tool_hub](const std::string_view id, const std::string_view tool, const std::string_view arguments) {
         return hub.try_call(id, tool, arguments);
       };
+    }
+    if (notifier_hub.has_value()) {
+      // the tab's "Send a test"
+      settings.test_notifier = [&hub = *notifier_hub](const std::string_view id) { return hub.test(id); };
     }
     plugin_routes.emplace(std::move(settings));
     plugin_route_handler.handle = [&routes = *plugin_routes](const secure_frontend::RouteId route, const std::string_view body,
@@ -1196,7 +1225,6 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       .control = std::move(control),
       .downloads = std::move(download_routes),
       .cards = std::move(card_route_handler),
-      .alerts = std::move(alert_route_handler),
       .settings = std::move(settings_route_handler),
       .plugins = std::move(plugin_route_handler),
       .login_link = std::move(login_link_handler)});
@@ -1244,10 +1272,8 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
   }
   std::cout << "Secure server listening on http://" << authority
             << (keyless ? " (no API key: loopback only; Ctrl-C to stop)\n" : " (authenticated; Ctrl-C to stop)\n");
-#if defined(SECURE_FRONTEND_EMAIL_ALERTS)
-  raise_alert("server_started", "the server started",
+  raise_event("server_started", "the server started",
               "The Strata server is listening on " + authority + " with " + std::to_string(card_count) + " model cards.");
-#endif
   if (login_links.has_value()) {
     // On the console only (never a log): the link works from this PC, once, within ten minutes.
     if (const auto code = login_links->issue(secure_frontend::LoginLinks::Clock::now())) {
@@ -1290,35 +1316,44 @@ namespace secure_frontend {
 
 // The exported entry points (the anonymous-namespace boot helpers above are
 // file-local; only these two names leave this translation unit).
-int server_run(const FrontendConfig& config, const bool expert, const std::optional<bool> search_on) {
-  return server_run_impl(config, expert, search_on);
+int server_run(const FrontendConfig& config, const bool expert, const OldPluginChoices& old) {
+  return server_run_impl(config, expert, old);
 }
 int server_check(const FrontendConfig& config, const std::vector<std::string>& overridden, bool expert) {
   return server_check_impl(config, overridden, expert);
 }
-int launcher_run(const FrontendConfigDraft& main, const std::optional<std::filesystem::path>& config_file, const std::optional<bool> search_on) {
-  return launcher_run_impl(main, config_file, search_on);
+int launcher_run(const FrontendConfigDraft& main, const std::optional<std::filesystem::path>& config_file, const OldPluginChoices& old) {
+  return launcher_run_impl(main, config_file, old);
 }
 
-std::optional<bool> move_old_search_rows(FrontendConfigDraft& draft, const std::optional<std::filesystem::path>& config_file, const bool serve) {
+OldPluginChoices move_old_plugin_rows(FrontendConfigDraft& draft, const std::optional<std::filesystem::path>& config_file, const bool serve) {
   const auto moved = move_plugin_rows(draft);
-  if (moved.moved.empty()) return moved.search_enabled;
-  std::string names;
-  for (const auto& row : moved.moved) names += (names.empty() ? "" : ", ") + row;
+  const OldPluginChoices old{.search = moved.search_enabled, .email = moved.email_enabled};
+  if (moved.moved.empty()) return old;
+  // one line for each plugin: web search's rows, then email's
+  std::string search;
+  std::string email;
+  for (const auto& row : moved.moved) {
+    std::string& names = row.rfind("search.", 0) == 0U ? search : email;
+    names += (names.empty() ? "" : ", ") + row;
+  }
+  // "<prefix>web search is a plugin now: <rows><verb> to plugins.search.* and tools.max_rounds<tail>", and email's
+  const auto say = [&search, &email](std::ostream& out, const std::string& prefix, const std::string& verb, const std::string& tail) {
+    if (!search.empty()) out << prefix << "web search is a plugin now: " << search << verb << " to plugins.search.* and tools.max_rounds" << tail << '\n';
+    if (!email.empty()) out << prefix << "email alerts are a plugin now: " << email << verb << " to plugins.email.*" << tail << '\n';
+  };
   if (!serve) {
-    std::cout << "config: web search is a plugin now: a start moves " << names << " to plugins.search.* and tools.max_rounds\n";
-    return moved.search_enabled;
+    say(std::cout, "config: ", " move", " at the next start");
+    return old;
   }
   if (config_file.has_value()) {
     if (const auto failure = update_config_file(*config_file, [](FrontendConfigDraft& file) { (void)move_plugin_rows(file); })) {
-      std::cerr << "[strata] config: web search is a plugin now: " << names << " are read as its settings, but the config file was not changed ("
-                << config_update_reason(*failure) << ")\n";
-      return moved.search_enabled;
+      say(std::cerr, "[strata] config: ", " read as moved", " (the config file was not changed: " + std::string{config_update_reason(*failure)} + ")");
+      return old;
     }
   }
-  std::cerr << "[strata] config: web search is a plugin now: " << names << (config_file.has_value() ? " moved" : " read as moved")
-            << " to plugins.search.* and tools.max_rounds\n";
-  return moved.search_enabled;
+  say(std::cerr, "[strata] config: ", config_file.has_value() ? " moved" : " read as moved", "");
+  return old;
 }
 int launcher_check(const FrontendConfigDraft& main, const std::vector<std::string>& overridden) {
   return launcher_check_impl(main, overridden);

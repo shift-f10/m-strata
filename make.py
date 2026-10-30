@@ -34,9 +34,10 @@ ROOT = Path(__file__).resolve().parent
 OPTIONAL_FAMILIES = ("maya", "raon1")   # the families a build may leave out; strata, gemma4 and flint are always built
 # what --without takes: those families, and the picture encoder (strata-vision: a Qwen card reads pictures with it)
 LEAVE_OUT = OPTIONAL_FAMILIES + ("vision",)
-# built only when asked (off by default): email alerts (SECURE_FRONTEND_EMAIL_ALERTS), web search through a SearXNG
-# instance (SECURE_FRONTEND_WEB_SEARCH: the Web search plugin, plugins/search/ with strata-search, an MCP server the
-# server runs), the server in a window with a tray icon (SECURE_FRONTEND_WINDOW: strata-window; Windows needs the
+# built only when asked (off by default): email alerts (SECURE_FRONTEND_EMAIL_ALERTS: the Email alerts plugin,
+# plugins/email/ with strata-email, a notifier the server runs), web search through a SearXNG instance
+# (SECURE_FRONTEND_WEB_SEARCH: the Web search plugin, plugins/search/ with strata-search, an MCP server the server
+# runs), the server in a window with a tray icon (SECURE_FRONTEND_WINDOW: strata-window; Windows needs the
 # WebView2 SDK in .toolchains/webview2, Linux GTK 3, WebKitGTK 4.1 and Ayatana AppIndicator) and the server in a terminal
 # (SECURE_FRONTEND_TUI: strata-tui, the headless twin of the window; nothing beyond the C++ standard library and the
 # system's console)
@@ -229,7 +230,8 @@ def frontend_configure_args(opts: Options, platform: str) -> list[str]:
 def frontend_build_targets(opts: Options) -> list[str]:
     """The frontend's programs to build: the server and strata, and strata-window and strata-tui, which need the server
     but are not needed by it. With --with search, strata-search (the Web search plugin's program) is built with the
-    server, and the install puts it in plugins/search/."""
+    server, and the install puts it in plugins/search/; with --with email, strata-email (the Email alerts plugin's
+    program) is built with the server, and the install puts it in plugins/email/."""
     return (["strata-unified-server", "strata"] + (["strata-window"] if "window" in opts.with_features else []) +
             (["strata-tui"] if "tui" in opts.with_features else []))
 
@@ -262,8 +264,9 @@ def required_files(opts: Options, platform: str) -> list[str]:
     vision = [] if "vision" in opts.without else [f"engine/strata-vision{exe}"]
     # engine/build.json: the build record the server's About shows (build_record)
     # plugins/<id>/: the first-party plugins, each its manifest (stage_plugins) and the files it lists: the Debugging
-    # plugin in every folder, and with --with search the Web search plugin and strata-search, the MCP server the server
-    # runs for it (the frontend's install puts it there)
+    # plugin in every folder, with --with search the Web search plugin and strata-search, the MCP server the server
+    # runs for it, and with --with email the Email alerts plugin and strata-email, the notifier the server runs for it
+    # (the frontend's install puts each program there)
     plugins = [f"plugins/{plugin}/{name}" for plugin in first_party_plugins(opts)
                for name in ["plugin.json", *plugin_files(plugin, platform)]]
     return ([f"strata-unified-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
@@ -278,13 +281,15 @@ def required_files(opts: Options, platform: str) -> list[str]:
 def first_party_plugins(opts: Options) -> list[str]:
     """This repository's plugins/<id>/ this folder holds, recorded in engine/build.json (trusted through that record,
     decision 4), in a stable order: the Debugging plugin in every folder, off unless --debugging ships it on; with
-    --with search, the Web search plugin (spec 2026-10-30 section 10)."""
-    return ["debugging"] + (["search"] if "search" in opts.with_features else [])
+    --with search, the Web search plugin; with --with email, the Email alerts plugin (spec 2026-10-30 section 10)."""
+    return (["debugging"] + (["search"] if "search" in opts.with_features else []) +
+            (["email"] if "email" in opts.with_features else []))
 
 
 def plugin_files(plugin: str, platform: str) -> list[str]:
     """A first-party plugin's files beside its manifest on `platform`, as this repository's manifest lists them (the
-    Debugging plugin: none; search: strata-search, which the frontend's install puts in plugins/search/)."""
+    Debugging plugin: none; search: strata-search, which the frontend's install puts in plugins/search/; email:
+    strata-email, which it puts in plugins/email/)."""
     manifest = json.loads((ROOT / "plugins" / plugin / "plugin.json").read_text(encoding="utf-8"))
     return list(manifest.get("files", {}).get(platform, []))
 
@@ -309,8 +314,9 @@ def plugin_records(opts: Options, platform: str, stage: Path) -> list[dict]:
     for plugin in first_party_plugins(opts):
         folder = stage / "plugins" / plugin
         files = {name: _sha256(folder / name) for name in plugin_files(plugin, platform) if (folder / name).is_file()}
-        # Debugging is on only in a --debugging build; search is on, and the server runs it only once its required
-        # url setting is filled in
+        # Debugging is on only in a --debugging build; search and email are on, and the server runs each only once its
+        # required settings are filled in (search: its url; email: the mail server, the login, the addresses and the
+        # password)
         records.append({"id": plugin, "manifest": _sha256(folder / "plugin.json"), "files": files,
                         "on": opts.debugging if plugin == "debugging" else True})
     return records
@@ -412,7 +418,8 @@ def layout_problems(root: Path, opts: Options, platform: str) -> list[str]:
         if opts.cuda_runtime and any(fnmatch.fnmatch(name, pattern) for pattern in cuda):
             continue
         base = name.rsplit("/", 1)[-1].lower()
-        # the MSVC runtime beside each program: the root's, engine/'s, and a first-party plugin's (plugins/search/)
+        # the MSVC runtime beside each program: the root's, engine/'s, and a first-party plugin's (plugins/search/,
+        # plugins/email/)
         beside_a_program = name.count("/") <= 1 or (name.startswith("plugins/") and name.count("/") == 2)
         if platform == "windows" and beside_a_program and any(fnmatch.fnmatch(base, p) for p in _MSVC_RUNTIME):
             continue
@@ -469,7 +476,7 @@ Contents:   strata-unified-server and strata, the frontend{window_contents}
             engine/: multiengine (the launcher), one library per model family, strata-prepare{vision}, the expert
             profiles{templates}{cuda}
             plugins/debugging: the Debugging plugin, verbose logs to find out why a model does not start or
-            calibrate ({debugging}; the Plugins tab turns it on and off){search}
+            calibrate ({debugging}; the Plugins tab turns it on and off){search}{email}
             LICENSE and NOTICE.md
             Nothing else is needed; move or copy the whole folder.
 
@@ -510,8 +517,10 @@ def readme_text(opts: Options, platform: str) -> str:
     cuda = ",\n            NVIDIA's cuBLAS" if opts.cuda_runtime else ""
     search = ("\n            plugins/search: the Web search plugin, web search through your SearXNG instance (strata-search; its"
               "\n            settings are in the Plugins tab)" if "search" in opts.with_features else "")
-    held = ["the API key", "the server's settings", "the model folders"] + \
-           (["email alerts"] if "email" in opts.with_features else [])
+    email = ("\n            plugins/email: the Email alerts plugin, email alerts through your mail server (strata-email; its"
+             "\n            settings are in the Plugins tab)" if "email" in opts.with_features else "")
+    # the Settings tab's own: web search's and email's settings are their plugins', in the Plugins tab
+    held = ["the API key", "the server's settings", "the model folders"]
     settings = ", ".join(held[:-1]) + " and " + held[-1]
     # strata-window: the same server in a window, with the page inside and an icon in the tray
     window_exe = ".\\strata-window.exe" if windows else "./strata-window"
@@ -533,8 +542,8 @@ def readme_text(opts: Options, platform: str) -> str:
     nvidia = NVIDIA_TEXT.format(cublas="cublas" if windows else "libcublas") if opts.cuda_runtime else ""
     vision = "" if "vision" in opts.without else ",\n            strata-vision (a Qwen model's picture encoder)"
     return README_TEXT.format(server=server, shell=shell, strata=".\\strata.exe" if windows else "./strata", cuda=cuda,
-                              search=search, settings=settings, templates=templates, minimax=minimax, nvidia=nvidia,
-                              vision=vision, window=window, window_contents=window_contents,
+                              search=search, email=email, settings=settings, templates=templates, minimax=minimax,
+                              nvidia=nvidia, vision=vision, window=window, window_contents=window_contents,
                               debugging="on in this folder" if opts.debugging else "off") + \
            ("\n" + DEBUGGING_NOTICE + "\n" if opts.debugging else "")
 

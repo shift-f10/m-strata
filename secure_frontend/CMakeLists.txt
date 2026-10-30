@@ -404,10 +404,6 @@ target_include_directories(secure_frontend_json PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 target_link_libraries(secure_frontend_chat_schema PUBLIC secure_frontend_json secure_frontend_api_core)
 target_link_libraries(secure_frontend_tokenizer_pack PUBLIC secure_frontend_json secure_frontend_paths)
-if(SECURE_FRONTEND_EMAIL_ALERTS)
-    # every target that reads the config sees the build's choice (alerts.* rows refused without it)
-    target_compile_definitions(secure_frontend_typed_config PUBLIC SECURE_FRONTEND_EMAIL_ALERTS=1)
-endif()
 target_compile_features(secure_frontend_chat_schema PUBLIC cxx_std_20)
 target_include_directories(secure_frontend_chat_schema
     PUBLIC
@@ -798,13 +794,18 @@ secure_frontend_add_library(secure_frontend_mcp_client SOURCES src/mcp_client.cp
     LINKS secure_frontend_json secure_frontend_engine_protocol_client)
 secure_frontend_add_library(secure_frontend_tool_hub SOURCES src/tool_hub.cpp
     LINKS secure_frontend_mcp_client secure_frontend_engine_stdio_process secure_frontend_json)
+# Notifier plugins (plugin spec 2026-10-30, section 10): the server's notifier host - each notifier plugin's program told
+# of the server's events, one JSON line each (notifier_hub.hpp). Every build: email is the email plugin's program now.
+secure_frontend_add_library(secure_frontend_notifier_hub SOURCES src/notifier_hub.cpp
+    LINKS secure_frontend_engine_stdio_process secure_frontend_json)
 if(SECURE_FRONTEND_EMAIL_ALERTS)
-    secure_frontend_add_library(secure_frontend_email_alerts SOURCES src/smtp_client.cpp src/email_alerts.cpp
-        LINKS secure_frontend_net_tls secure_frontend_typed_config secure_frontend_secrets secure_frontend_token_store
-              secure_frontend_paths)
-    # the page's alert settings routes (kAlertRoutes)
-    secure_frontend_add_library(secure_frontend_alert_routes SOURCES src/alert_routes.cpp
-        LINKS secure_frontend_email_alerts secure_frontend_api_core secure_frontend_config_writer secure_frontend_token_store)
+    # email alerts as a notifier plugin (plugin spec 2026-10-30, section 10): strata-email, the email plugin's program -
+    # the SMTP dialogue over TLS, the install's only mail connection, never the server's
+    secure_frontend_add_library(secure_frontend_email_notifier SOURCES src/smtp_client.cpp src/email_notifier.cpp
+        LINKS secure_frontend_net_tls secure_frontend_typed_config secure_frontend_secrets secure_frontend_json)
+    add_executable(strata-email src/email_main.cpp)
+    target_link_libraries(strata-email PRIVATE secure_frontend_email_notifier)
+    secure_frontend_set_warnings(strata-email)
 endif()
 # GUI-first start-up (spec 2026-10-27 §5): calibration - the sweep, the plan per engine, the result file and its key.
 secure_frontend_add_library(secure_frontend_calibration SOURCES src/calibration.cpp
@@ -833,6 +834,10 @@ secure_frontend_add_library(secure_frontend_install_plugins SOURCES src/install_
 # A tool's or notifier's secret settings (plugin_secrets.hpp): plugin-<id>-<name> in roots.secret, DPAPI or 0600.
 secure_frontend_add_library(secure_frontend_plugin_secrets SOURCES src/plugin_secrets.cpp
     LINKS secure_frontend_token_store secure_frontend_paths)
+# Email alerts' old password (roots.secret/smtp-password), moved once to the email plugin's secret (plugin spec 2026-10-30,
+# section 10) - every build.
+secure_frontend_add_library(secure_frontend_smtp_password SOURCES src/smtp_password.cpp
+    LINKS secure_frontend_plugin_secrets secure_frontend_token_store secure_frontend_paths secure_frontend_secrets)
 # A calibration's report for a bug report (owner 2026-10-30): its trials, this PC's hardware and the build, as Markdown.
 secure_frontend_add_library(secure_frontend_calibration_report SOURCES src/calibration_report.cpp
     LINKS secure_frontend_about_info secure_frontend_serve_monitor)
@@ -878,9 +883,11 @@ secure_frontend_add_library(secure_frontend_server_bootstrap
           secure_frontend_chat_route secure_frontend_request_log secure_frontend_launch secure_frontend_model_runtime
           secure_frontend_model_launcher secure_frontend_downloads secure_frontend_first_start secure_frontend_card_routes
           secure_frontend_about_info secure_frontend_config_routes secure_frontend_plugin_routes
-          secure_frontend_install_plugins secure_frontend_tool_hub secure_frontend_plugin_secrets)
+          secure_frontend_install_plugins secure_frontend_tool_hub secure_frontend_plugin_secrets
+          secure_frontend_notifier_hub secure_frontend_smtp_password)
 if(SECURE_FRONTEND_EMAIL_ALERTS)
-    target_link_libraries(secure_frontend_server_bootstrap PUBLIC secure_frontend_alert_routes secure_frontend_email_alerts)
+    # strata-email, the email plugin's program, is built with the server
+    add_dependencies(strata-unified-server strata-email)
 endif()
 if(SECURE_FRONTEND_WEB_SEARCH)
     # strata-search, the search plugin's program, is built with the server
@@ -961,6 +968,10 @@ if(SECURE_FRONTEND_WEB_SEARCH)
     # beside the plugin.json make puts there; the server runs it from that folder
     install(TARGETS strata-search RUNTIME DESTINATION plugins/search COMPONENT runtime)
 endif()
+if(SECURE_FRONTEND_EMAIL_ALERTS)
+    # email alerts, a first-party notifier plugin (plugin spec 2026-10-30, section 10): strata-email in plugins/email/
+    install(TARGETS strata-email RUNTIME DESTINATION plugins/email COMPONENT runtime)
+endif()
 if(SECURE_FRONTEND_WINDOW)
     # strata-window (spec 2026-10-28-server-window-design, Part 2): the server in a window with a tray icon. Windows:
     # WebView2 through Microsoft's SDK (its header and static loader; BSD-3-Clause), the runtime being part of Windows
@@ -1019,6 +1030,9 @@ if(MSVC)
     if(SECURE_FRONTEND_WEB_SEARCH)
         # strata-search loads the runtime from its own folder, as the engine's programs do from engine/
         install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION plugins/search COMPONENT runtime)
+    endif()
+    if(SECURE_FRONTEND_EMAIL_ALERTS)
+        install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION plugins/email COMPONENT runtime)
     endif()
 endif()
 
@@ -1524,11 +1538,10 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_api_router_tests
         model_control_routes_need_the_switch_and_the_key model_download_routes_need_the_switch_and_the_key
         model_card_routes_need_the_switch_and_the_key calibration_routes_need_their_handlers_and_the_key
-        alert_routes_need_their_handler_and_the_key
         config_routes_need_their_handler_and_the_key plugin_routes_need_their_handler_and_the_key
         web_ui_cards_from_this_pc_and_the_danger_zone web_ui_downloads_go_to_a_chosen_folder
         web_ui_downloads_say_what_is_on_this_pc web_ui_downloads_groups_are_accordions web_ui_downloads_destination_is_a_panel
-        web_ui_models_tab_calibrates web_ui_models_tab_shows_compatibility web_ui_has_email_alert_settings web_ui_has_server_settings web_ui_has_a_plugins_tab web_ui_claims_a_login_link_at_load_and_on_hashchange web_ui_opens_the_view_its_address_names
+        web_ui_models_tab_calibrates web_ui_models_tab_shows_compatibility web_ui_email_is_the_email_plugins_card web_ui_has_server_settings web_ui_has_a_plugins_tab web_ui_claims_a_login_link_at_load_and_on_hashchange web_ui_opens_the_view_its_address_names
         web_ui_has_model_folder_setting
         web_ui_monitor_shows_stopped_and_the_model web_ui_monitor_is_even_and_shows_memory_disk_and_cache
         web_ui_about_lists_the_engines_and_this_pc
@@ -1671,8 +1684,10 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     # the server-starting cases carry the windows-runtime label (ruling R-J).
     target_link_libraries(secure_frontend_egress_tests PRIVATE secure_frontend_socket_io)
     if(SECURE_FRONTEND_EMAIL_ALERTS)
-        # the email build's server resolves the SMTP host (owner's choice, 2026-10-27); the import check knows it
-        target_compile_definitions(secure_frontend_egress_tests PRIVATE SECURE_FRONTEND_EMAIL_ALERTS=1)
+        # email alerts: strata-email is the mail connection, never the server
+        secure_frontend_add_cases(secure_frontend_egress_tests egress_strata_email_is_the_mail_client
+            ARGS $<TARGET_FILE:strata-email> TIMEOUT 120)
+        add_dependencies(secure_frontend_egress_tests strata-email)
     endif()
     if(SECURE_FRONTEND_WEB_SEARCH)
         # web search: strata-search is the search connection, never the server
@@ -1750,7 +1765,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         timeout_shape_rows_at_each_edge
         session_rows_match_the_pin
         slot_save_path_is_a_bounded_private_path
-        web_ui_and_loopback_without_key_rows email_alert_rows_follow_the_build old_web_search_rows_are_read_in_every_build
+        web_ui_and_loopback_without_key_rows old_email_alert_rows_are_read_in_every_build old_web_search_rows_are_read_in_every_build
         model_name_row monitor_row models_keys_typed_and_described control_remote_networks_typed_and_checked
         download_keys_typed_and_described
         codex_and_tool_call_rows_are_dispositioned
@@ -2126,11 +2141,16 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
 
     # GUI-first start-up (spec 2026-10-27 §5a): the email alerts' SMTP dialogue, queue and password (with the option only).
     if(SECURE_FRONTEND_EMAIL_ALERTS)
-        secure_frontend_add_test_executable(secure_frontend_smtp_tests tests/smtp_client_test.cpp secure_frontend_email_alerts
-            secure_frontend_alert_routes secure_frontend_first_start)
+        secure_frontend_add_test_executable(secure_frontend_smtp_tests tests/smtp_client_test.cpp secure_frontend_email_notifier)
         secure_frontend_add_cases(secure_frontend_smtp_tests
             implicit_tls_sends_with_auth_plain starttls_upgrades_before_auth_login refusals_are_named_and_never_leak
-            alerts_queue_and_the_password alert_routes_read_save_and_test alert_routes_let_in_the_clients_the_rule_lists
+            LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+        # strata-email's core (the email plugin's program) over a scripted SMTP server
+        secure_frontend_add_test_executable(secure_frontend_email_notifier_tests tests/email_notifier_test.cpp
+            secure_frontend_email_notifier)
+        secure_frontend_add_cases(secure_frontend_email_notifier_tests
+            the_arguments_are_read_and_a_wrong_one_named an_event_is_mailed_once_a_minute_per_kind the_test_is_answered
+            without_a_password_or_with_wrong_settings_nothing_is_sent
             LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     endif()
 
@@ -2179,6 +2199,30 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         the_handshake_and_the_tool_list_are_upstreams a_call_answers_the_servers_own_messages_and_returns_the_text
         a_timeout_or_a_cancel_sends_notifications_cancelled long_text_is_cut_with_upstreams_note
         content_blocks_become_upstreams_text)
+    # The notifier host over real children: the fake notifier program (plugin spec 2026-10-30, section 10)
+    add_executable(secure_frontend_fake_notifier tests/fake_notifier_main.cpp)
+    target_compile_features(secure_frontend_fake_notifier PRIVATE cxx_std_20)
+    target_include_directories(secure_frontend_fake_notifier PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    secure_frontend_set_warnings(secure_frontend_fake_notifier)
+    secure_frontend_add_test_executable(secure_frontend_notifier_hub_tests tests/notifier_hub_test.cpp secure_frontend_notifier_hub)
+    target_compile_definitions(secure_frontend_notifier_hub_tests PRIVATE FAKE_NOTIFIER_PATH="$<TARGET_FILE:secure_frontend_fake_notifier>")
+    add_dependencies(secure_frontend_notifier_hub_tests secure_frontend_fake_notifier)
+    secure_frontend_add_cases(secure_frontend_notifier_hub_tests
+        events_reach_each_notifier_that_wants_them the_test_is_answered_or_said_why_not event_answers_are_logged
+        a_program_that_ends_is_started_again stopping_does_not_wait_for_a_test
+        LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+    # notifier plugins through the real server: the fake notifier as a first-party plugin, and the old alert rows moved
+    secure_frontend_add_test_executable(secure_frontend_notifier_server_tests tests/notifier_server_test.cpp
+        secure_frontend_test_support secure_frontend_api_core secure_frontend_socket_io secure_frontend_api_client)
+    secure_frontend_test_paths(secure_frontend_notifier_server_tests)
+    target_compile_definitions(secure_frontend_notifier_server_tests PRIVATE FAKE_NOTIFIER_PATH="$<TARGET_FILE:secure_frontend_fake_notifier>")
+    add_dependencies(secure_frontend_notifier_server_tests secure_frontend_fake_notifier)
+    if(WIN32)
+        target_link_libraries(secure_frontend_notifier_server_tests PRIVATE ws2_32)
+    endif()
+    secure_frontend_add_cases(secure_frontend_notifier_server_tests
+        a_notifier_plugin_hears_the_start_and_answers_a_test old_email_rows_move_to_the_plugin
+        LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
     add_executable(secure_frontend_fake_mcp_tool tests/fake_mcp_tool_main.cpp)
     target_link_libraries(secure_frontend_fake_mcp_tool PRIVATE secure_frontend_json)
     target_compile_features(secure_frontend_fake_mcp_tool PRIVATE cxx_std_20)
@@ -2316,7 +2360,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     target_compile_definitions(secure_frontend_plugin_manifest_tests PRIVATE
         SECURE_FRONTEND_REPO_PLUGINS="${CMAKE_CURRENT_SOURCE_DIR}/../plugins")
     secure_frontend_add_cases(secure_frontend_plugin_manifest_tests
-        the_shipped_debugging_plugin_is_one the_shipped_search_plugin_is_one a_diagnostics_manifest_is_read
+        the_shipped_debugging_plugin_is_one the_shipped_search_plugin_is_one the_shipped_email_plugin_is_one a_diagnostics_manifest_is_read
         a_tool_manifest_says_how_its_program_runs a_wrong_run_block_is_refused_by_name values_are_checked_against_the_settings a_code_plugin_names_this_platforms_files a_wrong_manifest_is_refused_by_name
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_test_executable(secure_frontend_plugin_registry_tests tests/plugin_registry_test.cpp secure_frontend_plugins)
@@ -2331,6 +2375,10 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_tool_runs_with_its_settings_filled_in a_tool_whose_settings_do_not_fit_is_left_out
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # A tool's or notifier's secret settings (owner 2026-10-30, decision 6).
+    secure_frontend_add_test_executable(secure_frontend_smtp_password_tests tests/smtp_password_test.cpp secure_frontend_smtp_password)
+    secure_frontend_add_cases(secure_frontend_smtp_password_tests
+        the_old_password_moves_to_the_email_plugin a_password_the_plugin_has_stays
+        LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_test_executable(secure_frontend_plugin_secrets_tests tests/plugin_secrets_test.cpp secure_frontend_plugin_secrets)
     secure_frontend_add_cases(secure_frontend_plugin_secrets_tests a_secret_is_stored_read_and_removed
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
@@ -2339,7 +2387,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_plugin_routes secure_frontend_http_request_handler)
     secure_frontend_add_cases(secure_frontend_plugin_routes_tests
         the_plugins_are_listed approval_and_switching_are_kept refusals_say_why settings_are_listed_and_saved
-        tools_are_listed_and_tried
+        tools_are_listed_and_tried notifiers_are_tested
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # A calibration's report for a bug report (owner 2026-10-30).

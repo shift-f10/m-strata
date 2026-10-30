@@ -296,9 +296,6 @@ main { flex: 1; min-height: 0; display: flex; }
 .delete-dialog div[id^="delete-step"][hidden] { display: none; }
 .alerts-settings { display: flex; flex-direction: column; gap: var(--st-s-3); }
 .alerts-settings p { margin: 0; }
-.alerts-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--st-s-2) var(--st-s-3); align-items: center; }
-.alerts-events { display: flex; flex-wrap: wrap; gap: var(--st-s-2) var(--st-s-4); border: none; padding: 0; margin: 0; }
-.alerts-events label { display: inline-flex; align-items: center; gap: var(--st-s-2); font-size: var(--st-fs-sm); }
 .alerts-settings[hidden] { display: none; }
 /* The Settings tab (spec 2026-10-28-server-window-design, Part 1) */
 .settings { max-width: 860px; width: 100%; margin: 0 auto; padding: var(--st-s-6); display: flex; flex-direction: column;
@@ -364,6 +361,7 @@ main { flex: 1; min-height: 0; display: flex; }
 /* a tool plugin's Try (Settings' test search before 2026-10-30): what came back scrolls in its own block */
 .plugin-card .plugin-try { display: flex; flex-direction: column; gap: var(--st-s-3); margin-top: var(--st-s-2); }
 .plugin-card .plugin-try p { margin: 0; }
+.plugin-card .plugin-choices { display: flex; flex-wrap: wrap; gap: var(--st-s-2) var(--st-s-4); border: none; padding: 0; margin: 0; }
 .plugin-card .plugin-try-output { margin: 0; max-height: 16rem; overflow: auto; white-space: pre-wrap; word-break: break-word;
   font-size: var(--st-fs-sm); padding: 10px 14px; border: 1.5px solid var(--st-line); border-radius: 10px; }
 .about-engines td.num, .about-engines th.num { text-align: right; white-space: nowrap; }
@@ -426,7 +424,6 @@ main { flex: 1; min-height: 0; display: flex; }
   .models-subtab { flex: 1; padding: 0 8px; }
   .folder-picker, .delete-dialog { padding: var(--st-s-4); }
   .model-folder__row, .folder-picker__path { flex-wrap: wrap; }
-  .alerts-grid { grid-template-columns: 1fr; }
   /* A folder path on its own line, smaller, its button below (it wrapped into a narrow column beside the button). */
   .model-folder__row { flex-direction: column; align-items: stretch; gap: var(--st-s-2); }
   .model-remove__row { flex-direction: column; align-items: stretch; gap: var(--st-s-2); }

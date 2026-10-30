@@ -359,7 +359,9 @@ The server runs it as it runs strata-search today:
   "<text>"}`, within 60 seconds;
 - the host starts each notifier plugin that is on when the server starts, and starts one that ended again after a minute;
 - events wait in a queue of at most 16, and an event raised while the program is down is dropped and logged;
-- a notifier with an `events` setting (a text list of event names) gets only those; one without gets all.
+- a notifier with an `events` setting (a text list of event names) gets only those; one without gets all;
+- (built 2026-10-30) a notifier may answer an event with `{"event", "ok", "reply"}`; the log shows it, and the test's
+  answer is the line without an `event`.
 
 **Search, made a tool plugin.**
 - `plugins/search/`: `plugin.json` and `strata-search(.exe)`.
@@ -371,7 +373,8 @@ The server runs it as it runs strata-search today:
 
 **Email, made a notifier plugin.**
 - `strata-email(.exe)` is the SMTP client over TLS (Schannel on Windows, OpenSSL elsewhere), the per-kind limit and the
-  test, moved out of the server: the server holds no SMTP client any more (`SECURE_FRONTEND_EMAIL_ALERTS` goes).
+  test, moved out of the server: the server holds no SMTP client any more (built 2026-10-30:
+  `SECURE_FRONTEND_EMAIL_ALERTS` and `SECURE_FRONTEND_WEB_SEARCH` stay, each building only its plugin's program).
 - Settings: `host`, `port` (default 465), `security` (`ssl` or `starttls`), `username`, `from`, `to` (1-5 addresses),
   `events`, and `password` (a secret, given to the program as `SMTP_PASSWORD`).
 - Network: "the mail server {host}:{port}".

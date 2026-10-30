@@ -288,6 +288,41 @@ void the_shipped_search_plugin_is_one() {
   expect(run.note.find("Today's date is {today}.") == 0U && run.note.find("web_search") != std::string::npos, "its note");
 }
 
+// Email alerts as a notifier plugin (plugin spec 2026-10-30, section 10): the repository's plugins/email/plugin.json is a
+// manifest the server reads - strata-email with the mail server's settings as arguments, the password only as
+// SMTP_PASSWORD, the events it is told of (all by default), and IONOS as a preset.
+void the_shipped_email_plugin_is_one() {
+  std::ifstream in(std::string{SECURE_FRONTEND_REPO_PLUGINS} + "/email/plugin.json", std::ios::binary);
+  const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+  const auto parsed = secure_frontend::parse_plugin_manifest(text, "email");
+  const auto* manifest = std::get_if<secure_frontend::PluginManifest>(&parsed);
+  expect(manifest != nullptr && manifest->run.has_value(), "read: " + why(parsed));
+  if (manifest == nullptr || !manifest->run) return;
+  const auto& run = *manifest->run;
+  using T = secure_frontend::PluginTemplate;
+  expect(manifest->kind == secure_frontend::PluginKind::notifier && manifest->publisher == "M-Strata" && manifest->license == "AGPL-3.0-only",
+         "a first-party notifier plugin");
+  expect(run.arguments == std::vector<T>{{.text = "--host"}, {.setting = "host"}, {.text = "--port"}, {.setting = "port"},
+                                         {.text = "--security"}, {.setting = "security"}, {.text = "--username"}, {.setting = "username"},
+                                         {.text = "--from"}, {.setting = "from"}, {.text = "--to"}, {.setting = "to"}} &&
+             run.environment == std::vector<std::pair<std::string, T>>{{"SMTP_PASSWORD", T{.setting = "password"}}} &&
+             run.network == "the mail server {host}:{port}",
+         "strata-email's arguments, the password only in its environment, its network");
+  const auto setting = [&run](const std::string& name) -> const secure_frontend::PluginSetting* {
+    for (const auto& s : run.settings) if (s.name == name) return &s;
+    return nullptr;
+  };
+  const auto* events = setting("events");
+  const auto* password = setting("password");
+  expect(run.settings.size() == 8U && events != nullptr && events->choices.size() == 6U &&
+             events->default_value == secure_frontend::PluginValue{std::vector<std::string>(events->choices)} && password != nullptr &&
+             password->kind == secure_frontend::SettingKind::secret && password->required,
+         "its settings: the mail server's, the events (all by default) and the password, a secret");
+  expect(run.presets.size() == 1U && run.presets[0].label == "IONOS" &&
+             run.presets[0].values.at("host") == secure_frontend::PluginValue{std::string{"smtp.ionos.com"}},
+         "IONOS is a preset");
+}
+
 // The debugging plugin this repository ships (plugins/debugging/plugin.json; the owner, 2026-10-30: "we should make
 // the email, websearch, debugging all plugins as well"): make puts it in every install, on with --debugging. It is a
 // diagnostics plugin with each switch a make --debugging build had.
@@ -315,6 +350,7 @@ int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"the_shipped_debugging_plugin_is_one", the_shipped_debugging_plugin_is_one},
       {"the_shipped_search_plugin_is_one", the_shipped_search_plugin_is_one},
+      {"the_shipped_email_plugin_is_one", the_shipped_email_plugin_is_one},
       {"a_diagnostics_manifest_is_read", a_diagnostics_manifest_is_read},
       {"a_code_plugin_names_this_platforms_files", a_code_plugin_names_this_platforms_files},
       {"a_wrong_manifest_is_refused_by_name", a_wrong_manifest_is_refused_by_name},

@@ -1,0 +1,28 @@
+{
+  "schema": "m-strata.plugin/1",
+  "id": "email",
+  "kind": "notifier",
+  "name": "Email alerts",
+  "version": "1.0.0",
+  "publisher": "M-Strata",
+  "license": "AGPL-3.0-only",
+  "about": "Sends an email when a download or a calibration finishes or fails, when a model's engine stops unexpectedly, and when the server starts. Each email names the card or model and what happened, never a path, a prompt or a key; it goes from this PC to your mail server over TLS.",
+  "files": {"windows": ["strata-email.exe"], "linux": ["strata-email"]},
+  "notifier": {
+    "program": {"windows": "strata-email.exe", "linux": "strata-email"},
+    "arguments": ["--host", "{host}", "--port", "{port}", "--security", "{security}", "--username", "{username}", "--from", "{from}", "--to", "{to}"],
+    "environment": {"SMTP_PASSWORD": "{password}"},
+    "network": "the mail server {host}:{port}",
+    "settings": [
+      {"name": "host", "kind": "text", "label": "Mail server", "help": "The SMTP server's DNS name (IONOS: smtp.ionos.com, or your account's regional host).", "required": true},
+      {"name": "port", "kind": "integer", "label": "Port", "help": "465 with SSL/TLS, 587 with STARTTLS.", "default": 465, "min": 1, "max": 65535},
+      {"name": "security", "kind": "choice", "label": "Security", "help": "ssl: TLS from the first byte; starttls: STARTTLS before the login. Never plain text.", "default": "ssl", "choices": ["ssl", "starttls"]},
+      {"name": "username", "kind": "text", "label": "User name", "help": "The login (IONOS: the full mailbox address).", "required": true},
+      {"name": "from", "kind": "text", "label": "From", "help": "The sender address (IONOS: the mailbox you log in to).", "required": true},
+      {"name": "to", "kind": "text_list", "label": "To", "help": "1-5 addresses the alerts go to.", "required": true, "max_items": 5},
+      {"name": "events", "kind": "text_list", "label": "Alerts", "help": "Which alerts are sent.", "default": ["download_finished", "download_failed", "calibration_finished", "calibration_failed", "engine_stopped", "server_started"], "choices": ["download_finished", "download_failed", "calibration_finished", "calibration_failed", "engine_stopped", "server_started"], "max_items": 6},
+      {"name": "password", "kind": "secret", "label": "Password", "help": "The mailbox's password: kept protected in this PC's secret folder, never shown again.", "required": true}
+    ],
+    "presets": [{"label": "IONOS", "values": {"host": "smtp.ionos.com", "port": 465, "security": "ssl"}}]
+  }
+}

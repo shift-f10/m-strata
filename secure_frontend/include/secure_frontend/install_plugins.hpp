@@ -40,6 +40,7 @@ struct PluginProgram final {
   std::filesystem::path program;
   std::vector<std::string> arguments;
   std::map<std::string, std::string, std::less<>> environment;
+  std::map<std::string, PluginValue> values;                    // its settings' values, never a secret's (a notifier's events)
 };
 // The plugins of `kind` that are on, each as it runs. One whose settings do not fit its manifest (a required one not
 // set, a value it refuses) is left out, its id and why in `left_out`. `environment` gives each its closed environment.

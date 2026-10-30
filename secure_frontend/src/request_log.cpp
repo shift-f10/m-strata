@@ -29,10 +29,6 @@ std::string_view route_name(const RouteId route) {
     case RouteId::strata_calibrate_auto: return "strata_calibrate_auto";
     case RouteId::strata_calibrate_report: return "strata_calibrate_report";
     case RouteId::strata_login_link: return "strata_login_link";
-    case RouteId::strata_alerts: return "strata_alerts";
-    case RouteId::strata_alerts_settings: return "strata_alerts_settings";
-    case RouteId::strata_alerts_password: return "strata_alerts_password";
-    case RouteId::strata_alerts_test: return "strata_alerts_test";
     case RouteId::strata_config: return "strata_config";
     case RouteId::strata_config_settings: return "strata_config_settings";
     case RouteId::strata_key_rotate: return "strata_key_rotate";
@@ -41,6 +37,7 @@ std::string_view route_name(const RouteId route) {
     case RouteId::strata_plugins_switch: return "strata_plugins_switch";
     case RouteId::strata_plugins_settings: return "strata_plugins_settings";
     case RouteId::strata_plugins_try: return "strata_plugins_try";
+    case RouteId::strata_plugins_test: return "strata_plugins_test";
     case RouteId::strata_folders: return "strata_folders";
     case RouteId::strata_folder_private: return "strata_folder_private";
     case RouteId::strata_folder_new: return "strata_folder_new";

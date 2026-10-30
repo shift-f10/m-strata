@@ -164,7 +164,7 @@
     ["chat", "models", "monitor", "settings", "plugins", "about"].forEach(function (tab) { $("tab-btn-" + tab).setAttribute("aria-selected", tab === name ? "true" : "false"); });
     if (name === "monitor") { startMonitor(); } else { stopMonitor(); }
     if (name === "models") { renderModels(false); refreshLauncher(); refreshDownloads(); showModelsSubtab(modelsSubtab); }
-    if (name === "settings") { refreshFolders(); refreshAlerts(); refreshServerConfig(); renderKey(); }
+    if (name === "settings") { refreshFolders(); refreshServerConfig(); renderKey(); }
     if (name === "plugins") { refreshPlugins(); }
     if (name === "about") { renderAbout(); }
     if (name === "chat") { $("input").focus(); }
@@ -193,7 +193,7 @@
     startPolling();
     refreshLauncher();  // a server with model control off answers 404 and the page stays as it was
     refreshDownloads();  // likewise with downloads off; a transfer already running is followed
-    refreshFolders(); refreshAlerts(); refreshServerConfig();  // the Settings tab shows with any of them
+    refreshFolders(); refreshServerConfig();  // the Settings tab shows with either
     refreshPlugins();    // the Plugins tab shows wherever its route answers
     loadHostGpus();      // the cards' GPUs choice lists this PC's GPUs
   }
@@ -3038,97 +3038,12 @@
     if (downloads.enabled) { await refreshDownloads(); }
   }
 
-  // ---------------------------------------------------------------- Settings: email alerts
-  // GUI-first start-up (spec section 5a): the server's email alerts, in a build that has them (its alerts route answers;
-  // a build without them answers 404 and the Settings sub-tab stays hidden). The settings are read from and saved to
-  // the server's config file and apply when it restarts; the password is saved on its own and never shown again.
-  var alerts = { built: false, data: null };
-  function showAlertsError(text) { $("alerts-error").textContent = text; $("alerts-error").hidden = !text; }
-  function alertEventBoxes() { return Array.prototype.slice.call($("alerts-events").querySelectorAll("input[data-event]")); }
-  function fillAlerts(d) {
-    $("alerts-enabled").checked = d.enabled === true;
-    $("alerts-host").value = typeof d.host === "string" ? d.host : "";
-    $("alerts-port").value = typeof d.port === "number" ? String(d.port) : "465";
-    $("alerts-security").value = d.security === "starttls" ? "starttls" : "ssl";
-    $("alerts-username").value = typeof d.username === "string" ? d.username : "";
-    $("alerts-from").value = typeof d.from === "string" ? d.from : "";
-    $("alerts-to").value = Array.isArray(d.to) ? d.to.join(", ") : "";
-    var events = Array.isArray(d.events) ? d.events : [];
-    alertEventBoxes().forEach(function (box) { box.checked = events.indexOf(box.getAttribute("data-event")) >= 0; });
-    $("alerts-password-state").textContent = d.password_set === true ? "A password is saved (it is never shown)." : "No password is saved yet.";
-    var editable = d.editable !== false;
-    ["alerts-save", "alerts-enabled"].forEach(function (id) { $(id).disabled = !editable; });
-    if (!editable) { $("alerts-result").textContent = "This server was started without a config file it can write; edit the file by hand."; }
-  }
-  async function refreshAlerts() {
-    var response, text;
-    try { response = await api("/v1/strata/alerts", jsonPost({})); text = await response.text(); } catch (e) { return; }
-    alerts.built = response.ok;
-    $("alerts-settings").hidden = !alerts.built;
-    showSettingsSubtab();
-    if (!alerts.built) { return; }
-    try { alerts.data = JSON.parse(text); } catch (e) { alerts.data = null; }
-    if (alerts.data) { fillAlerts(alerts.data); }
-  }
-  function alertsForm() {
-    var to = $("alerts-to").value.split(",").map(function (t) { return t.trim(); }).filter(function (t) { return t; });
-    return {
-      enabled: $("alerts-enabled").checked, host: $("alerts-host").value.trim(), port: Number($("alerts-port").value) || 465,
-      security: $("alerts-security").value, username: $("alerts-username").value.trim(), from: $("alerts-from").value.trim(), to: to,
-      events: alertEventBoxes().filter(function (box) { return box.checked; }).map(function (box) { return box.getAttribute("data-event"); })
-    };
-  }
-  // IONOS: smtp.ionos.com, SSL/TLS on 465, the full mailbox address as the user name and From.
-  function fillIonos() {
-    $("alerts-host").value = "smtp.ionos.com";
-    $("alerts-port").value = "465";
-    $("alerts-security").value = "ssl";
-    var mailbox = $("alerts-username").value.trim() || $("alerts-from").value.trim();
-    if (mailbox) { $("alerts-username").value = mailbox; $("alerts-from").value = mailbox; }
-    $("alerts-result").textContent = "IONOS filled in: use the mailbox's full address as the user name and its password." +
-      " Where port 465 is blocked, pick STARTTLS (587).";
-  }
-  async function saveAlerts() {
-    showAlertsError("");
-    var answer = await downloadsAnswer(api("/v1/strata/alerts/settings", jsonPost(alertsForm())));
-    if (answer.signedOut) { return; }
-    if (answer.error) { showAlertsError(answer.error); return; }
-    $("alerts-result").textContent = "Saved. They apply when the server restarts.";
-    await refreshAlerts();
-  }
-  async function saveAlertsPassword() {
-    showAlertsError("");
-    var password = $("alerts-password").value;
-    $("alerts-password").value = "";
-    if (!password) { showAlertsError("Type the mailbox's password first."); return; }
-    var answer = await downloadsAnswer(api("/v1/strata/alerts/password", jsonPost({ password: password })));
-    password = "";
-    if (answer.signedOut) { return; }
-    if (answer.error) { showAlertsError(answer.error); return; }
-    $("alerts-result").textContent = "Password saved.";
-    await refreshAlerts();
-  }
-  async function testAlerts() {
-    showAlertsError("");
-    $("alerts-result").textContent = "Sending a test email through the saved settings...";
-    $("alerts-test").disabled = true;
-    var answer = await downloadsAnswer(api("/v1/strata/alerts/test", jsonPost({})));
-    $("alerts-test").disabled = false;
-    if (answer.signedOut) { return; }
-    if (answer.error) { $("alerts-result").textContent = ""; showAlertsError(answer.error); return; }
-    var r = answer.body || {};
-    $("alerts-result").textContent = r.sent === true ? "Sent: check the inbox." : "";
-    if (r.sent !== true) {
-      showAlertsError("Not sent (" + String(r.stage || "-") + (r.code ? ", the server said " + r.code : "") + "): " + String(r.reply || ""));
-    }
-  }
-
-  // The Settings tab holds the API key, the server's own settings, the model folders and the email alerts: shown when the
-  // server has any of them (spec 2026-10-28-server-window-design, Part 1). Web search left it on 2026-10-30 (the owner:
-  // "we should make the email, websearch, debugging all plugins as well"): its settings are the search plugin's, in the
-  // Plugins tab, and its rounds limit is the server's tools.max_rounds, with the limits here.
+  // The Settings tab holds the API key, the server's own settings and the model folders: shown when the server has any of
+  // them (spec 2026-10-28-server-window-design, Part 1). Web search and email alerts left it on 2026-10-30 (the owner: "we
+  // should make the email, websearch, debugging all plugins as well"): their settings are their plugins' cards, in the
+  // Plugins tab, and web search's rounds limit is the server's tools.max_rounds, with the limits here.
   function showSettingsSubtab() {
-    var any = alerts.built || folders.built || serverConfig.built;
+    var any = folders.built || serverConfig.built;
     $("tab-btn-settings").hidden = !any;
   }
 
@@ -3406,7 +3321,7 @@
     if (p.network) { card.appendChild(el("p", "muted small", "Connects to " + p.network + ".")); }
     if (p.settings_problem) { card.appendChild(el("p", "msg-warn small", "Not ready: " + p.settings_problem)); }
     if (Array.isArray(p.settings) && p.settings.length) { card.appendChild(pluginSettingsForm(p)); }
-    var trying = p.kind === "tool" ? pluginTry(p) : null;
+    var trying = p.kind === "tool" ? pluginTry(p) : p.kind === "notifier" ? pluginTest(p) : null;
     if (trying) { card.appendChild(trying); }
     if (p.manifest_sha256) { card.appendChild(pluginSums(p)); }
     var editable = !!(plugins.data && plugins.data.editable);
@@ -3453,6 +3368,21 @@
         });
         var chosen = s.value !== null && s.value !== undefined ? s.value : s["default"];
         if (chosen !== null && chosen !== undefined) { input.value = String(chosen); }
+      } else if (s.kind === "text_list" && Array.isArray(s.choices) && s.choices.length) {
+        // its manifest names the items it may hold (the email plugin's alerts): a checkbox for each, ticked as the
+        // value (or the default) lists them
+        input = el("fieldset", "plugin-choices");
+        var picked = Array.isArray(s.value) ? s.value : Array.isArray(s["default"]) ? s["default"] : [];
+        s.choices.forEach(function (c) {
+          var choice = el("label", "option-auto");
+          var box = el("input");
+          box.type = "checkbox";
+          box.setAttribute("data-choice", String(c));
+          box.checked = picked.indexOf(String(c)) >= 0;
+          choice.appendChild(box);
+          choice.appendChild(document.createTextNode(String(c).replace(/_/g, " ")));
+          input.appendChild(choice);
+        });
       } else if (s.kind === "text_list") {
         input = el("textarea", "st-input config-list");
         input.rows = 3;
@@ -3489,6 +3419,10 @@
     var s = f.setting;
     if (s.kind === "secret") { if (f.cleared) { return null; } return f.input.value === "" ? undefined : f.input.value; }
     if (s.kind === "boolean") { return f.input.checked; }
+    if (s.kind === "text_list" && f.input.tagName === "FIELDSET") {
+      return Array.prototype.slice.call(f.input.querySelectorAll("input[data-choice]")).filter(function (box) { return box.checked; })
+        .map(function (box) { return box.getAttribute("data-choice"); });
+    }
     if (s.kind === "text_list") {
       var items = f.input.value.split(/\r?\n|,/).map(function (x) { return x.trim(); }).filter(function (x) { return x; });
       return items.length ? items : null;
@@ -3503,6 +3437,11 @@
       if (!Object.prototype.hasOwnProperty.call(preset.values, f.setting.name)) { return; }
       var v = preset.values[f.setting.name];
       if (f.setting.kind === "boolean") { f.input.checked = v === true; }
+      else if (f.setting.kind === "text_list" && f.input.tagName === "FIELDSET") {
+        Array.prototype.slice.call(f.input.querySelectorAll("input[data-choice]")).forEach(function (box) {
+          box.checked = Array.isArray(v) && v.indexOf(box.getAttribute("data-choice")) >= 0;
+        });
+      }
       else if (f.setting.kind === "text_list") { f.input.value = Array.isArray(v) ? v.join("\n") : ""; }
       else { f.input.value = String(v); }
     });
@@ -3565,6 +3504,41 @@
     var box = el("div", "plugin-try");
     drawPluginTry(box, p, tools);
     return box;
+  }
+  // Send a test (plugin spec section 10): Settings' "Send a test email" became this, for every notifier plugin. The test
+  // goes to the plugin's running program through the server's notifier host, and its answer is shown as the plugin gave
+  // it (the email plugin's: what the mail server said). One that is on but not running yet says when the test works.
+  function pluginTest(p) {
+    if (p.running !== true) { return p.state === "on" ? el("p", "muted small", "Send a test works once its program is running (after a restart).") : null; }
+    var t = pluginTryState(p.id);
+    var box = el("div", "plugin-try");
+    var actions = el("div", "model-actions");
+    var go = el("button", "st-btn st-btn--secondary st-btn--sm", "Send a test");
+    go.type = "button";
+    go.disabled = plugins.acting;
+    go.addEventListener("click", function () { testNotifier(p, t); });
+    actions.appendChild(go);
+    box.appendChild(actions);
+    if (t.busy) { box.appendChild(el("p", "muted small", "Sending a test...")); }
+    if (t.result) {
+      box.appendChild(el("p", t.result.ok === true ? "muted small" : "msg-warn small",
+        (t.result.ok === true ? "It answered: " : "It did not go through: ") + String(t.result.reply || "")));
+    }
+    return box;
+  }
+  async function testNotifier(p, t) {
+    if (plugins.acting) { return; }
+    plugins.acting = true;
+    t.busy = true;
+    t.result = null;
+    showPluginsError("");
+    renderPlugins();
+    var answer = await downloadsAnswer(api("/v1/strata/plugins/test", jsonPost({ id: p.id })));
+    plugins.acting = false;
+    t.busy = false;
+    if (answer.signedOut) { return; }
+    if (answer.error) { showPluginsError(answer.error); } else { t.result = answer.body || { ok: false, reply: "" }; }
+    renderPlugins();
   }
   function pluginTryState(id) {
     if (!plugins.tries[id]) { plugins.tries[id] = { tool: "", arguments: Object.create(null), busy: false, result: null }; }
@@ -4173,10 +4147,6 @@
     document.querySelectorAll("[data-save]").forEach(function (button) {
       button.addEventListener("click", function () { saveServerConfig(button.getAttribute("data-save")); });
     });
-    $("alerts-ionos").addEventListener("click", fillIonos);
-    $("alerts-save").addEventListener("click", saveAlerts);
-    $("alerts-password-save").addEventListener("click", saveAlertsPassword);
-    $("alerts-test").addEventListener("click", testAlerts);
     $("folders-save").addEventListener("click", saveFolders);
     $("no-model-open").addEventListener("click", function () { showView("models"); });
     $("models-refresh").addEventListener("click", function () { refreshLauncher(); });

@@ -122,9 +122,11 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 
 - On the page: a notice when a download is queued, paused, cancelled, finished, failed or ready, and when a model is
   running, stopped or did not start.
-- **Email alerts** (a build with `email`): over SSL/TLS or STARTTLS, for downloads finished or failed, calibrations
-  finished or failed, the engine stopped unexpectedly, and the server started. "Fill in IONOS" presets one provider,
-  "Send a test email" checks it, and the password is stored apart and never shown again (DPAPI on Windows).
+- **Email alerts** (a build with `email`: the Email alerts plugin, `plugins/email`, whose program `strata-email` sends
+  the mail): over SSL/TLS or STARTTLS, for downloads finished or failed, calibrations finished or failed, the engine
+  stopped unexpectedly, and the server started. Its card in the Plugins tab holds its settings ("Fill in IONOS" presets
+  one provider) and **Send a test**; the password is stored apart and never shown again (DPAPI on Windows). Other
+  notifier plugins run the same way once you approve them.
 
 **Web search through MCP and SearXNG**
 
@@ -154,14 +156,14 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 - **OpenAI-compatible API:** `/v1/chat/completions` (streamed or not, with usage and `reasoning_effort`),
   `/v1/models`, `/health` and `/metrics`.
 - **Settings tab:** the API key (show, copy, rotate), where the server listens and which PCs may use it, limits and
-  timeouts, the download folders, and the model folders (as they are, or on network shares - experimental), email
-  alerts, and - while the Debugging plugin is on - **Troubleshooting** (the engine's own output in the server log).
-- **Plugins tab** (being built; Debugging and Web search so far): every plugin in the install's `plugins` folder,
+  timeouts, the download folders, and the model folders (as they are, or on network shares - experimental), and -
+  while the Debugging plugin is on - **Troubleshooting** (the engine's own output in the server log).
+- **Plugins tab** (being built; Debugging, Web search and Email alerts so far): every plugin in the install's `plugins` folder,
   with what it is, its state and its SHA-256s. A plugin runs only when this install was built with it or you approved
   it, and only with the files you approved: a changed file waits for your approval again. Approve, and turn on or off,
   from the tab; a tool's or notifier's settings are in its card too (a password or key is kept protected and never
-  shown again), and a running tool plugin's card lists its tools with **Try** (one call, with the arguments you type).
-  A change applies when the server restarts.
+  shown again); a running tool plugin's card lists its tools with **Try** (one call, with the arguments you type), and
+  a running notifier's has **Send a test**. A change applies when the server restarts.
 - **Model folders on network shares - experimental, off by default:** a model folder may be on an SMB/CIFS share
   or an NFS mount once Settings turns it on; see
   [Model folders on network shares](#model-folders-on-network-shares-experimental) for what it means and its status.
@@ -466,7 +468,7 @@ python3 -m venv .venv-dev && .venv-dev/bin/python -m pip install cmake ninja
 | `--ggml-dir DIR` | The pinned llama.cpp checkout (or set `STRATA_GGML_DIR`). |
 | `--cuda-root DIR` | The CUDA toolkit (default: `CUDA_PATH` / `CUDA_HOME`). |
 | `--cuda-arch auto` | GPU targets. `auto` (the default) builds for each supported card type in this PC, once (compute capability 7.5 or newer: the RTX 20 series and later; older cards are left out), with only that card's machine code; with no supported card make stops and says "no supported NVIDIA card detected". `compatible` builds for every generation the engines build for (Turing, Ampere, Ada, Hopper, Blackwell), several times the size; or give a list such as `"86;89;120"`. |
-| `--with email,search,window,tui` | Optional features, off otherwise: email alerts, web search for the models, `strata-window` (the server in a window with a tray icon) and `strata-tui` (the server in a terminal). The install scripts turn on all four. |
+| `--with email,search,window,tui` | Optional features, off otherwise: email alerts (the Email alerts plugin), web search for the models (the Web search plugin), `strata-window` (the server in a window with a tray icon) and `strata-tui` (the server in a terminal). The install scripts turn on all four. |
 | `--without maya,raon1,vision` | Leave those engine families, or the picture encoder (`vision`), out (strata, Gemma 4 and flint are always built). |
 | `--no-cuda-runtime` | Do not bundle cuBLAS (the PC running it then needs a CUDA toolkit). |
 | `--jobs N` | Parallel compile jobs (default: the CPU count). |
@@ -478,8 +480,8 @@ The first build compiles the CUDA engine and takes a while; later builds are inc
 folder holds only what runs:
 - `strata-unified-server` and `strata`;
 - `strata-window` (with `--with window`) and `strata-tui` (with `--with tui`);
-- `plugins/`: `debugging/` (every folder) and `search/` (with `--with search`: the Web search plugin, its manifest and
-  `strata-search`);
+- `plugins/`: `debugging/` (every folder), `search/` (with `--with search`: the Web search plugin, its manifest and
+  `strata-search`) and `email/` (with `--with email`: the Email alerts plugin, its manifest and `strata-email`);
 - `engine/`: the launcher, one library per family, `strata-prepare`, `strata-vision` (upstream's picture encoder, built
   from `upstream/tools/vision` with the same pinned llama.cpp), the bundled cuBLAS, the expert profiles and, with the
   Maya families, `templates/minimax-m3.1/`;
@@ -603,9 +605,6 @@ is left as it was. An empty box puts the setting back to its default.
   hold what the engine prints of your prompts and the paths of your model files, so the server warns of it at every
   start: turn it off when you are done, and look through a log before you share it. Unset, it is on while the
   Debugging plugin is on.
-- **Email alerts** (a build with `email`): the SMTP server, port and security (SSL/TLS on 465 or STARTTLS on 587),
-  user name, From and To, and which events to send (downloads, calibrations, engine stops, server start). "Fill in
-  IONOS" presets one provider; the password is stored on its own and never shown again; "Send a test email" checks it.
 
 ### The config file
 
@@ -621,7 +620,7 @@ is left as it was. An empty box puts the setting back to its default.
 | `roots.allow_untrusted_media` | Use model folders as they are (the Model folders switch). |
 | `plugins.search.url`, `plugins.search.results`, `plugins.search.timeout_s` | The Web search plugin's settings (its card in the Plugins tab). An older config's `search.*` rows move here, and `search.max_rounds` to `tools.max_rounds`, at its first start. |
 | `tools.max_rounds` | Tool calls one answer may make (8 by default, 1-8). |
-| `alerts.*` | Email alerts (set from the page). |
+| `plugins.email.*` | The Email alerts plugin's settings (its card in the Plugins tab): the SMTP server, port and security (SSL/TLS on 465 or STARTTLS on 587), user name, From and To, and which events to send. Its password is kept in the secret folder, never here. An older config's `alerts.email.*` rows, and its `smtp-password`, move to it at its first start. |
 | `limits.engine.generation_timeout_s` | How long one generation may run before it is stopped: 1800 s (half an hour) by default, up to 86400. Each model card's **Longest answer (minutes)** sets it for that model; this row is the card's default. |
 | `limits.chat.max_prompt_tokens`, `limits.chat.max_completion_tokens` | The largest prompt and answer a request may ask for (the card's context still bounds them). |
 | `pull.connections` | Connections per large download (16 by default, 1-32). |
@@ -869,7 +868,7 @@ for a real install, which makes its own key at the first start.
 
 | What you see | Why, and what to do |
 | --- | --- |
-| No Settings, Plugins or email on the page | Those sections answer this PC and the machines `models.control_remote_networks` lists; open the page from one of them. A build without `--with email` has no email section, one without `--with search` no Web search plugin, and Troubleshooting shows only while the Debugging plugin is on (the Plugins tab). |
+| No Settings or Plugins on the page | Those tabs answer this PC and the machines `models.control_remote_networks` lists; open the page from one of them. A build without `--with email` has no Email alerts plugin, one without `--with search` no Web search plugin, and Troubleshooting shows only while the Debugging plugin is on (the Plugins tab). |
 | The model never searches | The Plugins tab says why: the Web search plugin is off, its SearXNG address is not set, or (after a change) the server has not restarted yet; the server's log says `[strata] plugins: search does not run: ...` at the start. |
 | A new model family, download or setting is missing | The running server is an older build: rebuild the out folder and restart from it. |
 | "Other users of this PC can change files in this folder" | Make the folder private when the page asks, or turn on Settings > Model folders. |

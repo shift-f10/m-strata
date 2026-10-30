@@ -108,7 +108,9 @@ std::string_view plugin_state_name(const PluginState state) noexcept {
   return "refused";  // unreachable: every state is a case above
 }
 
-bool plugin_kind_runs(const PluginKind kind) noexcept { return kind == PluginKind::diagnostics || kind == PluginKind::tool; }
+bool plugin_kind_runs(const PluginKind kind) noexcept {
+  return kind == PluginKind::diagnostics || kind == PluginKind::tool || kind == PluginKind::notifier;
+}
 
 std::string render_plugin_choices(const PluginChoices& choices) {
   std::string out = "{\"schema\":";

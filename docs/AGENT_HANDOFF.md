@@ -280,6 +280,85 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z56 (Windows box; owner-directed)
+
+The plugin platform, step 5b-3: the notifier host, and email alerts as a notifier plugin (the design's section 10; the
+owner's decisions 6 and 7). With z54 this finishes "Search and email next"; key-signed trust is next (decision 8).
+- **strata-email** (`email_notifier.{hpp,cpp}`, `email_main.cpp`; built with `SECURE_FRONTEND_EMAIL_ALERTS`, which now
+  builds only it): the server's `EmailAlerts` moved out into the plugin's program. It takes `--host --port --security
+  --username --from --to` (a comma list) and `SMTP_PASSWORD`; it reads the host's lines, mails each event (at most one
+  per kind a minute, no retry; the subject "Strata on <server>: ...", the body and a footer, as before) and answers every
+  line it acts on: an event with `{"event", "ok", "reply"}`, the test with `{"ok", "reply"}` (sent: "sent (<the mail
+  server's last reply>)"; else "<stage>: <reply>"). Wrong arguments are named in every answer and nothing is sent; no
+  password, likewise. The SMTP dialogue (`smtp_client`, `smtp_tls`) is unchanged; its tests share a scripted server
+  (`tests/support/scripted_smtp.hpp`).
+- **The notifier host** (`notifier_hub.{hpp,cpp}`, every build): each notifier plugin that runs is started when the
+  server starts (before its first event), in `<roots.state>/plugins/<id>` with no new privileges and its stderr as the
+  tool hub sends it; told of the events its `events` setting names (or all) as one JSON line each, `{"event", "subject",
+  "body", "server", "time"}`, from a queue of at most 16 per plugin written by its own thread; an event raised while its
+  program is down (started again a minute after it ended) or with its queue full is dropped and logged. "Send a test"
+  writes `{"test": true, "server"}` and waits up to a minute for the line without an `event` (in short waits: a server
+  that stops is not held up by it, and the test says so); an event's answer is
+  logged (`[strata] plugins: <id>: <event>: <reply>`). `server_display_name` moved here; `rfc3339_now` is new.
+- **The server**: `plugin_kind_runs` now says notifier too (an engine plugin is the kind that does not run yet). Launcher
+  mode builds a `NotifierHub` from `running_programs(..., notifier)` (shared with the tool hub; `PluginProgram` now
+  carries its settings' values, never a secret's, for `events`) and raises the launcher's, the downloads' and the
+  start's events through it. The Plugins tab's "running" includes the notifiers it runs, and `POST
+  /v1/strata/plugins/test {"id"}` (`RouteId::strata_plugins_test`, `kPluginRoutes` of 6) answers `{"ok", "reply"}`
+  through it (refused: not in the folder, not a notifier, no notifier host; 400 for a bad body).
+- **Moving the old email setup**: `move_plugin_rows` moves `alerts.email.*` to `plugins.email.*` and hands back
+  `alerts.email.enabled`; `move_old_search_rows` became `move_old_plugin_rows`, returning `OldPluginChoices {search,
+  email}` (one log line per plugin; the search one as before). `hand_old_choices` keeps each as its plugin's choice and
+  moves `roots.secret/smtp-password` to `plugin-email-password` (`smtp_password.{hpp,cpp}`: the old read and store moved
+  out of `email_alerts.cpp`, plus `move_smtp_password`; a password the plugin has already stays, the old file is removed
+  either way, the log line never holds it). The `alerts.email.*` rows are read in every build now (no build gate) so they
+  can move; `email_alerts_built()` and the typed-config define are gone, and `describe()` no longer prints them.
+- **Removed**: `email_alerts.*`, `alert_routes.*`, `kAlertRoutes` and the four `RouteId::strata_alerts*`,
+  `ApiRouterConfig::alerts`, the bootstrap's email blocks, the page's email card (and its CSS), and the alert test
+  cases. The server binary imports no resolver in any build now; `egress_strata_email_is_the_mail_client` checks that
+  strata-email imports `getaddrinfo` and nothing else forbidden.
+- **The email plugin** (`plugins/email/plugin.json`): kind `notifier`, strata-email with the settings above as
+  arguments, the password only as `SMTP_PASSWORD`, settings host, port (465), security (ssl/starttls), username, from,
+  to (1-5), events (the six, all by default), password (secret), IONOS as a preset; network "the mail server
+  {host}:{port}". CMake installs strata-email (and on MSVC the runtime) to `plugins/email/`.
+- **make** (a worker under the standing rule; its diff read and its tests rerun here): `--with email` stages the email
+  plugin after search, records it on with its SHA-256s, requires its files, lets the MSVC runtime sit in
+  `plugins/email/`, and README.txt names it; the Settings sentence no longer lists email alerts.
+- **The page**: a running notifier's card has "Send a test" (the plugin's own answer, or why not); one on but not
+  running says when the test works; a text list whose manifest names its choices (the email plugin's alerts) is a
+  checkbox for each, as the old card's "Which alerts" was; the Settings tab shows with the model folders or the
+  server's own settings.
+- **Docs**: the README (email as a plugin, the Settings and Plugins tabs, the out folder, the config table,
+  troubleshooting), the frontend README (the plugin, the notifier host, the routes, the network sentence), the threat
+  model (the second network exception, the LAN routes, the email section, its residual, notifiers in Extensions), the
+  spec (an event's optional answer; the build options stay, each building only its plugin's program).
+- **Proof**:
+  - RED first, against stubs, then GREEN: strata-email's core (4 cases RED; its first GREEN run caught the test's own
+    script, one RCPT reply for two addresses, fixed in the script), the notifier host (4 cases RED; GREEN, then three
+    more runs of each, all GREEN; and `stopping_does_not_wait_for_a_test`, RED with the old one long wait), `notifiers_are_tested` and the notifier lines of `refusals_say_why` (routes and
+    registry), the email rows' move (a stub of the old move table), `smtp_password_tests` (5 RED), the shipped email
+    manifest (RED with it moved aside), the page (6 RED; the choices' checkboxes, 1 more), `notifier_server_tests` (7 RED against a bootstrap that runs no
+    notifier and keeps no email choice), make (the worker's: 2 RED, then 34 GREEN; rerun here, 34).
+  - MSVC: the whole tree built, no warnings; the whole suite 1460/1462 (the two release-only cases a test-hooks tree
+    fails), and after the last changes (the choices' checkboxes, the stop during a test, gcc's buffer) the suites they
+    touch 210/210. Linux gcc 13.3 and clang 18.1: gcc refused rfc3339_now's 32-byte snprintf buffer (-Wformat-truncation,
+    a class MSVC lacks), widened to 64; then both whole trees built, no warnings. The suites this touches (plugins,
+    notifiers, email, SMTP, the hub, search, MCP, router, server, config, egress, TUI) 350/351 on each, the one failure
+    `egress_table_scan_during_lifecycle`, which on Linux attributes listeners by user, not process (its own comment says
+    so), so the listeners other parallel tests open count as the server's - its message listed them; alone it passed three
+    times out of three on each. After the last changes, the notifier, email, plugin and router suites 115/115 on each. Python `tools/secure`: 158 passed, 4 skipped.
+  - Live: a shares-tree server on the x25 demo data (port 18091), the email plugin staged as make does, the old
+    alerts.email.* rows in its config and a dummy password stored the old way (DPAPI), its mail server
+    smtp.example.invalid so nothing could be sent: the log said the rows moved, the plugin is on as alerts.email.enabled
+    was, the SMTP password moved to the plugin's secret (never in the log), email is running, and its server_started
+    answer ("connect: the mail server could not be reached"); the config held plugins.email.* and no alerts.*, the secret
+    folder plugin-email-password and no smtp-password; the Plugins list showed it on and running, its network and its
+    password as set; Send a test, by the API and from the page's card, answered the same reply; after a rebuild the
+    card's alerts were checkboxes, and ticking one and saving wrote it to plugins.email.events. The server was stopped,
+    the demo config and build.json put back byte for byte, the plugin, its folder and the dummy secret moved out.
+- **Known gaps**: notifiers run in launcher mode only (as email alerts did); the TUI's Plugins view has no "Send a test"
+  or "Try" yet; the layout check allows the MSVC runtime in any `plugins/<id>/` (the worker's note).
+
 ### Claude Code session, 2026-10-30 z55 (Windows box; owner-directed)
 
 The tool host, finishing the spec's running contract (section 10) that z54 left short, as the old search service did:

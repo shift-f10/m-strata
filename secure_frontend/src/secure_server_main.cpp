@@ -128,12 +128,13 @@ int main(int argc, char* argv[]) {
     return EXIT_FAILURE;
   }
   auto main_draft = std::get<secure_frontend::FrontendConfigDraft>(draft);
-  // web search is a plugin now: the old search.* rows are its settings (a serve moves them in the config file)
+  // web search and email alerts are plugins now: the old search.* and alerts.email.* rows are their settings (a serve
+  // moves them in the config file)
   const bool serve = invocation.command != secure_frontend::ServerCommand::check;
-  const auto search_on = secure_frontend::move_old_search_rows(main_draft, started.config_file, serve);
+  const auto old = secure_frontend::move_old_plugin_rows(main_draft, started.config_file, serve);
   if (main_draft.entries.contains("models.cards")) {
     if (!serve) return secure_frontend::launcher_check(main_draft, overridden);
-    return secure_frontend::launcher_run(main_draft, started.config_file, search_on);
+    return secure_frontend::launcher_run(main_draft, started.config_file, old);
   }
   const auto loaded = secure_frontend::validate(main_draft);
   if (const auto* issues = std::get_if<secure_frontend::ConfigErrors>(&loaded)) {
@@ -142,5 +143,5 @@ int main(int argc, char* argv[]) {
   }
   const auto config = std::get<secure_frontend::ValidatedConfig>(loaded).shared();
   if (invocation.command == secure_frontend::ServerCommand::check) return secure_frontend::server_check(*config, overridden, invocation.expert);
-  return secure_frontend::server_run(*config, invocation.expert, search_on);
+  return secure_frontend::server_run(*config, invocation.expert, old);
 }

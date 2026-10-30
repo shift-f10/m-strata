@@ -19,6 +19,8 @@
 //   POST /v1/strata/plugins/try      {"id", "tool", "arguments": {...}} -> {"ok", "text", "truncated", "ms"}
 //                                       (one call of a running tool plugin's tool through the server's tool hub: the
 //                                       Plugins tab's "Try", which replaced the page's test search)
+//   POST /v1/strata/plugins/test     {"id"} -> {"ok", "reply"}   (a running notifier plugin's "Send a test" through the
+//                                       server's notifier host, which replaced the page's test email)
 // Each listed plugin also has its "settings" ({"name", "kind", "label", "help", "required", "default", "min"/"max",
 // "choices", "max_items", and "value", or a secret's "set"}), "presets", "network" (its words, the values filled in),
 // "settings_problem" (what keeps it from running, or null) and "tools" (a running tool plugin's, each {"name",
@@ -27,6 +29,7 @@
 
 #include "secure_frontend/api_router.hpp"
 #include "secure_frontend/mcp_client.hpp"
+#include "secure_frontend/notifier_hub.hpp"
 #include "secure_frontend/plugin_registry.hpp"
 #include "secure_frontend/request_router.hpp"
 #include "secure_frontend/tool_runner.hpp"
@@ -54,6 +57,8 @@ struct PluginRouteSettings final {
   // plugin runs in this server.
   std::function<std::map<std::string, std::vector<McpTool>>()> tools{};
   std::function<ToolResult(std::string_view id, std::string_view tool, std::string_view arguments_json)> try_tool{};
+  // The server's notifier host (notifier_hub.hpp): one test of a running notifier plugin. Unset: no notifier plugin runs.
+  std::function<NotifierTest(std::string_view id)> test_notifier{};
   // Who may read and change them (the server passes model_files_allowed, as for its other settings). Empty: loopback
   // clients only.
   std::function<bool(const RequestContext& context)> client_allowed{};
@@ -70,6 +75,7 @@ class PluginRoutes final {
   [[nodiscard]] HttpResponse change(std::string_view body);
   [[nodiscard]] HttpResponse save_settings(std::string_view body);
   [[nodiscard]] HttpResponse try_tool(std::string_view body);
+  [[nodiscard]] HttpResponse test_notifier(std::string_view body);
   [[nodiscard]] std::optional<PluginChoices> choices() const;
   [[nodiscard]] bool save(const PluginChoices& choices);
 

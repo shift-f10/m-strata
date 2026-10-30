@@ -289,7 +289,7 @@ MINIMAX_FILES = ("engine/templates/minimax-m3.1/chat_template.jinja", "engine/te
 
 
 def stage(tmp_path: Path, platform: str, extra: tuple[str, ...] = (), skip: tuple[str, ...] = (),
-          search: bool = False) -> Path:
+          search: bool = False, email: bool = False) -> Path:
     exe = ".exe" if platform == "windows" else ""
     lib = (lambda n: n + ".dll") if platform == "windows" else (lambda n: "lib" + n + ".so")
     files = [f"strata-unified-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
@@ -299,6 +299,8 @@ def stage(tmp_path: Path, platform: str, extra: tuple[str, ...] = (), skip: tupl
         list(MINIMAX_FILES)
     if search:   # --with search: the Web search plugin, its manifest and strata-search, which the install puts there
         files += ["plugins/search/plugin.json", f"plugins/search/strata-search{exe}"]
+    if email:   # --with email: the Email alerts plugin, its manifest and strata-email, which the install puts there
+        files += ["plugins/email/plugin.json", f"plugins/email/strata-email{exe}"]
     files += ["engine/" + lib(n) for n in ("multiengine_strata", "multiengine_gemma4", "multiengine_flint",
                                            "multiengine_raon1", "multiengine_maya", "multiengine_maya_ds4",
                                            "multiengine_maya_mm3", "strata_kq")]
@@ -320,6 +322,19 @@ def test_a_plugins_program_has_the_msvc_runtime_beside_it(tmp_path):
     assert make.layout_problems(root, options("--with", "search"), "windows") == []
     deeper = stage(tmp_path / "deeper", "windows", search=True, extra=("plugins/search/bin/vcruntime140.dll",))
     assert "plugins/search/bin/vcruntime140.dll: not a runtime file" in make.layout_problems(deeper, options("--with", "search"), "windows")
+
+
+def test_the_email_plugins_program_has_the_msvc_runtime_beside_it(tmp_path):
+    """strata-email in plugins/email/ loads the MSVC runtime from its own folder too (the frontend's install puts it
+    there on MSVC, as it does for plugins/search/): make takes the runtime there, and nowhere deeper."""
+    runtime = ("plugins/email/vcruntime140.dll", "plugins/email/vcruntime140_1.dll", "plugins/email/msvcp140.dll")
+    root = stage(tmp_path, "windows", email=True, extra=runtime)
+    assert make.layout_problems(root, options("--with", "email"), "windows") == []
+    both = stage(tmp_path / "both", "windows", search=True, email=True,
+                 extra=runtime + ("plugins/search/vcruntime140.dll", "plugins/search/msvcp140.dll"))
+    assert make.layout_problems(both, options("--with", "email,search"), "windows") == []
+    deeper = stage(tmp_path / "deeper", "windows", email=True, extra=("plugins/email/bin/vcruntime140.dll",))
+    assert "plugins/email/bin/vcruntime140.dll: not a runtime file" in make.layout_problems(deeper, options("--with", "email"), "windows")
 
 
 def test_a_runtime_folder_passes(tmp_path):
@@ -554,3 +569,89 @@ def test_search_is_a_first_party_plugin_with_its_program_in_its_folder(tmp_path)
         held = text.split("The Settings tab holds ", 1)[1].split(".", 1)[0]
         assert "web search" not in held and "the model folders" in held, held
         assert "plugins/search" not in make.readme_text(plain, platform)
+
+
+def test_email_is_a_first_party_plugin_with_its_program_in_its_folder(tmp_path):
+    """The owner (2026-10-30): "we should make the email, websearch, debugging all plugins as well" (spec 2026-10-30,
+    section 10). With --with email the folder holds plugins/email/: this repository's plugins/email/plugin.json, byte for
+    byte, and strata-email(.exe), the notifier the server runs, which the frontend's install puts there. engine/build.json
+    records it after the Debugging plugin and the Web search plugin (debugging, search, email), with the SHA-256 of its
+    manifest and of its program as staged, and on: the server runs it only once its required settings (the mail server,
+    the login, the addresses, the password) are filled in. README.txt names it among the contents, after the search one,
+    with its settings in the Plugins tab; the Settings tab no longer holds email alerts, in any build. Without --with
+    email there is no email plugin."""
+    shipped = (ROOT / "plugins" / "email" / "plugin.json").read_bytes()
+    searching = hashlib.sha256((ROOT / "plugins" / "search" / "plugin.json").read_bytes()).hexdigest()
+    debugging = hashlib.sha256((ROOT / "plugins" / "debugging" / "plugin.json").read_bytes()).hexdigest()
+    for platform, program, finder in (("windows", "strata-email.exe", "strata-search.exe"),
+                                      ("linux", "strata-email", "strata-search")):
+        mailing = options("--with", "email", platform=platform)
+        both = options("--with", "email,search", platform=platform)
+        plain = options(platform=platform)
+        assert make.first_party_plugins(both) == ["debugging", "search", "email"]
+        assert make.first_party_plugins(mailing) == ["debugging", "email"]
+        assert make.first_party_plugins(plain) == ["debugging"]
+        assert make.plugin_files("email", platform) == [program]
+        for opts in (mailing, both):
+            required = make.required_files(opts, platform)
+            assert "plugins/email/plugin.json" in required and f"plugins/email/{program}" in required, required
+            assert program not in required, "not a program beside the server"
+        assert not [f for f in make.required_files(plain, platform) if f.startswith("plugins/email")]
+
+        folder = stage(tmp_path / platform, platform, search=True, email=True)
+        (folder / "plugins" / "email" / program).write_bytes(b"the email program")
+        (folder / "plugins" / "search" / finder).write_bytes(b"the search program")
+        make.stage_plugins(both, folder)
+        assert (folder / "plugins" / "email" / "plugin.json").read_bytes() == shipped, "the shipped manifest, as it is"
+        assert make.layout_problems(folder, both, platform) == []
+        record = make.build_record(both, platform, folder, commit="c", built="b")
+        assert record["plugins"] == [
+            {"id": "debugging", "manifest": debugging, "files": {}, "on": False},
+            {"id": "search", "manifest": searching,
+             "files": {finder: hashlib.sha256(b"the search program").hexdigest()}, "on": True},
+            {"id": "email", "manifest": hashlib.sha256(shipped).hexdigest(),
+             "files": {program: hashlib.sha256(b"the email program").hexdigest()}, "on": True}], record["plugins"]
+        assert record["features"] == ["email", "search"]
+        assert make.build_record(options("--with", "email,search", "--debugging", platform=platform), platform, folder,
+                                 commit="c", built="b")["plugins"][0]["on"] is True
+
+        # --with email alone: the email plugin follows the Debugging plugin
+        alone = stage(tmp_path / ("alone-" + platform), platform, email=True)
+        (alone / "plugins" / "email" / program).write_bytes(b"the email program")
+        make.stage_plugins(mailing, alone)
+        assert not (alone / "plugins" / "search").exists()
+        assert make.layout_problems(alone, mailing, platform) == []
+        assert [(p["id"], p["on"]) for p in make.build_record(mailing, platform, alone, commit="c", built="b")["plugins"]] == \
+            [("debugging", False), ("email", True)]
+
+        # strata-email beside the server: the plugin is incomplete and the root's copy is refused; the build record is
+        # still written, so the layout check can say so
+        old = stage(tmp_path / ("old-" + platform), platform, extra=(program,), skip=(f"plugins/email/{program}",),
+                    email=True)
+        make.stage_plugins(mailing, old)
+        problems = make.layout_problems(old, mailing, platform)
+        assert f"plugins/email/{program}: missing" in problems and f"{program}: not a runtime file" in problems, problems
+        assert [p["files"] for p in make.build_record(mailing, platform, old, commit="c", built="b")["plugins"]] == [{}, {}]
+
+        # without --with email: nothing staged, and an email plugin in the folder is not a runtime file
+        bare = stage(tmp_path / ("bare-" + platform), platform)
+        make.stage_plugins(plain, bare)
+        assert not (bare / "plugins" / "email").exists()
+        assert [p["id"] for p in make.build_record(plain, platform, bare, commit="c", built="b")["plugins"]] == ["debugging"]
+        stray = make.layout_problems(stage(tmp_path / ("stray-" + platform), platform, email=True), plain, platform)
+        assert f"plugins/email/{program}: not a runtime file" in stray, stray
+        assert "plugins/email/plugin.json: not a runtime file" in stray, stray
+
+        # README.txt: the plugin among the contents, after the search one, with its settings in the Plugins tab
+        text = make.readme_text(both, platform)
+        entry = text.split("plugins/email: ", 1)[1].split("\n            LICENSE", 1)[0]
+        assert " ".join(entry.split()) == ("the Email alerts plugin, email alerts through your mail server (strata-email; "
+                                           "its settings are in the Plugins tab)"), entry
+        assert text.index("plugins/debugging: ") < text.index("plugins/search: ") < text.index("plugins/email: ")
+        assert "strata-email: " not in text, "not a program beside the server"
+        assert "plugins/email: the Email alerts plugin" in make.readme_text(mailing, platform)
+        assert "plugins/email" not in make.readme_text(plain, platform)
+        # the Settings tab no longer holds email alerts, whichever features the folder has
+        for opts in (plain, mailing, both, options("--with", "search", platform=platform)):
+            held = make.readme_text(opts, platform).split("The Settings tab holds ", 1)[1].split(".", 1)[0]
+            assert held == "the API key, the server's settings and the model folders", held

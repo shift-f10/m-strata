@@ -733,7 +733,7 @@ void web_ui_has_a_plugins_tab() {
   // result shown in a scrolling block with whether it was cut and how long it took. The list names a plugin's tools only
   // while its program runs, so one that is on but not started says when Try works.
   const std::string css{secure_frontend::find_web_asset("/ui/app.css")->body};
-  expect(js.find("var trying = p.kind === \"tool\" ? pluginTry(p) : null;") != std::string::npos &&
+  expect(js.find("var trying = p.kind === \"tool\" ? pluginTry(p) : p.kind === \"notifier\" ? pluginTest(p) : null;") != std::string::npos &&
              js.find("var tools = (Array.isArray(p.tools) ? p.tools : [])") != std::string::npos,
          "a tool plugin's card has Try, from the tools its running program lists");
   expect(js.find("if (!tools.length) { return p.state === \"on\" ? el(\"p\", \"muted small\", \"Try works once its program is running (after a restart).\") : null; }") !=
@@ -860,44 +860,41 @@ void web_ui_opens_the_view_its_address_names() {
          "a held key opens the named view too");
 }
 
-// GUI-first start-up (spec 2026-10-27 §5a): a Settings sub-tab with the email alerts - shown only when the server has
-// them (its alerts route answers; a build without them answers 404) - the IONOS preset, which alerts, the password
-// (a password field, saved on its own and never shown again), Save and "Send a test email", and a note that the
-// settings apply when the server restarts.
-void web_ui_has_email_alert_settings() {
+// Email alerts (spec 2026-10-27 §5a), a notifier plugin since 2026-10-30 (plugin spec section 10): Settings has no email
+// card any more - its settings are the email plugin's card in the Plugins tab, drawn from its manifest (IONOS a preset),
+// and "Send a test email" became the card's "Send a test", for every running notifier plugin, through the server's
+// notifier host; the Settings tab shows with the server's own settings or the model folders.
+void web_ui_email_is_the_email_plugins_card() {
   const std::string html{secure_frontend::find_web_asset("/")->body};
   const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
   // (2026-10-28, the Settings tab: the settings moved from Models > Settings to a tab of their own)
   expect(html.find("<button class=\"st-tab\" role=\"tab\" id=\"tab-btn-settings\" aria-controls=\"view-settings\" aria-selected=\"false\" "
                    "data-tab=\"settings\" hidden>") != std::string::npos,
          "a Settings tab, hidden until the server offers it");
-  for (const char* id : {"id=\"view-settings\"", "id=\"alerts-enabled\"", "id=\"alerts-host\"", "id=\"alerts-port\"",
-                         "id=\"alerts-security\"", "id=\"alerts-username\"", "id=\"alerts-from\"", "id=\"alerts-to\"",
-                         "id=\"alerts-events\"", "id=\"alerts-ionos\"", "id=\"alerts-save\"", "id=\"alerts-test\"",
-                         "id=\"alerts-password\"", "id=\"alerts-password-save\"", "id=\"alerts-password-state\"",
-                         "id=\"alerts-result\"", "id=\"alerts-error\""}) {
-    expect(html.find(id) != std::string::npos, std::string{"the alert settings have "} + id);
-  }
-  const auto password = html.find("id=\"alerts-password\"");
-  const std::string tag = password == std::string::npos ? std::string{}
-                                                        : html.substr(html.rfind('<', password), html.find('>', password) - html.rfind('<', password));
-  expect(tag.find("type=\"password\"") != std::string::npos && tag.find("name=") == std::string::npos, "the password field is a password input");
-  expect(html.find("apply when the server restarts") != std::string::npos, "the page says when they apply");
-  expect(js.find("api(\"/v1/strata/alerts\", jsonPost({}))") != std::string::npos &&
-             js.find("api(\"/v1/strata/alerts/settings\", jsonPost(alertsForm()))") != std::string::npos &&
-             js.find("api(\"/v1/strata/alerts/password\", jsonPost({ password: password }))") != std::string::npos &&
-             js.find("api(\"/v1/strata/alerts/test\", jsonPost({}))") != std::string::npos,
-         "the four routes");
-  // (changed 2026-10-27 with the Model folders setting: the sub-tab shows with it, alerts or web search; 2026-10-28: a tab,
-  // shown with the server's own settings too; 2026-10-30: web search left Settings for its plugin's card, plugin spec
-  // section 10)
-  expect(js.find("var any = alerts.built || folders.built || serverConfig.built;") != std::string::npos &&
-             js.find("$(\"tab-btn-settings\").hidden = !any;") != std::string::npos &&
-             js.find("$(\"alerts-settings\").hidden = !alerts.built;") != std::string::npos,
-         "the sub-tab shows when the server has alerts (or model folders, or its own settings), the alerts card only with alerts");
-  expect(js.find("\"smtp.ionos.com\"") != std::string::npos && js.find("$(\"alerts-port\").value = \"465\";") != std::string::npos,
-         "the IONOS preset: smtp.ionos.com, 465, SSL/TLS");
-  expect(js.find("$(\"alerts-password\").value = \"\";") != std::string::npos, "the password field is emptied once sent");
+  expect(html.find("id=\"alerts-settings\"") == std::string::npos && html.find("id=\"alerts-enabled\"") == std::string::npos &&
+             html.find("id=\"alerts-password\"") == std::string::npos && js.find("/v1/strata/alerts") == std::string::npos &&
+             js.find("alertsForm") == std::string::npos && js.find("refreshAlerts") == std::string::npos,
+         "no email card in Settings, and no alert route");
+  expect(js.find("var any = folders.built || serverConfig.built;") != std::string::npos &&
+             js.find("$(\"tab-btn-settings\").hidden = !any;") != std::string::npos,
+         "the Settings tab shows with the model folders or the server's own settings");
+  expect(js.find("var trying = p.kind === \"tool\" ? pluginTry(p) : p.kind === \"notifier\" ? pluginTest(p) : null;") != std::string::npos,
+         "a notifier plugin's card has Send a test, as a tool's has Try");
+  expect(js.find("if (p.running !== true) { return p.state === \"on\" ? el(\"p\", \"muted small\", \"Send a test works once its program is running (after a restart).\") : null; }") !=
+             std::string::npos,
+         "one that is on but not running says when the test works");
+  expect(js.find("el(\"button\", \"st-btn st-btn--secondary st-btn--sm\", \"Send a test\")") != std::string::npos &&
+             js.find("api(\"/v1/strata/plugins/test\", jsonPost({ id: p.id }))") != std::string::npos,
+         "Send a test posts the plugin's id");
+  expect(js.find("(t.result.ok === true ? \"It answered: \" : \"It did not go through: \") + String(t.result.reply || \"\")") != std::string::npos,
+         "the plugin's own answer is shown, as it said it");
+  // a text list whose manifest names its choices (the email plugin's alerts) is a checkbox for each, as the old card's
+  // "Which alerts" was; one without choices stays a box of lines
+  expect(js.find("if (s.kind === \"text_list\" && Array.isArray(s.choices) && s.choices.length) {") != std::string::npos &&
+             js.find("box.checked = picked.indexOf(String(c)) >= 0;") != std::string::npos &&
+             js.find("return Array.prototype.slice.call(f.input.querySelectorAll(\"input[data-choice]\")).filter(function (box) { return box.checked; })") !=
+                 std::string::npos,
+         "a text list with choices is a checkbox per choice");
 }
 
 // Owner 2026-10-28: the searches in a box, as the thinking is ("they look out of place"), the round limit said as
@@ -1772,52 +1769,8 @@ void model_download_routes_need_the_switch_and_the_key() {
   expect(none.empty(), "downloads off: nothing is called");
 }
 
-// GUI-first start-up (spec 2026-10-27 §5a): the alert settings routes - keyed, POST, a small JSON body - served only
-// while their handler is set (a build with email alerts and model control).
-void alert_routes_need_their_handler_and_the_key() {
-  const std::vector<std::pair<std::string, secure_frontend::RouteId>> routes{
-      {"/v1/strata/alerts", secure_frontend::RouteId::strata_alerts},
-      {"/v1/strata/alerts/settings", secure_frontend::RouteId::strata_alerts_settings},
-      {"/v1/strata/alerts/password", secure_frontend::RouteId::strata_alerts_password},
-      {"/v1/strata/alerts/test", secure_frontend::RouteId::strata_alerts_test}};
-  const auto make = [](std::vector<std::string>* calls, const bool on) {
-    secure_frontend::SecretBytes secret;
-    (void)secret.assign(kRouterToken);
-    secure_frontend::ModelCardRoutes alerts;
-    if (on) {
-      alerts.handle = [calls](const secure_frontend::RouteId route, const std::string_view body,
-                              const secure_frontend::RequestContext&) -> secure_frontend::RouteResult {
-        calls->push_back(std::to_string(static_cast<int>(route)) + " " + std::string{body});
-        return secure_frontend::HttpResponse{.status = 200, .headers = {}, .body = "{}\n"};
-      };
-    }
-    return secure_frontend::ApiRouter({
-        .policy = secure_frontend::make_http_policy(*secure_frontend::parse_listener_address("127.0.0.1"), 8080, {}, {}),
-        .validator = secure_frontend::make_bearer_validator(std::make_shared<const secure_frontend::TokenVerifier>(std::move(secret))),
-        .model_id = "", .owned_by = "local", .chat_body_limit = 49152,
-        .health = [] { return secure_frontend::HealthView{true, "none", ""}; },
-        .chat = {},
-        .served = [] { return secure_frontend::ServedModels{}; },
-        .alerts = std::move(alerts)});
-  };
-  std::vector<std::string> calls;
-  auto router = make(&calls, true);
-  for (const auto& [target, route] : routes) {
-    expect(request(router, "POST", target, "{}", false).status == 401, target + " needs the key");
-    expect(request(router, "POST", target, "{\"x\":1}").status == 200 && !calls.empty() &&
-               calls.back() == std::to_string(static_cast<int>(route)) + " {\"x\":1}",
-           target + " reaches the handler");
-    expect(request(router, "GET", target).status == 405, target + " is POST only");
-    expect(request(router, "POST", target, "{}", true, true, "text/plain").status == 415, target + " takes JSON");
-  }
-  std::vector<std::string> none;
-  auto off = make(&none, false);
-  for (const auto& [target, route] : routes) expect(request(off, "POST", target, "{}").status == 404, target + " is no route when off");
-  expect(none.empty(), "off: nothing is called");
-}
-
 // The Settings tab (spec 2026-10-28-server-window-design, Part 1): its routes are keyed, POST, JSON, served only while
-// their handler is set (model control on), as the alert routes'.
+// their handler is set (model control on), as the plugin routes'.
 void config_routes_need_their_handler_and_the_key() {
   const std::vector<std::pair<std::string, secure_frontend::RouteId>> routes{
       {"/v1/strata/config", secure_frontend::RouteId::strata_config},
@@ -1867,7 +1820,8 @@ void plugin_routes_need_their_handler_and_the_key() {
       {"/v1/strata/plugins/approve", secure_frontend::RouteId::strata_plugins_approve},
       {"/v1/strata/plugins/switch", secure_frontend::RouteId::strata_plugins_switch},
       {"/v1/strata/plugins/settings", secure_frontend::RouteId::strata_plugins_settings},
-      {"/v1/strata/plugins/try", secure_frontend::RouteId::strata_plugins_try}};
+      {"/v1/strata/plugins/try", secure_frontend::RouteId::strata_plugins_try},
+      {"/v1/strata/plugins/test", secure_frontend::RouteId::strata_plugins_test}};
   const auto make = [](std::vector<std::string>* calls, const bool on) {
     secure_frontend::SecretBytes secret;
     (void)secret.assign(kRouterToken);
@@ -2050,7 +2004,6 @@ int main(int argc, char** argv) {
       {"model_download_routes_need_the_switch_and_the_key", model_download_routes_need_the_switch_and_the_key},
       {"model_card_routes_need_the_switch_and_the_key", model_card_routes_need_the_switch_and_the_key},
       {"calibration_routes_need_their_handlers_and_the_key", calibration_routes_need_their_handlers_and_the_key},
-      {"alert_routes_need_their_handler_and_the_key", alert_routes_need_their_handler_and_the_key},
       {"config_routes_need_their_handler_and_the_key", config_routes_need_their_handler_and_the_key},
       {"plugin_routes_need_their_handler_and_the_key", plugin_routes_need_their_handler_and_the_key},
       {"web_ui_cards_from_this_pc_and_the_danger_zone", web_ui_cards_from_this_pc_and_the_danger_zone},
@@ -2060,7 +2013,7 @@ int main(int argc, char** argv) {
       {"web_ui_downloads_destination_is_a_panel", web_ui_downloads_destination_is_a_panel},
       {"web_ui_models_tab_calibrates", web_ui_models_tab_calibrates},
       {"web_ui_models_tab_shows_compatibility", web_ui_models_tab_shows_compatibility},
-      {"web_ui_has_email_alert_settings", web_ui_has_email_alert_settings},
+      {"web_ui_email_is_the_email_plugins_card", web_ui_email_is_the_email_plugins_card},
       {"web_ui_has_server_settings", web_ui_has_server_settings},
       {"web_ui_has_a_plugins_tab", web_ui_has_a_plugins_tab},
       {"web_ui_claims_a_login_link_at_load_and_on_hashchange", web_ui_claims_a_login_link_at_load_and_on_hashchange},

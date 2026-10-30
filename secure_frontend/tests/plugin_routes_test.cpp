@@ -45,6 +45,11 @@ const std::string kMailer = R"({"schema": "m-strata.plugin/1", "id": "mailer", "
       {"name": "password", "kind": "secret", "label": "Password", "help": "", "required": true}],
     "presets": [{"label": "IONOS", "values": {"host": "smtp.ionos.com", "port": 465, "security": "ssl"}}]}})";
 
+// An engine plugin, its library there: a kind this server does not run yet.
+const std::string kEngine = R"({"schema": "m-strata.plugin/1", "id": "acme", "kind": "engine", "name": "Acme",
+  "version": "0.1.0", "publisher": "Example Labs", "license": "Apache-2.0", "about": "", "engine": {},
+  "files": {"windows": ["multiengine_acme.dll"], "linux": ["libmultiengine_acme.so"]}})";
+
 // An install's plugins folder and a data folder's state, secret folder and config file, and the routes over them.
 struct Fixture final {
   std::filesystem::path root = secure_frontend_test::make_scratch_directory();
@@ -54,9 +59,10 @@ struct Fixture final {
   std::filesystem::path config = root / "config.json";
   std::unique_ptr<secure_frontend::PluginRoutes> routes;
   std::vector<std::string> logged;
-  std::vector<std::string> tried;  // each Try's id, tool and arguments, as the hub got them
+  std::vector<std::string> tried;   // each Try's id, tool and arguments, as the hub got them
+  std::vector<std::string> tested;  // each notifier test's id, as the notifier host got it
   explicit Fixture(std::set<std::string> running = {}, std::vector<secure_frontend::FirstPartyPlugin> first_party = {},
-                   const bool with_tools = false) {
+                   const bool with_tools = false, const bool with_notifiers = false) {
     secure_frontend_test::make_private_directory(plugins);
     secure_frontend_test::make_private_directory(state);
     secure_frontend_test::make_private_directory(secret);
@@ -64,10 +70,13 @@ struct Fixture final {
     add("debugging", kDebugging);
     add("search", kTool);
     add("mailer", kMailer);
+    add("acme", kEngine);
 #if defined(_WIN32)
     secure_frontend_test::write_file(plugins / "mailer" / "mailer.exe", "notifier");
+    secure_frontend_test::write_file(plugins / "acme" / "multiengine_acme.dll", "engine");
 #else
     secure_frontend_test::write_file(plugins / "mailer" / "mailer", "notifier", 0700);
+    secure_frontend_test::write_file(plugins / "acme" / "libmultiengine_acme.so", "engine", 0700);
 #endif
 #if defined(_WIN32)
     secure_frontend_test::write_file(plugins / "search" / "strata-search.exe", "tool");
@@ -87,6 +96,13 @@ struct Fixture final {
       settings.try_tool = [this](const std::string_view id, const std::string_view tool, const std::string_view arguments) {
         tried.push_back(std::string{id} + " " + std::string{tool} + " " + std::string{arguments});
         return secure_frontend::ToolResult{true, "found 3 results", 15U, false, false, std::chrono::milliseconds(42)};
+      };
+    }
+    if (with_notifiers) {
+      // the notifier host's side: the mailer answers a test with its mail server's words
+      settings.test_notifier = [this](const std::string_view id) {
+        tested.emplace_back(id);
+        return secure_frontend::NotifierTest{true, "sent (250 ok)"};
       };
     }
     routes = std::make_unique<secure_frontend::PluginRoutes>(std::move(settings));
@@ -147,7 +163,9 @@ void refusals_say_why() {
   refused(RouteId::strata_plugins_approve, R"({"id":"ghost"})", "no plugin");
   refused(RouteId::strata_plugins_switch, R"({"id":"debugging","on":true})", "approve");
   expect(f.post(RouteId::strata_plugins_approve, R"({"id":"mailer"})").status == 200, "a notifier plugin can be approved");
-  refused(RouteId::strata_plugins_switch, R"({"id":"mailer","on":true})", "does not run notifier plugins yet");
+  expect(f.post(RouteId::strata_plugins_switch, R"({"id":"mailer","on":true})").status == 200, "and turned on: notifiers run");
+  expect(f.post(RouteId::strata_plugins_approve, R"({"id":"acme"})").status == 200, "an engine plugin can be approved");
+  refused(RouteId::strata_plugins_switch, R"({"id":"acme","on":true})", "does not run engine plugins yet");
   expect(f.post(RouteId::strata_plugins_approve, R"({"id":"debugging"})").status == 200, "approved");
   refused(RouteId::strata_plugins_approve, R"({"id":"debugging"})", "already");
   expect(f.post(RouteId::strata_plugins_approve, "{}").status == 400 && f.post(RouteId::strata_plugins_switch, R"({"id":"debugging"})").status == 400 &&
@@ -241,6 +259,28 @@ void tools_are_listed_and_tried() {
   expect(nothing.status == 422 && has(nothing, "runs no tool plugins"), "no hub: " + shown(nothing));
 }
 
+// The Plugins tab's "Send a test" (plugin spec section 10; it replaced the page's test email): one test through the
+// server's notifier host, its answer as the plugin gave it; one not in the folder, not a notifier, or a body that is not
+// one is refused, and so is a server that runs no notifier plugins.
+void notifiers_are_tested() {
+  Fixture f({"mailer"}, {}, false, true);
+  const auto tested = f.post(RouteId::strata_plugins_test, R"({"id":"mailer"})");
+  expect(tested.status == 200 && has(tested, R"x({"ok":true,"reply":"sent (250 ok)"})x"), "tested: " + shown(tested));
+  expect(f.tested == std::vector<std::string>{"mailer"}, "the notifier host got the test");
+  const auto refused = [&f](const std::string& body, const std::string& why) {
+    const auto answer = f.post(RouteId::strata_plugins_test, body);
+    expect(answer.status == 422 && has(answer, "\"code\":\"plugin_refused\"") && has(answer, why), body + " refused for " + why + ": " + shown(answer));
+  };
+  refused(R"({"id":"ghost"})", "no plugin");
+  refused(R"({"id":"search"})", "not a notifier");
+  expect(f.post(RouteId::strata_plugins_test, "{}").status == 400 && f.post(RouteId::strata_plugins_test, R"({"id":"mailer","x":1})").status == 400,
+         "a body that is not one");
+  expect(f.post(RouteId::strata_plugins_test, R"({"id":"mailer"})", false).status == 403, "another PC is refused");
+  Fixture none;
+  const auto nothing = none.post(RouteId::strata_plugins_test, R"({"id":"mailer"})");
+  expect(nothing.status == 422 && has(nothing, "runs no notifier plugins"), "no notifier host: " + shown(nothing));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -250,5 +290,6 @@ int main(int argc, char** argv) {
       {"refusals_say_why", refusals_say_why},
       {"settings_are_listed_and_saved", settings_are_listed_and_saved},
       {"tools_are_listed_and_tried", tools_are_listed_and_tried},
+      {"notifiers_are_tested", notifiers_are_tested},
   }, failures);
 }

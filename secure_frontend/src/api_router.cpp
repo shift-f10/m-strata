@@ -161,13 +161,6 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
       if (head.method == entry.method) matched = &entry;
     }
   }
-  if (config_.alerts.handle) {
-    for (const auto& entry : kAlertRoutes) {
-      if (target != entry.path) continue;
-      allow = entry.method;
-      if (head.method == entry.method) matched = &entry;
-    }
-  }
   if (config_.settings.handle) {
     for (const auto& entry : kConfigRoutes) {
       if (target != entry.path) continue;
@@ -209,8 +202,6 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
   const bool download_post = decision.route == RouteId::strata_download_start || decision.route == RouteId::strata_download_pause ||
                              decision.route == RouteId::strata_download_cancel || decision.route == RouteId::strata_download_link;
   const bool card_post = std::any_of(kModelCardRoutes.begin(), kModelCardRoutes.end(),
-                                     [&decision](const RouteEntry& entry) { return entry.id == decision.route; }) ||
-                         std::any_of(kAlertRoutes.begin(), kAlertRoutes.end(),
                                      [&decision](const RouteEntry& entry) { return entry.id == decision.route; }) ||
                          std::any_of(kConfigRoutes.begin(), kConfigRoutes.end(),
                                      [&decision](const RouteEntry& entry) { return entry.id == decision.route; }) ||
@@ -398,17 +389,6 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
         }
         return result;
       }
-      case RouteId::strata_alerts:
-      case RouteId::strata_alerts_settings:
-      case RouteId::strata_alerts_password:
-      case RouteId::strata_alerts_test: {
-        RouteResult result = config_.alerts.handle(decision.route, body, context);
-        if (auto* complete = std::get_if<HttpResponse>(&result)) {
-          response = std::move(*complete);
-          break;
-        }
-        return result;
-      }
       case RouteId::strata_config:
       case RouteId::strata_config_settings:
       case RouteId::strata_key_rotate: {
@@ -423,7 +403,8 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
       case RouteId::strata_plugins_approve:
       case RouteId::strata_plugins_switch:
       case RouteId::strata_plugins_settings:
-      case RouteId::strata_plugins_try: {
+      case RouteId::strata_plugins_try:
+      case RouteId::strata_plugins_test: {
         RouteResult result = config_.plugins.handle(decision.route, body, context);
         if (auto* complete = std::get_if<HttpResponse>(&result)) {
           response = std::move(*complete);

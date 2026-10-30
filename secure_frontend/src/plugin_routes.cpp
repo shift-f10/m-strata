@@ -269,6 +269,7 @@ HttpResponse PluginRoutes::answer(const RouteId route, const std::string_view bo
     case RouteId::strata_plugins_switch: return change(body);
     case RouteId::strata_plugins_settings: return save_settings(body);
     case RouteId::strata_plugins_try: return try_tool(body);
+    case RouteId::strata_plugins_test: return test_notifier(body);
     default: return make_error_response(ApiError::not_found);
   }
 }
@@ -485,6 +486,26 @@ HttpResponse PluginRoutes::try_tool(const std::string_view body) {
   const ToolResult result = settings_.try_tool(name, *tool->if_string(), arguments_json);
   return json_answer(200, std::string{"{\"ok\":"} + (result.ok ? "true" : "false") + ",\"text\":" + json_text(result.text) +
                               ",\"truncated\":" + (result.truncated ? "true" : "false") + ",\"ms\":" + std::to_string(result.took.count()) + "}\n");
+}
+
+}  // namespace secure_frontend
+
+namespace secure_frontend {
+
+HttpResponse PluginRoutes::test_notifier(const std::string_view body) {
+  const auto request = parse_request(body, false);
+  if (!request) return make_error_response(ApiError::invalid_request);
+  const auto chosen = choices();
+  if (!chosen) return unreadable_choices();
+  const auto entries = discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen);
+  const auto entry = std::find_if(entries.begin(), entries.end(), [&request](const PluginEntry& e) { return e.id == request->id; });
+  if (entry == entries.end()) return refused("there is no plugin " + request->id + " in the plugins folder");
+  if (!entry->manifest || entry->manifest->kind != PluginKind::notifier) return refused(request->id + " is not a notifier plugin");
+  if (!settings_.test_notifier) {
+    return refused("this server runs no notifier plugins: one runs once it is on and its settings are filled in, after a restart");
+  }
+  const NotifierTest result = settings_.test_notifier(request->id);
+  return json_answer(200, std::string{"{\"ok\":"} + (result.ok ? "true" : "false") + ",\"reply\":" + json_text(result.reply) + "}\n");
 }
 
 }  // namespace secure_frontend

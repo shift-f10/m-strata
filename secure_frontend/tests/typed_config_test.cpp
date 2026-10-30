@@ -1950,11 +1950,10 @@ void slot_save_path_is_a_bounded_private_path() {
 // svc-side, :8096/:3698-3715); keep_files after T9-e (ImageService is D-9 out).
 // Owner decisions 2026-10-21 (session log step 12): listener.web_ui serves the built-in page;
 // listener.loopback_without_key is the one keyless listener — loopback only, no token.source.
-// GUI-first start-up (spec 2026-10-27 §5a): email alerts are optional at build time. Built in
-// (SECURE_FRONTEND_EMAIL_ALERTS), alerts.email.* is read and checked - the server, the IONOS-style TLS ports and modes,
-// the mailbox, 1-5 recipients, the events - with nothing that could break a mail header; built without, every
-// alerts.* row is refused by name.
-void email_alert_rows_follow_the_build() {
+// GUI-first start-up (spec 2026-10-27 §5a), now the email plugin's (plugin spec 2026-10-30, section 10): alerts.email.*
+// is read and checked in every build - the server, the IONOS-style TLS ports and modes, the mailbox, 1-5 recipients, the
+// events - with nothing that could break a mail header, so the first start can move it to plugins.email.*.
+void old_email_alert_rows_are_read_in_every_build() {
   ConfigFixture f;
   const std::map<std::string, std::string> ionos{{"alerts.email.enabled", "true"},
                                                  {"alerts.email.host", "\"smtp.ionos.com\""},
@@ -1965,7 +1964,6 @@ void email_alert_rows_follow_the_build() {
                                                  {"alerts.email.to", "[\"owner@example.com\"]"},
                                                  {"alerts.email.events", "[\"download_finished\", \"engine_stopped\"]"}};
   const auto result = with_literals(f, ionos);
-#if defined(SECURE_FRONTEND_EMAIL_ALERTS)
   const auto* config = config_of(result);
   expect(config != nullptr, "an IONOS account's settings validate: " + issues_of(result));
   if (config != nullptr) {
@@ -2023,10 +2021,36 @@ void email_alert_rows_follow_the_build() {
          "the alert rows validate alone");
   rows.entries["alerts.email.from"] = secure_frontend::ConfigDraftEntry{std::string{"not an address"}, secure_frontend::ConfigSource::file};
   expect(std::holds_alternative<secure_frontend::ConfigErrors>(secure_frontend::alerts_from_draft(rows)), "and refuse alone");
-#else
-  expect(has_issue(result, "alerts.email.enabled", ConfigIssueCode::invalid_value),
-         "a build without email alerts refuses the rows by name: " + issues_of(result));
-#endif
+  // the first start moves them (the owner's decision 6): every row to the email plugin's settings, alerts.email.enabled
+  // handed back as the plugin's on or off; a second time nothing moves
+  auto old_rows = secure_frontend::parse_config_text(render_config_json([&] {
+                                                       auto literals = f.literals;
+                                                       for (const auto& [row, literal] : ionos) literals[row] = literal;
+                                                       return literals;
+                                                     }()),
+                                                     f.dir);
+  auto* draft = std::get_if<secure_frontend::FrontendConfigDraft>(&old_rows);
+  expect(draft != nullptr, "the old rows read");
+  if (draft == nullptr) return;
+  const auto before = draft->entries.size();
+  const auto moved = secure_frontend::move_plugin_rows(*draft);
+  using V = secure_frontend::ConfigDraftValue;
+  expect(moved.moved == std::vector<std::string>{"alerts.email.enabled", "alerts.email.events", "alerts.email.from", "alerts.email.host",
+                                                 "alerts.email.port", "alerts.email.security", "alerts.email.to", "alerts.email.username"} &&
+             moved.email_enabled == std::optional<bool>{true} && !moved.search_enabled.has_value(),
+         "the rows moved, and email was on");
+  expect(draft->entries.at("plugins.email.host").value == V{std::string{"smtp.ionos.com"}} &&
+             draft->entries.at("plugins.email.port").value == V{std::int64_t{465}} &&
+             draft->entries.at("plugins.email.security").value == V{std::string{"ssl"}} &&
+             draft->entries.at("plugins.email.username").value == V{std::string{"alerts@example.com"}} &&
+             draft->entries.at("plugins.email.from").value == V{std::string{"alerts@example.com"}} &&
+             draft->entries.at("plugins.email.to").value == V{std::vector<std::string>{"owner@example.com"}} &&
+             draft->entries.at("plugins.email.events").value == V{std::vector<std::string>{"download_finished", "engine_stopped"}} &&
+             draft->entries.size() == before - 1U &&
+             std::none_of(draft->entries.begin(), draft->entries.end(), [](const auto& row) { return row.first.rfind("alerts.", 0) == 0U; }),
+         "each in its new place, the old ones gone");
+  expect(config_of(secure_frontend::validate(*draft)) != nullptr, "and the config still validates");
+  expect(secure_frontend::move_plugin_rows(*draft).moved.empty(), "a second time, nothing to move");
 }
 
 // Web search's old rows (spec 2026-10-27-web-search-design §2), now the search plugin's (plugin spec 2026-10-30, section
@@ -2581,7 +2605,7 @@ int main(int argc, char** argv) {
       {"session_rows_match_the_pin", session_rows_match_the_pin},
       {"slot_save_path_is_a_bounded_private_path", slot_save_path_is_a_bounded_private_path},
       {"web_ui_and_loopback_without_key_rows", web_ui_and_loopback_without_key_rows},
-      {"email_alert_rows_follow_the_build", email_alert_rows_follow_the_build},
+      {"old_email_alert_rows_are_read_in_every_build", old_email_alert_rows_are_read_in_every_build},
       {"old_web_search_rows_are_read_in_every_build", old_web_search_rows_are_read_in_every_build},
       {"model_name_row", model_name_row},
       {"models_keys_typed_and_described", models_keys_typed_and_described},
