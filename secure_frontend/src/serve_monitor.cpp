@@ -98,7 +98,7 @@ void append_decimal(std::string* out, const std::optional<double> value) {
 }
 
 template <typename T>
-void append_optional_count(std::string* out, const std::optional<T> value) {
+void append_optional_count(std::string* out, const std::optional<T>& value) {
   if (value.has_value()) append_count(out, static_cast<std::uint64_t>(*value));
   else out->append("null");
 }
@@ -488,7 +488,9 @@ std::string ServeMonitor::render_json(const MonitorView& view) const {
   {
     const std::optional<double> budget = loaded ? reading_number(cache_info_, "conversation_cache_mib") : std::nullopt;
     const std::optional<double> slots = loaded ? reading_number(cache_info_, "conversation_cache_slots") : std::nullopt;
-    const ConversationCacheState parked = loaded && conversation_cache_.has_value() ? *conversation_cache_ : ConversationCacheState{};
+    // (a reference, never a copy: GCC's optimiser warns of a copied optional's payload as maybe uninitialized)
+    static const ConversationCacheState kNoCache{};
+    const ConversationCacheState& parked = loaded && conversation_cache_.has_value() ? *conversation_cache_ : kNoCache;
     const auto whole = [](const std::optional<double> value) {
       return value.has_value() ? std::optional<std::uint64_t>{static_cast<std::uint64_t>(std::llround(*value))} : std::nullopt;
     };
