@@ -280,6 +280,31 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z45 (Windows box; owner-directed)
+
+The owner: "now let's work on making our multiengine plugin capable where for example a new model comes out that is not
+yet supported, our engine should have a published way so that we or another user can use those guidelines and create a
+library that we can just add later on and it will seamlessly integrate along with cards, settings, etc." and "it should
+have download cards as well for the model, mtp files if any, etc".
+
+- **The design:** `docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md`. It is based on two read-only
+  surveys of the engine launcher and of every place the server branches on `EngineProfile`.
+- **The plugin:** an `engine/families/<id>/` folder holding a versioned C ABI library and a `family.json` manifest. The
+  manifest declares:
+  - the GGUF architectures, tokenizer, chat template, thinking and tool format;
+  - the argument allowlist, card options, calibration steps and Monitor keys;
+  - its capabilities and its download entries (model files, MTP file, picture encoder, draft layer).
+- **The rest of the contract:**
+  - the launcher's `--family <id>`, with ABI, id and SHA-256 checks;
+  - a `FamilyDescriptor` behind every server switch (the built-in families get theirs from today's tables);
+  - an SDK with the wire protocol written once, plus the shared expert tiering;
+  - an authoring guide.
+- **The owner's decisions** (all three recommended):
+  - a declarative chat template, so no model-provided Jinja ever runs;
+  - approve each plugin in Settings, with the library's and manifest's SHA-256 pinned;
+  - re-package flint as a plugin as the first proof.
+- **Phases:** contract, descriptors, prompt format, downloads, trust, SDK and guide, proof. Nothing is built yet.
+
 ### Claude Code session, 2026-10-30 z44 (Windows box; owner-directed)
 
 The owner: "How about in the models section we create another tab, the same Compatibility Table we have on the readme
