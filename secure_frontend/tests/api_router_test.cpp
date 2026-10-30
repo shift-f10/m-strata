@@ -679,6 +679,11 @@ void web_ui_has_server_settings() {
   expect(js.find("\"listener.port\"") != std::string::npos && js.find("\"limits.engine.generation_timeout_s\"") != std::string::npos &&
              js.find("\"models.downloads_root\"") != std::string::npos && js.find("logs: [\"logging.engine_output\"]") != std::string::npos,
          "the four groups name their settings");
+  // the owner (2026-10-29): a build without make --debugging hides the Troubleshooting section (the server says which)
+  expect(js.find("$(\"logs-settings\").hidden = serverConfig.data.debugging !== true;") != std::string::npos &&
+             js.find("[\"key-settings\", \"server-settings\", \"limits-settings\", \"paths-settings\"].forEach(function (id) { $(id).hidden = false; });") !=
+                 std::string::npos,
+         "Troubleshooting shows only in a debugging build");
   // the two folders are chosen with the page's folder picker (spec Part 1, Folders), or typed
   expect(js.find("var CONFIG_FOLDERS = [\"models.downloads_root\", \"models.default_root\"];") != std::string::npos &&
              js.find("var picked = await pickFolder(label, ") != std::string::npos &&

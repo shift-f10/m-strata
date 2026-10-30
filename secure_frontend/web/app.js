@@ -3116,7 +3116,9 @@
     }
     try { serverConfig.data = JSON.parse(text); } catch (e) { return; }
     serverConfig.built = true;
-    ["key-settings", "server-settings", "limits-settings", "paths-settings", "logs-settings"].forEach(function (id) { $(id).hidden = false; });
+    ["key-settings", "server-settings", "limits-settings", "paths-settings"].forEach(function (id) { $(id).hidden = false; });
+    // Troubleshooting only in a make --debugging build (owner 2026-10-29), as the server says
+    $("logs-settings").hidden = serverConfig.data.debugging !== true;
     renderServerConfig();
     renderKey();
     showSettingsSubtab();

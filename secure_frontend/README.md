@@ -389,7 +389,9 @@ config rows (`listener.host`, `.port`, `.allow_remote`, `.allow_wildcard_bind`, 
 `POST /v1/strata/config/settings` (`{"values":{key: value or null}}`; null or an empty text is the default). A save is
 held to the server's start-up rules on the whole file: a problem the change brings is refused by name and nothing is
 written. Saved settings apply at the next start; a command-line option (`--port`, `--host`, ...) still overrides the
-file for the start that names it.
+file for the start that names it. Troubleshooting is a debugging build's only (`make --debugging`; owner 2026-10-29):
+the answer's `"debugging"` says which build this is, any other build neither lists nor saves `logging.engine_output`
+(it refuses it by name; the config file still takes it), and the page hides the section.
 
 **Model folders** (every build with model control): "Use model folders as they are, even if other
 users of this PC can access them" saves `roots.allow_untrusted_media` to the config file; it applies at the next start.

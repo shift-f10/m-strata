@@ -269,9 +269,11 @@ void warn_of_engine_output(const FrontendConfig& config) {
                  "output unless the config turns them off. Build again without --debugging for everyday use.\n";
   }
   if (!config.logging.engine_output) return;
+  // Settings > Troubleshooting is a debugging build's only (owner 2026-10-29); any other build names the config row
   std::cerr << "strata: warning: logging.engine_output is true: the engine's own output goes to this log, and it can hold "
                "what the engine prints of your prompts and the paths of your model files. Turn it off when you are done "
-               "(Settings > Troubleshooting), keep this log private, and look through it before you share it.\n";
+            << (secure_frontend::debugging_build() ? "(Settings > Troubleshooting)" : "(logging.engine_output in the config file)")
+            << ", keep this log private, and look through it before you share it.\n";
 }
 
 int server_run_impl(const FrontendConfig& config, const bool expert) {

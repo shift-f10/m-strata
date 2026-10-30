@@ -130,13 +130,15 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   `/v1/models`, `/health` and `/metrics`.
 - **Settings tab:** the API key (show, copy, rotate), where the server listens and which PCs may use it, limits and
   timeouts, the download folders, and the model folders (as they are, or on network shares - experimental), email
-  alerts, web search, and **Troubleshooting** (the engine's own output in the server log).
+  alerts, web search, and - in a debugging build - **Troubleshooting** (the engine's own output in the server log).
 - **Model folders on network shares - experimental, off by default:** a model folder may be on an SMB/CIFS share
   or an NFS mount once Settings turns it on; see
   [Model folders on network shares](#model-folders-on-network-shares-experimental) for what it means and its status.
 - **A debugging build** (`make --debugging`, `install.bat -Debugging`): verbose logs to find out why a model does not
   start or calibrate, said before the build, at every start of the server, and in the window and terminal apps,
-  which ask before they start it.
+  which ask before they start it. Only a debugging build has Settings > Troubleshooting.
+- **The install scripts ask what to build:** email alerts, web search, the window app, the terminal app, the
+  GLM/DeepSeek/MiniMax engines, raon1, pictures, and a debugging build - one question each, Enter for the default.
 
 **The window app**
 
@@ -251,7 +253,11 @@ model does not.
 
 ### Install with one script (Windows)
 
-`install.bat` looks at what the PC has and lists what is missing and what it will do. After you answer `y` it:
+`install.bat` first asks what to build, one question each - email alerts, web search, the window app
+(`strata-window`), the terminal app (`strata-tui`), the GLM-5.3/DeepSeek-V4.1/MiniMax-M3.1 engines (Project Maya's,
+the largest part of the build), Raon-1-mini, pictures in Qwen chats (`strata-vision`), and a debugging build. Enter
+takes the default: everything but a debugging build. Qwen, Gemma 4 and flint are always built. Then it looks at what
+the PC has and lists what is missing and what it will do. After you answer `y` it:
 - installs what is missing with winget, Microsoft's package manager that comes with Windows: Git, Python 3.12,
   Visual Studio Build Tools 2022 with the C++ workload, and the CUDA Toolkit 13.0. If Build Tools are already
   installed without C++, it adds the C++ workload to them. Each installer asks Windows for administrator rights
@@ -287,11 +293,12 @@ To see first what it would do, without changing anything, run `.\install.bat -Pl
 | Option | What it does |
 | --- | --- |
 | `-Out D:\Apps\M-Strata` | The out folder (default: `M-Strata-app` beside the repository; `M-Strata-app-2` and so on if that one is taken). It must be new or empty. |
-| `-With email,search,window,tui` | The optional features (default: all four, so both front ends are built and you pick one to start); `window` adds `strata-window` and its SDK, `tui` adds `strata-tui`. Leave one out to build only the other, for example `-With email,search,tui`. |
+| `-With email,search,window,tui` | Answers the four feature questions (without it, and without `-Yes`, they are asked; their default is all four, so both front ends are built and you pick one to start); `window` adds `strata-window` and its SDK, `tui` adds `strata-tui`. Leave one out to build only the other, for example `-With email,search,tui`. |
+| `-Without maya,raon1,vision` | Answers the three engine questions: leave the GLM/DeepSeek/MiniMax engines (`maya`), Raon-1-mini (`raon1`) or the picture encoder (`vision`) out (`make --without`). |
 | `-GgmlDir D:\llama.cpp` | Use this llama.cpp checkout (at the pinned commit) instead of fetching one. |
 | `-Plan` | Only list what it would install, fetch and build; nothing changes. |
-| `-Yes` | Do not ask before installing. |
-| `-Debugging` | Build a server that logs verbosely, to find out why a model does not start or calibrate (`make --debugging`, below). The plan says what that logs and what to take care of before anything is installed. |
+| `-Yes` | Ask nothing: build the defaults (everything but a debugging build) and install without asking. |
+| `-Debugging` | Answers the debugging question with yes: a server that logs verbosely, to find out why a model does not start or calibrate (`make --debugging`, below). The plan says what that logs and what to take care of before anything is installed. |
 
 Running it again is safe: it skips what is there and builds into a new folder.
 
@@ -306,9 +313,11 @@ git clone --recurse-submodules https://github.com/shift-f10/m-strata.git
 cd m-strata && ./install.sh
 ```
 
-Its options are `--out DIR`, `--with email,search,window,tui`, `--ggml-dir DIR`, `--plan` and `--yes`, as above. Without
-`--with` it builds both front ends on a desktop, and only `strata-tui` on a machine with no display (no `DISPLAY` or
-`WAYLAND_DISPLAY`, as over SSH), so the window's GTK packages are not installed there. On another distribution, install
+It asks the same questions first. Its options are `--out DIR`, `--with email,search,window,tui`,
+`--without maya,raon1,vision`, `--ggml-dir DIR`, `--debugging`, `--plan` and `--yes`, as above. The window's question
+defaults to yes on a desktop and to no on a machine with no display (no `DISPLAY` or `WAYLAND_DISPLAY`, as over SSH),
+so its GTK packages are not installed there; `--yes` builds both front ends on a desktop and only `strata-tui`
+without a display. On another distribution, install
 the packages of the table above its way and follow the steps by hand below.
 
 ### Install by hand (Windows)
@@ -408,7 +417,7 @@ python3 -m venv .venv-dev && .venv-dev/bin/python -m pip install cmake ninja
 | `--jobs N` | Parallel compile jobs (default: the CPU count). |
 | `--build-dir DIR` | Where the builds are kept (default `out/make-build`). |
 | `--plan` | Print the commands only. |
-| `--debugging` | A debugging build, to find out why a model does not start or calibrate: the server logs one line per request (never its text) and the engine's own output (`logging.requests`, `logging.engine_output`) unless the config turns them off, warns of it at every start, and the About tab lists `debugging` among the features. `strata-window` opens with a pop-up saying so and starts the server only on **Yes** (No, the default, exits); `strata-tui` shows the same on a screen of its own and starts the server only on **y** (any other key quits). The engine's output can hold what the engine prints of your prompts and the paths of your model files: run it on your own PC, keep the server's log private, look through a log before you share it, and build again without `--debugging` for everyday use. make prints this before and after the build and puts it in the folder's README.txt; `install.sh --debugging` and `install.bat -Debugging` pass it on. Any build can turn the engine's output on alone: Settings > Troubleshooting. |
+| `--debugging` | A debugging build, to find out why a model does not start or calibrate: the server logs one line per request (never its text) and the engine's own output (`logging.requests`, `logging.engine_output`) unless the config turns them off, warns of it at every start, and the About tab lists `debugging` among the features. `strata-window` opens with a pop-up saying so and starts the server only on **Yes** (No, the default, exits); `strata-tui` shows the same on a screen of its own and starts the server only on **y** (any other key quits). The engine's output can hold what the engine prints of your prompts and the paths of your model files: run it on your own PC, keep the server's log private, look through a log before you share it, and build again without `--debugging` for everyday use. make prints this before and after the build and puts it in the folder's README.txt; `install.sh --debugging` and `install.bat -Debugging` pass it on, and their questions ask for it. Only a debugging build has Settings > Troubleshooting, which turns the engine's output off without a new build; another build turns it on alone with `logging.engine_output` in its config file. |
 
 The first build compiles the CUDA engine and takes a while; later builds are incremental (`out/make-build`). The out
 folder holds only what runs:
@@ -531,7 +540,8 @@ is left as it was. An empty box puts the setting back to its default.
   use shared folders without changing their permissions (then other users of the PC can read or change those files).
   "Use model folders on network shares (SMB/CIFS, NFS)" - **experimental** - lets a model folder be on a share; see
   [Model folders on network shares](#model-folders-on-network-shares-experimental).
-- **Troubleshooting:** "Write the engine's own output to the server log" (`logging.engine_output`), to find out why a
+- **Troubleshooting** (a `--debugging` build only): "Write the engine's own output to the server log"
+  (`logging.engine_output`; another build takes it in the config file only), to find out why a
   model does not start or calibrate: each line the engine prints reaches the log as `[engine] ...`. That output can
   hold what the engine prints of your prompts and the paths of your model files, so the server warns of it at every
   start: turn it off when you are done, and look through a log before you share it. A `--debugging` build has it on.
@@ -787,14 +797,14 @@ for a real install, which makes its own key at the first start.
 
 | What you see | Why, and what to do |
 | --- | --- |
-| No Settings, email or web search on the page | Those sections answer this PC and the machines `models.control_remote_networks` lists; open the page from one of them. A build without `--with email,search` has no email or search sections at all. |
+| No Settings, email or web search on the page | Those sections answer this PC and the machines `models.control_remote_networks` lists; open the page from one of them. A build without `--with email,search` has no email or search sections at all, and one without `--debugging` no Troubleshooting. |
 | A new model family, download or setting is missing | The running server is an older build: rebuild the out folder and restart from it. |
 | "Other users of this PC can change files in this folder" | Make the folder private when the page asks, or turn on Settings > Model folders. |
 | A GLM download shows its size as "read from Hugging Face at the start" | Project Maya's catalog pins each file's SHA-256 but not its size; the server reads the size when the download starts. |
 | A web-search answer is empty | It ran out of tokens while reasoning (`finish_reason` `length`): raise `max_tokens`. If every search found nothing, the search box says why; see "Web search through SearXNG" for more engines. |
 | An answer stops early, marked "Max tokens" (`length`), with room left in the context | It reached the longest answer the server allows (`limits.engine.generation_timeout_s`, half an hour by default; servers built before 2026-10-29 stopped at 120 s). Raise **Longest answer (minutes)** on the model's card, or **Longest answer (seconds)** in Settings → Limits and timeouts for every model, and restart the model or the server. |
 | The engine takes long to stop with a big model | Freeing tens of GB of pinned RAM takes time; the server waits, then reports it. |
-| A model does not start, or its calibration stops ("the engine did not start") | Turn on Settings > Troubleshooting (or build with `--debugging`), restart, try again, and read the `[engine]` lines in the log (the console, or the window app's Server log): the engine says why. After `engine generation N ended: crashed` the next line gives its exit code (`0xC0000005` an access violation, `0xC0000409` an abort). Turn it off afterwards. |
+| A model does not start, or its calibration stops ("the engine did not start") | Build with `--debugging` (or set `logging.engine_output` to `true` in the config file), restart, try again, and read the `[engine]` lines in the log (the console, or the window app's Server log): the engine says why. After `engine generation N ended: crashed` the next line gives its exit code (`0xC0000005` an access violation, `0xC0000409` an abort). Turn it off afterwards. |
 | The Monitor shows no GPU load, memory, temperature or power | Its readings come from `nvidia-smi`. A field it cannot read only blanks that reading; when there is no reading at all, the GPU card's grey line quotes what `nvidia-smi` answered (for example `Failed to initialize NVML: ...`, usually a driver that needs a restart or reinstall). |
 | A Qwen3.6 card has no MTP draft layer to choose | Its draft layer is part of the model file: the card says whether the file has one. A file without one runs without MTP; an Unsloth Qwen3.6 GGUF carries it. |
 | A model folder on a network share is refused | Turn on Settings > Model folders > Use model folders on network shares (experimental) and restart; a mapped drive must be mapped for the account the server runs as. |

@@ -1,5 +1,6 @@
 #include "secure_frontend/config_defaults.hpp"
 #include "secure_frontend/api_errors.hpp"
+#include "secure_frontend/frontend_config.hpp"
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/request_router.hpp"
 #include "secure_frontend/socket_io.hpp"
@@ -1251,8 +1252,17 @@ void engine_output_reaches_the_log_only_when_asked() {
            "the engine's lines, one per log line: " + log);
     expect(log.find("strata: warning: logging.engine_output is true: the engine's own output goes to this log") != std::string::npos,
            "the start says so, with what it can hold");
+    // and where to turn it off: Settings > Troubleshooting, which only a debugging build has (owner 2026-10-29), else
+    // the config file
+    expect(log.find(secure_frontend::debugging_build() ? "Turn it off when you are done (Settings > Troubleshooting)"
+                                                        : "Turn it off when you are done (logging.engine_output in the config file)") !=
+               std::string::npos,
+           "the notice says where to turn it off in this build: " + log);
   }
-  auto server = start_server({}, {"--stderr-cache-lines"});
+  // off: the default, except in a debugging build (make --debugging), which has it on unless the config turns it off
+  auto server = start_server(secure_frontend::debugging_build() ? std::map<std::string, std::string>{{"logging.engine_output", "false"}}
+                                                               : std::map<std::string, std::string>{},
+                             {"--stderr-cache-lines"});
   if (!server) return;
   std::this_thread::sleep_for(1s);
   const std::string log = server->stderr_text();

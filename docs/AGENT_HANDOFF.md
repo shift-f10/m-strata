@@ -280,6 +280,57 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-29 z38 (Windows box; owner-directed; committed with this entry and pushed on the owner's "commit and push once done")
+
+The owner: "when the "--debugging on" was not provided in the install/builder, I want the settings to hide the
+Troubleshooting section. In the install section, we should ask these questions, if they want email alerts, search,
+etc so that they can build exactly what they want".
+
+- **Troubleshooting only in a debugging build.**
+  - `POST /v1/strata/config` answers `"debugging"` (`debugging_build()`, make `--debugging`).
+  - Only such a build lists and saves `logging.engine_output`, the Troubleshooting row (`managed()` in
+    `config_routes.cpp`). Any other build refuses it by name, as a row the tab does not manage. The config file still
+    takes it.
+  - The page hides `logs-settings` unless `debugging` is true.
+  - The TUI's Settings lists the server's rows, so it has no row for it.
+  - With the row on, a non-debugging build's start-up notice names `logging.engine_output in the config file`, not
+    Settings > Troubleshooting.
+- **The installers ask what to build.** `install.ps1` and `install.sh` ask one question for each of make's choices,
+  before "Looking at what this PC has" (Linux's packages depend on the answers):
+  - email alerts, web search, the window app, the terminal app;
+  - the Maya engines (GLM/DeepSeek/MiniMax), Raon-1-mini, pictures (`vision`);
+  - a debugging build.
+  - Enter takes the default: everything but debugging. On Linux the window defaults to no without a display.
+  - `-With`/`--with`, the new `-Without`/`--without` (make's `--without`) and `-Debugging`/`--debugging` answer them
+    on the command line; `-Yes`/`--yes` asks nothing.
+  - A name outside make's lists is refused before anything is installed. The lists are checked against make.py's
+    `OPTIONAL_FEATURES`/`LEAVE_OUT`.
+  - Windows no longer passes `--with` with nothing after it: PowerShell 5.1 drops an empty argument.
+- **Also fixed:** `engine_output_reaches_the_log_only_when_asked` failed in a debugging tree. Its "off" half started
+  with an empty config, which a debugging build reads as on. It now turns the row off explicitly there; the normal
+  build's path is unchanged.
+- **Proof**:
+  - RED first: `troubleshooting_is_offered_only_in_a_debugging_build` (config routes), the page check in
+    `web_ui_has_server_settings`, the notice check in `engine_output_reaches_the_log_only_when_asked`, and
+    `test_the_installers_ask_what_to_build` and `test_the_window_question_defaults_to_no_without_a_display`.
+  - GREEN with MSVC, in a normal tree (`out/build/shares`) and a debugging tree (`out/build/debugging`): 166/166 each
+    (config routes, router, typed config, server CLI, TUI, the engine-output case).
+  - GREEN on Linux gcc 13.3 and clang 18.1: 168/168 each. `tools/secure/test_install.py` and `test_make.py`: 42/42,
+    including PowerShell's parser and `sh -n`.
+  - Live, on scratch servers (port 18091). The normal build answered `"debugging":false`, without the row, and refused
+    a save of it by name; the page showed every card but Troubleshooting. The debugging build answered
+    `"debugging":true` with the row, and the page showed Troubleshooting with its switch.
+  - Live, `install.bat -Plan` in a real console (hidden conhost), the questions answered. The plan's make line
+    followed them, for example `--with email,search,window,tui --without maya`. With piped answers, an invalid
+    "maybe" was asked again.
+  - Live, `install.sh --plan` in WSL under `script` (a pty):
+    - answers gave `--with search,window --without raon1`;
+    - `--with email,tui` asked only the rest;
+    - with no display, the window question read `[y/N]` with "(no display here)";
+    - `--yes` asked nothing;
+    - `--without qwen` was refused.
+- **Not verified**: a full install run with the questions (only `-Plan`/`--plan`), and the Linux window build.
+
 ### Claude Code session, 2026-10-29 z37 (Windows box; owner-directed; committed with this entry, not pushed)
 
 The owner: "clicking calibrate does not stop the current running model and empty the vram before running the
