@@ -280,6 +280,29 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z62 (Windows box; owner-directed)
+
+The Linux installer on Ubuntu 22.04 (the owner's Azure VM, "it did not fully install"; then "the fixes you make there,
+make sure you note them and incorporate them here so the linux installer works as we push later").
+- **What happened**: install.sh installed the CUDA Toolkit (3.3 GB) and only then found GCC 11 and stopped.
+- **The fix**: the compiler is decided in step 1, before anything is installed. GCC 13 or newer as `gcc` is used as
+  it is; `gcc-13`/`g++-13` beside an older gcc are what the build uses (`CC`, `CXX`, `CUDAHOSTCXX`, exported before
+  make; make passes its environment to CMake); on Ubuntu 22.04 the plan installs them from Ubuntu's toolchain PPA
+  (with `software-properties-common`), before the CUDA Toolkit's download; Ubuntu 24.04+ and Debian 13+ get GCC 13+
+  with build-essential; anything else stops at once with why. The system's own gcc is never changed by the script
+  (on the VM itself the owner's go-ahead made gcc-13 the default through update-alternatives, before this fix).
+  On main: replayed from the plugins branch (the owner, 2026-10-30, split the plugin work off), without that
+  branch's signing-key lines.
+  `M_STRATA_OS_RELEASE` lets the tests run the script against a stand-in system. The README's system table and Linux
+  install paragraph say so.
+- **Proof**: RED first (`test_install_sh_finds_gcc_13_before_installing_anything`, run in WSL against stand-in
+  Ubuntu 22.04 / 24.04 and Debian 12 systems with fake compilers on a PATH without the real ones;
+  `test_the_gcc_check_comes_before_any_install`), then GREEN: test_install.py 16 passed, 1 skipped in WSL, 15 passed,
+  2 skipped on Windows; the script parses (`sh -n`), `--help` prints its whole header.
+- **The VM** (not in the repository; noted here): Ubuntu 22.04.5, a Tesla T4 (sm_75), 4 CPUs. Its first run of the
+  GitHub checkout then stopped in the engine's CMake (gemma4's per-unit ISA flags were MSVC-only), which is fixed in
+  its own commit; the engine is being built there from this repository's state to find what else Linux needs.
+
 ### Claude Code session, 2026-10-30 z44 (Windows box; owner-directed)
 
 The owner: "How about in the models section we create another tab, the same Compatibility Table we have on the readme

@@ -13,8 +13,10 @@
 #                                                   start or calibrate (the plan says what to take care of)
 #
 # What it does, each step only when needed:
-#   1. finds what the build needs: git, Python 3.10+ with venv, GCC 13+ (build-essential), pkg-config, the CUDA
-#      Toolkit 13.0, OpenSSL's headers (--with email) and GTK 3 / WebKitGTK 4.1 / Ayatana AppIndicator (--with window);
+#   1. finds what the build needs: git, Python 3.10+ with venv, GCC 13+ (build-essential; on Ubuntu 22.04 gcc-13 from
+#      Ubuntu's toolchain PPA, which the build then uses while the system's gcc stays), pkg-config, the CUDA Toolkit
+#      13.0, OpenSSL's headers (--with email) and GTK 3 / WebKitGTK 4.1 / Ayatana AppIndicator (--with window) - and
+#      stops before installing anything when the system cannot have them;
 #   2. lists what is missing and asks, then installs it with apt (sudo) - the CUDA Toolkit from NVIDIA's own apt
 #      repository (its cuda-keyring package). The NVIDIA driver is not installed here (your distribution's way);
 #   3. when this script is not inside the repository, clones it (with its submodules) beside the script;
@@ -22,8 +24,9 @@
 #   5. fetches the pinned llama.cpp commit the engine builds ggml from (.toolchains/llama.cpp; an existing ../llama.cpp at
 #      that commit is used as it is);
 #   6. runs make.sh into a new folder and says how to start it.
-# Downloads: apt packages (your distribution's and NVIDIA's signed repositories), Python packages from PyPI, the
-# repositories from GitHub. Nothing else is downloaded, and nothing is sent anywhere.
+# Downloads: apt packages (your distribution's and NVIDIA's signed repositories, and on Ubuntu 22.04 Ubuntu's
+# toolchain PPA for GCC 13), Python packages from PyPI, the repositories from GitHub. Nothing else is downloaded, and
+# nothing is sent anywhere.
 set -eu
 
 # what the build pins (keep in step with engine/CMakeLists.txt, README.md and install.ps1: tools/secure/test_make.py)
@@ -32,6 +35,8 @@ LLAMA_URL=https://github.com/ggml-org/llama.cpp.git
 REPO_URL=https://github.com/shift-f10/m-strata.git
 CUDA_PACKAGE=cuda-toolkit-13-0
 CUDA_ROOT=/usr/local/cuda-13.0
+# the system's description (tests point it at a stand-in's)
+os_release=${M_STRATA_OS_RELEASE:-/etc/os-release}
 
 out=""
 with=""
@@ -52,7 +57,7 @@ while [ $# -gt 0 ]; do
     --plan) plan=1; shift ;;
     --debugging) debugging=1; debugging_given=1; shift ;;
     --yes) yes=1; shift ;;
-    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     *) echo "install: unknown option $1 (see ./install.sh --help)" >&2; exit 2 ;;
   esac
 done
@@ -128,8 +133,8 @@ fi
 step 'Looking at what this PC has'
 [ "$(uname -s)" = Linux ] || fail 'install.sh is for Linux; on Windows run install.bat'
 [ "$(uname -m)" = x86_64 ] || fail 'M-Strata builds on x86_64 only'
-[ -r /etc/os-release ] || fail 'no /etc/os-release: install the packages by hand (README.md, Install)'
-. /etc/os-release
+[ -r "$os_release" ] || fail "no $os_release: install the packages by hand (README.md, Install)"
+. "$os_release"
 case "${ID:-}" in
   ubuntu) repo_os="ubuntu$(printf '%s' "$VERSION_ID" | tr -d .)" ;;
   debian) repo_os="debian$VERSION_ID" ;;
@@ -137,7 +142,33 @@ case "${ID:-}" in
 esac
 command -v apt-get >/dev/null 2>&1 || fail 'apt-get was not found'
 
+# GCC 13 or newer, the build's C++20 (the owner's Azure VM, 2026-10-30: Ubuntu 22.04 has GCC 11, and this used to be found
+# only after the CUDA Toolkit was installed). Ubuntu 24.04+ and Debian 13+ have it as gcc; gcc-13/g++-13 beside an older
+# gcc are what the build uses (CC, CXX, CUDAHOSTCXX: the system's gcc stays as it is); Ubuntu 22.04 gets them from
+# Ubuntu's toolchain PPA; anything else stops here, before anything is installed.
+gcc_version() { "$1" -dumpversion 2>/dev/null | cut -d. -f1; }
+gcc_major=$(gcc_version gcc || true)
+gcc_major=${gcc_major:-0}
+release_major=${VERSION_ID%%.*}
+compiler=""
+gcc_ppa=0
+if [ "$gcc_major" -ge 13 ]; then
+  say "  GCC: $gcc_major"
+elif command -v gcc-13 >/dev/null 2>&1 && command -v g++-13 >/dev/null 2>&1; then
+  compiler=13
+  say "  GCC 13: gcc-13 and g++-13 (the build uses them; the system's gcc is $gcc_major)"
+elif [ "$ID" = ubuntu ] && [ "$release_major" = 22 ]; then
+  compiler=13
+  gcc_ppa=1
+  say "  GCC 13: missing - will install gcc-13 and g++-13 from Ubuntu's toolchain PPA (the system's gcc stays as it is)"
+elif [ "$gcc_major" = 0 ] && { { [ "$ID" = ubuntu ] && [ "$release_major" -ge 24 ]; } || { [ "$ID" = debian ] && [ "$release_major" -ge 13 ]; }; }; then
+  say "  GCC: comes with build-essential (13 or newer on $PRETTY_NAME)"
+else
+  fail "GCC 13 or newer is needed (this system has GCC $gcc_major): Ubuntu 24.04 or newer, or Debian 13, has it; on Ubuntu 22.04 this script installs it"
+fi
+
 packages="git python3 python3-venv build-essential pkg-config wget ca-certificates"
+if [ "$gcc_ppa" = 1 ]; then packages="$packages software-properties-common"; fi  # (add-apt-repository)
 if has_feature email; then packages="$packages libssl-dev"; fi
 if has_feature window; then packages="$packages libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev"; fi
 missing=""
@@ -173,6 +204,9 @@ fi
 
 step 'The plan'
 if [ -n "$missing" ]; then say "  sudo apt-get install$missing"; fi
+if [ "$gcc_ppa" = 1 ]; then
+  say "  sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test, then sudo apt-get install -y gcc-13 g++-13 (Ubuntu's toolchain PPA)"
+fi
 if [ -z "$cuda" ]; then say "  NVIDIA's cuda-keyring for $repo_os, then sudo apt-get install $CUDA_PACKAGE"; fi
 if [ "$in_repo" = 0 ]; then say "  clone $REPO_URL (with its submodules) into $repo"; fi
 say "  CMake and Ninja into $repo/.venv-dev (pip, from PyPI)"
@@ -180,7 +214,8 @@ if [ "$ggml_given" = 1 ]; then say "  llama.cpp: $ggml, as it is"; else say "  l
 make_flags=""
 [ "$debugging" = 1 ] && make_flags="--debugging"
 if [ -n "$without" ]; then make_flags="--without $without${make_flags:+ $make_flags}"; fi
-say "  make.sh --out $out --with $with${make_flags:+ $make_flags}"
+if [ "$compiler" = 13 ]; then make_env="CC=gcc-13 CXX=g++-13 CUDAHOSTCXX=g++-13 "; else make_env=""; fi
+say "  ${make_env}make.sh --out $out --with $with${make_flags:+ $make_flags}"
 if [ "$debugging" = 1 ]; then
   say ''
   say "  --debugging: the server will log verbosely, to find out why a model does not start or calibrate. It logs"
@@ -204,6 +239,13 @@ if [ -n "$missing" ]; then
   # shellcheck disable=SC2086 # the list splits into packages
   sudo apt-get install -y $missing
 fi
+if [ "$gcc_ppa" = 1 ]; then
+  # before the CUDA Toolkit's download: the compiler is the smaller step, and the one this system may refuse
+  step "GCC 13 from Ubuntu's toolchain PPA"
+  sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+  sudo apt-get update
+  sudo apt-get install -y gcc-13 g++-13
+fi
 if [ -z "$cuda" ]; then
   step 'Installing the CUDA Toolkit 13.0'
   keyring=$(mktemp -d)
@@ -217,8 +259,13 @@ if [ -z "$cuda" ]; then
   cuda=$CUDA_ROOT
 fi
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' || fail 'Python 3.10 or newer is needed'
-gcc_major=$(gcc -dumpversion | cut -d. -f1)
-[ "$gcc_major" -ge 13 ] || fail "GCC 13 or newer is needed (this system has GCC $gcc_major): Ubuntu 24.04 or newer has it"
+if [ "$compiler" = 13 ]; then
+  [ "$(gcc_version gcc-13 || echo 0)" -ge 13 ] || fail 'gcc-13 is not usable after its install'
+  export CC=gcc-13 CXX=g++-13 CUDAHOSTCXX=g++-13  # make's CMake runs take them; the system's gcc stays
+else
+  gcc_major=$(gcc_version gcc || true)
+  [ "${gcc_major:-0}" -ge 13 ] || fail "GCC 13 or newer is needed (this system has GCC ${gcc_major:-none}): Ubuntu 24.04 or newer has it"
+fi
 
 # --- 3. the repository -------------------------------------------------------------------------------------------------
 if [ "$in_repo" = 0 ]; then
