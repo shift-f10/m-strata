@@ -37,7 +37,7 @@ std::string decimal_text(const double value) {
   return ec == std::errc{} ? std::string{buffer, end} : std::string{"?"};
 }
 
-constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 + 1 + 2 + 1 + 1 + 2 + 4 + 5 + 1 + 1 /* roots.allow_untrusted_media */ + 1 /* glm.kv */ + 3 /* listener.login_link, models.default_engine, models.default_root */ + 8 /* alerts.email.* */ + 1 /* models.control_remote_networks */ + 5 /* search.* */ + 2 /* vision.mmproj, vision.gpu */ + 2 /* glm.pcie_share, glm.cpu_lane */ + 1 /* logging.engine_output */ + 1 /* roots.allow_network_shares */> kSchema{{
+constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 + 1 + 2 + 1 + 1 + 2 + 4 + 5 + 1 + 1 /* roots.allow_untrusted_media */ + 1 /* glm.kv */ + 3 /* listener.login_link, models.default_engine, models.default_root */ + 8 /* alerts.email.* */ + 1 /* models.control_remote_networks */ + 5 /* search.* */ + 2 /* vision.mmproj, vision.gpu */ + 2 /* glm.pcie_share, glm.cpu_lane */ + 1 /* logging.engine_output */ + 1 /* roots.allow_network_shares */ + 1 /* tools.max_rounds */> kSchema{{
     {"schema_version", T::integer, false, 1, 1, d::kSchemaVersion, false, "", "",
      "Config format version; must be 1. Required in a config file."},
     {"listener.host", T::string, false, 0, 0, 0, false, "127.0.0.1", "--host",
@@ -437,16 +437,18 @@ constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 
      "1-5 addresses the alerts go to. Needed with alerts.email.enabled."},
     {"alerts.email.events", T::string_array, false, 0, 0, 0, false, "", "",
      "Which alerts are sent: download_finished, download_failed, calibration_finished, calibration_failed, engine_stopped, server_started (absent: all)."},
-    // Web search (docs/superpowers/specs/2026-10-27-web-search-design.md §2), read only in a build with SECURE_FRONTEND_WEB_SEARCH.
+    // Web search's old rows (spec 2026-10-27-web-search-design §2): read in every build, and moved at the first start to
+    // the search plugin's settings (plugins.search.*) and tools.max_rounds (plugin spec 2026-10-30, section 10).
     {"search.enabled", T::boolean, false, 0, 0, 0, false, "", "",
-     "Let the model search the web through a SearXNG instance when it is unsure or the answer needs recent information (a build with SECURE_FRONTEND_WEB_SEARCH only; any other build refuses search.*). The searches leave this PC: what the model searches for comes from the chat."},
+     "Moved at the first start: the web search plugin's on or off (the Plugins tab)."},
     {"search.url", T::string, false, 0, 0, 0, false, "", "",
-     "The SearXNG instance, http(s)://host[:port][/path], with the JSON format on (its settings.yml: search.formats lists json). Needed with search.enabled."},
-    {"search.results", T::integer, false, 1, 10, 5, false, "", "", "Results the model gets per search (1-10)."},
-    {"search.max_rounds", T::integer, false, 1, 8, 8, false, "", "",
-     "Searches one answer may make (upstream's mcp.max_rounds, 1-8)."},
-    {"search.timeout_s", T::integer, false, 5, 120, 30, false, "", "",
-     "Seconds each step of a search may take: the connection, the request, each read of the reply (5-120)."},
+     "Moved at the first start to plugins.search.url: the SearXNG instance, http(s)://host[:port][/path], with the JSON format on."},
+    {"search.results", T::integer, false, 1, 10, 5, false, "", "", "Moved at the first start to plugins.search.results (1-10)."},
+    {"search.max_rounds", T::integer, false, 1, 8, 8, false, "", "", "Moved at the first start to tools.max_rounds (1-8)."},
+    {"search.timeout_s", T::integer, false, 5, 120, 30, false, "", "", "Moved at the first start to plugins.search.timeout_s (5-120)."},
+    // Tool plugins (plugin spec 2026-10-30, section 10): the rounds of tool calls one answer may make.
+    {"tools.max_rounds", T::integer, false, 1, 8, 8, false, "", "",
+     "Rounds of tool calls (a web search, any tool plugin's) one answer may make before the model answers from what it found (upstream's mcp.max_rounds, 1-8)."},
 }};
 
 void add(ConfigErrors& errors, std::string key, const ConfigIssueCode code, std::string reason) {
@@ -824,8 +826,8 @@ AlertsConfig read_alerts(DraftReader& read, const FrontendConfigDraft& draft, Co
   return alerts_config;
 }
 
-// Web search (spec 2026-10-27-web-search-design §2): search.*, only in a build that has it (any search.* row is refused by
-// name otherwise). Each row's value is checked in every build, as alerts.* are.
+// Web search's old rows (spec 2026-10-27-web-search-design §2): search.*, read in every build so they can be moved to the
+// search plugin's settings at the first start (plugin spec 2026-10-30, section 10); each row's value is still checked.
 SearchConfig read_search(DraftReader& read, const FrontendConfigDraft& draft, ConfigErrors& errors) {
   SearchConfig search;
   search.enabled = read.boolean("search.enabled");
@@ -836,14 +838,6 @@ SearchConfig read_search(DraftReader& read, const FrontendConfigDraft& draft, Co
   search.results = static_cast<std::size_t>(read.integer("search.results"));
   search.max_rounds = static_cast<std::size_t>(read.integer("search.max_rounds"));
   search.timeout = std::chrono::seconds(read.integer("search.timeout_s"));
-  if (!web_search_built()) {
-    for (const auto& [path, entry] : draft.entries) {
-      if (path.rfind("search.", 0) == 0U) {
-        add(errors, path, ConfigIssueCode::invalid_value, "this build has no web search (built without SECURE_FRONTEND_WEB_SEARCH)");
-      }
-    }
-    return {};
-  }
   if (search.enabled && !draft.entries.contains("search.url")) {
     add(errors, "search.url", ConfigIssueCode::missing_required, "is needed with search.enabled");
   }
@@ -1006,6 +1000,28 @@ bool plugin_setting_path(const std::string_view path) noexcept {
   return dot != std::string_view::npos && name(rest.substr(0U, dot)) && name(rest.substr(dot + 1U));
 }
 
+MovedPluginRows move_plugin_rows(FrontendConfigDraft& draft) {
+  MovedPluginRows out;
+  // (old row, its new place; empty: none - search.enabled becomes the plugin's on or off, handed back)
+  constexpr std::array<std::pair<std::string_view, std::string_view>, 5> kMoves{{{"search.enabled", ""},
+                                                                                 {"search.max_rounds", "tools.max_rounds"},
+                                                                                 {"search.results", "plugins.search.results"},
+                                                                                 {"search.timeout_s", "plugins.search.timeout_s"},
+                                                                                 {"search.url", "plugins.search.url"}}};
+  for (const auto& [old_row, new_row] : kMoves) {
+    const auto found = draft.entries.find(old_row);
+    if (found == draft.entries.end()) continue;
+    if (new_row.empty()) {
+      if (const auto* on = std::get_if<bool>(&found->second.value)) out.search_enabled = *on;
+    } else if (!draft.entries.contains(new_row)) {
+      draft.entries.emplace(std::string{new_row}, found->second);
+    }
+    draft.entries.erase(found);
+    out.moved.emplace_back(old_row);
+  }
+  return out;
+}
+
 void set_debugging_logs(const DebuggingLogs logs) noexcept {
   g_debugging_requests.store(logs.requests);
   g_debugging_engine_output.store(logs.engine_output);
@@ -1107,6 +1123,8 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
   // unset, each follows the Debugging plugin (owner 2026-10-30; LoggingConfig)
   const std::optional<bool> log_requests = read.optional_boolean("logging.requests");
   const std::optional<bool> log_engine_output = read.optional_boolean("logging.engine_output");
+  // tool plugins (plugin spec 2026-10-30, section 10): the rounds of tool calls one answer may make
+  const ToolsConfig tools_config{static_cast<std::size_t>(read.integer("tools.max_rounds"))};
   // SP5 M1 Task 4: defaults.sampling.* (unset rows stay unset).
   SamplingDefaults sampling_defaults{
       read.decimal("defaults.sampling.temperature"), read.decimal("defaults.sampling.top_p"),
@@ -1722,7 +1740,7 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
                                       std::chrono::seconds(stall), std::chrono::seconds(connect), static_cast<std::uint32_t>(connections)},
                          LoggingConfig{log_requests, log_engine_output}, std::move(sampling_defaults), reasoning, std::move(session),
                          replicas, vision, std::move(glm), UpdateSettings{std::move(update_source)},
-                         std::move(models_config), std::move(alerts_config), std::move(search_config), std::move(plugin_settings)));
+                         std::move(models_config), std::move(alerts_config), std::move(search_config), std::move(plugin_settings), tools_config));
   return ValidatedConfig{std::move(config_ptr)};
 }
 
@@ -1814,6 +1832,7 @@ std::string describe(const FrontendConfig& c) {
   };
   line("logging.requests", flag_or_unset(c.logging.requests));
   line("logging.engine_output", flag_or_unset(c.logging.engine_output));
+  line("tools.max_rounds", std::to_string(c.tools.max_rounds));
   // SP5 M1 Task 4: the defaults.sampling.* rows; an unset row stays unset and
   // is never sent (the engine keeps its own default).
   const auto decimal_or_unset = [](const std::optional<double>& value) {

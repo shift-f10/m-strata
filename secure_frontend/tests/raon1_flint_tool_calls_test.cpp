@@ -321,7 +321,7 @@ void the_route_plans_raon1_and_flint_searches() {
   secure_frontend::ChatCompletionRequest request;
   request.model = "m";
   request.messages = {{"user", "Q"}};
-  secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::raon1, {}};
+  secure_frontend::SearchTurn turn{request, {{{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}}, true, {}, secure_frontend::ToolFormat::raon1, {}};
   const auto raon = raon_pack();
   const auto planned = secure_frontend::search_first_plan(config, turn, raon);
   const auto* plan = std::get_if<secure_frontend::ChatGenerationPlan>(&planned);
@@ -340,8 +340,8 @@ void the_route_plans_raon1_and_flint_searches() {
     secure_frontend::ChatCompletionRequest later = request;
     later.messages = {{"user", "Who won the 2026 World Cup final?"}, {"assistant", "Spain won it 2-1 ([report](https://example.org/final))."},
                        {"user", "Who scored the goals?"}};
-    const secure_frontend::SearchTurn first_turn{request, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::raon1, {}};
-    const secure_frontend::SearchTurn next_turn{later, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::raon1, {}};
+    const secure_frontend::SearchTurn first_turn{request, {{{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}}, true, {}, secure_frontend::ToolFormat::raon1, {}};
+    const secure_frontend::SearchTurn next_turn{later, {{{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}}, true, {}, secure_frontend::ToolFormat::raon1, {}};
     const auto first = secure_frontend::search_first_plan(config, first_turn, raon);
     const auto next = secure_frontend::search_first_plan(config, next_turn, raon);
     const auto* a = std::get_if<secure_frontend::ChatGenerationPlan>(&first);
@@ -357,8 +357,8 @@ void the_route_plans_raon1_and_flint_searches() {
     secure_frontend::ChatCompletionRequest later = request;
     later.messages = {{"user", "Who won the 2026 World Cup final?"}, {"assistant", "Spain won it 2-1 ([report](https://example.org/final))."},
                        {"user", "Who scored the goals?"}};
-    const secure_frontend::SearchTurn first_turn{request, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::flint, {}};
-    const secure_frontend::SearchTurn next_turn{later, {{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}, true, {}, secure_frontend::ToolFormat::flint, {}};
+    const secure_frontend::SearchTurn first_turn{request, {{{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}}, true, {}, secure_frontend::ToolFormat::flint, {}};
+    const secure_frontend::SearchTurn next_turn{later, {{{"web_search", {"query"}}, "{\"name\": \"web_search\"}"}}, true, {}, secure_frontend::ToolFormat::flint, {}};
     const auto first = secure_frontend::search_first_plan(config, first_turn, flint);
     const auto next = secure_frontend::search_first_plan(config, next_turn, flint);
     const auto* a = std::get_if<secure_frontend::ChatGenerationPlan>(&first);
@@ -398,7 +398,7 @@ void the_real_packs_plan_their_searches() {
     expect(pack != nullptr, std::string{real.variable} + ": the pack loads");
     if (pack == nullptr) continue;
     for (const bool thinking : {true, false}) {
-      const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, tool}, thinking, {}, real.format, {}};
+      const secure_frontend::SearchTurn turn{request, {{{"web_search", {"query"}}, tool}}, thinking, {}, real.format, {}};
       const auto planned = secure_frontend::search_first_plan(config, turn, *pack);
       const auto* refused = std::get_if<secure_frontend::ChatGenerationPlanError>(&planned);
       expect(refused == nullptr, std::string{real.variable} + (thinking ? " thinking" : " not thinking") + ": the search plan, not " +

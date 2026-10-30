@@ -100,8 +100,8 @@ void ToolCallObserver::deliver(std::vector<ToolParseEvent> events) {
   }
 }
 
-SearchRounds::SearchRounds(ToolRunner& runner, ToolOffer offer, const std::size_t max_rounds)
-    : runner_(runner), offer_(std::move(offer)), max_rounds_(max_rounds) {}
+SearchRounds::SearchRounds(ToolRunner& runner, std::vector<ToolOffer> offers, const std::size_t max_rounds)
+    : runner_(runner), offers_(std::move(offers)), max_rounds_(max_rounds) {}
 
 SearchRounds::Next SearchRounds::after(const ToolCallObserver& round, const RunEnd end, const std::function<bool()>& cancelled,
                                        const std::function<void(std::string)>& event) {

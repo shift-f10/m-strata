@@ -3,6 +3,7 @@
 #include "secure_frontend/canonical_path.hpp"
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/sha256.hpp"
+#include "secure_frontend/token_store.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -107,7 +108,7 @@ std::string_view plugin_state_name(const PluginState state) noexcept {
   return "refused";  // unreachable: every state is a case above
 }
 
-bool plugin_kind_runs(const PluginKind kind) noexcept { return kind == PluginKind::diagnostics; }
+bool plugin_kind_runs(const PluginKind kind) noexcept { return kind == PluginKind::diagnostics || kind == PluginKind::tool; }
 
 std::string render_plugin_choices(const PluginChoices& choices) {
   std::string out = "{\"schema\":";
@@ -188,6 +189,15 @@ std::optional<PluginChoices> read_plugin_choices(const std::filesystem::path& st
   std::string text(static_cast<std::size_t>(size), '\0');
   if (!in || (size > 0U && !in.read(text.data(), static_cast<std::streamsize>(size)))) return std::nullopt;
   return parse_plugin_choices(text);
+}
+
+bool write_plugin_choices(const std::filesystem::path& state_dir, const PluginChoices& choices) {
+  const auto root = open_root(state_dir, RootPolicy::create_private);
+  const auto name = parse_relative_path(kPluginChoicesFile);
+  if (!std::holds_alternative<CanonicalRoot>(root) || !std::holds_alternative<RelativePath>(name)) return false;
+  return !write_private_file(std::get<CanonicalRoot>(root), std::get<RelativePath>(name), render_plugin_choices(choices),
+                             TokenStoreMode::replace)
+              .has_value();
 }
 
 std::vector<PluginEntry> discover_plugins(const std::filesystem::path& plugins_dir, const std::vector<FirstPartyPlugin>& first_party,

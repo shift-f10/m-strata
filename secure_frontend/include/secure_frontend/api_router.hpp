@@ -87,7 +87,6 @@ struct ApiRouterConfig final {
   ModelDownloads downloads{};
   ModelCardRoutes cards{};
   ModelCardRoutes alerts{};  // kAlertRoutes (a build with email alerts only); empty: not served
-  ModelCardRoutes search{};  // kSearchRoutes (a build with web search only); empty: not served
   ModelCardRoutes settings{};  // kConfigRoutes (the Settings tab: the server's settings, the key); empty: not served
   ModelCardRoutes plugins{};   // kPluginRoutes (the Plugins tab); empty: not served
   // GUI-first start-up (spec 2026-10-27 §3, D1; listener.login_link): set, POST /v1/strata/login-link answers without

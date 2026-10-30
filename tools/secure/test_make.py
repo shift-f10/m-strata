@@ -220,18 +220,19 @@ def test_email_alerts_are_built_only_when_asked():
 
 def test_web_search_is_built_only_when_asked(tmp_path):
     """Owner, 2026-10-27: web search is a build option, off by default, on in our builds (--with search); with it,
-    strata-search - the MCP server the server runs for it, the install's only search connection - sits beside the
-    server, and an out folder without it is incomplete."""
+    strata-search - the MCP server the server runs for it, the install's only search connection - is in the Web search
+    plugin's folder, plugins/search/ (owner 2026-10-30: search is a plugin), and an out folder without it is
+    incomplete."""
     assert "-DSECURE_FRONTEND_WEB_SEARCH=OFF" in make.frontend_configure_args(options(), "windows")
     assert "-DSECURE_FRONTEND_WEB_SEARCH=ON" in make.frontend_configure_args(options("--with", "search"), "linux")
     both = make.frontend_configure_args(options("--with", "email,search"), "windows")
     assert "-DSECURE_FRONTEND_EMAIL_ALERTS=ON" in both and "-DSECURE_FRONTEND_WEB_SEARCH=ON" in both
-    assert "strata-search.exe" in make.required_files(options("--with", "search"), "windows")
-    assert "strata-search" in make.required_files(options("--with", "search", platform="linux"), "linux")
+    assert "plugins/search/strata-search.exe" in make.required_files(options("--with", "search"), "windows")
+    assert "plugins/search/strata-search" in make.required_files(options("--with", "search", platform="linux"), "linux")
     assert not [f for f in make.required_files(options(), "windows") if "strata-search" in f]
     root = stage(tmp_path, "windows")
-    problems = "\n".join(make.layout_problems(root, options("--with", "search"), "windows"))
-    assert "strata-search.exe: missing" in problems, problems
+    problems = make.layout_problems(root, options("--with", "search"), "windows")
+    assert "plugins/search/strata-search.exe: missing" in problems, problems
     assert "strata-search" not in "\n".join(make.layout_problems(root, options(), "windows"))
 
 
@@ -287,7 +288,8 @@ MAYA_PROFILES = ("expert-profile-glm.bin", "expert-profile-ds4.bin", "expert-pro
 MINIMAX_FILES = ("engine/templates/minimax-m3.1/chat_template.jinja", "engine/templates/minimax-m3.1/LICENSE.minimax-m31")
 
 
-def stage(tmp_path: Path, platform: str, extra: tuple[str, ...] = (), skip: tuple[str, ...] = ()) -> Path:
+def stage(tmp_path: Path, platform: str, extra: tuple[str, ...] = (), skip: tuple[str, ...] = (),
+          search: bool = False) -> Path:
     exe = ".exe" if platform == "windows" else ""
     lib = (lambda n: n + ".dll") if platform == "windows" else (lambda n: "lib" + n + ".so")
     files = [f"strata-unified-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
@@ -295,6 +297,8 @@ def stage(tmp_path: Path, platform: str, extra: tuple[str, ...] = (), skip: tupl
              "engine/data/draft_vocab.bin", "engine/build.json", "README.txt", "config.example.json", "LICENSE", "NOTICE.md",
              "plugins/debugging/plugin.json"] + ["engine/profiles/" + p for p in MAYA_PROFILES] + \
         list(MINIMAX_FILES)
+    if search:   # --with search: the Web search plugin, its manifest and strata-search, which the install puts there
+        files += ["plugins/search/plugin.json", f"plugins/search/strata-search{exe}"]
     files += ["engine/" + lib(n) for n in ("multiengine_strata", "multiengine_gemma4", "multiengine_flint",
                                            "multiengine_raon1", "multiengine_maya", "multiengine_maya_ds4",
                                            "multiengine_maya_mm3", "strata_kq")]
@@ -307,6 +311,15 @@ def stage(tmp_path: Path, platform: str, extra: tuple[str, ...] = (), skip: tupl
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"binary")
     return tmp_path
+
+
+def test_a_plugins_program_has_the_msvc_runtime_beside_it(tmp_path):
+    """strata-search in plugins/search/ loads the MSVC runtime from its own folder, as engine/'s programs do from
+    engine/: make takes the runtime there, and nowhere deeper."""
+    root = stage(tmp_path, "windows", search=True, extra=("plugins/search/vcruntime140.dll", "plugins/search/msvcp140.dll"))
+    assert make.layout_problems(root, options("--with", "search"), "windows") == []
+    deeper = stage(tmp_path / "deeper", "windows", search=True, extra=("plugins/search/bin/vcruntime140.dll",))
+    assert "plugins/search/bin/vcruntime140.dll: not a runtime file" in make.layout_problems(deeper, options("--with", "search"), "windows")
 
 
 def test_a_runtime_folder_passes(tmp_path):
@@ -423,7 +436,7 @@ def test_the_build_record_names_each_engine_and_its_source(tmp_path):
     assert "Raon-1-mini" in engines["multiengine_raon1.dll"]["models"] and "Project Maya" in engines["multiengine_raon1.dll"]["source"]
     assert all(e["bytes"] == len(b"binary") for e in record["engines"])
     lean = make.build_record(options("--without", "maya,raon1", "--with", "search", platform="linux"), "linux",
-                             stage(tmp_path / "linux", "linux"), commit="x", built="y")
+                             stage(tmp_path / "linux", "linux", search=True), commit="x", built="y")
     assert [e["library"] for e in lean["engines"]] == ["libmultiengine_strata.so", "libmultiengine_gemma4.so", "libmultiengine_flint.so",
                                                        "strata-vision"]
     assert lean["features"] == ["search"]
@@ -465,7 +478,7 @@ def test_debugging_is_a_plugin_off_unless_asked_for_and_says_what_it_means(tmp_p
         assert not any("SECURE_FRONTEND_DEBUGGING" in arg for arg in make.frontend_configure_args(opts, "windows"))
         assert "plugins/debugging/plugin.json" in make.required_files(opts, "linux")
     folder = tmp_path / "folder"
-    make.stage_plugins(folder)
+    make.stage_plugins(plain, folder)
     assert (folder / "plugins" / "debugging" / "plugin.json").read_bytes() == shipped, "the shipped manifest, as it is"
     for opts, on in ((plain, False), (asked, True)):
         record = make.build_record(opts, "windows", folder, commit="c", built="b")
@@ -483,3 +496,61 @@ def test_debugging_is_a_plugin_off_unless_asked_for_and_says_what_it_means(tmp_p
     assert make.DEBUGGING_NOTICE in make.readme_text(asked, "windows")
     assert "--debugging" not in make.readme_text(plain, "linux")
     assert "plugins/debugging: the Debugging plugin" in make.readme_text(plain, "linux")
+
+
+def test_search_is_a_first_party_plugin_with_its_program_in_its_folder(tmp_path):
+    """The owner (2026-10-30): "we should make the email, websearch, debugging all plugins as well" (spec 2026-10-30,
+    section 10, "Search, made a tool plugin"). With --with search the folder holds plugins/search/: this repository's
+    plugins/search/plugin.json, byte for byte, and strata-search(.exe), which the frontend's install puts there instead
+    of beside the server. engine/build.json records it after the Debugging plugin, with the SHA-256 of its manifest and
+    of its program as staged, and on: the server runs it only once its required url setting is filled in. README.txt
+    names it, and its settings are in the Plugins tab, no longer in the Settings tab. Without --with search there is
+    no search plugin."""
+    shipped = (ROOT / "plugins" / "search" / "plugin.json").read_bytes()
+    debugging = hashlib.sha256((ROOT / "plugins" / "debugging" / "plugin.json").read_bytes()).hexdigest()
+    for platform, program in (("windows", "strata-search.exe"), ("linux", "strata-search")):
+        searching = options("--with", "search", platform=platform)
+        plain = options(platform=platform)
+        required = make.required_files(searching, platform)
+        assert "plugins/search/plugin.json" in required and f"plugins/search/{program}" in required, required
+        assert program not in required, "no longer beside the server"
+        assert not [f for f in make.required_files(plain, platform) if f.startswith("plugins/search")]
+
+        folder = stage(tmp_path / platform, platform, search=True)
+        (folder / "plugins" / "search" / program).write_bytes(b"the search program")
+        make.stage_plugins(searching, folder)
+        assert (folder / "plugins" / "search" / "plugin.json").read_bytes() == shipped, "the shipped manifest, as it is"
+        assert make.layout_problems(folder, searching, platform) == []
+        record = make.build_record(searching, platform, folder, commit="c", built="b")
+        assert record["plugins"] == [
+            {"id": "debugging", "manifest": debugging, "files": {}, "on": False},
+            {"id": "search", "manifest": hashlib.sha256(shipped).hexdigest(),
+             "files": {program: hashlib.sha256(b"the search program").hexdigest()}, "on": True}], record["plugins"]
+        assert make.build_record(options("--with", "search", "--debugging", platform=platform), platform, folder,
+                                 commit="c", built="b")["plugins"][0]["on"] is True
+
+        # the old layout, strata-search beside the server: the plugin is incomplete and the root's copy is refused; the
+        # build record is still written, so the layout check can say so
+        old = stage(tmp_path / ("old-" + platform), platform, extra=(program,), skip=(f"plugins/search/{program}",),
+                    search=True)
+        make.stage_plugins(searching, old)
+        problems = make.layout_problems(old, searching, platform)
+        assert f"plugins/search/{program}: missing" in problems and f"{program}: not a runtime file" in problems, problems
+        assert [p["files"] for p in make.build_record(searching, platform, old, commit="c", built="b")["plugins"]] == [{}, {}]
+
+        # without --with search: nothing staged, and a search plugin in the folder is not a runtime file
+        bare = stage(tmp_path / ("bare-" + platform), platform)
+        make.stage_plugins(plain, bare)
+        assert not (bare / "plugins" / "search").exists()
+        assert [p["id"] for p in make.build_record(plain, platform, bare, commit="c", built="b")["plugins"]] == ["debugging"]
+        stray = make.layout_problems(stage(tmp_path / ("stray-" + platform), platform, search=True), plain, platform)
+        assert f"plugins/search/{program}: not a runtime file" in stray, stray
+
+        # README.txt: the plugin among the contents, with its settings in the Plugins tab, not the Settings tab's
+        text = make.readme_text(searching, platform)
+        entry = text.split("plugins/search: ", 1)[1].split("\n            LICENSE", 1)[0]
+        assert entry.startswith("the Web search plugin") and "SearXNG" in entry and "the Plugins tab" in entry, entry
+        assert "strata-search: " not in text, "not a program beside the server"
+        held = text.split("The Settings tab holds ", 1)[1].split(".", 1)[0]
+        assert "web search" not in held and "the model folders" in held, held
+        assert "plugins/search" not in make.readme_text(plain, platform)

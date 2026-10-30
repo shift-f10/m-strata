@@ -280,6 +280,75 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z54 (Windows box; owner-directed)
+
+The plugin platform, step 5b-2: the tool host, and web search as a tool plugin (the design's section 10; the owner's
+decisions 6 and 7: settings move into the plugins, third-party tool plugins run now).
+- **The tool hub** (`tool_hub.{hpp,cpp}`, library `secure_frontend_tool_hub`, every build): `ToolHub` is the chat's
+  `ToolRunner` (its `offers()` now a list) over the tool plugins that run. Each plugin's program starts when a chat (or
+  Try) first needs it, through the MCP client (now built in every build); every listed tool is offered, at most 16, a
+  name two plugins list going to the first (logged once); calls route by name; each plugin's `note` joins the system
+  message (`{today}` filled, and its tools' descriptions end with the date); a call ends after its manifest's
+  `call_timeout_s` (new: 1-600, default 120; a notifier refuses it); a result is cut at 20000 characters, upstream's cut
+  (the spec said 64 KiB; corrected). A program that dies starts again with the next chat; one that does not start
+  leaves its tools out for 60 s. While one chat's call runs, others are offered that plugin's tools as listed. `listed()`
+  and `try_call()` serve the Plugins tab. A manifest argument naming a setting with no value is refused at read.
+- **What runs** (`install_plugins.{hpp,cpp}`): `plugin_programs` turns each tool plugin that is on into its program, its
+  arguments and environment filled from its settings (a secret from the secret folder, only into its environment), over
+  the closed environment the server gives it; one whose settings do not fit is left out with why.
+  `plugin_kind_runs` now says diagnostics and tool; `write_plugin_choices` is shared.
+- **The server** (`server_bootstrap.cpp`): both modes build a `ToolHub` from the tool plugins (each in the downloads'
+  closed environment with an owner-only temp folder `<roots.state>/plugins/<id>`; one left out is logged
+  `[strata] plugins: <id> does not run: <why>`), with `tools.max_rounds` (new row, 1-8, default 8; Settings' limits,
+  "Tool calls per answer"). The Plugins tab's "running" is now a Debugging plugin on or a tool plugin the hub runs; its
+  list gets each running tool plugin's `tools`, and `POST /v1/strata/plugins/try` (`RouteId::strata_plugins_try`) makes
+  one call through the hub (refused: not in the folder, not a tool, no hub; 400 for a bad body).
+  `move_old_search_rows` (exported; `secure_server_main` calls it for both modes) moves a config's `search.url`,
+  `.results`, `.timeout_s` to `plugins.search.*` and `search.max_rounds` to `tools.max_rounds` (one set stays), in the
+  config file too on a serve, and hands `search.enabled` on to `plugins.json` once the state folder is checked (a choice
+  made there stays); `--check` says what a start would move.
+- **Removed**: the search service and the search routes (`search_service.*`, `search_routes.*`, `kSearchRoutes`, the
+  three `RouteId::strata_search*`, `ApiRouterConfig::search`), the bootstrap's search blocks, and the
+  `web_search_built` config gate. `SECURE_FRONTEND_WEB_SEARCH` now only builds `strata-search`.
+- **The search plugin** (`plugins/search/plugin.json`): kind `tool`, `strata-search` with `--url {url} --results
+  {results} --timeout {timeout_s}`, its note (today's date, search for anything recent), `call_timeout_s` 365, settings
+  `url` (required), `results` (1-10, 5), `timeout_s` (5-120, 30). CMake installs `strata-search` (and, on MSVC, the
+  runtime) to `plugins/search/`; make (a worker, its diff and tests checked here) stages the plugin with `--with
+  search`, records it in `build.json` (on, with its files' SHA-256s), lists it in README.txt, and its layout check
+  allows the MSVC runtime in a plugin folder.
+- **The page** (a worker, checked here and live): the Settings web search card is gone; "Tool calls per answer" joins
+  the limits; a running tool plugin's card has Try (its tools, a box per string parameter, the text and time).
+- **Tests**: the hub over a fake MCP tool program (`fake_mcp_tool`, six cases); `install_plugins_tests` (two);
+  `tools_are_listed_and_tried`; the families' tool-call tests take a list of offers; the end-to-end
+  `web_search_server_tests` now run search as a plugin (the harness copies a plugin's files and records their
+  SHA-256s, and can write `plugins.json`), plus `old_search_rows_move_to_the_plugin` and
+  `a_third_party_tool_plugin_runs_once_approved` (the fake tool, unapproved then approved).
+- **Docs**: the README (web search as a plugin, Plugins and Settings tabs, the config table, SearXNG steps,
+  troubleshooting, the out folder), the frontend README (the plugin, the tool hub, the API, Try), the threat model
+  (the third and a fourth network exception, the LAN routes, web search as a plugin, tool plugins run unconfined with
+  the server's rights once trusted), the spec's result cut.
+- **Proof**:
+  - RED first, against stubs: `tools_are_listed_and_tried` (7, routes that list no tools and serve no Try); the six
+    hub cases against a stub hub; the two `install_plugins` cases; `refusals_say_why` (the kinds that run); the e2e
+    suite against a bootstrap that runs no tool plugin and moves no row (6 of 7 RED; the chat that turns search off
+    passes either way); the Settings rows (3). Then GREEN. The third-party case's first GREEN run caught my own
+    expectation's spacing (the call's arguments go out as upstream's `json.dumps` writes them); the test was corrected,
+    not loosened.
+  - MSVC: the whole tree built, no warnings; the whole suite 1448/1450 (the two release-only cases a test-hooks tree
+    fails). Linux gcc 13.3: the whole tree built, no warnings; the suites it touches 426/426. clang 18.1 refused one
+    unused lambda capture in the new test (a warning class MSVC lacks), fixed; then the whole tree built, no warnings,
+    and 424/426: the two `net01_*` listener-count cases failed under 8 parallel jobs and passed alone three times out
+    of three. Python `tools/secure` 156 passed, 4 skipped.
+  - Live, a shares-tree server on the x25 demo data (port 18091) with the plugin staged as make does and the old
+    `search.*` rows in its config: the log said what moved and that the plugin is on as `search.enabled` was; the
+    config held `plugins.search.{url,results}` and `tools.max_rounds` 4 and no `search.*`; `plugins.json` held the
+    choice; the Plugins list showed search on, running, with `web_search`; Try answered from the owner's test SearXNG
+    instance (0.9 s by the API; 3.0 s from the page's Try box); Settings showed no web search card and "Tool calls per
+    answer" 4. The server was stopped, and the demo config and `build.json` put back byte for byte.
+- **Known gaps**: `strata serve` (the CLI's managed path) reads `plugins.search.*` but does not move old `search.*`
+  rows. Next: the notifier host and email as a plugin (5b-3), then key-signed trust; the repository already has
+  `src/ed25519_verify.cpp` (verification only), to be weighed against vendoring Monocypher.
+
 ### Claude Code session, 2026-10-30 z53 (Windows box; owner-directed)
 
 The plugin platform, step 5b-1: plugin settings and secrets (the design's section 10; the owner's decision 6).

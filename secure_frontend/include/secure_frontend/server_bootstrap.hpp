@@ -19,7 +19,9 @@ namespace secure_frontend {
 // The full boot: state roots, compose, tokenizer, supervisor, listener, pool — and
 // the SP3 I1 shutdown path (SIGTERM/Ctrl handler -> drain -> 0). Returns a process
 // exit code; the messages are the server's own (stderr/stdout).
-[[nodiscard]] int server_run(const FrontendConfig& config, bool expert);
+// `search_on`: a config's old search.enabled (move_old_search_rows), kept as the search plugin's choice once the state
+// folder is checked.
+[[nodiscard]] int server_run(const FrontendConfig& config, bool expert, std::optional<bool> search_on = std::nullopt);
 
 // strata-unified-server --check: describe, launch-config issues, then the token read.
 [[nodiscard]] int server_check(const FrontendConfig& config, const std::vector<std::string>& overridden, bool expert);
@@ -29,8 +31,16 @@ namespace secure_frontend {
 // bind (none: the server waits for the page, D5). The same SP3 I1 shutdown. With
 // models.downloads the download routes are served (plan 2026-10-23-model-downloads Task 4): each
 // transfer is a `strata --config <config_file> pull` child, so the config file is needed.
-[[nodiscard]] int launcher_run(const FrontendConfigDraft& main, const std::optional<std::filesystem::path>& config_file);
+[[nodiscard]] int launcher_run(const FrontendConfigDraft& main, const std::optional<std::filesystem::path>& config_file,
+                               std::optional<bool> search_on = std::nullopt);
 // --check for a launcher config: the server's settings, each card's verdict, the token read.
 [[nodiscard]] int launcher_check(const FrontendConfigDraft& main, const std::vector<std::string>& overridden);
+
+// Web search became a tool plugin (owner 2026-10-30; plugin spec section 10): a config's old search.* rows are read as
+// plugins.search.* and tools.max_rounds (move_plugin_rows). A serve (`serve`) also moves them in `config_file`, once, and
+// says so on stderr; a --check says on stdout what a start would move. Returns the old search.enabled, when it was set:
+// what the search plugin's on or off becomes (server_run, launcher_run).
+[[nodiscard]] std::optional<bool> move_old_search_rows(FrontendConfigDraft& draft, const std::optional<std::filesystem::path>& config_file,
+                                                       bool serve);
 
 }  // namespace secure_frontend

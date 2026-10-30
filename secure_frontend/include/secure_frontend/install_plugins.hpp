@@ -5,10 +5,16 @@
 // build.json; the owner's choices in <roots.state>/plugins.json. The server decides from this what runs and what the
 // Debugging plugin turns on; strata-window and strata-tui ask before they start a server while it is on.
 
+#include "secure_frontend/frontend_config.hpp"
 #include "secure_frontend/plugin_registry.hpp"
 
 #include <filesystem>
+#include <functional>
+#include <map>
 #include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace secure_frontend {
@@ -24,5 +30,23 @@ struct InstallPlugins final {
 // so make's record alone decides a first-party plugin). An unreadable choices file lets nothing run.
 [[nodiscard]] InstallPlugins install_plugins(const std::filesystem::path& engine_folder,
                                              const std::optional<std::filesystem::path>& state_dir);
+
+// A tool's or notifier's program as the server runs it (plugin spec section 10): its file in its folder, its arguments
+// and environment filled in from its settings - each value as the config holds it, or its default - with a secret read
+// from the secret folder (only ever into the environment), over the closed environment the server gives it.
+struct PluginProgram final {
+  std::string id;
+  PluginRun run;                                                // its manifest's block (its note, its call's limit)
+  std::filesystem::path program;
+  std::vector<std::string> arguments;
+  std::map<std::string, std::string, std::less<>> environment;
+};
+// The plugins of `kind` that are on, each as it runs. One whose settings do not fit its manifest (a required one not
+// set, a value it refuses) is left out, its id and why in `left_out`. `environment` gives each its closed environment.
+[[nodiscard]] std::vector<PluginProgram> plugin_programs(
+    const InstallPlugins& plugins, PluginKind kind, const PluginSettingsConfig& config,
+    const std::optional<std::filesystem::path>& secret_dir,
+    const std::function<std::map<std::string, std::string, std::less<>>(std::string_view id)>& environment,
+    std::vector<std::pair<std::string, std::string>>* left_out);
 
 }  // namespace secure_frontend

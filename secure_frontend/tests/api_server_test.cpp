@@ -1278,7 +1278,7 @@ void the_debugging_plugin_turns_the_logs_on() {
     test_support::ServerOptions options;
     options.config_literals = std::move(literals);
     options.engine_args = {"--stderr-cache-lines"};
-    options.first_party_plugins = {{.id = "debugging", .manifest = manifest, .on = on}};
+    options.plugins = {{.id = "debugging", .manifest = manifest, .on = on}};
     auto server = test_support::ServerProcess::start(options);
     const bool ready = server != nullptr && server->wait_until_listening(10s) && server->wait_for_health(test_support::kHealthReady, 15s);
     expect(ready, "server ready" + (server ? std::string{": "} + server->stderr_text() : std::string{}));

@@ -16,14 +16,20 @@
 //                                       (a tool's or notifier's settings, plugin spec section 10: each checked against its
 //                                       manifest; every value but a secret's in the config file as plugins.<id>.<name>, a
 //                                       secret in the secret folder; null back to the default, or a secret removed)
+//   POST /v1/strata/plugins/try      {"id", "tool", "arguments": {...}} -> {"ok", "text", "truncated", "ms"}
+//                                       (one call of a running tool plugin's tool through the server's tool hub: the
+//                                       Plugins tab's "Try", which replaced the page's test search)
 // Each listed plugin also has its "settings" ({"name", "kind", "label", "help", "required", "default", "min"/"max",
-// "choices", "max_items", and "value", or a secret's "set"}), "presets", "network" (its words, the values filled in) and
-// "settings_problem" (what keeps it from running, or null).
+// "choices", "max_items", and "value", or a secret's "set"}), "presets", "network" (its words, the values filled in),
+// "settings_problem" (what keeps it from running, or null) and "tools" (a running tool plugin's, each {"name",
+// "description", "string_parameters"}; none for any other).
 // A refusal is plugin_refused with its reason (no such plugin, already trusted, refused, not trusted yet).
 
 #include "secure_frontend/api_router.hpp"
+#include "secure_frontend/mcp_client.hpp"
 #include "secure_frontend/plugin_registry.hpp"
 #include "secure_frontend/request_router.hpp"
+#include "secure_frontend/tool_runner.hpp"
 
 #include <filesystem>
 #include <functional>
@@ -44,6 +50,10 @@ struct PluginRouteSettings final {
   std::optional<std::filesystem::path> config_file{}; // where plugins.<id>.<name> live (unset: settings read-only)
   std::optional<std::filesystem::path> secret_dir{};  // roots.secret: a secret setting's folder (unset: none kept)
   std::function<void(std::string_view)> log{};
+  // The server's tool hub (tool_hub.hpp): the tools each running tool plugin lists, and one call for "Try". Unset: no tool
+  // plugin runs in this server.
+  std::function<std::map<std::string, std::vector<McpTool>>()> tools{};
+  std::function<ToolResult(std::string_view id, std::string_view tool, std::string_view arguments_json)> try_tool{};
   // Who may read and change them (the server passes model_files_allowed, as for its other settings). Empty: loopback
   // clients only.
   std::function<bool(const RequestContext& context)> client_allowed{};
@@ -59,6 +69,7 @@ class PluginRoutes final {
   [[nodiscard]] HttpResponse approve(std::string_view body);
   [[nodiscard]] HttpResponse change(std::string_view body);
   [[nodiscard]] HttpResponse save_settings(std::string_view body);
+  [[nodiscard]] HttpResponse try_tool(std::string_view body);
   [[nodiscard]] std::optional<PluginChoices> choices() const;
   [[nodiscard]] bool save(const PluginChoices& choices);
 

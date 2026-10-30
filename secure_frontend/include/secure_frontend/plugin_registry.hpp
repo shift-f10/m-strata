@@ -45,6 +45,8 @@ struct PluginChoices final {
 inline constexpr std::string_view kPluginChoicesFile = "plugins.json";
 // The owner's choices in `state_dir` (no file yet: none); nullopt when the file is there but is not one.
 [[nodiscard]] std::optional<PluginChoices> read_plugin_choices(const std::filesystem::path& state_dir);
+// Written owner-only over the file (true), or not (the folder could not be opened or made private, the write failed).
+[[nodiscard]] bool write_plugin_choices(const std::filesystem::path& state_dir, const PluginChoices& choices);
 
 // A first-party plugin as `make` recorded it in engine/build.json: what it built, and whether it starts on.
 struct FirstPartyPlugin final {

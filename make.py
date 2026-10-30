@@ -35,10 +35,11 @@ OPTIONAL_FAMILIES = ("maya", "raon1")   # the families a build may leave out; st
 # what --without takes: those families, and the picture encoder (strata-vision: a Qwen card reads pictures with it)
 LEAVE_OUT = OPTIONAL_FAMILIES + ("vision",)
 # built only when asked (off by default): email alerts (SECURE_FRONTEND_EMAIL_ALERTS), web search through a SearXNG
-# instance (SECURE_FRONTEND_WEB_SEARCH: strata-search, an MCP server beside the server), the server in a window with a
-# tray icon (SECURE_FRONTEND_WINDOW: strata-window; Windows needs the WebView2 SDK in .toolchains/webview2, Linux GTK 3,
-# WebKitGTK 4.1 and Ayatana AppIndicator) and the server in a terminal (SECURE_FRONTEND_TUI: strata-tui, the headless
-# twin of the window; nothing beyond the C++ standard library and the system's console)
+# instance (SECURE_FRONTEND_WEB_SEARCH: the Web search plugin, plugins/search/ with strata-search, an MCP server the
+# server runs), the server in a window with a tray icon (SECURE_FRONTEND_WINDOW: strata-window; Windows needs the
+# WebView2 SDK in .toolchains/webview2, Linux GTK 3, WebKitGTK 4.1 and Ayatana AppIndicator) and the server in a terminal
+# (SECURE_FRONTEND_TUI: strata-tui, the headless twin of the window; nothing beyond the C++ standard library and the
+# system's console)
 OPTIONAL_FEATURES = ("email", "search", "window", "tui")
 
 
@@ -226,8 +227,9 @@ def frontend_configure_args(opts: Options, platform: str) -> list[str]:
 
 
 def frontend_build_targets(opts: Options) -> list[str]:
-    """The frontend's programs to build: the server (strata-search comes with it) and strata, and strata-window and
-    strata-tui, which need the server but are not needed by it."""
+    """The frontend's programs to build: the server and strata, and strata-window and strata-tui, which need the server
+    but are not needed by it. With --with search, strata-search (the Web search plugin's program) is built with the
+    server, and the install puts it in plugins/search/."""
     return (["strata-unified-server", "strata"] + (["strata-window"] if "window" in opts.with_features else []) +
             (["strata-tui"] if "tui" in opts.with_features else []))
 
@@ -252,8 +254,6 @@ def required_files(opts: Options, platform: str) -> list[str]:
     maya = ([] if "maya" in opts.without else
             [f"engine/profiles/expert-profile-{f}.bin" for f in ("glm", "ds4", "mm3")] +
             ["engine/templates/minimax-m3.1/chat_template.jinja", "engine/templates/minimax-m3.1/LICENSE.minimax-m31"])
-    # web search: strata-search, the MCP server the server runs beside itself for it
-    search = [f"strata-search{exe}"] if "search" in opts.with_features else []
     # the window: strata-window, which runs the server beside it
     window = [f"strata-window{exe}"] if "window" in opts.with_features else []
     # the terminal: strata-tui, which runs the server beside it as the window does
@@ -261,34 +261,59 @@ def required_files(opts: Options, platform: str) -> list[str]:
     # the picture encoder beside the launcher, where the server looks for it (spec 2026-10-28)
     vision = [] if "vision" in opts.without else [f"engine/strata-vision{exe}"]
     # engine/build.json: the build record the server's About shows (build_record)
-    # plugins/<id>/plugin.json: the first-party plugins (stage_plugins), the Debugging plugin in every folder
+    # plugins/<id>/: the first-party plugins, each its manifest (stage_plugins) and the files it lists: the Debugging
+    # plugin in every folder, and with --with search the Web search plugin and strata-search, the MCP server the server
+    # runs for it (the frontend's install puts it there)
+    plugins = [f"plugins/{plugin}/{name}" for plugin in first_party_plugins(opts)
+               for name in ["plugin.json", *plugin_files(plugin, platform)]]
     return ([f"strata-unified-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
              "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin", "engine/data/draft_vocab.bin",
              "engine/build.json",
-             "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + search + window + vision + maya +
-            ["engine/" + lib(n) for n in _families(opts)] +
-            [f"plugins/{plugin}/plugin.json" for plugin in FIRST_PARTY_PLUGINS])
+             "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + window + vision + maya +
+            ["engine/" + lib(n) for n in _families(opts)] + plugins)
 
 
 # ---- the first-party plugins (owner 2026-10-30: "we should make the email, websearch, debugging all plugins as well") --
 
-# This repository's plugins/<id>/, copied into every folder and recorded in engine/build.json (trusted through that
-# record, decision 4): the Debugging plugin, off unless --debugging ships it on.
-FIRST_PARTY_PLUGINS = ("debugging",)
+def first_party_plugins(opts: Options) -> list[str]:
+    """This repository's plugins/<id>/ this folder holds, recorded in engine/build.json (trusted through that record,
+    decision 4), in a stable order: the Debugging plugin in every folder, off unless --debugging ships it on; with
+    --with search, the Web search plugin (spec 2026-10-30 section 10)."""
+    return ["debugging"] + (["search"] if "search" in opts.with_features else [])
 
 
-def stage_plugins(stage: Path) -> None:
-    """Copy each first-party plugin's manifest into the folder, byte for byte (its SHA-256 is the record's)."""
-    for plugin in FIRST_PARTY_PLUGINS:
+def plugin_files(plugin: str, platform: str) -> list[str]:
+    """A first-party plugin's files beside its manifest on `platform`, as this repository's manifest lists them (the
+    Debugging plugin: none; search: strata-search, which the frontend's install puts in plugins/search/)."""
+    manifest = json.loads((ROOT / "plugins" / plugin / "plugin.json").read_text(encoding="utf-8"))
+    return list(manifest.get("files", {}).get(platform, []))
+
+
+def stage_plugins(opts: Options, stage: Path) -> None:
+    """Copy each first-party plugin's manifest into the folder, byte for byte (its SHA-256 is the record's). Its
+    programs are there already, from the install."""
+    for plugin in first_party_plugins(opts):
         target = stage / "plugins" / plugin
         target.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / "plugins" / plugin / "plugin.json", target / "plugin.json")
 
 
-def plugin_records(opts: Options, stage: Path) -> list[dict]:
-    """engine/build.json's plugins: each first-party plugin's manifest SHA-256 (as staged) and whether it starts on."""
-    return [{"id": plugin, "manifest": hashlib.sha256((stage / "plugins" / plugin / "plugin.json").read_bytes()).hexdigest(),
-             "files": {}, "on": plugin == "debugging" and opts.debugging} for plugin in FIRST_PARTY_PLUGINS]
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def plugin_records(opts: Options, platform: str, stage: Path) -> list[dict]:
+    """engine/build.json's plugins: each first-party plugin's manifest SHA-256 and each of its files' (as staged), and
+    whether it starts on. A file the install did not put there is left out; the layout check names it."""
+    records = []
+    for plugin in first_party_plugins(opts):
+        folder = stage / "plugins" / plugin
+        files = {name: _sha256(folder / name) for name in plugin_files(plugin, platform) if (folder / name).is_file()}
+        # Debugging is on only in a --debugging build; search is on, and the server runs it only once its required
+        # url setting is filled in
+        records.append({"id": plugin, "manifest": _sha256(folder / "plugin.json"), "files": files,
+                        "on": opts.debugging if plugin == "debugging" else True})
+    return records
 
 
 # ---- the build record (engine/build.json; owner 2026-10-27: the About lists the build of our engines) -------------
@@ -346,7 +371,7 @@ def build_record(opts: Options, platform: str, stage: Path, commit: str | None =
     return {"schema_version": 1, "built": built, "commit": commit,
             "ggml": (_tree_text("engine/third_party/ggml/VERSION.txt").split() or ["?"])[0][:12],
             "cuda_arch": opts.cuda_arch, "features": list(opts.with_features),
-            "engines": engines, "plugins": plugin_records(opts, stage)}
+            "engines": engines, "plugins": plugin_records(opts, platform, stage)}
 
 
 def _cuda_runtime_patterns(platform: str) -> list[str]:
@@ -387,7 +412,9 @@ def layout_problems(root: Path, opts: Options, platform: str) -> list[str]:
         if opts.cuda_runtime and any(fnmatch.fnmatch(name, pattern) for pattern in cuda):
             continue
         base = name.rsplit("/", 1)[-1].lower()
-        if platform == "windows" and name.count("/") <= 1 and any(fnmatch.fnmatch(base, p) for p in _MSVC_RUNTIME):
+        # the MSVC runtime beside each program: the root's, engine/'s, and a first-party plugin's (plugins/search/)
+        beside_a_program = name.count("/") <= 1 or (name.startswith("plugins/") and name.count("/") == 2)
+        if platform == "windows" and beside_a_program and any(fnmatch.fnmatch(base, p) for p in _MSVC_RUNTIME):
             continue
         problems.append(f"{name}: not a runtime file")
     problems += _distribution_check().inspect(root, False)
@@ -438,11 +465,11 @@ Config:     data/config.json (to keep a port, set listener.port there). An answe
             raise limits.engine.generation_timeout_s (120 s by default), then restart the server.
 Key:        {strata} --config data/config.json key show   (or key rotate)
 
-Contents:   strata-unified-server and strata, the frontend{search}{window_contents}
+Contents:   strata-unified-server and strata, the frontend{window_contents}
             engine/: multiengine (the launcher), one library per model family, strata-prepare{vision}, the expert
             profiles{templates}{cuda}
             plugins/debugging: the Debugging plugin, verbose logs to find out why a model does not start or
-            calibrate ({debugging}; the Plugins tab turns it on and off)
+            calibrate ({debugging}; the Plugins tab turns it on and off){search}
             LICENSE and NOTICE.md
             Nothing else is needed; move or copy the whole folder.
 
@@ -481,10 +508,10 @@ def readme_text(opts: Options, platform: str) -> str:
     server = ".\\strata-unified-server.exe" if windows else "./strata-unified-server"
     shell = "   (PowerShell; in cmd: strata-unified-server)" if windows else ""
     cuda = ",\n            NVIDIA's cuBLAS" if opts.cuda_runtime else ""
-    search = ("\n            strata-search: web search through your SearXNG instance (the Settings tab)"
-              if "search" in opts.with_features else "")
+    search = ("\n            plugins/search: the Web search plugin, web search through your SearXNG instance (strata-search; its"
+              "\n            settings are in the Plugins tab)" if "search" in opts.with_features else "")
     held = ["the API key", "the server's settings", "the model folders"] + \
-           (["email alerts"] if "email" in opts.with_features else []) + (["web search"] if "search" in opts.with_features else [])
+           (["email alerts"] if "email" in opts.with_features else [])
     settings = ", ".join(held[:-1]) + " and " + held[-1]
     # strata-window: the same server in a window, with the page inside and an icon in the tray
     window_exe = ".\\strata-window.exe" if windows else "./strata-window"
@@ -659,7 +686,7 @@ def main(argv: list[str] | None = None) -> int:
     # the program's license (AGPL-3.0, owner 2026-10-28) and its notices, as the repository's root holds them
     for name in ("LICENSE", "NOTICE.md"):
         shutil.copyfile(ROOT / name, stage / name)
-    stage_plugins(stage)
+    stage_plugins(opts, stage)
     (stage / "engine" / "build.json").write_text(json.dumps(build_record(opts, platform, stage), indent=2) + "\n",
                                                  encoding="utf-8", newline="\n")
     problems = layout_problems(stage, opts, platform)

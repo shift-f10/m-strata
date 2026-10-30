@@ -103,7 +103,7 @@ void renders_the_templates_tool_prompts() {
   const auto* cases = member(*fixture, "cases");
   expect(tool != nullptr && cases != nullptr && cases->if_array() != nullptr && cases->if_array()->size() >= 23U, "the fixture's cases");
   if (tool == nullptr || cases == nullptr || cases->if_array() == nullptr) return;
-  // the search service's form ({"name", "description", "parameters"}) and llama.cpp's OpenAI form render alike
+  // the tool hub's form ({"name", "description", "parameters"}) and llama.cpp's OpenAI form render alike
   const std::vector<std::vector<std::string>> forms{{secure_frontend::python_json_text(*tool)},
                                                     {"{\"type\": \"function\", \"function\": " + secure_frontend::python_json_text(*tool) + "}"}};
   static const std::vector<std::string_view> kMarkers{"<bos>", "<|turn>", "<turn|>", "<|think|>", "<|tool>", "<tool|>", "<|tool_call>",
@@ -430,7 +430,7 @@ void the_route_plans_gemma4_searches() {
   secure_frontend::ChatCompletionRequest request;
   request.model = "m";
   request.messages = {{"user", "Hi"}};
-  const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, true, {}, secure_frontend::ToolFormat::gemma4, {}};
+  const secure_frontend::SearchTurn turn{request, {{{"web_search", {"query"}}, kTool}}, true, {}, secure_frontend::ToolFormat::gemma4, {}};
   const auto pack = test_support::spm_tokenizer();
   const auto planned = secure_frontend::search_first_plan(config, turn, pack);
   const auto* plan = std::get_if<secure_frontend::ChatGenerationPlan>(&planned);
@@ -444,8 +444,8 @@ void the_route_plans_gemma4_searches() {
     secure_frontend::ChatCompletionRequest later = request;
     later.messages = {{"user", "Who won the 2026 World Cup final?"}, {"assistant", "Spain won it 2-1 ([report](https://example.org/final))."},
                        {"user", "Who scored the goals?"}};
-    const secure_frontend::SearchTurn first_turn{request, {{"web_search", {"query"}}, kTool}, true, {}, secure_frontend::ToolFormat::gemma4, {}};
-    const secure_frontend::SearchTurn next_turn{later, {{"web_search", {"query"}}, kTool}, true, {}, secure_frontend::ToolFormat::gemma4, {}};
+    const secure_frontend::SearchTurn first_turn{request, {{{"web_search", {"query"}}, kTool}}, true, {}, secure_frontend::ToolFormat::gemma4, {}};
+    const secure_frontend::SearchTurn next_turn{later, {{{"web_search", {"query"}}, kTool}}, true, {}, secure_frontend::ToolFormat::gemma4, {}};
     const auto first = secure_frontend::search_first_plan(config, first_turn, pack);
     const auto next = secure_frontend::search_first_plan(config, next_turn, pack);
     const auto* a = std::get_if<secure_frontend::ChatGenerationPlan>(&first);
@@ -474,7 +474,7 @@ void the_real_pack_plans_its_search() {
   request.model = "m";
   request.messages = {{"user", "what is today's headlines?"}};
   for (const bool thinking : {true, false}) {
-    const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, thinking, {}, secure_frontend::ToolFormat::gemma4, {}};
+    const secure_frontend::SearchTurn turn{request, {{{"web_search", {"query"}}, kTool}}, thinking, {}, secure_frontend::ToolFormat::gemma4, {}};
     const auto planned = secure_frontend::search_first_plan(config, turn, *pack);
     const auto* refused = std::get_if<secure_frontend::ChatGenerationPlanError>(&planned);
     expect(refused == nullptr, std::string{thinking ? "thinking" : "not thinking"} + ": the search plan, not " +

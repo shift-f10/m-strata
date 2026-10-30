@@ -67,16 +67,16 @@ struct ChatRouteConfig final {
   VisionService* vision{nullptr};
   // listener.monitor (session log step 16): told about each generation; null when off.
   ServeMonitor* monitor{nullptr};
-  // Web search (spec 2026-10-27-web-search-design §2): the server's tool for the qwen and glm53 profiles' text chats (the
-  // search service: a build with SECURE_FRONTEND_WEB_SEARCH and search.enabled); null: every chat is served without it.
+  // Tool plugins (plugin spec 2026-10-30, section 10; web search first): the server's tool hub, for the text chats of
+  // every profile with a tool form; null (no tool plugin runs): every chat is served without tools.
   ToolRunner* tools{nullptr};
-  std::size_t tool_rounds{8};  // search.max_rounds
+  std::size_t tool_rounds{8};  // tools.max_rounds
 };
 
-// One chat with the server's tool: what the search loop's rounds render again (the request, the tool, the thinking).
+// One chat with the server's tools: what the tool loop's rounds render again (the request, the tools, the thinking).
 struct SearchTurn final {
   ChatCompletionRequest request;
-  ToolOffer offer;
+  std::vector<ToolOffer> offers;  // every tool the plugins list (tool_hub.hpp), at most 16
   bool thinking{true};
   QwenEffortPlacement effort{QwenEffort::high, false};
   ToolFormat format{ToolFormat::qwen};  // the profile's: qwen (upstream's template), glm53 (Maya's GLM-5.3 one)

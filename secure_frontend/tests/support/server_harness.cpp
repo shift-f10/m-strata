@@ -156,6 +156,26 @@ Socket connect_loopback(const std::uint16_t port, const std::chrono::millisecond
 
 }  // namespace
 
+std::string sha256_hex(const std::string_view bytes) {
+  secure_frontend::Sha256 hash;
+  hash.update(bytes);
+  static constexpr char kDigits[] = "0123456789abcdef";
+  std::string sum;
+  for (const auto byte : hash.finish()) {
+    sum += kDigits[byte >> 4U];
+    sum += kDigits[byte & 0x0FU];
+  }
+  return sum;
+}
+
+std::optional<std::string> file_sha256_hex(const std::filesystem::path& file) {
+  std::ifstream in(file, std::ios::binary);
+  if (!in) return std::nullopt;
+  const std::string bytes{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+  if (in.bad()) return std::nullopt;
+  return sha256_hex(bytes);
+}
+
 std::vector<long> children_of(const long pid) {
   std::vector<long> children;
 #if !defined(_WIN32)
@@ -353,23 +373,34 @@ std::unique_ptr<ServerProcess> ServerProcess::start(const ServerOptions& options
     }
     secure_frontend_test::write_file(bin / kFakeEngineOptionsFile, lines, 0600);
   }
-  // First-party plugins: <root>/plugins/<id>/plugin.json, and make's record of them beside the engine.
-  if (!options.first_party_plugins.empty()) {
+  // Plugins: <root>/plugins/<id>/plugin.json and its files, and make's record of the first-party ones beside the engine.
+  if (!options.plugins.empty()) {
     secure_frontend_test::make_private_directory(server->root_ / "plugins");
     std::string listed;
-    for (const auto& plugin : options.first_party_plugins) {
-      secure_frontend_test::make_private_directory(server->root_ / "plugins" / plugin.id);
-      secure_frontend_test::write_file(server->root_ / "plugins" / plugin.id / "plugin.json", plugin.manifest, 0600);
-      secure_frontend::Sha256 hash;
-      hash.update(plugin.manifest);
-      std::string sum;
-      for (const auto byte : hash.finish()) {
-        static constexpr char kDigits[] = "0123456789abcdef";
-        sum += kDigits[byte >> 4U];
-        sum += kDigits[byte & 0x0FU];
+    for (const auto& plugin : options.plugins) {
+      const auto folder = server->root_ / "plugins" / plugin.id;
+      secure_frontend_test::make_private_directory(folder);
+      secure_frontend_test::write_file(folder / "plugin.json", plugin.manifest, 0600);
+      std::string files;
+      for (const auto& [name, from] : plugin.files) {
+        std::error_code copied;
+        std::filesystem::copy_file(from, folder / name, std::filesystem::copy_options::overwrite_existing, copied);
+        const auto sum = copied ? std::nullopt : file_sha256_hex(folder / name);
+#if !defined(_WIN32)
+        if (sum && chmod((folder / name).c_str(), 0700) != 0) {
+          std::cerr << "harness: chmod 0700 failed on " << utf8_path(folder / name) << '\n';
+          return nullptr;
+        }
+#endif
+        if (!sum) {
+          std::cerr << "harness: could not copy " << utf8_path(from) << " into " << utf8_path(folder) << '\n';
+          return nullptr;
+        }
+        files += std::string{files.empty() ? "" : ", "} + "\"" + name + "\": \"" + *sum + "\"";
       }
-      listed += std::string{listed.empty() ? "" : ","} + R"({"id": ")" + plugin.id + R"(", "manifest": ")" + sum +
-                R"(", "files": {}, "on": )" + (plugin.on ? "true" : "false") + "}";
+      if (!plugin.first_party) continue;
+      listed += std::string{listed.empty() ? "" : ","} + R"({"id": ")" + plugin.id + R"(", "manifest": ")" + sha256_hex(plugin.manifest) +
+                R"(", "files": {)" + files + R"(}, "on": )" + (plugin.on ? "true" : "false") + "}";
     }
     secure_frontend_test::write_file(bin / "build.json",
                                      R"({"schema_version": 1, "built": "x", "commit": "c", "ggml": "g", "cuda_arch": "a", )"
@@ -411,6 +442,7 @@ std::unique_ptr<ServerProcess> ServerProcess::start(const ServerOptions& options
   }
   const std::filesystem::path state_dir = options.state_dir.value_or(server->root_ / "state");
   if (!options.state_dir) secure_frontend_test::make_owner_private_directory(state_dir);  // 0700; Windows owner = the user
+  if (!options.plugin_choices.empty()) secure_frontend_test::write_file(state_dir / "plugins.json", options.plugin_choices, 0600);
   std::vector<std::string> arguments{utf8_path(server_path())};
   const bool launcher = !options.model_cards.empty();
   std::map<std::string, std::string> config_literals = options.config_literals;

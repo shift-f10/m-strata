@@ -92,8 +92,8 @@ struct LauncherSettings final {
   // GUI-first start-up (spec 2026-10-27 §5a): an alert (calibration_finished, calibration_failed, engine_stopped) with
   // its subject and text - the card's name and a fixed reason, never a path. Called outside the launcher's lock.
   std::function<void(std::string_view event, const std::string& subject, const std::string& body)> on_event{};
-  // Web search (spec 2026-10-27-web-search-design §2): the server's tool for each started model's chat route (the
-  // search service; null: none) and search.max_rounds. A calibration's engine never gets it.
+  // Tool plugins (plugin spec 2026-10-30, section 10): the server's tool hub for each started model's chat route (null:
+  // none) and tools.max_rounds. A calibration's engine never gets it.
   ToolRunner* tools{nullptr};
   std::size_t tool_rounds{8};
 };

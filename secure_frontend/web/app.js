@@ -164,7 +164,7 @@
     ["chat", "models", "monitor", "settings", "plugins", "about"].forEach(function (tab) { $("tab-btn-" + tab).setAttribute("aria-selected", tab === name ? "true" : "false"); });
     if (name === "monitor") { startMonitor(); } else { stopMonitor(); }
     if (name === "models") { renderModels(false); refreshLauncher(); refreshDownloads(); showModelsSubtab(modelsSubtab); }
-    if (name === "settings") { refreshFolders(); refreshAlerts(); refreshSearch(); refreshServerConfig(); renderKey(); }
+    if (name === "settings") { refreshFolders(); refreshAlerts(); refreshServerConfig(); renderKey(); }
     if (name === "plugins") { refreshPlugins(); }
     if (name === "about") { renderAbout(); }
     if (name === "chat") { $("input").focus(); }
@@ -193,7 +193,7 @@
     startPolling();
     refreshLauncher();  // a server with model control off answers 404 and the page stays as it was
     refreshDownloads();  // likewise with downloads off; a transfer already running is followed
-    refreshFolders(); refreshAlerts(); refreshSearch(); refreshServerConfig();  // the Settings tab shows with any of them
+    refreshFolders(); refreshAlerts(); refreshServerConfig();  // the Settings tab shows with any of them
     refreshPlugins();    // the Plugins tab shows wherever its route answers
     loadHostGpus();      // the cards' GPUs choice lists this PC's GPUs
   }
@@ -3123,10 +3123,12 @@
     }
   }
 
-  // The Settings tab holds the API key, the server's own settings, the model folders, the email alerts and the web search:
-  // shown when the server has any of them (spec 2026-10-28-server-window-design, Part 1).
+  // The Settings tab holds the API key, the server's own settings, the model folders and the email alerts: shown when the
+  // server has any of them (spec 2026-10-28-server-window-design, Part 1). Web search left it on 2026-10-30 (the owner:
+  // "we should make the email, websearch, debugging all plugins as well"): its settings are the search plugin's, in the
+  // Plugins tab, and its rounds limit is the server's tools.max_rounds, with the limits here.
   function showSettingsSubtab() {
-    var any = alerts.built || search.built || folders.built || serverConfig.built;
+    var any = alerts.built || folders.built || serverConfig.built;
     $("tab-btn-settings").hidden = !any;
   }
 
@@ -3166,11 +3168,13 @@
   // bounds and the schema's own words; each group's Save sends its values (null: back to the default). The server checks
   // them as it checks its config at start, and they apply when it restarts.
   var serverConfig = { built: false, data: null };
+  // tools.max_rounds (plugin spec section 10) was the web search section's "Searches per answer" (search.max_rounds):
+  // it bounds every tool plugin's rounds now, so it is the server's own limit, with the others.
   var CONFIG_GROUPS = {
     server: ["listener.host", "listener.port", "listener.allow_remote", "listener.allow_wildcard_bind", "listener.host_aliases",
              "models.control_remote", "models.control_remote_networks"],
     limits: ["limits.engine.generation_timeout_s", "limits.engine.ready_timeout_s", "limits.chat.max_prompt_tokens",
-             "limits.chat.max_completion_tokens", "pull.connections"],
+             "limits.chat.max_completion_tokens", "tools.max_rounds", "pull.connections"],
     paths: ["models.downloads_root", "models.default_root"],
     logs: ["logging.engine_output"]
   };
@@ -3187,6 +3191,7 @@
     "limits.engine.ready_timeout_s": "Longest model start (seconds)",
     "limits.chat.max_prompt_tokens": "Largest prompt (tokens)",
     "limits.chat.max_completion_tokens": "Largest answer (tokens)",
+    "tools.max_rounds": "Tool calls per answer",
     "pull.connections": "Connections per download",
     "models.downloads_root": "Downloads folder",
     "models.default_root": "Folder Add a model opens",
@@ -3331,7 +3336,9 @@
   // with what it is, its state and why, and its SHA-256s; one that waits is approved here (the files there now are
   // pinned), a trusted one turned on or off. Each change applies when the server restarts. The tab shows wherever the
   // server answers its route (model control on; the clients its other settings answer), a refusal shown in it.
-  var plugins = { data: null, acting: false };
+  // tries: each tool plugin's Try (the tool chosen, the arguments typed, the last result) by plugin id, so a card drawn
+  // again - after a Refresh, a change or a Try itself - keeps them
+  var plugins = { data: null, acting: false, tries: Object.create(null) };
   var PLUGIN_KINDS = { engine: "engine family", tool: "tool", notifier: "notifier", diagnostics: "diagnostics" };
   var PLUGIN_STATES = {
     on: ["On", "st-badge--generating"], off: ["Off", "st-badge--stopped"], waiting: ["Waiting for approval", "st-badge--queued"],
@@ -3399,6 +3406,8 @@
     if (p.network) { card.appendChild(el("p", "muted small", "Connects to " + p.network + ".")); }
     if (p.settings_problem) { card.appendChild(el("p", "msg-warn small", "Not ready: " + p.settings_problem)); }
     if (Array.isArray(p.settings) && p.settings.length) { card.appendChild(pluginSettingsForm(p)); }
+    var trying = p.kind === "tool" ? pluginTry(p) : null;
+    if (trying) { card.appendChild(trying); }
     if (p.manifest_sha256) { card.appendChild(pluginSums(p)); }
     var editable = !!(plugins.data && plugins.data.editable);
     var actions = el("div", "model-actions");
@@ -3545,6 +3554,96 @@
     });
     await pluginChange(api("/v1/strata/plugins/settings", jsonPost({ id: p.id, values: values })));
   }
+  // Try (the owner, 2026-10-30: "we should make the email, websearch, debugging all plugins as well"; plugin spec section
+  // 10): Settings' test search became this, for every tool plugin. One call to a tool of the plugin's running program,
+  // with the arguments typed, and the text that came back - what a model reads - so its settings can be checked before a
+  // chat depends on them. The list names a plugin's tools only while its program runs (the tool hub starts it), so one
+  // that is on but not started yet says when Try works; one that is off says nothing more.
+  function pluginTry(p) {
+    var tools = (Array.isArray(p.tools) ? p.tools : []).filter(function (tool) { return tool && typeof tool.name === "string" && tool.name; });
+    if (!tools.length) { return p.state === "on" ? el("p", "muted small", "Try works once its program is running (after a restart).") : null; }
+    var box = el("div", "plugin-try");
+    drawPluginTry(box, p, tools);
+    return box;
+  }
+  function pluginTryState(id) {
+    if (!plugins.tries[id]) { plugins.tries[id] = { tool: "", arguments: Object.create(null), busy: false, result: null }; }
+    return plugins.tries[id];
+  }
+  function drawPluginTry(box, p, tools) {
+    clear(box);
+    var t = pluginTryState(p.id);
+    var chosen = tools.filter(function (tool) { return tool.name === t.tool; })[0] || tools[0];
+    t.tool = chosen.name;
+    box.appendChild(el("p", "small", "Try a tool: one call to its running program with what you type, and the text it returns."));
+    var grid = el("div", "config-grid");
+    // a label around each box names it without an id (two cards may list a tool of the same name)
+    var toolField = el("label", "config-field");
+    toolField.appendChild(el("span", "st-label", "Tool"));
+    var pick = el("select", "st-input");
+    tools.forEach(function (tool) {
+      var option = el("option", null, tool.name);
+      option.value = tool.name;
+      pick.appendChild(option);
+    });
+    pick.value = chosen.name;
+    pick.disabled = plugins.acting;
+    pick.addEventListener("change", function () { t.tool = pick.value; t.result = null; drawPluginTry(box, p, tools); });
+    toolField.appendChild(pick);
+    if (chosen.description) { toolField.appendChild(el("span", "muted small", String(chosen.description))); }
+    grid.appendChild(toolField);
+    (Array.isArray(chosen.string_parameters) ? chosen.string_parameters : []).forEach(function (name) {
+      var field = el("label", "config-field");
+      field.appendChild(el("span", "st-label", String(name)));
+      var input = el("input", "st-input");
+      input.type = "text";
+      input.spellcheck = false;
+      input.autocapitalize = "off";
+      input.value = String(t.arguments[name] || "");
+      input.addEventListener("input", function () { t.arguments[name] = input.value; });
+      input.addEventListener("keydown", function (e) { if (e.key === "Enter") { tryPluginTool(p, chosen, t); } });
+      field.appendChild(input);
+      grid.appendChild(field);
+    });
+    box.appendChild(grid);
+    var actions = el("div", "model-actions");
+    var go = el("button", "st-btn st-btn--secondary st-btn--sm", "Try");
+    go.type = "button";
+    go.disabled = plugins.acting;
+    go.addEventListener("click", function () { tryPluginTool(p, chosen, t); });
+    actions.appendChild(go);
+    box.appendChild(actions);
+    if (t.busy) { box.appendChild(el("p", "muted small", "Calling " + chosen.name + "...")); }
+    if (t.result) {
+      var r = t.result;
+      var took = String(Number(r.ms) || 0) + " ms";
+      box.appendChild(el("p", r.ok === true ? "muted small" : "msg-warn small",
+        (r.ok === true ? "It answered in " : "The tool said the call failed, in ") + took + "." +
+        (r.truncated === true ? " The text was cut to what a model is given." : " This is the whole text.")));
+      if (typeof r.text === "string" && r.text) { box.appendChild(el("pre", "plugin-try-output", r.text)); }
+    }
+  }
+  // An empty box is left out of the call, so a tool's optional argument keeps its own default. A refusal (422: the
+  // plugin is not running, the tool or an argument is not its own, ...) shows as the tab's other refusals do.
+  async function tryPluginTool(p, tool, t) {
+    if (plugins.acting) { return; }
+    var args = Object.create(null);
+    (Array.isArray(tool.string_parameters) ? tool.string_parameters : []).forEach(function (name) {
+      var text = String(t.arguments[name] || "").trim();
+      if (text) { args[name] = text; }
+    });
+    plugins.acting = true;
+    t.busy = true;
+    t.result = null;
+    showPluginsError("");
+    renderPlugins();
+    var answer = await downloadsAnswer(api("/v1/strata/plugins/try", jsonPost({ id: p.id, tool: tool.name, arguments: args })));
+    plugins.acting = false;
+    t.busy = false;
+    if (answer.signedOut) { return; }
+    if (answer.error) { showPluginsError(answer.error); } else { t.result = answer.body || { ok: false, text: "" }; }
+    renderPlugins();
+  }
   function renderPlugins() {
     var list = $("plugins-list");
     clear(list);
@@ -3613,65 +3712,6 @@
     if (answer.error) { showFoldersError(answer.error); return; }
     $("folders-result").textContent = "Saved. It applies when the server restarts.";
     await refreshFolders();
-  }
-
-  // ---------------------------------------------------------------- Settings: web search
-  // Web search (spec 2026-10-27-web-search-design section 2): the server's web search through a SearXNG instance, in a
-  // build that has it (its search route answers; a build without it answers 404 and the section stays hidden). The
-  // settings are read from and saved to the server's config file and apply when it restarts; a test search runs one
-  // search through the saved settings and shows what a model would read.
-  var search = { built: false, data: null };
-  function showSearchError(text) { $("search-error").textContent = text; $("search-error").hidden = !text; }
-  function fillSearch(d) {
-    $("search-enabled").checked = d.enabled === true;
-    $("search-url").value = typeof d.url === "string" ? d.url : "";
-    $("search-results").value = typeof d.results === "number" ? String(d.results) : "5";
-    $("search-rounds").value = typeof d.max_rounds === "number" ? String(d.max_rounds) : "8";
-    $("search-timeout").value = typeof d.timeout_s === "number" ? String(d.timeout_s) : "30";
-    $("search-state").textContent = d.running === true ? "Web search is on for this server's chats." :
-      "Web search is off for this server's chats.";
-    var editable = d.editable !== false;
-    ["search-save", "search-enabled"].forEach(function (id) { $(id).disabled = !editable; });
-    if (!editable) { $("search-result").textContent = "This server was started without a config file it can write; edit the file by hand."; }
-  }
-  async function refreshSearch() {
-    var response, text;
-    try { response = await api("/v1/strata/search", jsonPost({})); text = await response.text(); } catch (e) { return; }
-    search.built = response.ok;
-    $("search-settings").hidden = !search.built;
-    showSettingsSubtab();
-    if (!search.built) { return; }
-    try { search.data = JSON.parse(text); } catch (e) { search.data = null; }
-    if (search.data) { fillSearch(search.data); }
-  }
-  function searchForm() {
-    return {
-      enabled: $("search-enabled").checked, url: $("search-url").value.trim(), results: Number($("search-results").value) || 5,
-      max_rounds: Number($("search-rounds").value) || 8, timeout_s: Number($("search-timeout").value) || 30
-    };
-  }
-  async function saveSearch() {
-    showSearchError("");
-    var answer = await downloadsAnswer(api("/v1/strata/search/settings", jsonPost(searchForm())));
-    if (answer.signedOut) { return; }
-    if (answer.error) { showSearchError(answer.error); return; }
-    $("search-result").textContent = "Saved. They apply when the server restarts.";
-    await refreshSearch();
-  }
-  async function testSearch() {
-    showSearchError("");
-    $("search-result").textContent = "Searching through the saved settings...";
-    $("search-output").hidden = true;
-    $("search-test").disabled = true;
-    var answer = await downloadsAnswer(api("/v1/strata/search/test", jsonPost({ query: $("search-query").value.trim() })));
-    $("search-test").disabled = false;
-    if (answer.signedOut) { return; }
-    if (answer.error) { $("search-result").textContent = ""; showSearchError(answer.error); return; }
-    var r = answer.body || {};
-    $("search-result").textContent = r.ok === true ? "It works. This is what a model reads (" + String(r.ms || 0) + " ms):" : "";
-    $("search-output").textContent = String(r.text || "");
-    $("search-output").hidden = !r.text || r.ok !== true;
-    if (r.ok !== true) { showSearchError("The search failed: " + String(r.text || "")); }
   }
 
   // ---------------------------------------------------------------- Monitor (GET /metrics)
@@ -4137,9 +4177,7 @@
     $("alerts-save").addEventListener("click", saveAlerts);
     $("alerts-password-save").addEventListener("click", saveAlertsPassword);
     $("alerts-test").addEventListener("click", testAlerts);
-    $("search-save").addEventListener("click", saveSearch);
     $("folders-save").addEventListener("click", saveFolders);
-    $("search-test").addEventListener("click", testSearch);
     $("no-model-open").addEventListener("click", function () { showView("models"); });
     $("models-refresh").addEventListener("click", function () { refreshLauncher(); });
     $("model-start").addEventListener("click", startModel);

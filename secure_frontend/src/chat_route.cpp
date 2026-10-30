@@ -251,9 +251,10 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
   std::shared_ptr<SearchTurn> search;
   const std::optional<ToolFormat> tool_format = search_tool_format(config_.profile);
   if (config_.tools != nullptr && tool_format && !vision_request && request.strata_search != false) {
-    if (auto offer = config_.tools->offer()) {
-      // owner 2026-10-28: its system message says today's date and to search for anything recent (every round's prompt)
-      search = std::make_shared<SearchTurn>(SearchTurn{with_system_note(request, config_.tools->system_note()), std::move(*offer), thinking,
+    if (auto offers = config_.tools->offers(); !offers.empty()) {
+      // owner 2026-10-28: its system message says today's date and to search for anything recent (every round's prompt;
+      // each tool plugin's note, 2026-10-30)
+      search = std::make_shared<SearchTurn>(SearchTurn{with_system_note(request, config_.tools->system_note()), std::move(offers), thinking,
                                                        effort, *tool_format, minimax_thinking});
     }
   }

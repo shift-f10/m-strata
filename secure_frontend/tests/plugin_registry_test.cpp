@@ -142,6 +142,14 @@ void refusals_say_why() {
 #else
   secure_frontend_test::write_file(plugins.dir / "search" / "strata-search", "tool", 0700);
 #endif
+  plugins.add("mailer", R"({"schema": "m-strata.plugin/1", "id": "mailer", "kind": "notifier", "name": "Mailer", "version": "1.0.0",
+    "publisher": "x", "license": "x", "about": "", "notifier": {"program": {"windows": "mailer.exe", "linux": "mailer"}},
+    "files": {"windows": ["mailer.exe"], "linux": ["mailer"]}})");
+#if defined(_WIN32)
+  secure_frontend_test::write_file(plugins.dir / "mailer" / "mailer.exe", "notifier");
+#else
+  secure_frontend_test::write_file(plugins.dir / "mailer" / "mailer", "notifier", 0700);
+#endif
   plugins.add("shared", R"({"schema": "m-strata.plugin/1", "id": "shared", "kind": "diagnostics", "name": "Shared", "version": "1",
     "publisher": "x", "license": "x", "about": "", "diagnostics": {"switches": ["troubleshooting"]}})");
 #if defined(_WIN32)
@@ -160,19 +168,27 @@ void refusals_say_why() {
   refused("broken", "id");
   refused("acme3", "missing");
   refused("shared", "other users");
-  expect(entries.size() == 4U && entry_of(entries, "empty") == nullptr && entry_of(entries, "stray.txt") == nullptr,
+  expect(entries.size() == 5U && entry_of(entries, "empty") == nullptr && entry_of(entries, "stray.txt") == nullptr,
          "only folders with a plugin.json: " + std::to_string(entries.size()));
-  // a kind this server does not run yet: refused even when trusted, its manifest read and its file hashed
+  // a tool plugin runs once approved (the owner's decision 7, plugin spec section 10), its file hashed; a kind this server
+  // does not run yet (a notifier, until its host) is refused even when trusted
   secure_frontend::PluginChoices choices;
   const auto* search = entry_of(entries, "search");
-  if (search == nullptr) return;
+  const auto* mailer = entry_of(entries, "mailer");
+  if (search == nullptr || mailer == nullptr) return;
   choices.approved["search"] = search->pin;
+  choices.approved["mailer"] = mailer->pin;
   const auto approved = plugins.find({}, choices);
   const auto* tool = entry_of(approved, "search");
-  expect(tool != nullptr && tool->state == secure_frontend::PluginState::refused && tool->reason.find("tool") != std::string::npos &&
-             tool->pin.files.size() == 1U && tool->pin.files.begin()->second == hex_sha256("tool"),
-         "a tool plugin does not run yet: " + state_of(tool));
+  expect(tool != nullptr && tool->state == secure_frontend::PluginState::on && tool->pin.files.size() == 1U &&
+             tool->pin.files.begin()->second == hex_sha256("tool"),
+         "a tool plugin runs once approved: " + state_of(tool));
+  const auto* notifier = entry_of(approved, "mailer");
+  expect(notifier != nullptr && notifier->state == secure_frontend::PluginState::refused && notifier->reason.find("notifier") != std::string::npos,
+         "a notifier plugin does not run yet: " + state_of(notifier));
   expect(secure_frontend::plugin_kind_runs(secure_frontend::PluginKind::diagnostics) &&
+             secure_frontend::plugin_kind_runs(secure_frontend::PluginKind::tool) &&
+             !secure_frontend::plugin_kind_runs(secure_frontend::PluginKind::notifier) &&
              !secure_frontend::plugin_kind_runs(secure_frontend::PluginKind::engine),
          "the kinds that run");
 }

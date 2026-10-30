@@ -728,6 +728,37 @@ void web_ui_has_a_plugins_tab() {
                  std::string::npos &&
              js.find("(p.network ? \" It says it connects to \" + p.network + \".\" : \"\")") != std::string::npos,
          "what it connects to, and what keeps it from running");
+  // the owner (2026-10-30: "we should make the email, websearch, debugging all plugins as well"; plugin spec section 10):
+  // Settings' test search becomes the tool card's Try - one call to a running tool plugin with the arguments typed, its
+  // result shown in a scrolling block with whether it was cut and how long it took. The list names a plugin's tools only
+  // while its program runs, so one that is on but not started says when Try works.
+  const std::string css{secure_frontend::find_web_asset("/ui/app.css")->body};
+  expect(js.find("var trying = p.kind === \"tool\" ? pluginTry(p) : null;") != std::string::npos &&
+             js.find("var tools = (Array.isArray(p.tools) ? p.tools : [])") != std::string::npos,
+         "a tool plugin's card has Try, from the tools its running program lists");
+  expect(js.find("if (!tools.length) { return p.state === \"on\" ? el(\"p\", \"muted small\", \"Try works once its program is running (after a restart).\") : null; }") !=
+             std::string::npos,
+         "a tool plugin that is on but lists no tools says when Try works");
+  expect(js.find("tools.forEach(function (tool) {") != std::string::npos &&
+             js.find("pick.addEventListener(\"change\", function () { t.tool = pick.value; t.result = null; drawPluginTry(box, p, tools); });") !=
+                 std::string::npos &&
+             js.find("if (chosen.description) { toolField.appendChild(el(\"span\", \"muted small\", String(chosen.description))); }") !=
+                 std::string::npos,
+         "a select of its tools, with the chosen tool's description");
+  expect(js.find("(Array.isArray(chosen.string_parameters) ? chosen.string_parameters : []).forEach(function (name) {") != std::string::npos,
+         "one text box per string parameter of the chosen tool");
+  expect(js.find("el(\"button\", \"st-btn st-btn--secondary st-btn--sm\", \"Try\")") != std::string::npos &&
+             js.find("api(\"/v1/strata/plugins/try\", jsonPost({ id: p.id, tool: tool.name, arguments: args }))") != std::string::npos,
+         "Try posts the one call");
+  expect(js.find("el(\"pre\", \"plugin-try-output\", r.text)") != std::string::npos &&
+             js.find("String(Number(r.ms) || 0) + \" ms\"") != std::string::npos &&
+             js.find("(r.truncated === true ? \" The text was cut to what a model is given.\" : \" This is the whole text.\")") !=
+                 std::string::npos &&
+             css.find(".plugin-card .plugin-try-output { margin: 0; max-height: 16rem; overflow: auto;") != std::string::npos,
+         "the result in a scrolling block, with whether it was cut and how long it took");
+  expect(html.find("id=\"search-settings\"") == std::string::npos && js.find("/v1/strata/search") == std::string::npos &&
+             js.find("searchForm") == std::string::npos && css.find(".search-output") == std::string::npos,
+         "Settings has no Web search section any more: its settings are the search plugin's, its test search is Try");
 }
 
 // The Settings tab (spec 2026-10-28-server-window-design, Part 1; the owner: "a configuration tab ... api key, etc"): the
@@ -773,6 +804,13 @@ void web_ui_has_server_settings() {
   expect(js.find("\"listener.port\"") != std::string::npos && js.find("\"limits.engine.generation_timeout_s\"") != std::string::npos &&
              js.find("\"models.downloads_root\"") != std::string::npos && js.find("logs: [\"logging.engine_output\"]") != std::string::npos,
          "the four groups name their settings");
+  // plugin spec section 10: search.max_rounds becomes the server's tools.max_rounds (1-8), the rounds of tool calls an
+  // answer may make, with the limits
+  const auto limits_at = js.find("limits: [\"limits.engine.generation_timeout_s\"");
+  const auto limits_end = limits_at == std::string::npos ? std::string::npos : js.find(']', limits_at);
+  expect(limits_end != std::string::npos && js.substr(limits_at, limits_end - limits_at).find("\"tools.max_rounds\"") != std::string::npos &&
+             js.find("\"tools.max_rounds\": \"Tool calls per answer\"") != std::string::npos,
+         "Limits and timeouts has the tool calls per answer");
   // the owner (2026-10-29): without the Debugging plugin on, the Troubleshooting section is hidden (the server says which)
   expect(js.find("$(\"logs-settings\").hidden = serverConfig.data.debugging !== true;") != std::string::npos &&
              js.find("[\"key-settings\", \"server-settings\", \"limits-settings\", \"paths-settings\"].forEach(function (id) { $(id).hidden = false; });") !=
@@ -851,39 +889,15 @@ void web_ui_has_email_alert_settings() {
              js.find("api(\"/v1/strata/alerts/test\", jsonPost({}))") != std::string::npos,
          "the four routes");
   // (changed 2026-10-27 with the Model folders setting: the sub-tab shows with it, alerts or web search; 2026-10-28: a tab,
-  // shown with the server's own settings too)
-  expect(js.find("var any = alerts.built || search.built || folders.built || serverConfig.built;") != std::string::npos &&
+  // shown with the server's own settings too; 2026-10-30: web search left Settings for its plugin's card, plugin spec
+  // section 10)
+  expect(js.find("var any = alerts.built || folders.built || serverConfig.built;") != std::string::npos &&
              js.find("$(\"tab-btn-settings\").hidden = !any;") != std::string::npos &&
              js.find("$(\"alerts-settings\").hidden = !alerts.built;") != std::string::npos,
-         "the sub-tab shows when the server has alerts (or web search, or model folders), the alerts card only with alerts");
+         "the sub-tab shows when the server has alerts (or model folders, or its own settings), the alerts card only with alerts");
   expect(js.find("\"smtp.ionos.com\"") != std::string::npos && js.find("$(\"alerts-port\").value = \"465\";") != std::string::npos,
          "the IONOS preset: smtp.ionos.com, 465, SSL/TLS");
   expect(js.find("$(\"alerts-password\").value = \"\";") != std::string::npos, "the password field is emptied once sent");
-}
-
-// Web search (spec 2026-10-27-web-search-design §2): the Settings sub-tab's web search section - on/off, the SearXNG
-// address, the results, rounds and time limit, save and a test search over the three routes, shown only when the server
-// has search - and the chat's note of what a reply searched for (its strata_search events).
-void web_ui_has_web_search_settings() {
-  const std::string html{secure_frontend::find_web_asset("/")->body};
-  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
-  for (const char* id : {"id=\"search-settings\"", "id=\"search-enabled\"", "id=\"search-url\"", "id=\"search-results\"",
-                         "id=\"search-rounds\"", "id=\"search-timeout\"", "id=\"search-save\"", "id=\"search-query\"",
-                         "id=\"search-test\"", "id=\"search-state\"", "id=\"search-result\"", "id=\"search-output\"",
-                         "id=\"search-error\""}) {
-    expect(html.find(id) != std::string::npos, std::string{"the search settings have "} + id);
-  }
-  expect(html.find("<div class=\"st-card alerts-settings\" id=\"search-settings\" hidden>") != std::string::npos,
-         "the section is hidden until the server offers it");
-  expect(html.find("leave this PC through that instance") != std::string::npos && html.find("search: formats:") != std::string::npos,
-         "the page says where the searches go and what the instance needs");
-  expect(js.find("api(\"/v1/strata/search\", jsonPost({}))") != std::string::npos &&
-             js.find("api(\"/v1/strata/search/settings\", jsonPost(searchForm()))") != std::string::npos &&
-             js.find("api(\"/v1/strata/search/test\", jsonPost({ query: $(\"search-query\").value.trim() }))") != std::string::npos,
-         "the three routes");
-  expect(js.find("$(\"search-settings\").hidden = !search.built;") != std::string::npos, "the section shows only with search");
-  expect(js.find("var search = event.strata_search;") != std::string::npos && js.find("\"Searched the web\"") != std::string::npos,
-         "a reply notes what it searched for");
 }
 
 // Owner 2026-10-28: the searches in a box, as the thinking is ("they look out of place"), the round limit said as
@@ -891,6 +905,10 @@ void web_ui_has_web_search_settings() {
 void web_ui_search_box_limit_note_and_engine_table() {
   const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
   const std::string css{secure_frontend::find_web_asset("/ui/app.css")->body};
+  // (kept from web_ui_has_web_search_settings, which went with Settings' Web search section on 2026-10-30: a reply
+  // still notes what it searched for, from its strata_search events)
+  expect(js.find("var search = event.strata_search;") != std::string::npos && js.find("\"Searched the web\"") != std::string::npos,
+         "a reply notes what it searched for");
   expect(js.find("el(\"details\", \"st-collapse search-box\")") != std::string::npos && js.find("el(\"ul\", \"search-list\")") != std::string::npos,
          "the searches are a collapsible box with a list, as the thinking is");
   expect(js.find("if (search && search.event === \"limit\") { run.limit = search.max_rounds; }") != std::string::npos &&
@@ -1798,51 +1816,8 @@ void alert_routes_need_their_handler_and_the_key() {
   expect(none.empty(), "off: nothing is called");
 }
 
-// Web search (spec 2026-10-27-web-search-design §2): the search settings routes - keyed, POST, a small JSON body - served
-// only while their handler is set (a build with web search and model control).
-void search_routes_need_their_handler_and_the_key() {
-  const std::vector<std::pair<std::string, secure_frontend::RouteId>> routes{
-      {"/v1/strata/search", secure_frontend::RouteId::strata_search},
-      {"/v1/strata/search/settings", secure_frontend::RouteId::strata_search_settings},
-      {"/v1/strata/search/test", secure_frontend::RouteId::strata_search_test}};
-  const auto make = [](std::vector<std::string>* calls, const bool on) {
-    secure_frontend::SecretBytes secret;
-    (void)secret.assign(kRouterToken);
-    secure_frontend::ModelCardRoutes search;
-    if (on) {
-      search.handle = [calls](const secure_frontend::RouteId route, const std::string_view body,
-                              const secure_frontend::RequestContext&) -> secure_frontend::RouteResult {
-        calls->push_back(std::to_string(static_cast<int>(route)) + " " + std::string{body});
-        return secure_frontend::HttpResponse{.status = 200, .headers = {}, .body = "{}\n"};
-      };
-    }
-    return secure_frontend::ApiRouter({
-        .policy = secure_frontend::make_http_policy(*secure_frontend::parse_listener_address("127.0.0.1"), 8080, {}, {}),
-        .validator = secure_frontend::make_bearer_validator(std::make_shared<const secure_frontend::TokenVerifier>(std::move(secret))),
-        .model_id = "", .owned_by = "local", .chat_body_limit = 49152,
-        .health = [] { return secure_frontend::HealthView{true, "none", ""}; },
-        .chat = {},
-        .served = [] { return secure_frontend::ServedModels{}; },
-        .search = std::move(search)});
-  };
-  std::vector<std::string> calls;
-  auto router = make(&calls, true);
-  for (const auto& [target, route] : routes) {
-    expect(request(router, "POST", target, "{}", false).status == 401, target + " needs the key");
-    expect(request(router, "POST", target, "{\"x\":1}").status == 200 && !calls.empty() &&
-               calls.back() == std::to_string(static_cast<int>(route)) + " {\"x\":1}",
-           target + " reaches the handler");
-    expect(request(router, "GET", target).status == 405, target + " is POST only");
-    expect(request(router, "POST", target, "{}", true, true, "text/plain").status == 415, target + " takes JSON");
-  }
-  std::vector<std::string> none;
-  auto off = make(&none, false);
-  for (const auto& [target, route] : routes) expect(request(off, "POST", target, "{}").status == 404, target + " is no route when off");
-  expect(none.empty(), "off: nothing is called");
-}
-
 // The Settings tab (spec 2026-10-28-server-window-design, Part 1): its routes are keyed, POST, JSON, served only while
-// their handler is set (model control on), as the search settings'.
+// their handler is set (model control on), as the alert routes'.
 void config_routes_need_their_handler_and_the_key() {
   const std::vector<std::pair<std::string, secure_frontend::RouteId>> routes{
       {"/v1/strata/config", secure_frontend::RouteId::strata_config},
@@ -1891,7 +1866,8 @@ void plugin_routes_need_their_handler_and_the_key() {
       {"/v1/strata/plugins", secure_frontend::RouteId::strata_plugins},
       {"/v1/strata/plugins/approve", secure_frontend::RouteId::strata_plugins_approve},
       {"/v1/strata/plugins/switch", secure_frontend::RouteId::strata_plugins_switch},
-      {"/v1/strata/plugins/settings", secure_frontend::RouteId::strata_plugins_settings}};
+      {"/v1/strata/plugins/settings", secure_frontend::RouteId::strata_plugins_settings},
+      {"/v1/strata/plugins/try", secure_frontend::RouteId::strata_plugins_try}};
   const auto make = [](std::vector<std::string>* calls, const bool on) {
     secure_frontend::SecretBytes secret;
     (void)secret.assign(kRouterToken);
@@ -2075,7 +2051,6 @@ int main(int argc, char** argv) {
       {"model_card_routes_need_the_switch_and_the_key", model_card_routes_need_the_switch_and_the_key},
       {"calibration_routes_need_their_handlers_and_the_key", calibration_routes_need_their_handlers_and_the_key},
       {"alert_routes_need_their_handler_and_the_key", alert_routes_need_their_handler_and_the_key},
-      {"search_routes_need_their_handler_and_the_key", search_routes_need_their_handler_and_the_key},
       {"config_routes_need_their_handler_and_the_key", config_routes_need_their_handler_and_the_key},
       {"plugin_routes_need_their_handler_and_the_key", plugin_routes_need_their_handler_and_the_key},
       {"web_ui_cards_from_this_pc_and_the_danger_zone", web_ui_cards_from_this_pc_and_the_danger_zone},
@@ -2090,7 +2065,6 @@ int main(int argc, char** argv) {
       {"web_ui_has_a_plugins_tab", web_ui_has_a_plugins_tab},
       {"web_ui_claims_a_login_link_at_load_and_on_hashchange", web_ui_claims_a_login_link_at_load_and_on_hashchange},
       {"web_ui_opens_the_view_its_address_names", web_ui_opens_the_view_its_address_names},
-      {"web_ui_has_web_search_settings", web_ui_has_web_search_settings},
       {"web_ui_has_model_folder_setting", web_ui_has_model_folder_setting},
       {"web_ui_monitor_shows_stopped_and_the_model", web_ui_monitor_shows_stopped_and_the_model},
       {"web_ui_monitor_is_even_and_shows_memory_disk_and_cache", web_ui_monitor_is_even_and_shows_memory_disk_and_cache},

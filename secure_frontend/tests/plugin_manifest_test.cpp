@@ -5,6 +5,7 @@
 #include "support/test_support.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <map>
@@ -135,6 +136,7 @@ const std::string kSearchTool = R"({"schema": "m-strata.plugin/1", "id": "search
     "environment": {"SEARX_TOKEN": "{token}", "MODE": "plain"},
     "network": "the SearXNG instance at {url}",
     "note": "Today is {today}.",
+    "call_timeout_s": 90,
     "settings": [
       {"name": "url", "kind": "url", "label": "SearXNG address", "help": "Its JSON format on.", "required": true},
       {"name": "results", "kind": "integer", "label": "Results", "help": "", "default": 5, "min": 1, "max": 10},
@@ -162,6 +164,7 @@ void a_tool_manifest_says_how_its_program_runs() {
              run.environment[1].first == "MODE" && run.environment[1].second == T{.text = "plain"},
          "its environment");
   expect(run.network == "the SearXNG instance at {url}" && run.note == "Today is {today}.", "network and note");
+  expect(run.call_timeout == std::chrono::seconds(90), "a call's time limit");
   using K = secure_frontend::SettingKind;
   expect(run.settings.size() == 6U && run.settings[0].kind == K::url && run.settings[0].required &&
              run.settings[1].kind == K::integer && run.settings[1].min == 1 && run.settings[1].max == 10 &&
@@ -205,6 +208,11 @@ void a_wrong_run_block_is_refused_by_name() {
   refuse(R"("values": {"url": "http://127.0.0.1:8080", "results": 3})", R"("values": {"results": 30})", "results");
   refuse(R"("values": {"url": "http://127.0.0.1:8080", "results": 3})", R"("values": {"token": "x"})", "secret");
   refuse(R"("note": "Today is {today}.",)", R"("note": "Today is {today}.", "extra": 1,)", "extra");
+  // a call's time limit: 1-600 seconds
+  refuse(R"("call_timeout_s": 90,)", R"("call_timeout_s": 0,)", "call_timeout_s");
+  refuse(R"("call_timeout_s": 90,)", R"("call_timeout_s": 601,)", "call_timeout_s");
+  // a setting an argument names has a value: required, or a default
+  refuse(R"("default": 5, "min": 1, "max": 10})", R"("min": 1, "max": 10})", "results");
   // a notifier has no note; only its own block
   std::string notifier = kSearchTool;
   notifier.replace(notifier.find(R"("kind": "tool")"), 14U, R"("kind": "notifier")");
@@ -256,6 +264,30 @@ void values_are_checked_against_the_settings() {
          "values as text");
 }
 
+// The search plugin this repository ships (plugins/search/plugin.json; the owner, 2026-10-30, decision 6): strata-search
+// as a tool plugin, its SearXNG settings its own, its note today's search advice.
+void the_shipped_search_plugin_is_one() {
+  std::ifstream in(std::string{SECURE_FRONTEND_REPO_PLUGINS} + "/search/plugin.json", std::ios::binary);
+  const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+  const auto parsed = secure_frontend::parse_plugin_manifest(text, "search");
+  const auto* manifest = std::get_if<secure_frontend::PluginManifest>(&parsed);
+  expect(manifest != nullptr && manifest->run.has_value(), "read: " + why(parsed));
+  if (manifest == nullptr || !manifest->run) return;
+  const auto& run = *manifest->run;
+  using T = secure_frontend::PluginTemplate;
+  expect(manifest->kind == secure_frontend::PluginKind::tool && manifest->publisher == "M-Strata" && manifest->license == "AGPL-3.0-only",
+         "a first-party tool plugin");
+  expect(run.arguments == std::vector<T>{{.text = "--url"}, {.setting = "url"}, {.text = "--results"}, {.setting = "results"},
+                                         {.text = "--timeout"}, {.setting = "timeout_s"}} &&
+             run.environment.empty() && run.network == "the SearXNG instance at {url}" && run.call_timeout == std::chrono::seconds(365),
+         "strata-search's arguments, its network, its time limit (each of its three steps at most 120 s, and a little more)");
+  expect(run.settings.size() == 3U && run.settings[0].name == "url" && run.settings[0].required &&
+             run.settings[1].default_value == secure_frontend::PluginValue{std::int64_t{5}} &&
+             run.settings[2].default_value == secure_frontend::PluginValue{std::int64_t{30}},
+         "its settings: the instance (needed), results per search, the time limit");
+  expect(run.note.find("Today's date is {today}.") == 0U && run.note.find("web_search") != std::string::npos, "its note");
+}
+
 // The debugging plugin this repository ships (plugins/debugging/plugin.json; the owner, 2026-10-30: "we should make
 // the email, websearch, debugging all plugins as well"): make puts it in every install, on with --debugging. It is a
 // diagnostics plugin with each switch a make --debugging build had.
@@ -282,6 +314,7 @@ void the_shipped_debugging_plugin_is_one() {
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"the_shipped_debugging_plugin_is_one", the_shipped_debugging_plugin_is_one},
+      {"the_shipped_search_plugin_is_one", the_shipped_search_plugin_is_one},
       {"a_diagnostics_manifest_is_read", a_diagnostics_manifest_is_read},
       {"a_code_plugin_names_this_platforms_files", a_code_plugin_names_this_platforms_files},
       {"a_wrong_manifest_is_refused_by_name", a_wrong_manifest_is_refused_by_name},

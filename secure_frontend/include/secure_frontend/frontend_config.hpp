@@ -416,6 +416,20 @@ struct SearchConfig final {
 // Tool and notifier plugins' settings (docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md, section 10;
 // owner 2026-10-30, decision 6): the plugins.<id>.<name> rows as config.json holds them. The server checks them against
 // each plugin's manifest when it starts. A secret is never here (roots.secret).
+// The rows the plugins took over (plugin spec 2026-10-30, section 10; the owner's decision 6), moved once when the
+// server starts: search.url, .results and .timeout_s become plugins.search.*, search.max_rounds becomes tools.max_rounds
+// (one the config sets already stays), and search.enabled is handed back as what the search plugin's on or off becomes.
+struct MovedPluginRows final {
+  std::vector<std::string> moved{};       // the old rows moved or dropped, by name, in order
+  std::optional<bool> search_enabled{};   // search.enabled, when the config had it
+};
+[[nodiscard]] MovedPluginRows move_plugin_rows(FrontendConfigDraft& draft);
+
+// Tool plugins (plugin spec 2026-10-30, section 10): tools.max_rounds, the rounds of tool calls one answer may make.
+struct ToolsConfig final {
+  std::size_t max_rounds{8};
+};
+
 struct PluginSettingsConfig final {
   std::map<std::string, std::map<std::string, ConfigDraftValue>> values{};  // plugin id -> setting name -> value
 };
@@ -435,14 +449,6 @@ struct DebuggingLogs final {
 };
 void set_debugging_logs(DebuggingLogs logs) noexcept;
 [[nodiscard]] DebuggingLogs debugging_logs() noexcept;
-
-[[nodiscard]] constexpr bool web_search_built() noexcept {
-#if defined(SECURE_FRONTEND_WEB_SEARCH)
-  return true;
-#else
-  return false;
-#endif
-}
 
 // SP4 §3.9. pull.downloader is only a syntactically absolute path here; the
 // file rules run lazily when a transferring verb or doctor --downloader runs
@@ -491,6 +497,7 @@ class FrontendConfig final {
   const AlertsConfig alerts;        // GUI-first start-up: alerts.email.* (spec 2026-10-27 §5a)
   const SearchConfig search;        // web search: search.* (spec 2026-10-27-web-search-design §2)
   const PluginSettingsConfig plugins;  // plugins.<id>.<name> (plugin spec 2026-10-30 §10)
+  const ToolsConfig tools;             // tools.* (plugin spec 2026-10-30 §10)
 
  private:
   friend std::variant<ValidatedConfig, std::vector<ConfigIssue>> validate(const FrontendConfigDraft& draft);
@@ -499,14 +506,14 @@ class FrontendConfig final {
                  SamplingDefaults sampling_value, ReasoningConfig reasoning_value, SessionPolicy session_value,
                  ReplicasConfig replicas_value, VisionConfig vision_value, GlmSettings glm_value,
                  UpdateSettings update_value = {}, ModelsConfig models_value = {}, AlertsConfig alerts_value = {},
-                 SearchConfig search_value = {}, PluginSettingsConfig plugins_value = {})
+                 SearchConfig search_value = {}, PluginSettingsConfig plugins_value = {}, ToolsConfig tools_value = {})
       : listener(std::move(listener_value)), limits(limits_value), roots(std::move(roots_value)),
         token(std::move(token_value)), engine(std::move(engine_value)), pull(std::move(pull_value)),
         update(std::move(update_value)),
         logging(logging_value), sampling(std::move(sampling_value)), reasoning(reasoning_value),
         session(std::move(session_value)), replicas(replicas_value), vision(vision_value), glm(std::move(glm_value)),
         models(std::move(models_value)), alerts(std::move(alerts_value)), search(std::move(search_value)),
-        plugins(std::move(plugins_value)) {}
+        plugins(std::move(plugins_value)), tools(tools_value) {}
 };
 
 // Immutable after validation; subsystems derive their limits from it once.

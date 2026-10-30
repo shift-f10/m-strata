@@ -2029,10 +2029,11 @@ void email_alert_rows_follow_the_build() {
 #endif
 }
 
-// Web search (spec 2026-10-27-web-search-design §2): optional at build time. Built in (SECURE_FRONTEND_WEB_SEARCH),
-// search.* is read and checked - the SearXNG URL (http or https, no user, query or fragment), 1-10 results, 1-8 rounds,
-// 5-120 s - and off by default; built without, every search.* row is refused by name.
-void web_search_rows_follow_the_build() {
+// Web search's old rows (spec 2026-10-27-web-search-design §2), now the search plugin's (plugin spec 2026-10-30, section
+// 10): search.* is read and checked in every build - the SearXNG URL (http or https, no user, query or fragment), 1-10
+// results, 1-8 rounds, 5-120 s - so the first start can move it; and tools.max_rounds (1-8, default 8) is the rounds of
+// tool calls one answer may make.
+void old_web_search_rows_are_read_in_every_build() {
   ConfigFixture f;
   const std::map<std::string, std::string> searxng{{"search.enabled", "true"},
                                                    {"search.url", "\"http://127.0.0.1:8888/searxng/\""},
@@ -2040,7 +2041,6 @@ void web_search_rows_follow_the_build() {
                                                    {"search.max_rounds", "2"},
                                                    {"search.timeout_s", "20"}};
   const auto result = with_literals(f, searxng);
-#if defined(SECURE_FRONTEND_WEB_SEARCH)
   const auto* config = config_of(result);
   expect(config != nullptr, "a SearXNG instance's settings validate: " + issues_of(result));
   if (config != nullptr) {
@@ -2086,10 +2086,54 @@ void web_search_rows_follow_the_build() {
          "the search rows validate alone");
   rows.entries["search.url"] = secure_frontend::ConfigDraftEntry{std::string{"not a url"}, secure_frontend::ConfigSource::file};
   expect(std::holds_alternative<secure_frontend::ConfigErrors>(secure_frontend::search_from_draft(rows)), "and refuse alone");
-#else
-  expect(has_issue(result, "search.enabled", ConfigIssueCode::invalid_value) && has_issue(result, "search.url", ConfigIssueCode::invalid_value),
-         "a build without web search refuses the rows by name: " + issues_of(result));
-#endif
+  // tools.max_rounds: every tool plugin's rounds
+  // the first start moves them (the owner's decision 6): search.url, .results and .timeout_s to the search plugin's
+  // settings, search.max_rounds to tools.max_rounds (one the config sets already stays), search.enabled handed back as the
+  // plugin's on or off; nothing else is touched, and a config without them moves nothing
+  auto old_rows = secure_frontend::parse_config_text(render_config_json([&] {
+                                                       auto literals = f.literals;
+                                                       for (const auto& [row, literal] : searxng) literals[row] = literal;
+                                                       return literals;
+                                                     }()),
+                                                     f.dir);
+  auto* draft = std::get_if<secure_frontend::FrontendConfigDraft>(&old_rows);
+  expect(draft != nullptr, "the old rows read");
+  if (draft != nullptr) {
+    const auto before = draft->entries.size();
+    const auto moved = secure_frontend::move_plugin_rows(*draft);
+    using V = secure_frontend::ConfigDraftValue;
+    expect(moved.moved == std::vector<std::string>{"search.enabled", "search.max_rounds", "search.results", "search.timeout_s", "search.url"} &&
+               moved.search_enabled == std::optional<bool>{true},
+           "the rows moved, and search was on");
+    expect(draft->entries.at("plugins.search.url").value == V{std::string{"http://127.0.0.1:8888/searxng/"}} &&
+               draft->entries.at("plugins.search.results").value == V{std::int64_t{3}} &&
+               draft->entries.at("plugins.search.timeout_s").value == V{std::int64_t{20}} &&
+               draft->entries.at("tools.max_rounds").value == V{std::int64_t{2}} && !draft->entries.contains("search.url") &&
+               !draft->entries.contains("search.enabled") && draft->entries.size() == before - 1U,
+           "each in its new place, the old ones gone");
+    expect(config_of(secure_frontend::validate(*draft)) != nullptr, "and the config still validates");
+    expect(secure_frontend::move_plugin_rows(*draft).moved.empty(), "a second time, nothing to move");
+  }
+  auto kept = secure_frontend::parse_config_text(render_config_json([&] {
+                                                   auto literals = f.literals;
+                                                   literals["search.max_rounds"] = "3";
+                                                   literals["tools.max_rounds"] = "5";
+                                                   return literals;
+                                                 }()),
+                                                 f.dir);
+  if (auto* both = std::get_if<secure_frontend::FrontendConfigDraft>(&kept)) {
+    (void)secure_frontend::move_plugin_rows(*both);
+    expect(std::get<std::int64_t>(both->entries.at("tools.max_rounds").value) == 5 && !both->entries.contains("search.max_rounds"),
+           "a tools.max_rounds the config sets stays; the old row goes");
+  }
+  expect(off != nullptr && off->tools.max_rounds == 8U && secure_frontend::describe(*off).find("\ntools.max_rounds = 8\n") != std::string::npos,
+         "tools.max_rounds: 8 by default, and --check prints it");
+  const auto two_result = with_literals(f, {{"tools.max_rounds", "2"}});
+  expect(config_of(two_result) != nullptr && config_of(two_result)->tools.max_rounds == 2U, "tools.max_rounds read: " + issues_of(two_result));
+  for (const char* bad : {"0", "9"}) {
+    expect(has_issue(with_literals(f, {{"tools.max_rounds", bad}}), "tools.max_rounds", ConfigIssueCode::out_of_range),
+           std::string{"tools.max_rounds refused: "} + bad);
+  }
 }
 
 void web_ui_and_loopback_without_key_rows() {
@@ -2538,7 +2582,7 @@ int main(int argc, char** argv) {
       {"slot_save_path_is_a_bounded_private_path", slot_save_path_is_a_bounded_private_path},
       {"web_ui_and_loopback_without_key_rows", web_ui_and_loopback_without_key_rows},
       {"email_alert_rows_follow_the_build", email_alert_rows_follow_the_build},
-      {"web_search_rows_follow_the_build", web_search_rows_follow_the_build},
+      {"old_web_search_rows_are_read_in_every_build", old_web_search_rows_are_read_in_every_build},
       {"model_name_row", model_name_row},
       {"models_keys_typed_and_described", models_keys_typed_and_described},
       {"control_remote_networks_typed_and_checked", control_remote_networks_typed_and_checked},

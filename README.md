@@ -128,13 +128,19 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
 
 **Web search through MCP and SearXNG**
 
-- A build with `search` has `strata-search`, an MCP server the server runs as a private child, which asks **your own
-  SearXNG instance**. Qwen3.6, Qwen3.8, GLM-5.3, Raon-1-mini, flint, Gemma 4, DeepSeek-V4.1 and MiniMax-M3.1 models get a `web_search` tool, each in its own
-  template's form, and decide when to search.
-- Up to `search.max_rounds` searches per answer (8 by default), then the model answers from what it found; the chat
-  shows each search and its results in a box, and the API returns them as `strata_search` events.
-- On or off per card, per chat (the chat settings' switch) and per request (`"strata_search": false`); a test search
-  in the Settings tab shows what a model reads; a search that found nothing says why.
+- Web search is a plugin: a build with `search` has the **Web search** plugin (`plugins/search`), whose program
+  `strata-search` is an MCP server the server runs as a private child, which asks **your own SearXNG instance**.
+  Qwen3.6, Qwen3.8, GLM-5.3, Raon-1-mini, flint, Gemma 4, DeepSeek-V4.1 and MiniMax-M3.1 models get a `web_search`
+  tool, each in its own template's form, and decide when to search.
+- Up to `tools.max_rounds` tool calls per answer (8 by default; Settings > Limits, "Tool calls per answer"), then the
+  model answers from what it found; the chat shows each search and its results in a box, and the API returns them as
+  `strata_search` events.
+- On or off for the install (the Plugins tab), per card, per chat (the chat settings' switch) and per request
+  (`"strata_search": false`); the plugin's **Try** in the Plugins tab runs one search and shows what a model reads; a
+  search that found nothing says why.
+- Other tool plugins - an MCP server on standard I/O in a folder of its own, your own or someone else's - run the same
+  way once you approve them in the Plugins tab, each with only the settings and environment its manifest declares;
+  a chat offers at most 16 tools.
 
 **The page and the API**
 
@@ -149,13 +155,13 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   `/v1/models`, `/health` and `/metrics`.
 - **Settings tab:** the API key (show, copy, rotate), where the server listens and which PCs may use it, limits and
   timeouts, the download folders, and the model folders (as they are, or on network shares - experimental), email
-  alerts, web search, and - while the Debugging plugin is on - **Troubleshooting** (the engine's own output in the
-  server log).
-- **Plugins tab** (being built; Debugging is the first plugin): every plugin in the install's `plugins` folder, with
-  what it is, its state and its SHA-256s. A plugin runs only when this install was built with it or you approved it,
-  and only with the files you approved: a changed file waits for your approval again. Approve, and turn on or off, from
-  the tab; a tool's or notifier's settings are in its card too (a password or key is kept protected and never shown
-  again). A change applies when the server restarts.
+  alerts, and - while the Debugging plugin is on - **Troubleshooting** (the engine's own output in the server log).
+- **Plugins tab** (being built; Debugging and Web search so far): every plugin in the install's `plugins` folder,
+  with what it is, its state and its SHA-256s. A plugin runs only when this install was built with it or you approved
+  it, and only with the files you approved: a changed file waits for your approval again. Approve, and turn on or off,
+  from the tab; a tool's or notifier's settings are in its card too (a password or key is kept protected and never
+  shown again), and a running tool plugin's card lists its tools with **Try** (one call, with the arguments you type).
+  A change applies when the server restarts.
 - **Model folders on network shares - experimental, off by default:** a model folder may be on an SMB/CIFS share
   or an NFS mount once Settings turns it on; see
   [Model folders on network shares](#model-folders-on-network-shares-experimental) for what it means and its status.
@@ -471,7 +477,9 @@ python3 -m venv .venv-dev && .venv-dev/bin/python -m pip install cmake ninja
 The first build compiles the CUDA engine and takes a while; later builds are incremental (`out/make-build`). The out
 folder holds only what runs:
 - `strata-unified-server` and `strata`;
-- `strata-search` (with `--with search`), `strata-window` (with `--with window`) and `strata-tui` (with `--with tui`);
+- `strata-window` (with `--with window`) and `strata-tui` (with `--with tui`);
+- `plugins/`: `debugging/` (every folder) and `search/` (with `--with search`: the Web search plugin, its manifest and
+  `strata-search`);
 - `engine/`: the launcher, one library per family, `strata-prepare`, `strata-vision` (upstream's picture encoder, built
   from `upstream/tools/vision` with the same pinned llama.cpp), the bundled cuBLAS, the expert profiles and, with the
   Maya families, `templates/minimax-m3.1/`;
@@ -577,8 +585,8 @@ clients that may add and delete models).
   key file to rotate.
 - **Server and network:** the listen address and port, the two opt-ins for serving other PCs, the host names clients
   use, and which PCs or subnets may manage models.
-- **Limits and timeouts:** the longest answer and model start (seconds), the largest prompt and answer (tokens), and
-  the connections per download.
+- **Limits and timeouts:** the longest answer and model start (seconds), the largest prompt and answer (tokens), the
+  tool calls per answer, and the connections per download.
 - **Folders:** where downloads go, and the folder Add a model opens first.
 
 Each group's Save checks the whole file by the rules the server checks at start, so a setting that would stop the
@@ -598,8 +606,6 @@ is left as it was. An empty box puts the setting back to its default.
 - **Email alerts** (a build with `email`): the SMTP server, port and security (SSL/TLS on 465 or STARTTLS on 587),
   user name, From and To, and which events to send (downloads, calibrations, engine stops, server start). "Fill in
   IONOS" presets one provider; the password is stored on its own and never shown again; "Send a test email" checks it.
-- **Web search** (a build with `search`): on/off, the address of your SearXNG instance, results per search, searches
-  per answer and a time limit, and a test search that shows what a model reads.
 
 ### The config file
 
@@ -613,7 +619,8 @@ is left as it was. An empty box puts the setting back to its default.
 | `listener.host_aliases` | The `Host` names clients may use (for example this PC's LAN name and address with the port). |
 | `models.control_remote`, `models.control_remote_networks` | Let other machines start and stop models, from listed hosts or subnets only. |
 | `roots.allow_untrusted_media` | Use model folders as they are (the Model folders switch). |
-| `search.enabled`, `search.url`, `search.results`, `search.max_rounds`, `search.timeout_s` | Web search. |
+| `plugins.search.url`, `plugins.search.results`, `plugins.search.timeout_s` | The Web search plugin's settings (its card in the Plugins tab). An older config's `search.*` rows move here, and `search.max_rounds` to `tools.max_rounds`, at its first start. |
+| `tools.max_rounds` | Tool calls one answer may make (8 by default, 1-8). |
 | `alerts.*` | Email alerts (set from the page). |
 | `limits.engine.generation_timeout_s` | How long one generation may run before it is stopped: 1800 s (half an hour) by default, up to 86400. Each model card's **Longest answer (minutes)** sets it for that model; this row is the card's default. |
 | `limits.chat.max_prompt_tokens`, `limits.chat.max_completion_tokens` | The largest prompt and answer a request may ask for (the card's context still bounds them). |
@@ -693,8 +700,8 @@ search:
   formats: [html, json]   # the server reads the JSON
 ```
 
-Run `docker compose up -d` there, then in Settings > Web search turn it on, enter
-`http://<that machine>:8080`, save, restart the server, and use "Test search". Every model (Qwen, GLM-5.3, raon1, flint, Gemma 4,
+Run `docker compose up -d` there, then in the Plugins tab enter `http://<that machine>:8080` as the Web search
+plugin's SearXNG address (the plugin is on unless you turned it off), save, restart the server, and use **Try**. Every model (Qwen, GLM-5.3, raon1, flint, Gemma 4,
 DeepSeek-V4.1, MiniMax-M3.1) then gets the `web_search` tool on every text chat; what it searches for leaves your PC through that instance. Each such
 card has a **Web search** switch (on by default; off, that model starts without the tool), and while it is on the chat
 settings have one too (off, the page's chats ask for no search). After the last allowed search the model is told to
@@ -862,7 +869,8 @@ for a real install, which makes its own key at the first start.
 
 | What you see | Why, and what to do |
 | --- | --- |
-| No Settings, email or web search on the page | Those sections answer this PC and the machines `models.control_remote_networks` lists; open the page from one of them. A build without `--with email,search` has no email or search sections at all, and Troubleshooting shows only while the Debugging plugin is on (the Plugins tab). |
+| No Settings, Plugins or email on the page | Those sections answer this PC and the machines `models.control_remote_networks` lists; open the page from one of them. A build without `--with email` has no email section, one without `--with search` no Web search plugin, and Troubleshooting shows only while the Debugging plugin is on (the Plugins tab). |
+| The model never searches | The Plugins tab says why: the Web search plugin is off, its SearXNG address is not set, or (after a change) the server has not restarted yet; the server's log says `[strata] plugins: search does not run: ...` at the start. |
 | A new model family, download or setting is missing | The running server is an older build: rebuild the out folder and restart from it. |
 | "Other users of this PC can change files in this folder" | Make the folder private when the page asks, or turn on Settings > Model folders. |
 | A GLM download shows its size as "read from Hugging Face at the start" | Project Maya's catalog pins each file's SHA-256 but not its size; the server reads the size when the download starts. |

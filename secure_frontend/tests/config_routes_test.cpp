@@ -70,12 +70,16 @@ void the_settings_are_listed_with_their_rules() {
   for (const char* key : {"listener.host", "listener.port", "listener.allow_remote", "listener.allow_wildcard_bind",
                           "listener.host_aliases", "models.control_remote", "models.control_remote_networks",
                           "limits.engine.generation_timeout_s", "limits.engine.ready_timeout_s", "limits.chat.max_prompt_tokens",
-                          "limits.chat.max_completion_tokens", "pull.connections", "models.downloads_root", "models.default_root"}) {
+                          "limits.chat.max_completion_tokens", "tools.max_rounds", "pull.connections", "models.downloads_root",
+                          "models.default_root"}) {
     expect(has(listed, std::string{"{\"key\":\""} + key + "\""), std::string{"listed: "} + key);
   }
   expect(has(listed, R"({"key":"listener.port","type":"integer","value":8080,"default":)") &&
              has(listed, R"({"key":"limits.engine.generation_timeout_s","type":"integer","value":null,"default":1800,"min":1,"max":86400,)"),
          "a value the file holds, and one it leaves to the default: " + listed.body);
+  // the rounds of tool calls one answer may make (plugin spec section 10; it was web search's own search.max_rounds)
+  expect(has(listed, R"({"key":"tools.max_rounds","type":"integer","value":null,"default":8,"min":1,"max":8,)"),
+         "tools.max_rounds, with the limits: " + listed.body);
   expect(has(listed, R"("key":{"rotatable":true})"), "the key lives in the data folder's store: it can be rotated");
   expect(listed.header_value("Cache-Control") == std::optional<std::string_view>{"no-store"}, "never cached");
   const auto remote = f.post(secure_frontend::RouteId::strata_config, "{}", false);
@@ -99,7 +103,7 @@ void a_save_is_held_to_the_start_up_rules() {
   expect(other.status == 422 && has(other, "engine.executable"), "a row the tab does not manage: refused: " + shown(other));
   expect(f.file() == before, "nothing was written");
   const auto saved = f.post(secure_frontend::RouteId::strata_config_settings,
-                            R"({"values":{"limits.engine.generation_timeout_s":1800,"pull.connections":8,"listener.port":9090,)"
+                            R"({"values":{"limits.engine.generation_timeout_s":1800,"pull.connections":8,"listener.port":9090,"tools.max_rounds":3,)"
                             R"("listener.host_aliases":["127.0.0.1:9090","localhost:9090"]}})");
   expect(saved.status == 200 && has(saved, "\"saved\":true") && has(saved, "\"restart_needed\":true"), "saved: " + shown(saved));
   const auto reread = secure_frontend::parse_config_text(f.file(), f.data.root);
@@ -107,6 +111,7 @@ void a_save_is_held_to_the_start_up_rules() {
   expect(draft != nullptr && std::get<std::int64_t>(draft->entries.at("limits.engine.generation_timeout_s").value) == 1800 &&
              std::get<std::int64_t>(draft->entries.at("pull.connections").value) == 8 &&
              std::get<std::int64_t>(draft->entries.at("listener.port").value) == 9090 &&
+             std::get<std::int64_t>(draft->entries.at("tools.max_rounds").value) == 3 &&
              draft->entries.contains("models.default_engine"),
          "written, and the rest of the file kept");
   const auto reset = f.post(secure_frontend::RouteId::strata_config_settings, R"({"values":{"pull.connections":null}})");

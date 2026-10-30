@@ -12,11 +12,6 @@
 #include "secure_frontend/alert_routes.hpp"
 #include "secure_frontend/email_alerts.hpp"
 #endif
-#if defined(SECURE_FRONTEND_WEB_SEARCH)
-#include "secure_frontend/first_start.hpp"
-#include "secure_frontend/search_routes.hpp"
-#include "secure_frontend/search_service.hpp"
-#endif
 #include "secure_frontend/api_errors.hpp"
 #include "secure_frontend/api_router.hpp"
 #include "secure_frontend/chat_execution.hpp"
@@ -24,6 +19,7 @@
 #include "secure_frontend/chat_schema.hpp"
 #include "secure_frontend/config.hpp"
 #include "secure_frontend/config_routes.hpp"
+#include "secure_frontend/config_writer.hpp"
 #include "secure_frontend/plugin_routes.hpp"
 #include "secure_frontend/connection_pool.hpp"
 #include "secure_frontend/crt_environment.hpp"
@@ -55,6 +51,7 @@
 #include "secure_frontend/token_reader.hpp"
 #include "secure_frontend/token_verifier.hpp"
 #include "secure_frontend/tokenizer_pack.hpp"
+#include "secure_frontend/tool_hub.hpp"
 #include "secure_frontend/vision_supervisor.hpp"
 
 #include <algorithm>
@@ -67,6 +64,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -227,31 +225,55 @@ std::map<std::string, std::string, std::less<>> download_environment(const std::
   return environment;
 }
 
-#if defined(SECURE_FRONTEND_WEB_SEARCH)
-// Web search (spec 2026-10-27-web-search-design §2): strata-search beside the server, in the downloads' closed
-// environment with its own owner-only temp folder under the state root; nullopt (and why) when that cannot be made.
-std::optional<secure_frontend::SearchServiceSettings> search_settings(const FrontendConfig& config) {
-  if (!config.roots.state.has_value()) return std::nullopt;
-  const auto temp = *config.roots.state / "search";
-  if (const auto opened = secure_frontend::open_root(temp, secure_frontend::RootPolicy::create_private);
-      const auto* failure = std::get_if<secure_frontend::PathError>(&opened)) {
-    std::cerr << "search: " << secure_frontend::path_to_utf8(temp) << ": " << failure->message << '\n';
-    return std::nullopt;
+// Tool plugins (owner 2026-10-30; plugin spec section 10): each tool plugin that is on and whose settings fit, as the
+// tool hub runs it - in the downloads' closed environment with its own owner-only temp folder, <roots.state>/plugins/<id>.
+// One left out is logged with why.
+std::vector<secure_frontend::ToolPlugin> tool_plugins(const FrontendConfig& config, const secure_frontend::InstallPlugins& plugins) {
+  std::vector<secure_frontend::ToolPlugin> tools;
+  if (!config.roots.state.has_value()) return tools;
+  std::vector<std::pair<std::string, std::string>> left_out;
+  std::set<std::string, std::less<>> no_folder;
+  const auto programs = secure_frontend::plugin_programs(
+      plugins, secure_frontend::PluginKind::tool, config.plugins,
+      config.roots.secret ? std::optional<std::filesystem::path>{config.roots.secret->path()} : std::nullopt,
+      [&config, &no_folder](const std::string_view id) {
+        const auto temp = *config.roots.state / "plugins" / secure_frontend::path_from_utf8(id);
+        for (const auto& folder : {temp.parent_path(), temp}) {
+          if (const auto opened = secure_frontend::open_root(folder, secure_frontend::RootPolicy::create_private);
+              const auto* failure = std::get_if<secure_frontend::PathError>(&opened)) {
+            std::cerr << "[strata] plugins: " << id << " does not run: " << secure_frontend::path_to_utf8(folder) << ": " << failure->message << '\n';
+            no_folder.emplace(id);
+            break;
+          }
+        }
+        return download_environment(temp);
+      },
+      &left_out);
+  for (const auto& [id, why] : left_out) std::cerr << "[strata] plugins: " << id << " does not run: " << why << '\n';
+  for (const auto& program : programs) {
+    if (no_folder.contains(program.id)) continue;
+    tools.push_back({.id = program.id, .program = program.program, .arguments = program.arguments, .environment = program.environment,
+                     .note = program.run.note, .call_timeout = program.run.call_timeout});
   }
-#if defined(_WIN32)
-  const auto program = secure_frontend::executable_directory() / "strata-search.exe";
-#else
-  const auto program = secure_frontend::executable_directory() / "strata-search";
-#endif
-  return secure_frontend::SearchServiceSettings{.program = program,
-                                                .url = config.search.url,
-                                                .results = config.search.results,
-                                                .timeout = config.search.timeout,
-                                                .environment = download_environment(temp),
-                                                .today = {},
-                                                .log = [](const std::string_view line) { std::cerr << line << '\n' << std::flush; }};
+  return tools;
 }
-#endif
+
+secure_frontend::ToolHubSettings hub_settings(std::vector<secure_frontend::ToolPlugin> tools) {
+  return {.plugins = std::move(tools), .today = {}, .log = [](const std::string_view line) { std::cerr << line << '\n' << std::flush; }};
+}
+
+// A config's old search.enabled (move_old_search_rows) becomes the search plugin's on or off, once: a choice the owner
+// has made in the Plugins tab already stands.
+void hand_search_choice(const std::filesystem::path& state, const bool on) {
+  auto choices = secure_frontend::read_plugin_choices(state);
+  if (!choices || choices->enabled.contains("search")) return;
+  choices->enabled["search"] = on;
+  if (!secure_frontend::write_plugin_choices(state, *choices)) {
+    std::cerr << "[strata] plugins: search.enabled could not be kept as the search plugin's choice (plugins.json was not written)\n";
+    return;
+  }
+  std::cerr << "[strata] plugins: the search plugin is " << (on ? "on" : "off") << ", as search.enabled was\n";
+}
 
 // Owner 2026-10-29: a server that copies its engines' own output into this log says so at every start, with what that
 // output can hold and what to do about it (docs/security/threat-model.md, the second engine-stderr exception).
@@ -308,11 +330,12 @@ void warn_of_engine_output(const FrontendConfig& config, const secure_frontend::
             << ", keep this log private, and look through it before you share it.\n";
 }
 
-int server_run_impl(const FrontendConfig& config, const bool expert) {
+int server_run_impl(const FrontendConfig& config, const bool expert, const std::optional<bool> search_on) {
   // Ruling T13-c: server-grade process defaults, also when serve arrives
   // through the strata CLI (install_process_defaults is idempotent).
   secure_frontend::install_process_defaults();
   if (!state_dir_is_usable(config)) return EXIT_FAILURE;
+  if (search_on.has_value()) hand_search_choice(*config.roots.state, *search_on);
   const secure_frontend::InstallPlugins plugins = start_plugins(config);
   // roots.logs / roots.cache: validate() only checked them, so --check stays
   // side-effect free; serve creates a missing one here, before bind or spawn.
@@ -392,16 +415,13 @@ int server_run_impl(const FrontendConfig& config, const bool expert) {
   secure_frontend::ChatRouteConfig chat_config = model.chat;
   chat_config.vision = vision_service;
   chat_config.monitor = monitor.has_value() ? &*monitor : nullptr;
-#if defined(SECURE_FRONTEND_WEB_SEARCH)
-  std::optional<secure_frontend::SearchService> search;  // outlives the route
-  if (config.search.enabled) {
-    const auto settings = search_settings(config);
-    if (!settings.has_value()) return EXIT_FAILURE;
-    search.emplace(*settings);
-    chat_config.tools = &*search;
-    chat_config.tool_rounds = config.search.max_rounds;
+  // Tool plugins (owner 2026-10-30; plugin spec section 10): the tools of each tool plugin that runs, for the model.
+  std::optional<secure_frontend::ToolHub> tool_hub;  // outlives the route
+  if (auto tools = tool_plugins(config, plugins); !tools.empty()) {
+    tool_hub.emplace(hub_settings(std::move(tools)));
+    chat_config.tools = &*tool_hub;
+    chat_config.tool_rounds = config.tools.max_rounds;
   }
-#endif
   secure_frontend::ChatRoute chat_route(std::move(chat_config), port, gate, model.tokenizer);
   // Spec §4.1: every request goes through the header-first router (Host,
   // Origin, preflight, bearer token, route table, Content-Type, body limit)
@@ -779,7 +799,8 @@ std::optional<secure_frontend::DownloadCardTemplate> download_card_template(cons
 }
 
 
-int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const std::optional<std::filesystem::path>& config_file) {
+int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const std::optional<std::filesystem::path>& config_file,
+                      const std::optional<bool> search_on) {
   // Ruling T13-c: server-grade process defaults (idempotent).
   secure_frontend::install_process_defaults();
   auto usable = usable_cards(main);
@@ -787,6 +808,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
   const std::shared_ptr<const FrontendConfig> server_config = usable->server;
   const FrontendConfig& config = *server_config;
   if (!state_dir_is_usable(config)) return EXIT_FAILURE;
+  if (search_on.has_value()) hand_search_choice(*config.roots.state, *search_on);
   const secure_frontend::InstallPlugins plugins = start_plugins(config);
   if (const auto issues = secure_frontend::create_runtime_roots(config); !issues.empty()) {
     for (const auto& issue : issues) std::cerr << "Configuration error: " << secure_frontend::format_issue(issue) << '\n';
@@ -899,17 +921,16 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
   };
   launcher_settings.on_event = raise_alert;
 #endif
-  // Web search (spec 2026-10-27-web-search-design §2): the server's tool for every started model, when it is on.
-#if defined(SECURE_FRONTEND_WEB_SEARCH)
-  std::optional<secure_frontend::SearchService> search;  // outlives the launcher
-  if (config.search.enabled) {
-    const auto settings = search_settings(config);
-    if (!settings.has_value()) return EXIT_FAILURE;
-    search.emplace(*settings);
-    launcher_settings.tools = &*search;
-    launcher_settings.tool_rounds = config.search.max_rounds;
+  // Tool plugins (owner 2026-10-30; plugin spec section 10): the tools of each tool plugin that runs, for every started
+  // model.
+  std::optional<secure_frontend::ToolHub> tool_hub;  // outlives the launcher
+  std::set<std::string, std::less<>> tool_ids;       // the plugins it runs (the Plugins tab's "running")
+  if (auto tools = tool_plugins(config, plugins); !tools.empty()) {
+    for (const auto& tool : tools) tool_ids.insert(tool.id);
+    tool_hub.emplace(hub_settings(std::move(tools)));
+    launcher_settings.tools = &*tool_hub;
+    launcher_settings.tool_rounds = config.tools.max_rounds;
   }
-#endif
   // GUI-first start-up (spec 2026-10-27 §5): each card's calibration, owner-only beside the engine's state; the GPU
   // for its key from the Monitor's readings (unknown with the Monitor off).
   if (config.models.control) {
@@ -1117,7 +1138,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
   }
   // The Plugins tab (owner 2026-10-30; plugin_routes.hpp): <install>/plugins, beside the engine folder, with the owner's
   // choices in <roots.state>/plugins.json; with model control (files_allowed's clients). What runs was decided at the
-  // start (start_plugins): the plugins on then are the ones the tab shows as running.
+  // start (start_plugins, tool_plugins): a Debugging plugin on then, and each tool plugin the hub runs, show as running.
   secure_frontend::ModelCardRoutes plugin_route_handler;
   std::optional<secure_frontend::PluginRoutes> plugin_routes;
   if (config.models.control) {
@@ -1128,34 +1149,26 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
         .secret_dir = config.roots.secret ? std::optional<std::filesystem::path>{config.roots.secret->path()} : std::nullopt,
         .client_allowed = files_allowed};
     for (const auto& entry : plugins.entries) {
-      if (entry.state == secure_frontend::PluginState::on) settings.running.insert(entry.id);
+      if (entry.state != secure_frontend::PluginState::on || !entry.manifest) continue;
+      if (entry.manifest->kind == secure_frontend::PluginKind::diagnostics || tool_ids.contains(entry.id)) settings.running.insert(entry.id);
     }
     settings.log = [](const std::string_view line) { std::cerr << line << '\n'; };
+    if (tool_hub.has_value()) {
+      // the tab's tools and its Try: a program not running yet starts here, as for a chat
+      settings.tools = [&hub = *tool_hub] {
+        (void)hub.offers();
+        return hub.listed();
+      };
+      settings.try_tool = [&hub = *tool_hub](const std::string_view id, const std::string_view tool, const std::string_view arguments) {
+        return hub.try_call(id, tool, arguments);
+      };
+    }
     plugin_routes.emplace(std::move(settings));
     plugin_route_handler.handle = [&routes = *plugin_routes](const secure_frontend::RouteId route, const std::string_view body,
                                                              const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {
       return routes.answer(route, body, context);
     };
   }
-  // Web search (spec 2026-10-27-web-search-design §2): the page's search settings, with model control (files_allowed's clients).
-  secure_frontend::ModelCardRoutes search_route_handler;
-#if defined(SECURE_FRONTEND_WEB_SEARCH)
-  std::optional<secure_frontend::SearchRoutes> search_routes;
-  if (config.models.control) {
-    if (const auto settings = search_settings(config)) {
-      search_routes.emplace(secure_frontend::SearchRouteSettings{.config_file = config_file,
-                                                                 .program = settings->program,
-                                                                 .environment = settings->environment,
-                                                                 .running = search.has_value(),
-                                                                 .log = settings->log,
-                                                                 .client_allowed = files_allowed});
-      search_route_handler.handle = [&routes = *search_routes](const secure_frontend::RouteId route, const std::string_view body,
-                                                               const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {
-        return routes.answer(route, body, context);
-      };
-    }
-  }
-#endif
   secure_frontend::ApiRouter router(secure_frontend::ApiRouterConfig{
       .policy = secure_frontend::make_http_policy(config.listener.host, config.listener.port, config.listener.host_aliases,
                                                   config.listener.cors_origins),
@@ -1178,7 +1191,6 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       .downloads = std::move(download_routes),
       .cards = std::move(card_route_handler),
       .alerts = std::move(alert_route_handler),
-      .search = std::move(search_route_handler),
       .settings = std::move(settings_route_handler),
       .plugins = std::move(plugin_route_handler),
       .login_link = std::move(login_link_handler)});
@@ -1272,12 +1284,35 @@ namespace secure_frontend {
 
 // The exported entry points (the anonymous-namespace boot helpers above are
 // file-local; only these two names leave this translation unit).
-int server_run(const FrontendConfig& config, const bool expert) { return server_run_impl(config, expert); }
+int server_run(const FrontendConfig& config, const bool expert, const std::optional<bool> search_on) {
+  return server_run_impl(config, expert, search_on);
+}
 int server_check(const FrontendConfig& config, const std::vector<std::string>& overridden, bool expert) {
   return server_check_impl(config, overridden, expert);
 }
-int launcher_run(const FrontendConfigDraft& main, const std::optional<std::filesystem::path>& config_file) {
-  return launcher_run_impl(main, config_file);
+int launcher_run(const FrontendConfigDraft& main, const std::optional<std::filesystem::path>& config_file, const std::optional<bool> search_on) {
+  return launcher_run_impl(main, config_file, search_on);
+}
+
+std::optional<bool> move_old_search_rows(FrontendConfigDraft& draft, const std::optional<std::filesystem::path>& config_file, const bool serve) {
+  const auto moved = move_plugin_rows(draft);
+  if (moved.moved.empty()) return moved.search_enabled;
+  std::string names;
+  for (const auto& row : moved.moved) names += (names.empty() ? "" : ", ") + row;
+  if (!serve) {
+    std::cout << "config: web search is a plugin now: a start moves " << names << " to plugins.search.* and tools.max_rounds\n";
+    return moved.search_enabled;
+  }
+  if (config_file.has_value()) {
+    if (const auto failure = update_config_file(*config_file, [](FrontendConfigDraft& file) { (void)move_plugin_rows(file); })) {
+      std::cerr << "[strata] config: web search is a plugin now: " << names << " are read as its settings, but the config file was not changed ("
+                << config_update_reason(*failure) << ")\n";
+      return moved.search_enabled;
+    }
+  }
+  std::cerr << "[strata] config: web search is a plugin now: " << names << (config_file.has_value() ? " moved" : " read as moved")
+            << " to plugins.search.* and tools.max_rounds\n";
+  return moved.search_enabled;
 }
 int launcher_check(const FrontendConfigDraft& main, const std::vector<std::string>& overridden) {
   return launcher_check_impl(main, overridden);

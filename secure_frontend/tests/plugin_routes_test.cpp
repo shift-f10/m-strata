@@ -54,7 +54,9 @@ struct Fixture final {
   std::filesystem::path config = root / "config.json";
   std::unique_ptr<secure_frontend::PluginRoutes> routes;
   std::vector<std::string> logged;
-  explicit Fixture(std::set<std::string> running = {}, std::vector<secure_frontend::FirstPartyPlugin> first_party = {}) {
+  std::vector<std::string> tried;  // each Try's id, tool and arguments, as the hub got them
+  explicit Fixture(std::set<std::string> running = {}, std::vector<secure_frontend::FirstPartyPlugin> first_party = {},
+                   const bool with_tools = false) {
     secure_frontend_test::make_private_directory(plugins);
     secure_frontend_test::make_private_directory(state);
     secure_frontend_test::make_private_directory(secret);
@@ -75,6 +77,18 @@ struct Fixture final {
     secure_frontend::PluginRouteSettings settings{.plugins_dir = plugins, .state_dir = state, .first_party = std::move(first_party),
                                                   .running = std::move(running), .config_file = config, .secret_dir = secret};
     settings.log = [this](const std::string_view line) { logged.emplace_back(line); };
+    if (with_tools) {
+      // the tool hub's side: search runs and lists web_search; a call answers what it was given
+      settings.tools = [] {
+        return std::map<std::string, std::vector<secure_frontend::McpTool>>{
+            {"search", {secure_frontend::McpTool{"web_search", "Search the web.",
+                                                 R"({"type": "object", "properties": {"query": {"type": "string"}, "max": {"type": "integer"}}})"}}}};
+      };
+      settings.try_tool = [this](const std::string_view id, const std::string_view tool, const std::string_view arguments) {
+        tried.push_back(std::string{id} + " " + std::string{tool} + " " + std::string{arguments});
+        return secure_frontend::ToolResult{true, "found 3 results", 15U, false, false, std::chrono::milliseconds(42)};
+      };
+    }
     routes = std::make_unique<secure_frontend::PluginRoutes>(std::move(settings));
   }
   void add(const std::string& id, const std::string& manifest) const {
@@ -132,8 +146,8 @@ void refusals_say_why() {
   };
   refused(RouteId::strata_plugins_approve, R"({"id":"ghost"})", "no plugin");
   refused(RouteId::strata_plugins_switch, R"({"id":"debugging","on":true})", "approve");
-  expect(f.post(RouteId::strata_plugins_approve, R"({"id":"search"})").status == 200, "a tool plugin can be approved");
-  refused(RouteId::strata_plugins_switch, R"({"id":"search","on":true})", "does not run tool plugins yet");
+  expect(f.post(RouteId::strata_plugins_approve, R"({"id":"mailer"})").status == 200, "a notifier plugin can be approved");
+  refused(RouteId::strata_plugins_switch, R"({"id":"mailer","on":true})", "does not run notifier plugins yet");
   expect(f.post(RouteId::strata_plugins_approve, R"({"id":"debugging"})").status == 200, "approved");
   refused(RouteId::strata_plugins_approve, R"({"id":"debugging"})", "already");
   expect(f.post(RouteId::strata_plugins_approve, "{}").status == 400 && f.post(RouteId::strata_plugins_switch, R"({"id":"debugging"})").status == 400 &&
@@ -199,6 +213,34 @@ void settings_are_listed_and_saved() {
   expect(secure_frontend_test::read_file(f.config).find("70000") == std::string::npos, "a refused value is never written");
 }
 
+// The Plugins tab's "Try" (plugin spec section 10; it replaced the page's test search): a running tool plugin lists its
+// tools (name, description, string parameters); Try makes one call through the server's tool hub and answers what came
+// back; one not in the folder, not a tool, or a body that is not one is refused.
+void tools_are_listed_and_tried() {
+  Fixture f({"search"}, {}, true);
+  const auto listed = f.post(RouteId::strata_plugins, "{}");
+  expect(has(listed, R"("tools":[{"name":"web_search","description":"Search the web.","string_parameters":["query"]}])"),
+         "a running tool plugin's tools: " + listed.body);
+  expect(has(listed, R"("id":"mailer")") && listed.body.find(R"("tools":[{)") == listed.body.rfind(R"("tools":[{)"),
+         "other plugins list none");
+  const auto tried = f.post(RouteId::strata_plugins_try, R"({"id":"search","tool":"web_search","arguments":{"query":"rust 1.90"}})");
+  expect(tried.status == 200 && has(tried, R"({"ok":true,"text":"found 3 results","truncated":false,"ms":42})"), "tried: " + shown(tried));
+  expect(f.tried == std::vector<std::string>{R"(search web_search {"query":"rust 1.90"})"}, "the hub got the call, its arguments compact");
+  const auto refused = [&f](const std::string& body, const std::string& why) {
+    const auto answer = f.post(RouteId::strata_plugins_try, body);
+    expect(answer.status == 422 && has(answer, "\"code\":\"plugin_refused\"") && has(answer, why), body + " refused for " + why + ": " + shown(answer));
+  };
+  refused(R"({"id":"ghost","tool":"x","arguments":{}})", "no plugin");
+  refused(R"({"id":"debugging","tool":"x","arguments":{}})", "not a tool");
+  expect(f.post(RouteId::strata_plugins_try, R"({"id":"search"})").status == 400, "a tool and its arguments are needed");
+  expect(f.post(RouteId::strata_plugins_try, R"({"id":"search","tool":"web_search","arguments":{}})", false).status == 403, "another PC is refused");
+  // a server without the hub (no tool plugin runs): nothing listed, and Try says so
+  Fixture none;
+  expect(has(none.post(RouteId::strata_plugins, "{}"), R"("tools":[])"), "no tools listed");
+  const auto nothing = none.post(RouteId::strata_plugins_try, R"({"id":"search","tool":"web_search","arguments":{}})");
+  expect(nothing.status == 422 && has(nothing, "runs no tool plugins"), "no hub: " + shown(nothing));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -207,5 +249,6 @@ int main(int argc, char** argv) {
       {"approval_and_switching_are_kept", approval_and_switching_are_kept},
       {"refusals_say_why", refusals_say_why},
       {"settings_are_listed_and_saved", settings_are_listed_and_saved},
+      {"tools_are_listed_and_tried", tools_are_listed_and_tried},
   }, failures);
 }

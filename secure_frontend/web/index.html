@@ -396,8 +396,9 @@
       </div>
       <div class="st-card alerts-settings" id="limits-settings" hidden>
         <div class="models-head"><span class="card-title">Limits and timeouts</span></div>
-        <p class="muted small">How long an answer or a model start may take, how large a prompt or an answer may be, and how
-          many connections a download uses. These settings apply when the server restarts.</p>
+        <p class="muted small">How long an answer or a model start may take, how large a prompt or an answer may be, how many
+          rounds of tool calls (such as web searches) an answer may make, and how many connections a download uses. These
+          settings apply when the server restarts.</p>
         <div class="config-grid" data-group="limits"></div>
         <div class="model-actions"><button type="button" class="st-btn st-btn--primary st-btn--sm" data-save="limits">Save</button></div>
         <p class="msg-error" data-error="limits" role="alert" hidden></p>
@@ -489,37 +490,6 @@
         <p class="muted small" id="alerts-password-state"></p>
         <p class="muted small" id="alerts-result" role="status" aria-live="polite"></p>
         <p class="msg-error" id="alerts-error" role="alert" hidden></p>
-      </div>
-      <div class="st-card alerts-settings" id="search-settings" hidden>
-        <div class="models-head"><span class="card-title">Web search</span></div>
-        <p class="muted small">With web search on, a model can look things up when it is not sure of a fact or the answer needs
-          recent information, through your own SearXNG instance, and answer from what it found with the links. The searches
-          leave this PC through that instance: what a model searches for comes from the chat. These settings apply when the
-          server restarts.</p>
-        <label class="model-calibration__auto"><input type="checkbox" id="search-enabled"> Let models search the web</label>
-        <div class="alerts-grid">
-          <label class="st-label" for="search-url">SearXNG address</label>
-          <input class="st-input" id="search-url" type="text" spellcheck="false" autocapitalize="off" placeholder="Its http or https address, with the host and port">
-          <label class="st-label" for="search-results">Results per search</label>
-          <input class="st-input" id="search-results" type="number" min="1" max="10" step="1">
-          <label class="st-label" for="search-rounds">Searches per answer</label>
-          <input class="st-input" id="search-rounds" type="number" min="1" max="8" step="1">
-          <label class="st-label" for="search-timeout">Time limit (seconds)</label>
-          <input class="st-input" id="search-timeout" type="number" min="5" max="120" step="1">
-        </div>
-        <p class="muted small">The instance must answer JSON: in its settings.yml, <code>search: formats:</code> lists <code>json</code>.</p>
-        <div class="model-actions">
-          <button type="button" class="st-btn st-btn--primary st-btn--sm" id="search-save">Save</button>
-        </div>
-        <label class="st-label" for="search-query">Test a search</label>
-        <div class="model-folder__row">
-          <input class="st-input" id="search-query" type="text" spellcheck="false" placeholder="SearXNG">
-          <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="search-test">Search</button>
-        </div>
-        <p class="muted small" id="search-state"></p>
-        <p class="muted small" id="search-result" role="status" aria-live="polite"></p>
-        <pre class="search-output" id="search-output" hidden></pre>
-        <p class="msg-error" id="search-error" role="alert" hidden></p>
       </div>
     </div>
   </section>

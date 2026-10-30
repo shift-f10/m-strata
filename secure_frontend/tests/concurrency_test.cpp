@@ -343,8 +343,7 @@ void request_log_format_and_token_bucket() {
       {R::strata_calibrate_auto, "strata_calibrate_auto"}, {R::strata_calibrate_report, "strata_calibrate_report"}, {R::strata_login_link, "strata_login_link"},
       {R::strata_alerts, "strata_alerts"},             {R::strata_alerts_settings, "strata_alerts_settings"},
       {R::strata_alerts_password, "strata_alerts_password"}, {R::strata_alerts_test, "strata_alerts_test"},
-      {R::strata_search, "strata_search"},             {R::strata_search_settings, "strata_search_settings"},
-      {R::strata_search_test, "strata_search_test"},   {R::strata_config, "strata_config"},
+      {R::strata_config, "strata_config"},
       {R::strata_config_settings, "strata_config_settings"}, {R::strata_key_rotate, "strata_key_rotate"},
       {R::strata_folders, "strata_folders"},           {R::strata_folder_private, "strata_folder_private"},
       {R::strata_folder_new, "strata_folder_new"},     {R::strata_card_add, "strata_card_add"},
@@ -353,7 +352,8 @@ void request_log_format_and_token_bucket() {
       {R::strata_about, "strata_about"},               {R::strata_download_link, "strata_download_link"},
       {R::strata_card_remove, "strata_card_remove"},   {R::strata_card_mtp, "strata_card_mtp"},
       {R::strata_plugins, "strata_plugins"},           {R::strata_plugins_approve, "strata_plugins_approve"},
-      {R::strata_plugins_switch, "strata_plugins_switch"},   {R::strata_plugins_settings, "strata_plugins_settings"}};
+      {R::strata_plugins_switch, "strata_plugins_switch"},   {R::strata_plugins_settings, "strata_plugins_settings"},
+      {R::strata_plugins_try, "strata_plugins_try"}};
   for (const auto& [route, name] : named) {
     const secure_frontend::RequestLogRecord line{route, 200, "", std::chrono::milliseconds(1), 0U, secure_frontend::AddressScope::loopback};
     expect(secure_frontend::format_request_line(1, line) == "req 1 " + std::string{name} + " 200 - 1 0 loopback",

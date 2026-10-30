@@ -22,6 +22,7 @@
 // Each kind has its own block, named after it ("engine", "tool", "notifier", "diagnostics"), and only its own. Every
 // other key is refused, as is any text that is not printable ASCII within its bound.
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -85,6 +86,7 @@ struct PluginRun final {
   std::string note;                                                 // a tool's system-message note ({today} allowed)
   std::vector<PluginSetting> settings;
   std::vector<PluginPreset> presets;
+  std::chrono::seconds call_timeout{120};                           // a tool's: one call's limit (1-600 s)
 };
 
 struct PluginManifest final {

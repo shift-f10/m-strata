@@ -1,7 +1,7 @@
 // Web search (docs/superpowers/specs/2026-10-27-web-search-design.md §2): the chat route's search loop - upstream's
 // run_with_mcp (serve/server.py) over our engine lease: each round's reply through the call parser, the calls run by
-// the server's tool, the round and its results rendered into the next prompt, at most search.max_rounds times (then
-// one round to answer, SearchRounds::after).
+// the tool plugins' tools (tool_hub.hpp), the round and its results rendered into the next prompt, at most
+// tools.max_rounds times (then one round to answer, SearchRounds::after).
 
 #include "secure_frontend/chat_route.hpp"
 
@@ -17,10 +17,20 @@
 namespace secure_frontend {
 namespace {
 
+// The parser's view of the offered tools: each one's name and string parameters.
+std::vector<ToolDeclaration> declarations_of(const std::vector<ToolOffer>& offers) {
+  std::vector<ToolDeclaration> declarations;
+  declarations.reserve(offers.size());
+  for (const auto& offer : offers) declarations.push_back(offer.declaration);
+  return declarations;
+}
+
 // A round's prompt: the conversation, the tool and the rounds so far, in the family's form.
 ChatGenerationPlanResult search_plan(const SearchLimits& limits, const SearchTurn& turn, const TokenizerPack& tokenizer,
                                      const std::span<const ToolRound> rounds) {
-  const std::vector<std::string> tools{turn.offer.template_json};
+  std::vector<std::string> tools;
+  tools.reserve(turn.offers.size());
+  for (const auto& offer : turn.offers) tools.push_back(offer.template_json);
   switch (turn.format) {
     case ToolFormat::glm:  // GLM-5.3 always thinks (its template opens <think>), as the glm53 profile does
       return make_glm53_tool_generation_plan(turn.request, tokenizer, tools, rounds, limits.max_prompt_tokens, 1U, limits.sampling);
@@ -118,10 +128,10 @@ class SearchStreamRounds final : public StreamRounds {
   SearchStreamRounds(SearchLimits limits, std::shared_ptr<const SearchTurn> turn, const TokenizerPack& tokenizer, ChatExecutionService& chat,
                      SseIdentity identity)
       : limits_(std::move(limits)), turn_(std::move(turn)), tokenizer_(tokenizer), chat_(chat), identity_(std::move(identity)),
-        rounds_(*limits_.tools, turn_->offer, limits_.rounds) {}
+        rounds_(*limits_.tools, turn_->offers, limits_.rounds) {}
 
   GenerationObserver& observer(GenerationObserver& stream) override {
-    round_.emplace(stream, std::vector<ToolDeclaration>{turn_->offer.declaration}, turn_->format);
+    round_.emplace(stream, declarations_of(turn_->offers), turn_->format);
     return *round_;
   }
 
@@ -191,12 +201,12 @@ GenerationOutcome ChatRoute::run_search_rounds(Lease& lease, const SearchTurn& t
   const ExecutionControl control{.cancelled = context.client_gone, .shutting_down = context.shutting_down,
                                  .shutdown_requested = [] { return shutdown_signalled(); }};
   Collector collector(control);
-  SearchRounds rounds(*config_.tools, turn.offer, config_.tool_rounds);
+  SearchRounds rounds(*config_.tools, turn.offers, config_.tool_rounds);
   const TokenByteDecoder decoder(tokenizer_);
   std::size_t completion_tokens = 0U;
   for (;;) {
     if (const auto failure = lease.chat().begin(prompt_ids, {.max_tokens = max_tokens, .sampling = plan.sampling})) return *failure;
-    ToolCallObserver round(collector, {turn.offer.declaration}, turn.format);
+    ToolCallObserver round(collector, declarations_of(turn.offers), turn.format);
     const GenerationRunResult run = drive_generation(lease.protocol(), decoder, round_limits(lease.chat(), plan, max_tokens, config_.monitor), round);
     round.finish(run.end == RunEnd::stop);
     completion_tokens += run.completion_tokens;

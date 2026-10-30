@@ -11,6 +11,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace test_support {
@@ -107,13 +108,18 @@ struct ServerOptions final {
   // Web search: the expert launch's pack is the byte pack with Qwen's reasoning and tool tags (tool_byte_tokenizer).
   bool tool_tokenizer{false};
   // Plugins (owner 2026-10-30): each manifest as <root>/plugins/<id>/plugin.json, beside the engine's folder as make
-  // puts them, and recorded in <root>/bin/build.json as a first-party plugin, on or off as given.
+  // puts them, with its program files copied in (owner-only); a first-party one is recorded in <root>/bin/build.json,
+  // on or off as given, with each file's SHA-256. A third-party one is not: plugin_choices approves it, or nothing does.
   struct Plugin final {
     std::string id;
     std::string manifest;
     bool on{true};
+    std::vector<std::pair<std::string, std::filesystem::path>> files{};  // the name in its folder -> the file copied
+    bool first_party{true};
   };
-  std::vector<Plugin> first_party_plugins{};
+  std::vector<Plugin> plugins{};
+  // <state>/plugins.json written before the start (the owner's choices: approvals, on or off); empty: none.
+  std::string plugin_choices{};
 };
 
 // strata-unified-server as a test child: fixture models (fake-model.gguf, 0600)
@@ -127,6 +133,10 @@ struct ServerOptions final {
 // kill-on-close harness Job used to count descendants and to clean up.
 // Linux: the test process becomes a child subreaper, so descendants orphaned
 // by a server that died are re-parented here and reaped by the destructor.
+// A file's SHA-256 as lowercase hex (a plugin's pin; std::nullopt when it cannot be read).
+[[nodiscard]] std::optional<std::string> file_sha256_hex(const std::filesystem::path& file);
+[[nodiscard]] std::string sha256_hex(std::string_view bytes);
+
 class ServerProcess final {
  public:
   enum class Stop { term, interrupt, kill, ctrl_break };

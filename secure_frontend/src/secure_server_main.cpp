@@ -127,17 +127,20 @@ int main(int argc, char* argv[]) {
     for (const auto& issue : *issues) std::cerr << "Configuration error: " << secure_frontend::format_issue(issue) << '\n';
     return EXIT_FAILURE;
   }
-  if (std::get<secure_frontend::FrontendConfigDraft>(draft).entries.contains("models.cards")) {
-    const auto& main_draft = std::get<secure_frontend::FrontendConfigDraft>(draft);
-    if (invocation.command == secure_frontend::ServerCommand::check) return secure_frontend::launcher_check(main_draft, overridden);
-    return secure_frontend::launcher_run(main_draft, started.config_file);
+  auto main_draft = std::get<secure_frontend::FrontendConfigDraft>(draft);
+  // web search is a plugin now: the old search.* rows are its settings (a serve moves them in the config file)
+  const bool serve = invocation.command != secure_frontend::ServerCommand::check;
+  const auto search_on = secure_frontend::move_old_search_rows(main_draft, started.config_file, serve);
+  if (main_draft.entries.contains("models.cards")) {
+    if (!serve) return secure_frontend::launcher_check(main_draft, overridden);
+    return secure_frontend::launcher_run(main_draft, started.config_file, search_on);
   }
-  const auto loaded = secure_frontend::validate(std::get<secure_frontend::FrontendConfigDraft>(draft));
+  const auto loaded = secure_frontend::validate(main_draft);
   if (const auto* issues = std::get_if<secure_frontend::ConfigErrors>(&loaded)) {
     for (const auto& issue : *issues) std::cerr << "Configuration error: " << secure_frontend::format_issue(issue) << '\n';
     return EXIT_FAILURE;
   }
   const auto config = std::get<secure_frontend::ValidatedConfig>(loaded).shared();
   if (invocation.command == secure_frontend::ServerCommand::check) return secure_frontend::server_check(*config, overridden, invocation.expert);
-  return secure_frontend::server_run(*config, invocation.expert);
+  return secure_frontend::server_run(*config, invocation.expert, search_on);
 }

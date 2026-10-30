@@ -168,13 +168,6 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
       if (head.method == entry.method) matched = &entry;
     }
   }
-  if (config_.search.handle) {
-    for (const auto& entry : kSearchRoutes) {
-      if (target != entry.path) continue;
-      allow = entry.method;
-      if (head.method == entry.method) matched = &entry;
-    }
-  }
   if (config_.settings.handle) {
     for (const auto& entry : kConfigRoutes) {
       if (target != entry.path) continue;
@@ -218,8 +211,6 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
   const bool card_post = std::any_of(kModelCardRoutes.begin(), kModelCardRoutes.end(),
                                      [&decision](const RouteEntry& entry) { return entry.id == decision.route; }) ||
                          std::any_of(kAlertRoutes.begin(), kAlertRoutes.end(),
-                                     [&decision](const RouteEntry& entry) { return entry.id == decision.route; }) ||
-                         std::any_of(kSearchRoutes.begin(), kSearchRoutes.end(),
                                      [&decision](const RouteEntry& entry) { return entry.id == decision.route; }) ||
                          std::any_of(kConfigRoutes.begin(), kConfigRoutes.end(),
                                      [&decision](const RouteEntry& entry) { return entry.id == decision.route; }) ||
@@ -418,16 +409,6 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
         }
         return result;
       }
-      case RouteId::strata_search:
-      case RouteId::strata_search_settings:
-      case RouteId::strata_search_test: {
-        RouteResult result = config_.search.handle(decision.route, body, context);
-        if (auto* complete = std::get_if<HttpResponse>(&result)) {
-          response = std::move(*complete);
-          break;
-        }
-        return result;
-      }
       case RouteId::strata_config:
       case RouteId::strata_config_settings:
       case RouteId::strata_key_rotate: {
@@ -441,7 +422,8 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
       case RouteId::strata_plugins:
       case RouteId::strata_plugins_approve:
       case RouteId::strata_plugins_switch:
-      case RouteId::strata_plugins_settings: {
+      case RouteId::strata_plugins_settings:
+      case RouteId::strata_plugins_try: {
         RouteResult result = config_.plugins.handle(decision.route, body, context);
         if (auto* complete = std::get_if<HttpResponse>(&result)) {
           response = std::move(*complete);

@@ -344,7 +344,8 @@ The server runs it as it runs strata-search today:
 - The model's calls are routed by name.
 - The search loop becomes the tool loop. `tools.max_rounds` (1-8, default 8; `search.max_rounds` moves there) bounds an
   answer's rounds.
-- A result is cut at 64 KiB, and the page shows each call, as it shows searches today.
+- A result is cut at 20000 characters (upstream's hub cuts it there; built 2026-10-30), and the page shows each call,
+  as it shows searches today.
 - A tool block may carry a `note` (one paragraph, `{today}` filled in). It joins the chat's system message while that
   plugin's tools are offered: search's says today's date and to search for anything recent.
 - A program that fails is started again by a later chat, after a minute, as today.

@@ -8,9 +8,10 @@ It includes a deliberately limited socket-listener executable for smoke testing
 and a native, serial inference listener. It does not connect to the legacy
 service, download artifacts, or open outbound sockets (one exception, in a build
 with the optional email alerts: the SMTP connection, made only once
-`alerts.email.enabled` is set; see "Install" below; a build with the optional web
-search runs `strata-search` beside it, which alone connects to the SearXNG
-instance, only once `search.enabled` is set).
+`alerts.email.enabled` is set; see "Install" below. A tool plugin - web search
+first - is a program the server runs as a private child from `<install>/plugins/<id>`,
+and it alone connects to what its manifest names: the Web search plugin's
+`strata-search` to the SearXNG instance `plugins.search.url` names).
 
 ## Token-source metadata
 
@@ -166,29 +167,44 @@ and `windows-msvc` presets (our own builds) turn it on; `make.py --with email`
 builds it into an out folder. On Linux it links the system's OpenSSL
 (`find_package(OpenSSL)`); on Windows it uses SChannel.
 
-**Web search is a build option**, `SECURE_FRONTEND_WEB_SEARCH`, **off by default**
-(spec [`docs/superpowers/specs/2026-10-27-web-search-design.md`](../docs/superpowers/specs/2026-10-27-web-search-design.md)).
-With it, a qwen, GLM-5.3, raon1, flint, Gemma 4, DeepSeek-V4.1 or MiniMax-M3.1 model may call one tool, `web_search`, when it is unsure
-of a fact or the answer needs recent information: the server runs `strata-search`
-(an MCP server on stdio, beside the server) and talks to it with upstream's MCP
-client; `strata-search` asks one SearXNG instance's JSON API and the model answers
-from the titles, URLs and snippets, with the links. The answer streams across the
-search rounds (at most `search.max_rounds`), each search announced as a
-`strata_search` chunk. A build without it has no MCP or search code, refuses every
-`search.*` key by name and serves no search route. The same three presets turn it
-on; `make.py --with search` builds it into an out folder (`strata-search` beside
-the server). The instance must answer JSON (SearXNG's `settings.yml`:
-`search: formats:` lists `json`).
+**Web search is a tool plugin** (since 2026-10-30, plugin spec
+[`docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md`](../docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md),
+section 10; first built in, spec
+[`docs/superpowers/specs/2026-10-27-web-search-design.md`](../docs/superpowers/specs/2026-10-27-web-search-design.md)).
+The build option `SECURE_FRONTEND_WEB_SEARCH` (**off by default**; the three presets turn it on) builds its program,
+`strata-search`, an MCP server on stdio installed in `plugins/search/` beside the plugin's manifest; `make.py --with
+search` puts the plugin into an out folder, on. The server itself has the tool hub in every build. With the plugin on
+and `plugins.search.url` set, a qwen, GLM-5.3, raon1, flint, Gemma 4, DeepSeek-V4.1 or MiniMax-M3.1 model may call
+`web_search` when it is unsure of a fact or the answer needs recent information: the hub runs `strata-search` and talks
+to it with upstream's MCP client; `strata-search` asks one SearXNG instance's JSON API and the model answers from the
+titles, URLs and snippets, with the links. The answer streams across the rounds (at most `tools.max_rounds`), each call
+announced as a `strata_search` chunk. The instance must answer JSON (SearXNG's `settings.yml`: `search: formats:` lists
+`json`). A config's old `search.*` rows are moved at its first start - `search.url`, `.results` and `.timeout_s` to
+`plugins.search.*`, `search.max_rounds` to `tools.max_rounds` (one the config sets stays), `search.enabled` to the
+plugin's on or off in `<roots.state>/plugins.json` (a choice made there already stays) - in the config file too, and the
+log says so; `--check` says what a start would move.
+
+**Tool plugins** (plugin spec section 10): each tool plugin that is on - one `make` built, or a third-party one the
+owner approved - and whose settings fit its manifest is run by the server's tool hub when a chat first needs it: its
+program from its folder, with its manifest's arguments (each `{setting}` filled in), in a closed environment (the
+system's own variables and a private temp folder, `<roots.state>/plugins/<id>`) plus only the variables its manifest
+declares; a secret setting is read from the secret folder into its variable and nowhere else. One that is left out
+says why in the log at the start (`[strata] plugins: <id> does not run: ...`). A chat is offered every listed tool, at
+most 16 (a name two plugins list goes to the first); its system message gets each plugin's note (`{today}` filled in,
+and those plugins' tool descriptions end with the date). One call may take its manifest's `call_timeout_s` (120 s by
+default, 1-600; the search plugin's 365); what the model reads of a result is cut at 20000 characters, as upstream's
+hub cuts it. A program that dies is started again by the next chat; one that does not start leaves its tools out for a
+minute. While one chat's call runs, another chat is still offered that plugin's tools.
 
 ### Web search from the API
 
 A client of the OpenAI-compatible `POST /v1/chat/completions` gets web search with no change to its requests: the
 server offers the tool to the model, runs the searches itself and returns the answer.
 
-**Turn it on, once, on the server.** A build with web search (above), then `search.enabled` on and `search.url` naming
-the SearXNG instance: on the page (Settings > Web search) or in `data/config.json`. Saved settings apply at the
-next start, so restart the server. "Test search" there shows what a model would read; the server log prints
-`[strata] search: strata-search is running` when the first chat starts it.
+**Turn it on, once, on the server.** A build with web search (above), then the Web search plugin's SearXNG address
+(`plugins.search.url`): on the page (its card in the Plugins tab) or in `data/config.json`. Saved settings apply at the
+next start, so restart the server. **Try** in its card runs one search and shows what a model would read; the server
+log prints `[strata] plugins: search is running` when the first chat (or Try) starts it.
 
 **What the model is offered.** Every text chat to a qwen (Qwen3.6, Qwen3.8), GLM-5.3, raon1, flint, Gemma 4,
 DeepSeek-V4.1 or MiniMax-M3.1 model gets one tool, each in its own template's form (raon1 writes Qwen's calls, flint GLM's, Gemma 4 its
@@ -218,7 +234,7 @@ A chat with an image is served without it, and so is a model whose card's **Web 
 - Ask it to: "Search the web for ... and cite your sources" in the message, or once for the whole conversation in a
   system message, for example
   `{"role": "system", "content": "Before you answer anything about current events, versions, dates or other facts that change, search the web and cite the URLs you used."}`.
-- A broad question can take several searches, at most `search.max_rounds` (8 by default) per answer. A search the model
+- A broad question can take several searches, at most `tools.max_rounds` (8 by default) per answer. A search the model
   asks for past that limit is not run: the model reads "Not run: this answer has made all the searches it may. Answer
   the user now from the results above, without searching again." in its place and gets one more round to answer (upstream
   ends the answer there instead); a search it asks for in that round ends the answer.
@@ -227,13 +243,13 @@ A chat with an image is served without it, and so is a model whose card's **Web 
 - `max_tokens` is each round's budget (as upstream's server spends it), reasoning included: a thinking model that
   searches several times can spend a round's tokens reasoning and end with `finish_reason` `length` and no answer. Give
   it room (8192 or more), or leave `max_tokens` out for the server's automatic budget.
-- What the model searches for comes from the conversation and goes to the instance (`search.url`), which passes it on
+- What the model searches for comes from the conversation and goes to the instance (`plugins.search.url`), which passes it on
   to the search engines it uses.
 
 **Do not send** `tools`, `tool_choice`, `functions`, `function_call`, `parallel_tool_calls` or `mcp_servers`: the server
 refuses them (`extension_disabled`). `"strata_search": false` serves that one request without the tool (any profile;
 `true` or leaving it out keeps the server's and the card's choice; anything else is a 400 naming it); it cannot turn
-search on. `search.enabled` turns it off for all.
+search on. Turning the Web search plugin off (the Plugins tab) turns it off for all.
 
 **What comes back.**
 
@@ -274,7 +290,7 @@ README's Install section lists every dependency and the same steps by hand).
 `--with email,search` adds email alerts and web search (each is off otherwise). `--without maya,raon1` leaves those
 engine families out (strata, Gemma 4 and flint are always built). `--no-cuda-runtime` skips bundling cuBLAS; `--jobs N`
 sets the compile jobs; `--plan` prints the commands only. The folder gets `strata-unified-server`, `strata`,
-`strata-search` (with `search`), `engine/` (the `multiengine` launcher, one library per family, `strata-prepare`, the
+`plugins/` (`debugging/`, and `search/` with `strata-search` with `search`), `engine/` (the `multiengine` launcher, one library per family, `strata-prepare`, the
 expert profiles, MiniMax's template in `templates/minimax-m3.1/` and, by default, NVIDIA's cuBLAS), `README.txt`,
 `config.example.json`, `LICENSE` and `NOTICE.md`, and it is made owner-only.
 
@@ -408,16 +424,16 @@ which alerts to send (downloads finished or failed, calibrations finished or fai
 the server started). "IONOS" fills in `smtp.ionos.com`, 465 SSL/TLS and the mailbox address as the user name. The
 password is saved on its own into the secret folder (DPAPI on Windows, 0600 elsewhere) and never shown again. "Send a
 test email" reports the mail server's answer. Saved settings are written to the config file and apply at the next start.
-In a build with web search the tab also holds **Web search**: on/off, the SearXNG address, results per search,
-searches per answer and the time limit, Save, and a test search through the saved settings that shows what a model
-reads. A chat reply notes what it searched for.
+Web search's settings are its plugin's (the Plugins tab, below); the tab's limits hold `tools.max_rounds` ("Tool calls
+per answer"). A chat reply notes what it searched for.
 
 **Plugins** (every build with model control; owner 2026-10-30, spec
 `docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md`, section 8): the top-level Plugins tab lists each
 folder of `<install>/plugins` that holds a `plugin.json` (`POST /v1/strata/plugins`), with Approve, which pins the
 SHA-256s there now (`/approve`), and Turn on / Turn off (`/switch`). The owner's choices are kept in
 `<roots.state>/plugins.json`; what runs is decided when the server starts. A plugin `make` built is trusted through
-`engine/build.json` and needs no approval. The one plugin so far is **Debugging** (`plugins/debugging`, kind
+`engine/build.json` and needs no approval. The plugins so far: **Web search** (`plugins/search`, kind `tool`, in a
+folder built `--with search`; above), and **Debugging** (`plugins/debugging`, kind
 `diagnostics`, in every folder `make` builds; `make --debugging` ships it on): while it is on, the logging rows a config
 leaves unset (`logging.requests`, `logging.engine_output`) are on, every start says so, Settings shows
 Troubleshooting, and strata-window and strata-tui say what it logs before they start the server. Turning it on in the
@@ -431,7 +447,9 @@ config reader takes these rows, bounded, and `--check` prints them); a secret go
 `plugin-<id>-<name>` (DPAPI on Windows, 0600 elsewhere), is never answered again (the card shows set or not set) and is
 removed by a null. The list says what each plugin connects to (`network`, its values filled in) and what keeps it from
 running (`settings_problem`: a required setting missing, a value its manifest refuses); presets fill a card in. A change
-applies when the server restarts.
+applies when the server restarts. A running tool plugin's entry lists its `tools` (each name, description and string
+parameters), and its card's **Try** calls one through the server's tool hub (`POST /v1/strata/plugins/try {"id", "tool",
+"arguments": {...}}` -> `{"ok", "text", "truncated", "ms"}`), starting the program first if no chat has.
 
 ### strata-window: the server in a window with a tray icon (2026-10-28)
 
@@ -545,8 +563,9 @@ Remote/wildcard binds are rejected unless the corresponding explicit flags are
 provided. CORS remains disabled, and the executable neither sends outbound
 traffic nor starts MCP, telemetry, analytics, update checks, or downloads
 (downloads run as `strata` children; a build with email alerts sends mail to the
-configured SMTP server only when they are enabled; a build with web search runs its
-own `strata-search` for it, the one MCP server and tool there is).
+configured SMTP server only when they are enabled; MCP is only the tool plugins'
+servers, each a child the server runs from its plugin folder: web search's `strata-search`, and a
+third-party one only once the owner approved it).
 
 ## Configuration
 
@@ -743,11 +762,12 @@ Every key (generated from the schema; `readme_config_table_matches_schema` keeps
 | `alerts.email.from` | string | unset | - | - | The From address (IONOS: the mailbox the user name logs in to). Needed with alerts.email.enabled. |
 | `alerts.email.to` | string array | `[]` | - | - | 1-5 addresses the alerts go to. Needed with alerts.email.enabled. |
 | `alerts.email.events` | string array | `[]` | - | - | Which alerts are sent: download_finished, download_failed, calibration_finished, calibration_failed, engine_stopped, server_started (absent: all). |
-| `search.enabled` | boolean | `false` | - | - | Let the model search the web through a SearXNG instance when it is unsure or the answer needs recent information (a build with SECURE_FRONTEND_WEB_SEARCH only; any other build refuses search.*). The searches leave this PC: what the model searches for comes from the chat. |
-| `search.url` | string | unset | - | - | The SearXNG instance, http(s)://host[:port][/path], with the JSON format on (its settings.yml: search.formats lists json). Needed with search.enabled. |
-| `search.results` | integer | `5` | 1-10 | - | Results the model gets per search (1-10). |
-| `search.max_rounds` | integer | `8` | 1-8 | - | Searches one answer may make (upstream's mcp.max_rounds, 1-8). |
-| `search.timeout_s` | integer | `30` | 5-120 | - | Seconds each step of a search may take: the connection, the request, each read of the reply (5-120). |
+| `search.enabled` | boolean | `false` | - | - | Moved at the first start: the web search plugin's on or off (the Plugins tab). |
+| `search.url` | string | unset | - | - | Moved at the first start to plugins.search.url: the SearXNG instance, http(s)://host[:port][/path], with the JSON format on. |
+| `search.results` | integer | `5` | 1-10 | - | Moved at the first start to plugins.search.results (1-10). |
+| `search.max_rounds` | integer | `8` | 1-8 | - | Moved at the first start to tools.max_rounds (1-8). |
+| `search.timeout_s` | integer | `30` | 5-120 | - | Moved at the first start to plugins.search.timeout_s (5-120). |
+| `tools.max_rounds` | integer | `8` | 1-8 | - | Rounds of tool calls (a web search, any tool plugin's) one answer may make before the model answers from what it found (upstream's mcp.max_rounds, 1-8). |
 <!-- config-keys:end -->
 
 `roots.secret` defaults to the config file's directory only for a `file:` token

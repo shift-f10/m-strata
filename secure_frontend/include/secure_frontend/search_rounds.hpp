@@ -67,7 +67,7 @@ inline constexpr std::string_view kSearchLimitNote =
 //   {"event":"limit","max_rounds":8}
 class SearchRounds final {
  public:
-  SearchRounds(ToolRunner& runner, ToolOffer offer, std::size_t max_rounds);
+  SearchRounds(ToolRunner& runner, std::vector<ToolOffer> offers, std::size_t max_rounds);
 
   enum class Next { done, again, cancelled };
   // done: the answer is complete; again: the round is kept and its results follow it in the next prompt; cancelled:
@@ -75,12 +75,12 @@ class SearchRounds final {
   [[nodiscard]] Next after(const ToolCallObserver& round, RunEnd end, const std::function<bool()>& cancelled,
                            const std::function<void(std::string)>& event);
 
-  [[nodiscard]] const ToolOffer& offer() const noexcept { return offer_; }
+  [[nodiscard]] const std::vector<ToolOffer>& offers() const noexcept { return offers_; }
   [[nodiscard]] std::span<const ToolRound> rounds() const noexcept { return rounds_; }
 
  private:
   ToolRunner& runner_;
-  ToolOffer offer_;
+  std::vector<ToolOffer> offers_;
   std::size_t max_rounds_;
   std::vector<ToolRound> rounds_;
   bool answer_round_{false};  // the limit was reached and the model has had its answer round

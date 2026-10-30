@@ -408,10 +408,6 @@ if(SECURE_FRONTEND_EMAIL_ALERTS)
     # every target that reads the config sees the build's choice (alerts.* rows refused without it)
     target_compile_definitions(secure_frontend_typed_config PUBLIC SECURE_FRONTEND_EMAIL_ALERTS=1)
 endif()
-if(SECURE_FRONTEND_WEB_SEARCH)
-    # ... and of web search (search.* rows refused without it)
-    target_compile_definitions(secure_frontend_typed_config PUBLIC SECURE_FRONTEND_WEB_SEARCH=1)
-endif()
 target_compile_features(secure_frontend_chat_schema PUBLIC cxx_std_20)
 target_include_directories(secure_frontend_chat_schema
     PUBLIC
@@ -794,16 +790,14 @@ if(SECURE_FRONTEND_WEB_SEARCH)
     add_executable(strata-search src/search_main.cpp)
     target_link_libraries(strata-search PRIVATE secure_frontend_web_search)
     secure_frontend_set_warnings(strata-search)
-    # the server's MCP client (upstream's serve/mcp.py, stdio): it talks to strata-search over the child's pipes
-    secure_frontend_add_library(secure_frontend_mcp_client SOURCES src/mcp_client.cpp
-        LINKS secure_frontend_json secure_frontend_engine_protocol_client)
-    # the server's tool: strata-search run beside the server, the MCP client over its pipes (search_service.hpp)
-    secure_frontend_add_library(secure_frontend_search_service SOURCES src/search_service.cpp
-        LINKS secure_frontend_mcp_client secure_frontend_engine_stdio_process secure_frontend_json)
-    # the page's search settings (search_routes.hpp)
-    secure_frontend_add_library(secure_frontend_search_routes SOURCES src/search_routes.cpp
-        LINKS secure_frontend_search_service secure_frontend_config_writer secure_frontend_api_core secure_frontend_paths)
 endif()
+# Tool plugins (plugin spec 2026-10-30, section 10): the server's MCP client (upstream's serve/mcp.py, stdio) and the
+# tool hub over it (tool_hub.hpp) - in every build: web search is the search plugin's program now, not a build option of
+# the server.
+secure_frontend_add_library(secure_frontend_mcp_client SOURCES src/mcp_client.cpp
+    LINKS secure_frontend_json secure_frontend_engine_protocol_client)
+secure_frontend_add_library(secure_frontend_tool_hub SOURCES src/tool_hub.cpp
+    LINKS secure_frontend_mcp_client secure_frontend_engine_stdio_process secure_frontend_json)
 if(SECURE_FRONTEND_EMAIL_ALERTS)
     secure_frontend_add_library(secure_frontend_email_alerts SOURCES src/smtp_client.cpp src/email_alerts.cpp
         LINKS secure_frontend_net_tls secure_frontend_typed_config secure_frontend_secrets secure_frontend_token_store
@@ -827,15 +821,15 @@ if(WIN32)
 endif()
 # Plugins (owner 2026-10-30; docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md): manifests.
 secure_frontend_add_library(secure_frontend_plugins SOURCES src/plugin_manifest.cpp src/plugin_registry.cpp
-    LINKS secure_frontend_json secure_frontend_sha256 secure_frontend_paths)
+    LINKS secure_frontend_json secure_frontend_sha256 secure_frontend_paths secure_frontend_token_store)
 # The Plugins tab's server half (plugin_routes.hpp): the list, an approval, on/off, in <roots.state>/plugins.json.
 secure_frontend_add_library(secure_frontend_plugin_routes SOURCES src/plugin_routes.cpp
     LINKS secure_frontend_plugins secure_frontend_token_store secure_frontend_api_core secure_frontend_paths
-          secure_frontend_config_writer secure_frontend_typed_config secure_frontend_plugin_secrets)
+          secure_frontend_config_writer secure_frontend_typed_config secure_frontend_plugin_secrets secure_frontend_mcp_client)
 # An install's plugins as its server finds them when it starts (install_plugins.hpp): make's record beside the engine
 # and the owner's choices; the server, strata-window and strata-tui read them.
 secure_frontend_add_library(secure_frontend_install_plugins SOURCES src/install_plugins.cpp
-    LINKS secure_frontend_plugins secure_frontend_about_info)
+    LINKS secure_frontend_plugins secure_frontend_about_info secure_frontend_typed_config secure_frontend_plugin_secrets)
 # A tool's or notifier's secret settings (plugin_secrets.hpp): plugin-<id>-<name> in roots.secret, DPAPI or 0600.
 secure_frontend_add_library(secure_frontend_plugin_secrets SOURCES src/plugin_secrets.cpp
     LINKS secure_frontend_token_store secure_frontend_paths)
@@ -884,13 +878,12 @@ secure_frontend_add_library(secure_frontend_server_bootstrap
           secure_frontend_chat_route secure_frontend_request_log secure_frontend_launch secure_frontend_model_runtime
           secure_frontend_model_launcher secure_frontend_downloads secure_frontend_first_start secure_frontend_card_routes
           secure_frontend_about_info secure_frontend_config_routes secure_frontend_plugin_routes
-          secure_frontend_install_plugins)
+          secure_frontend_install_plugins secure_frontend_tool_hub secure_frontend_plugin_secrets)
 if(SECURE_FRONTEND_EMAIL_ALERTS)
     target_link_libraries(secure_frontend_server_bootstrap PUBLIC secure_frontend_alert_routes secure_frontend_email_alerts)
 endif()
 if(SECURE_FRONTEND_WEB_SEARCH)
-    target_link_libraries(secure_frontend_server_bootstrap PUBLIC secure_frontend_search_service secure_frontend_search_routes)
-    # strata-search is a runtime file of the server: built with it, beside it
+    # strata-search, the search plugin's program, is built with the server
     add_dependencies(strata-unified-server strata-search)
 endif()
 target_link_libraries(strata-unified-server PRIVATE secure_frontend_server_bootstrap)
@@ -964,8 +957,9 @@ secure_frontend_set_warnings(strata)
 # MSVC runtime beside them (Microsoft's app-local deployment). Nothing else of this tree is installed.
 install(TARGETS strata-unified-server strata RUNTIME DESTINATION . COMPONENT runtime)
 if(SECURE_FRONTEND_WEB_SEARCH)
-    # web search: strata-search beside the server, which runs it from its own folder
-    install(TARGETS strata-search RUNTIME DESTINATION . COMPONENT runtime)
+    # web search, a first-party tool plugin (plugin spec 2026-10-30, section 10): strata-search in plugins/search/,
+    # beside the plugin.json make puts there; the server runs it from that folder
+    install(TARGETS strata-search RUNTIME DESTINATION plugins/search COMPONENT runtime)
 endif()
 if(SECURE_FRONTEND_WINDOW)
     # strata-window (spec 2026-10-28-server-window-design, Part 2): the server in a window with a tray icon. Windows:
@@ -1022,6 +1016,10 @@ if(MSVC)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT runtime)
     set(CMAKE_INSTALL_UCRT_LIBRARIES OFF)   # the Universal CRT is part of Windows 10 and later
     include(InstallRequiredSystemLibraries)
+    if(SECURE_FRONTEND_WEB_SEARCH)
+        # strata-search loads the runtime from its own folder, as the engine's programs do from engine/
+        install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION plugins/search COMPONENT runtime)
+    endif()
 endif()
 
 # SP3 M2 — streaming.
@@ -1526,12 +1524,12 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_api_router_tests
         model_control_routes_need_the_switch_and_the_key model_download_routes_need_the_switch_and_the_key
         model_card_routes_need_the_switch_and_the_key calibration_routes_need_their_handlers_and_the_key
-        alert_routes_need_their_handler_and_the_key search_routes_need_their_handler_and_the_key
+        alert_routes_need_their_handler_and_the_key
         config_routes_need_their_handler_and_the_key plugin_routes_need_their_handler_and_the_key
         web_ui_cards_from_this_pc_and_the_danger_zone web_ui_downloads_go_to_a_chosen_folder
         web_ui_downloads_say_what_is_on_this_pc web_ui_downloads_groups_are_accordions web_ui_downloads_destination_is_a_panel
         web_ui_models_tab_calibrates web_ui_models_tab_shows_compatibility web_ui_has_email_alert_settings web_ui_has_server_settings web_ui_has_a_plugins_tab web_ui_claims_a_login_link_at_load_and_on_hashchange web_ui_opens_the_view_its_address_names
-        web_ui_has_web_search_settings web_ui_has_model_folder_setting
+        web_ui_has_model_folder_setting
         web_ui_monitor_shows_stopped_and_the_model web_ui_monitor_is_even_and_shows_memory_disk_and_cache
         web_ui_about_lists_the_engines_and_this_pc
         web_ui_search_box_limit_note_and_engine_table web_ui_chat_can_turn_search_off
@@ -1752,7 +1750,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         timeout_shape_rows_at_each_edge
         session_rows_match_the_pin
         slot_save_path_is_a_bounded_private_path
-        web_ui_and_loopback_without_key_rows email_alert_rows_follow_the_build web_search_rows_follow_the_build
+        web_ui_and_loopback_without_key_rows email_alert_rows_follow_the_build old_web_search_rows_are_read_in_every_build
         model_name_row monitor_row models_keys_typed_and_described control_remote_networks_typed_and_checked
         download_keys_typed_and_described
         codex_and_tool_call_rows_are_dispositioned
@@ -2145,11 +2143,10 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
             searxng_json_becomes_numbered_results a_search_writes_one_request_and_reads_the_reply
             the_mcp_server_answers_upstreams_client)
         secure_frontend_add_cases(secure_frontend_web_search_tests strata_search_answers_over_stdio
-            the_client_runs_strata_search_on_its_pipes the_search_service_offers_web_search_and_runs_it
-            a_running_search_does_not_hold_up_the_offer search_routes_read_save_and_test
-            search_routes_let_in_the_clients_the_rule_lists ARGS $<TARGET_FILE:strata-search>)
+            the_client_runs_strata_search_on_its_pipes the_search_plugin_offers_web_search_and_runs_it
+            a_running_search_does_not_hold_up_the_offers ARGS $<TARGET_FILE:strata-search>)
         target_link_libraries(secure_frontend_web_search_tests PRIVATE secure_frontend_mcp_client secure_frontend_engine_stdio_process
-            secure_frontend_search_service secure_frontend_search_routes secure_frontend_first_start)
+            secure_frontend_tool_hub secure_frontend_first_start)
         if(WIN32)
             target_link_libraries(secure_frontend_web_search_tests PRIVATE ws2_32)
         endif()
@@ -2157,26 +2154,42 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_add_test_executable(secure_frontend_web_search_server_tests tests/web_search_server_test.cpp
             secure_frontend_test_support secure_frontend_api_core secure_frontend_socket_io secure_frontend_api_client)
         secure_frontend_test_paths(secure_frontend_web_search_server_tests)
-        add_dependencies(secure_frontend_web_search_server_tests strata-search)
+        # the search plugin as make ships it (its manifest, strata-search) and a third-party stand-in (the fake tool)
+        target_compile_definitions(secure_frontend_web_search_server_tests PRIVATE
+            SECURE_FRONTEND_REPO_PLUGINS="${CMAKE_CURRENT_SOURCE_DIR}/../plugins"
+            STRATA_SEARCH_PATH="$<TARGET_FILE:strata-search>" FAKE_MCP_TOOL_PATH="$<TARGET_FILE:secure_frontend_fake_mcp_tool>")
+        add_dependencies(secure_frontend_web_search_server_tests strata-search secure_frontend_fake_mcp_tool)
         if(WIN32)
             target_link_libraries(secure_frontend_web_search_server_tests PRIVATE ws2_32)
         endif()
         secure_frontend_add_cases(secure_frontend_web_search_server_tests a_chat_searches_through_strata_search_and_answers
             a_chat_can_turn_search_off a_started_card_searches_too a_card_started_without_web_search_never_searches
-            a_model_that_cannot_carry_the_tool_says_so
+            a_model_that_cannot_carry_the_tool_says_so old_search_rows_move_to_the_plugin a_third_party_tool_plugin_runs_once_approved
             LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
         # A real instance in place of the fake (SECURE_FRONTEND_SEARXNG_URL; unset, skipped).
         secure_frontend_add_cases(secure_frontend_web_search_server_tests a_real_searxng_answers_through_the_server
             LABELS searxng-real TIMEOUT 180)
         set_tests_properties(secure_frontend_web_search_server_tests.a_real_searxng_answers_through_the_server PROPERTIES
             SKIP_REGULAR_EXPRESSION "SKIPPED:")
-        # phase 2: the server's MCP client
-        secure_frontend_add_test_executable(secure_frontend_mcp_client_tests tests/mcp_client_test.cpp secure_frontend_mcp_client)
-        secure_frontend_add_cases(secure_frontend_mcp_client_tests
-            the_handshake_and_the_tool_list_are_upstreams a_call_answers_the_servers_own_messages_and_returns_the_text
-            a_timeout_or_a_cancel_sends_notifications_cancelled long_text_is_cut_with_upstreams_note
-            content_blocks_become_upstreams_text)
     endif()
+    # The server's MCP client (every build: tool plugins), and the tool hub over real children - the fake tool program,
+    # an MCP server on stdio (plugin spec 2026-10-30, section 10)
+    secure_frontend_add_test_executable(secure_frontend_mcp_client_tests tests/mcp_client_test.cpp secure_frontend_mcp_client)
+    secure_frontend_add_cases(secure_frontend_mcp_client_tests
+        the_handshake_and_the_tool_list_are_upstreams a_call_answers_the_servers_own_messages_and_returns_the_text
+        a_timeout_or_a_cancel_sends_notifications_cancelled long_text_is_cut_with_upstreams_note
+        content_blocks_become_upstreams_text)
+    add_executable(secure_frontend_fake_mcp_tool tests/fake_mcp_tool_main.cpp)
+    target_link_libraries(secure_frontend_fake_mcp_tool PRIVATE secure_frontend_json)
+    target_compile_features(secure_frontend_fake_mcp_tool PRIVATE cxx_std_20)
+    secure_frontend_set_warnings(secure_frontend_fake_mcp_tool)
+    secure_frontend_add_test_executable(secure_frontend_tool_hub_tests tests/tool_hub_test.cpp secure_frontend_tool_hub)
+    target_compile_definitions(secure_frontend_tool_hub_tests PRIVATE FAKE_MCP_TOOL_PATH="$<TARGET_FILE:secure_frontend_fake_mcp_tool>")
+    add_dependencies(secure_frontend_tool_hub_tests secure_frontend_fake_mcp_tool)
+    secure_frontend_add_cases(secure_frontend_tool_hub_tests
+        several_plugins_tools_are_offered_and_routed a_plugin_gets_its_own_arguments_and_environment
+        a_plugin_that_does_not_start_is_left_out notes_and_dates at_most_sixteen_tools a_stuck_call_ends_and_try_calls_one
+        LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # GUI-first start-up (spec 2026-10-27 §5): calibration's sweep, plan, result file and key.
     secure_frontend_add_test_executable(secure_frontend_calibration_tests tests/calibration_test.cpp secure_frontend_calibration)
@@ -2303,13 +2316,19 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     target_compile_definitions(secure_frontend_plugin_manifest_tests PRIVATE
         SECURE_FRONTEND_REPO_PLUGINS="${CMAKE_CURRENT_SOURCE_DIR}/../plugins")
     secure_frontend_add_cases(secure_frontend_plugin_manifest_tests
-        the_shipped_debugging_plugin_is_one a_diagnostics_manifest_is_read
+        the_shipped_debugging_plugin_is_one the_shipped_search_plugin_is_one a_diagnostics_manifest_is_read
         a_tool_manifest_says_how_its_program_runs a_wrong_run_block_is_refused_by_name values_are_checked_against_the_settings a_code_plugin_names_this_platforms_files a_wrong_manifest_is_refused_by_name
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_test_executable(secure_frontend_plugin_registry_tests tests/plugin_registry_test.cpp secure_frontend_plugins)
     secure_frontend_add_cases(secure_frontend_plugin_registry_tests
         the_diagnostics_that_are_on_are_combined a_new_plugin_waits_then_runs_once_approved a_changed_plugin_waits_again a_first_party_plugin_is_trusted_by_its_build_record
         refusals_say_why the_choices_round_trip
+        LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+    # An install's plugins as its server runs them (owner 2026-10-30, decisions 6 and 7).
+    secure_frontend_add_test_executable(secure_frontend_install_plugins_tests tests/install_plugins_test.cpp
+        secure_frontend_install_plugins secure_frontend_sha256)
+    secure_frontend_add_cases(secure_frontend_install_plugins_tests
+        a_tool_runs_with_its_settings_filled_in a_tool_whose_settings_do_not_fit_is_left_out
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # A tool's or notifier's secret settings (owner 2026-10-30, decision 6).
     secure_frontend_add_test_executable(secure_frontend_plugin_secrets_tests tests/plugin_secrets_test.cpp secure_frontend_plugin_secrets)
@@ -2320,6 +2339,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_plugin_routes secure_frontend_http_request_handler)
     secure_frontend_add_cases(secure_frontend_plugin_routes_tests
         the_plugins_are_listed approval_and_switching_are_kept refusals_say_why settings_are_listed_and_saved
+        tools_are_listed_and_tried
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # A calibration's report for a bug report (owner 2026-10-30).

@@ -37,7 +37,7 @@ struct Client final : secure_frontend::GenerationObserver {
 struct FakeRunner final : secure_frontend::ToolRunner {
   std::vector<std::string> queries;
   std::vector<secure_frontend::ToolResult> results;  // in order; the last one repeats
-  std::optional<secure_frontend::ToolOffer> offer() override { return std::nullopt; }
+  std::vector<secure_frontend::ToolOffer> offers() override { return {}; }
   secure_frontend::ToolResult run(const secure_frontend::ToolCall& call, const std::function<bool()>& cancelled) override {
     std::string query;
     for (const auto& a : call.arguments) {
@@ -95,7 +95,7 @@ void a_round_that_calls_runs_them_and_is_kept() {
   FakeRunner runner;
   runner.results = {{true, "results for a", 13U, false, false, std::chrono::milliseconds(5)},
                     {false, "error: SearXNG answered 500", 27U, false, false, std::chrono::milliseconds(7)}};
-  secure_frontend::SearchRounds rounds(runner, web_search(), 8U);
+  secure_frontend::SearchRounds rounds(runner, {web_search()}, 8U);
   std::vector<std::string> events;
   const auto next = rounds.after(round, secure_frontend::RunEnd::stop, [] { return false; }, [&events](std::string e) { events.push_back(std::move(e)); });
   expect(next == secure_frontend::SearchRounds::Next::again, "a round that called goes on");
@@ -121,7 +121,7 @@ void a_round_without_calls_is_the_answer() {
   round.on_text("Paris.");
   round.finish(true);
   FakeRunner runner;
-  secure_frontend::SearchRounds rounds(runner, web_search(), 8U);
+  secure_frontend::SearchRounds rounds(runner, {web_search()}, 8U);
   std::vector<std::string> events;
   expect(rounds.after(round, secure_frontend::RunEnd::stop, [] { return false; }, [&events](std::string e) { events.push_back(std::move(e)); }) ==
              secure_frontend::SearchRounds::Next::done,
@@ -135,7 +135,7 @@ void calls_not_run_are_skipped() {
   round.on_text(call_text("q"));
   round.finish(true);
   FakeRunner runner;
-  secure_frontend::SearchRounds rounds(runner, web_search(), 8U);
+  secure_frontend::SearchRounds rounds(runner, {web_search()}, 8U);
   std::vector<std::string> events;
   const auto collect = [&events](std::string e) { events.push_back(std::move(e)); };
   expect(rounds.after(round, secure_frontend::RunEnd::length, [] { return false; }, collect) == secure_frontend::SearchRounds::Next::done,
@@ -152,7 +152,7 @@ void calls_not_run_are_skipped() {
 void the_round_limit_leaves_one_answer_round() {
   FakeRunner runner;
   runner.results = {{true, "r", 1U, false, false, std::chrono::milliseconds(1)}};
-  secure_frontend::SearchRounds rounds(runner, web_search(), 1U);
+  secure_frontend::SearchRounds rounds(runner, {web_search()}, 1U);
   std::vector<std::string> events;
   const auto collect = [&events](std::string e) { events.push_back(std::move(e)); };
   Client client;
@@ -244,7 +244,7 @@ void a_cancel_while_a_search_runs_ends_the_answer() {
   round.finish(true);
   FakeRunner runner;
   runner.results = {{false, "", 0U, false, true, std::chrono::milliseconds(0)}};
-  secure_frontend::SearchRounds rounds(runner, web_search(), 8U);
+  secure_frontend::SearchRounds rounds(runner, {web_search()}, 8U);
   std::vector<std::string> events;
   bool asked = false;
   // the chat stops once the first search has started
@@ -268,7 +268,7 @@ void events_escape_what_they_carry() {
   round.finish(true);
   FakeRunner runner;
   runner.results = {{true, "line\n\"q\" \xC3\xA9", 10U, true, false, std::chrono::milliseconds(1234)}};
-  secure_frontend::SearchRounds rounds(runner, web_search(), 8U);
+  secure_frontend::SearchRounds rounds(runner, {web_search()}, 8U);
   std::vector<std::string> events;
   (void)rounds.after(round, secure_frontend::RunEnd::stop, [] { return false; }, [&events](std::string e) { events.push_back(std::move(e)); });
   expect(events.size() == 2U && events[0] == R"({"event":"call","round":1,"name":"web_search","arguments":{"query":"say \"hi\"\n2","max_results":2}})",

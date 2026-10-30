@@ -6,8 +6,7 @@
 #include "secure_frontend/mcp_client.hpp"
 #include "secure_frontend/first_start.hpp"
 #include "secure_frontend/search_mcp_server.hpp"
-#include "secure_frontend/search_routes.hpp"
-#include "secure_frontend/search_service.hpp"
+#include "secure_frontend/tool_hub.hpp"
 #include "secure_frontend/web_search.hpp"
 #include "support/fake_searxng.hpp"
 #include "support/process_runner.hpp"
@@ -315,173 +314,91 @@ void the_client_runs_strata_search_on_its_pipes() {
   expect(process.terminate(std::chrono::seconds(5)), "it ends when the server is done");
 }
 
-// Phase 4: the server's tool - strata-search started on first use, web_search offered as the template shows it (its own
-// name, description and schema; today's date after the description), a call run over the pipes, and a program that
-// cannot start leaves chats without search for a while instead of failing them.
-void the_search_service_offers_web_search_and_runs_it() {
-  FakeSearxng searxng;
-  secure_frontend::SearchServiceSettings settings;
-  settings.program = secure_frontend_test::extra_arguments().at(0);
-  settings.url = "http://127.0.0.1:" + std::to_string(searxng.port());
-  settings.results = 3U;
-  settings.timeout = std::chrono::seconds(10);
+// The search plugin as the server runs it (plugins/search/plugin.json, the owner's decision 6): strata-search with its
+// settings as arguments, the closed environment, the manifest's note.
+secure_frontend::ToolPlugin search_plugin(const std::string& url) {
+  secure_frontend::ToolPlugin plugin{.id = "search",
+                                     .program = secure_frontend_test::extra_arguments().at(0),
+                                     .arguments = {"--url", url, "--results", "3", "--timeout", "10"},
+                                     .environment = {},
+                                     .note = "Today's date is {today}. What you know may be out of date: for anything recent, or anything "
+                                             "that may have changed, search the web with web_search before you answer.",
+                                     .call_timeout = std::chrono::seconds(35)};
 #if defined(_WIN32)
   for (const char* name : {"SystemRoot", "WINDIR", "SystemDrive"}) {
-    if (const char* value = secure_frontend::crt_getenv(name)) settings.environment.emplace(name, value);
+    if (const char* value = secure_frontend::crt_getenv(name)) plugin.environment.emplace(name, value);
   }
 #else
-  settings.environment.emplace("PATH", "/usr/bin:/bin");
+  plugin.environment.emplace("PATH", "/usr/bin:/bin");
 #endif
-  settings.today = [] { return std::string{"2026-10-27"}; };
+  return plugin;
+}
+
+// Phase 4, now the search plugin through the tool hub (plugin spec 2026-10-30, section 10): strata-search started on
+// first use, web_search offered as the template shows it (its own name, description and schema; today's date after the
+// description, as its note names {today}), the note a chat's system message carries, a call run over the pipes, and a
+// program that cannot start leaves chats without its tools for a while instead of failing them.
+void the_search_plugin_offers_web_search_and_runs_it() {
+  FakeSearxng searxng;
   std::vector<std::string> lines;
-  settings.log = [&lines](const std::string_view line) { lines.emplace_back(line); };
-  secure_frontend::SearchService service(settings);
-  const auto offer = service.offer();
-  expect(offer.has_value(), "web_search is offered");
-  if (offer.has_value()) {
-    expect(offer->declaration.name == "web_search" && offer->declaration.string_parameters == std::vector<std::string>{"query"},
+  secure_frontend::ToolHub hub({.plugins = {search_plugin("http://127.0.0.1:" + std::to_string(searxng.port()))},
+                                .today = [] { return std::string{"2026-10-27"}; },
+                                .log = [&lines](const std::string_view line) { lines.emplace_back(line); }});
+  const auto offers = hub.offers();
+  expect(offers.size() == 1U, "web_search is offered");
+  if (offers.size() == 1U) {
+    expect(offers[0].declaration.name == "web_search" && offers[0].declaration.string_parameters == std::vector<std::string>{"query"},
            "its declaration: query is the string parameter");
-    expect(offer->template_json.rfind(R"({"name": "web_search", "description": "Search the web through a SearXNG instance)", 0) == 0U &&
-               offer->template_json.find(R"( Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.", )"
-                                         R"("parameters": {"type": "object", "properties": {"query": {"type": "string")") != std::string::npos,
-           "as the template's tojson writes it, the date after the description: " + offer->template_json);
+    expect(offers[0].template_json.rfind(R"({"name": "web_search", "description": "Search the web through a SearXNG instance)", 0) == 0U &&
+               offers[0].template_json.find(R"( Then answer from the results and cite the URLs you used. Today's date is 2026-10-27.", )"
+                                            R"("parameters": {"type": "object", "properties": {"query": {"type": "string")") != std::string::npos,
+           "as the template's tojson writes it, the date after the description: " + offers[0].template_json);
   }
   // owner 2026-10-28: the note a search turn's system message carries - the date, and to search for anything recent
-  expect(service.system_note() ==
+  expect(hub.system_note() ==
              "Today's date is 2026-10-27. What you know may be out of date: for anything recent, or anything that may have "
              "changed, search the web with web_search before you answer.",
-         "the system turn's note: " + service.system_note());
+         "the system turn's note: " + hub.system_note());
   const secure_frontend::ToolCall call{"web_search", {{"query", secure_frontend::JsonValue::make_string("rust 1.90")},
                                                       {"max_results", secure_frontend::JsonValue::make_integer(2)}}};
-  const auto found = service.run(call, [] { return false; });
+  const auto found = hub.run(call, [] { return false; });
   expect(found.ok && found.text.find("1. Announcing Rust 1.90.0") != std::string::npos && found.chars == found.text.size(),
          "the call comes back as the model reads it: " + found.text.substr(0, 120));
   expect(searxng.requests().size() == 1U && searxng.requests()[0] == "GET /search?q=rust%201.90&format=json HTTP/1.1",
          "one GET to the instance");
-  expect(service.offer().has_value() && lines.size() == 1U, "the running program is reused (one start line)");
+  expect(hub.offers().size() == 1U && lines.size() == 1U, "the running program is reused (one start line)");
 
-  secure_frontend::SearchServiceSettings missing = settings;
+  auto missing = search_plugin("http://127.0.0.1:1");
   missing.program = std::filesystem::path(secure_frontend_test::extra_arguments().at(0)).parent_path() / "no-such-strata-search";
   lines.clear();
-  secure_frontend::SearchService broken(missing);
-  expect(!broken.offer().has_value() && !broken.offer().has_value() && lines.size() == 1U,
+  secure_frontend::ToolHub broken({.plugins = {missing}, .log = [&lines](const std::string_view line) { lines.emplace_back(line); }});
+  expect(broken.offers().empty() && broken.offers().empty() && lines.size() == 1U,
          "a program that does not start: no tool, and no second try at once");
   const auto refused = broken.run(call, [] { return false; });
   expect(!refused.ok && refused.text.rfind("error: ", 0) == 0U, "a call then fails as text the model can read");
 }
 
-// A search that is still running (another chat's) does not hold up the next chat's offer: the listed tool stands.
-void a_running_search_does_not_hold_up_the_offer() {
+// A search that is still running (another chat's) does not hold up the next chat's offers: the listed tool stands.
+void a_running_search_does_not_hold_up_the_offers() {
   FakeSearxng slow(kSearxngReply, std::chrono::milliseconds(2000));
-  secure_frontend::SearchServiceSettings settings;
-  settings.program = secure_frontend_test::extra_arguments().at(0);
-  settings.url = "http://127.0.0.1:" + std::to_string(slow.port());
-  settings.timeout = std::chrono::seconds(10);
-#if defined(_WIN32)
-  for (const char* name : {"SystemRoot", "WINDIR", "SystemDrive"}) {
-    if (const char* value = secure_frontend::crt_getenv(name)) settings.environment.emplace(name, value);
-  }
-#else
-  settings.environment.emplace("PATH", "/usr/bin:/bin");
-#endif
-  secure_frontend::SearchService service(settings);
-  const auto first = service.offer();
-  expect(first.has_value(), "the tool is offered");
+  secure_frontend::ToolHub hub({.plugins = {search_plugin("http://127.0.0.1:" + std::to_string(slow.port()))}});
+  const auto first = hub.offers();
+  expect(first.size() == 1U, "the tool is offered");
   const secure_frontend::ToolCall call{"web_search", {{"query", secure_frontend::JsonValue::make_string("rust 1.90")}}};
   std::atomic<bool> done{false};
-  std::thread searching([&service, &call, &done] {
-    (void)service.run(call, [] { return false; });
+  std::thread searching([&hub, &call, &done] {
+    (void)hub.run(call, [] { return false; });
     done = true;
   });
   while (slow.requests().empty()) std::this_thread::sleep_for(std::chrono::milliseconds(10));  // the search waits on the instance
   const auto asked = std::chrono::steady_clock::now();
-  const auto again = service.offer();
+  const auto again = hub.offers();
   const auto took = std::chrono::steady_clock::now() - asked;
-  expect(again.has_value() && first.has_value() && again->template_json == first->template_json && !done,
+  expect(again.size() == 1U && first.size() == 1U && again[0].template_json == first[0].template_json && !done,
          "the same tool is offered while the search runs");
   expect(took < std::chrono::milliseconds(500),
          "at once (" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(took).count()) + " ms)");
   searching.join();
-}
-
-// Phase 6: the page's search settings over the routes - read from the config file, saved to it (checked; applied at the
-// next start), a test search through the saved settings by strata-search - for this PC's clients only.
-void search_routes_read_save_and_test() {
-  FakeSearxng searxng;
-  const auto root = secure_frontend_test::make_scratch_directory();
-  const auto data = secure_frontend::data_folder_layout(root / "data");
-  const auto engine = root / "engine.exe";
-  secure_frontend_test::write_file(engine, "engine");
-  expect(std::holds_alternative<secure_frontend::FirstStartResult>(secure_frontend::ensure_data_folder(data, engine)), "a data folder");
-  secure_frontend::SearchRouteSettings settings{.config_file = data.config_file, .program = secure_frontend_test::extra_arguments().at(0)};
-#if defined(_WIN32)
-  for (const char* name : {"SystemRoot", "WINDIR", "SystemDrive"}) {
-    if (const char* value = secure_frontend::crt_getenv(name)) settings.environment.emplace(name, value);
-  }
-#else
-  settings.environment.emplace("PATH", "/usr/bin:/bin");
-#endif
-  settings.log = [](std::string_view) {};
-  secure_frontend::SearchRoutes routes(std::move(settings));
-  const auto post = [&routes](const secure_frontend::RouteId route, const std::string& body, const bool loopback = true) {
-    return routes.answer(route, body, secure_frontend::RequestContext{.client_gone = {}, .loopback_peer = loopback});
-  };
-  const auto has = [](const std::string& text, const std::string_view part) { return text.find(part) != std::string::npos; };
-  const auto first = post(secure_frontend::RouteId::strata_search, "{}");
-  expect(first.status == 200 && has(first.body, "\"built\":true") && has(first.body, "\"enabled\":false") &&
-             has(first.body, "\"results\":5") && has(first.body, "\"max_rounds\":8") && has(first.body, "\"timeout_s\":30") &&
-             has(first.body, "\"running\":false"),
-         "the settings, off at first: " + first.body);
-  expect(post(secure_frontend::RouteId::strata_search, "{}", false).status == 403, "this PC's clients only");
-  expect(post(secure_frontend::RouteId::strata_search_test, "{}").status == 422, "no test search before a URL is saved");
-
-  const std::string url = "http://127.0.0.1:" + std::to_string(searxng.port());
-  const auto saved = post(secure_frontend::RouteId::strata_search_settings,
-                          R"({"enabled":true,"url":")" + url + R"(","results":3,"max_rounds":2,"timeout_s":20})");
-  expect(saved.status == 200 && has(saved.body, "\"restart_needed\":true"), "saved: " + saved.body);
-  const auto text = secure_frontend_test::read_file(data.config_file);
-  expect(has(text, "\"search\"") && has(text, "\"url\": \"" + url + "\"") && has(text, "\"listener\""), "into the config file, the rest kept: " + text);
-  const auto bad = post(secure_frontend::RouteId::strata_search_settings, R"({"enabled":true,"url":"ftp://example.org"})");
-  expect(bad.status == 422 && has(bad.body, "\"code\":\"settings_refused\"") && has(bad.body, "search.url"),
-         "a bad URL is refused by name: " + bad.body);
-  expect(has(secure_frontend_test::read_file(data.config_file), "\"url\": \"" + url + "\""), "and nothing is written");
-  expect(post(secure_frontend::RouteId::strata_search_settings, R"({"engine":"google"})").status == 400, "an unknown field is refused");
-
-  const auto tested = post(secure_frontend::RouteId::strata_search_test, R"({"query":"rust 1.90"})");
-  expect(tested.status == 200 && has(tested.body, "\"ok\":true") && has(tested.body, "Announcing Rust 1.90.0"),
-         "a test search through the saved settings: " + tested.body);
-  expect(!searxng.requests().empty() && searxng.requests().back() == "GET /search?q=rust%201.90&format=json HTTP/1.1",
-         "it asked the saved instance");
-}
-
-// Owner 2026-10-27 ("I don't see ... mcp settings" on a page opened from another PC): the routes let in the clients the
-// server's rule lets in (it passes model_files_allowed, as for the model-file routes); without a rule, this PC's only.
-void search_routes_let_in_the_clients_the_rule_lists() {
-  const auto root = secure_frontend_test::make_scratch_directory();
-  const auto data = secure_frontend::data_folder_layout(root / "data");
-  const auto engine = root / "engine.exe";
-  secure_frontend_test::write_file(engine, "engine");
-  expect(std::holds_alternative<secure_frontend::FirstStartResult>(secure_frontend::ensure_data_folder(data, engine)), "a data folder");
-  secure_frontend::SearchRouteSettings settings{.config_file = data.config_file, .program = secure_frontend_test::extra_arguments().at(0)};
-  settings.log = [](std::string_view) {};
-  settings.client_allowed = [](const secure_frontend::RequestContext& context) {
-    return context.loopback_peer || (context.peer[0] == 4U && context.peer[1] == 172U && context.peer[2] == 16U && context.peer[3] == 1U);
-  };
-  secure_frontend::SearchRoutes routes(std::move(settings));
-  const auto from = [&routes](const secure_frontend::RouteId route, const std::string& body, const unsigned char subnet) {
-    secure_frontend::RequestContext context{.client_gone = {}, .loopback_peer = false};
-    context.peer[0] = 4U;
-    context.peer[1] = 172U;
-    context.peer[2] = 16U;
-    context.peer[3] = subnet;
-    context.peer[4] = 7U;
-    return routes.answer(route, body, context);
-  };
-  const auto listed = from(secure_frontend::RouteId::strata_search, "{}", 1U);
-  expect(listed.status == 200 && listed.body.find("\"built\":true") != std::string::npos, "a listed client sees the settings: " + listed.body);
-  const auto saved = from(secure_frontend::RouteId::strata_search_settings, R"({"enabled":false,"url":"http://127.0.0.1:9"})", 1U);
-  expect(saved.status == 200, "and saves them: " + saved.body);
-  expect(from(secure_frontend::RouteId::strata_search, "{}", 3U).status == 403, "a client the rule does not list is refused");
 }
 
 }  // namespace
@@ -497,10 +414,8 @@ int main(int argc, char** argv) {
       {"replies_are_read_by_length_chunks_or_close", replies_are_read_by_length_chunks_or_close},
       {"searxng_json_becomes_numbered_results", searxng_json_becomes_numbered_results},
       {"a_search_writes_one_request_and_reads_the_reply", a_search_writes_one_request_and_reads_the_reply},
-      {"the_search_service_offers_web_search_and_runs_it", the_search_service_offers_web_search_and_runs_it},
-      {"a_running_search_does_not_hold_up_the_offer", a_running_search_does_not_hold_up_the_offer},
-      {"search_routes_read_save_and_test", search_routes_read_save_and_test},
-      {"search_routes_let_in_the_clients_the_rule_lists", search_routes_let_in_the_clients_the_rule_lists},
+      {"the_search_plugin_offers_web_search_and_runs_it", the_search_plugin_offers_web_search_and_runs_it},
+      {"a_running_search_does_not_hold_up_the_offers", a_running_search_does_not_hold_up_the_offers},
       {"the_mcp_server_answers_upstreams_client", the_mcp_server_answers_upstreams_client},
       {"strata_search_answers_over_stdio", strata_search_answers_over_stdio},
       {"the_client_runs_strata_search_on_its_pipes", the_client_runs_strata_search_on_its_pipes},

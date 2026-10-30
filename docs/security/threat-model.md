@@ -96,11 +96,14 @@ Trust boundaries:
   set connects to the configured SMTP host itself to send alerts (below, "GUI-first
   start-up"). A default build has no mail code, and no build connects anywhere
   until alerts are enabled in config.
-  A third owner-accepted exception (2026-10-27): a server **built with**
-  `SECURE_FRONTEND_WEB_SEARCH` (off by default) and with `search.enabled` set runs
-  `strata-search`, a separate program beside it, which connects to the configured
-  SearXNG instance for the model's searches (below, "Web search"). The server process
-  itself gains no resolver or outbound connection for it.
+  A third owner-accepted exception (2026-10-27; a tool plugin since 2026-10-30): with
+  the Web search plugin on (a folder built `--with search` ships it) and
+  `plugins.search.url` set, the server runs its program `strata-search` from
+  `<install>/plugins/search`, which connects to the configured SearXNG instance for the
+  model's searches (below, "Web search"). A fourth (owner 2026-10-30: third-party tool
+  plugins run now): a tool plugin the owner approved runs the same way, and connects
+  wherever its program does (below, "Extensions and MCP"). The server process itself
+  gains no resolver or outbound connection for either.
 - Privacy-relevant behavior is build-time auditable: the release manifest lists
   enabled network-capable components, and CI tests prove that a normal service
   lifecycle makes no outbound network connection.
@@ -766,10 +769,11 @@ asks quoted there.
   all) before the whole tree is made owner-only. Any other sub-folder still refuses it, so a general folder (Documents,
   a drive's root) cannot be locked by mistake.
 - **The settings from the LAN** (2026-10-28, owner: the email and MCP sections were missing on a page opened from
-  another PC): the email alerts and web search settings routes follow the same rule as the file routes -
+  another PC): the email alerts and the Plugins tab's routes follow the same rule as the file routes -
   `model_files_allowed`: this PC, or a listed host or subnet with `models.control_remote`, never `control_remote`
-  alone. A listed client can therefore change where alerts go and which SearXNG answers searches, and set the SMTP
-  password (written to the secret folder, never shown back). That password then crosses the LAN in the request body,
+  alone. A listed client can therefore change where alerts go and which SearXNG answers searches (the Web search
+  plugin's settings), run one call of a running tool plugin's tool (Try), and set the SMTP password (written to the
+  secret folder, never shown back). That password then crosses the LAN in the request body,
   as the API key already does on a plain-HTTP listener.
 - **About** (`GET /v1/strata/about`, 2026-10-28): keyed like every API route. It tells a key holder the engine folder's
   build record (`engine/build.json`, read once, schema 1, at most 64 KiB, known fields only, printable text) and this
@@ -843,18 +847,20 @@ asks quoted there.
   default build imports no resolver at all; an email build imports `getaddrinfo` and nothing else
   on the forbidden list.
 
-### Web search (2026-10-27; built only with `SECURE_FRONTEND_WEB_SEARCH`)
+### Web search (2026-10-27; the Web search tool plugin since 2026-10-30)
 
-Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
+Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`; as a plugin,
+`docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md`, section 10.
 
-- **One tool, the server's own.** The model may call `web_search` and nothing else; the
-  tool is offered by the server, never by a request (client-sent `tools` stay refused), a
-  model, a manifest or a card. Calls are read only from qwen, glm53, raon1, flint, gemma4,
+- **Tools come from the running tool plugins, never from a request.** The model may call
+  only the tools the server's tool hub offers - web search's `web_search`, and any other
+  running tool plugin's, at most 16 - never one from a request (client-sent `tools` stay
+  refused), a model or a card. Calls are read only from qwen, glm53, raon1, flint, gemma4,
   deepseek and minimax replies (2026-10-28: raon1 in Qwen's form, flint in GLM's, Gemma 4 in its own
   `<|tool_call>call:NAME{...}<tool_call|>` read by llama.cpp's grammar, DeepSeek in its
   DSML blocks rewritten into GLM's form as Maya's `DsmlRewriter` does, MiniMax in its
   namespaced XML rewritten likewise by Maya's `MinimaxRewriter`, each as its own
-  template writes it), as upstream, Maya and llama.cpp read them, and only for that tool;
+  template writes it), as upstream, Maya and llama.cpp read them, and only for those tools;
   any other call, and one the grammar refuses, is text. The results and the model's own
   words go back into the prompt as plain spans (their special literals are text, never a
   token), so a page that writes `<|tool_call>`, `<turn|>` or `｜DSML｜` cannot open a call or
@@ -873,21 +879,23 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
   client can put any text there, as it can in any message of its own conversation; the server renders it as each
   family's template renders history calls and results, the results and the model's words as plain spans (their
   literals are text, never a token), and offers and runs no tool because of it. A search turn's system message also
-  says today's date and to search for anything recent (the search service's fixed note).
+  says today's date and to search for anything recent (the search plugin's note, from its manifest).
 - **Fewer searches, never more (2026-10-28).** A card's Web search checkbox (`web_search`,
-  on by default, shown only while the server's search is on) starts its model without the
-  tool, and a request's `"strata_search": false` serves that chat without it. Neither can
-  turn search on where the server's settings have it off, offer another tool, or reach
-  another program; anything but a boolean is refused by name. Past `search.max_rounds` the
+  on by default, shown only while a tool plugin runs) starts its model without the
+  tools, and a request's `"strata_search": false` serves that chat without them. Neither can
+  turn search on where the plugin is off, offer another tool, or reach another program;
+  anything but a boolean is refused by name. Past `tools.max_rounds` the
   calls are not run: the model gets a fixed note in their place and one round to answer,
   and a call in that round ends the answer.
-- **One program, one destination.** The server runs only the bundled `strata-search`
-  (beside its own executable, never a configured command), as a child with the downloads'
-  closed environment (system variables and an owner-only temp folder under
-  `roots.state`) and the instance's URL and limits as its only arguments. It is the
-  install's only search connection: the one origin from `search.url` (http or https; https
-  checked as the email client checks TLS), `GET <url>/search?q=..&format=json` only, no
-  redirect followed, a 4 MiB reply, `search.timeout_s` per step. The static import check
+- **One program, one destination.** The hub runs the search plugin's `strata-search` from
+  its plugin folder (a first-party plugin: make's record pins the SHA-256s of its manifest
+  and program; never a configured command), as a child with the downloads' closed
+  environment (system variables and an owner-only temp folder, `<roots.state>/plugins/search`)
+  and the instance's URL and limits as its only arguments (its manifest's, filled from
+  `plugins.search.*`). It is the install's only search connection: the one origin from
+  `plugins.search.url` (http or https; https checked as the email client checks TLS),
+  `GET <url>/search?q=..&format=json` only, no redirect followed, a 4 MiB reply,
+  `plugins.search.timeout_s` per step. The static import check
   knows the split: the server binary keeps its rule, `strata-search` imports `getaddrinfo`
   and no HTTP client library.
 - **What leaves the PC.** The model's queries (derived from the conversation) go to the
@@ -896,11 +904,12 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
 - **Results are untrusted text.** Only titles, URLs, dates and snippets reach the model
   (capped; no page bodies), encoded as ordinary text even where they spell a special token,
   so a page cannot open a turn, end a result or forge a call. A steered model can only
-  search again (at most `search.max_rounds` rounds) or answer.
-- **Settings.** `search.*` rows, refused by name in a build without the option. The page's
-  routes (`/v1/strata/search`, `/settings`, `/test`) need the key, model control and a
-  loopback client; settings apply at the next start; a test search runs only when the
-  operator presses it.
+  search again (at most `tools.max_rounds` rounds) or answer.
+- **Settings.** `plugins.search.*` rows (a config's old `search.*` rows are moved there at
+  its first start, `search.enabled` becoming the plugin's choice in the owner-only
+  `plugins.json`), saved from the Plugins tab with the key, model control and
+  `model_files_allowed`'s clients; settings apply at the next start; Try runs one call
+  only when the operator presses it.
 
 ### The window app (2026-10-28; built only with `SECURE_FRONTEND_WINDOW`)
 
@@ -947,8 +956,8 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
 
 - Plugins (owner 2026-10-30; spec
   `docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md`,
-  section 8): the server reads `<install>/plugins/<id>/plugin.json`, but
-  only the `diagnostics` kind runs so far, and it runs no code: a manifest
+  section 8): the server reads `<install>/plugins/<id>/plugin.json`; the
+  `diagnostics` and `tool` kinds run. A diagnostics plugin runs no code: a manifest
   that names which of three fixed switches it turns on (`logging.requests`,
   `logging.engine_output`, Settings > Troubleshooting), refused if it names
   anything else. A plugin is on only when it is trusted - make's record in
@@ -974,12 +983,32 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
   in arguments or in the words it shows). The settings route answers the
   clients the other settings routes answer (`settings_are_listed_and_saved`,
   `a_secret_is_stored_read_and_removed`).
-- MCP, tool execution, arbitrary plugins, and remote command execution are
-  disabled and absent from the default build/runtime configuration. The one exception is
-  the web search build's own MCP server and tool (above), which no request, model or
-  configuration can extend.
-- Enabling an extension requires a future, separately reviewed capability model;
-  it cannot be enabled through a model manifest, HTTP request, or unrecognized
+- Tool plugins (owner 2026-10-30, decision 7: third-party ones run now; spec
+  section 10): a tool plugin is a program - an MCP server on standard I/O - that
+  the server's tool hub runs with the server's own user rights. It is trusted
+  as any plugin is: make's record, or the owner's approval of the SHA-256s of
+  its manifest and every file it names, checked when the server starts (a
+  changed file waits for approval again). The server hands it no more than
+  its manifest declares: its program, one of its own files inside its folder
+  (the manifest reader refuses '.', '..' and anything outside); the manifest's
+  arguments with its settings filled in; a closed environment (the system's own
+  variables, a private temp folder `<roots.state>/plugins/<id>`) plus only its
+  declared variables, a secret only there. **What it does then is not
+  confined:** an approved third-party plugin can read what the server's user
+  can read and connect anywhere - approving it is trusting its publisher as
+  running any program is, and the tab and the TUI say a code plugin runs with
+  the server's rights; its `network` words are its own claim, not a limit.
+  What the hub takes from it is bounded: tool names, descriptions and its note
+  as text in the prompt (encoded as plain text, never a token), at most 16
+  tools, a result cut at 20000 characters, a call ended after its
+  `call_timeout_s` (1-600 s); a program that dies is started again by the next
+  chat, one that does not start is left out for a minute
+  (`tools_are_listed_and_tried`, `a_third_party_tool_plugin_runs_once_approved`).
+- Remote command execution is absent. MCP and tool execution are only the
+  tool plugins' (above), which no request, model, card or configuration key
+  can add; a card or a request can only turn tools off. A notifier or engine
+  plugin runs nothing yet: enabling one requires its own reviewed step, and
+  none can be enabled through a model manifest, HTTP request, or unrecognized
   configuration key.
 
 ## Out of scope and residual risks

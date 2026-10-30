@@ -1,8 +1,8 @@
 #pragma once
 
-// The server's own tool (web search, docs/superpowers/specs/2026-10-27-web-search-design.md §2), as the chat route uses
-// it: what to offer the model and how to run one call. The search service (search_service.hpp, built only with
-// SECURE_FRONTEND_WEB_SEARCH) is the one implementation; without it a route has none and serves every chat as before.
+// The server's tools, as the chat route uses them: what to offer the model and how to run one call. The tool hub
+// (tool_hub.hpp: the tool plugins that are on, web search among them; docs/superpowers/specs/2026-10-30-engine-family-
+// plugins-design.md, section 10) is the one implementation; with none a route serves every chat as before.
 
 #include "secure_frontend/tool_calls.hpp"
 
@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace secure_frontend {
 
@@ -33,14 +34,14 @@ struct ToolResult final {
 class ToolRunner {
  public:
   virtual ~ToolRunner() = default;
-  // The tool for a chat's prompt (its program started on first use); nullopt: none now - the chat is served without.
-  [[nodiscard]] virtual std::optional<ToolOffer> offer() = 0;
-  // One call; `cancelled` is asked while it waits.
+  // The tools for a chat's prompt (their programs started on first use); none: the chat is served without.
+  [[nodiscard]] virtual std::vector<ToolOffer> offers() = 0;
+  // One call, to the tool it names; `cancelled` is asked while it waits.
   [[nodiscard]] virtual ToolResult run(const ToolCall& call, const std::function<bool()>& cancelled) = 0;
-  // A chat it was offered to is served without it: the model's prompt cannot carry the tool (its vocabulary lacks a tag
-  // that prompt needs); `why` is the plan's fixed reason (owner 2026-10-28: flint's fallback was silent).
+  // A chat they were offered to is served without them: the model's prompt cannot carry the tools (its vocabulary
+  // lacks a tag that prompt needs); `why` is the plan's fixed reason (owner 2026-10-28: flint's fallback was silent).
   virtual void served_without(const std::string_view why) { (void)why; }
-  // What a chat's system message says while the tool is offered (owner 2026-10-28: today's date, and that the model's
+  // What a chat's system message says while the tools are offered (owner 2026-10-28: today's date, and that the model's
   // knowledge may be out of date so it should search for anything recent); empty: nothing.
   [[nodiscard]] virtual std::string system_note() const { return {}; }
 };

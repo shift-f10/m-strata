@@ -1167,7 +1167,7 @@ void cards_say_whether_their_profile_takes_reasoning_effort() {
 // by default, even when its card file lists no options. Without the server's search no card shows it.
 void cards_offer_web_search_when_the_server_has_it() {
   struct NoTool final : secure_frontend::ToolRunner {
-    std::optional<secure_frontend::ToolOffer> offer() override { return std::nullopt; }
+    std::vector<secure_frontend::ToolOffer> offers() override { return {}; }
     secure_frontend::ToolResult run(const secure_frontend::ToolCall&, const std::function<bool()>&) override { return {}; }
   } tool;
   const auto listing = [](secure_frontend::ToolRunner* tools) {

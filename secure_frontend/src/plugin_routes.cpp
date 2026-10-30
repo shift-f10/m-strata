@@ -31,6 +31,38 @@ std::string json_text(const std::string_view text) {
 
 std::string json_or_null(const std::string_view text) { return text.empty() ? std::string{"null"} : json_text(text); }
 
+const JsonValue* member_of(const JsonValue& object, const std::string_view key) {
+  const auto* members = object.if_object();
+  if (members == nullptr) return nullptr;
+  for (const auto& entry : *members) {
+    if (entry.key == key) return &entry.value;
+  }
+  return nullptr;
+}
+
+// A value as compact JSON (a Try's arguments, as the tool hub sends them).
+void compact(const JsonValue& value, std::string& out) {
+  if (const auto* items = value.if_array()) {
+    out += '[';
+    for (std::size_t i = 0; i < items->size(); ++i) {
+      if (i > 0U) out += ',';
+      compact((*items)[i], out);
+    }
+    out += ']';
+  } else if (const auto* members = value.if_object()) {
+    out += '{';
+    for (std::size_t i = 0; i < members->size(); ++i) {
+      if (i > 0U) out += ',';
+      append_json_string(&out, (*members)[i].key);
+      out += ':';
+      compact((*members)[i].value, out);
+    }
+    out += '}';
+  } else {
+    out += python_json_text(value);
+  }
+}
+
 HttpResponse json_answer(const int status, std::string body) {
   return {.status = status, .headers = {{"Content-Type", "application/json; charset=utf-8"}, {"Cache-Control", "no-store"}},
           .body = std::move(body)};
@@ -167,8 +199,35 @@ std::string settings_json(const PluginManifest* manifest, const std::map<std::st
          ",\"settings_problem\":" + (problem ? json_text(*problem) : std::string{"null"});
 }
 
+// A running tool plugin's tools as the "Try" form needs them: each name, description and string parameters.
+std::string tools_json(const std::vector<McpTool>* tools) {
+  constexpr JsonLimits kSchemaLimits{.max_bytes = 1U << 20U, .max_depth = 32U, .max_container_entries = 4096U,
+                                     .max_string_bytes = 1U << 16U, .allow_fractions = true};
+  std::string out = ",\"tools\":[";
+  bool first = true;
+  for (const auto& tool : tools != nullptr ? *tools : std::vector<McpTool>{}) {
+    out += (first ? "" : ",") + std::string{"{\"name\":"} + json_text(tool.name) + ",\"description\":" + json_text(tool.description) +
+           ",\"string_parameters\":[";
+    first = false;
+    const auto parsed = parse_json(tool.input_schema, kSchemaLimits);
+    const auto* schema = std::get_if<JsonValue>(&parsed);
+    const auto* properties = schema != nullptr && schema->if_object() != nullptr ? member_of(*schema, "properties") : nullptr;
+    bool first_parameter = true;
+    if (properties != nullptr && properties->if_object() != nullptr) {
+      for (const auto& property : *properties->if_object()) {
+        const auto* type = member_of(property.value, "type");
+        if (type == nullptr || type->if_string() == nullptr || *type->if_string() != "string") continue;
+        out += (first_parameter ? "" : ",") + json_text(property.key);
+        first_parameter = false;
+      }
+    }
+    out += "]}";
+  }
+  return out + "]";
+}
+
 std::string entry_json(const PluginEntry& entry, const bool running, const std::map<std::string, PluginValue>& values,
-                       const std::set<std::string>& secrets_set) {
+                       const std::set<std::string>& secrets_set, const std::vector<McpTool>* tools) {
   const auto* manifest = entry.manifest ? &*entry.manifest : nullptr;
   std::string out = "{\"id\":" + json_text(entry.id);
   out += ",\"kind\":" + (manifest != nullptr ? json_text(plugin_kind_name(manifest->kind)) : std::string{"null"});
@@ -194,7 +253,7 @@ std::string entry_json(const PluginEntry& entry, const bool running, const std::
       first = false;
     }
   }
-  return out + "]" + settings_json(manifest, values, secrets_set) + "}";
+  return out + "]" + settings_json(manifest, values, secrets_set) + tools_json(tools) + "}";
 }
 
 }  // namespace
@@ -209,6 +268,7 @@ HttpResponse PluginRoutes::answer(const RouteId route, const std::string_view bo
     case RouteId::strata_plugins_approve: return approve(body);
     case RouteId::strata_plugins_switch: return change(body);
     case RouteId::strata_plugins_settings: return save_settings(body);
+    case RouteId::strata_plugins_try: return try_tool(body);
     default: return make_error_response(ApiError::not_found);
   }
 }
@@ -218,13 +278,7 @@ std::optional<PluginChoices> PluginRoutes::choices() const {
 }
 
 bool PluginRoutes::save(const PluginChoices& choices) {
-  if (!settings_.state_dir) return false;
-  const auto root = open_root(*settings_.state_dir, RootPolicy::create_private);
-  const auto name = parse_relative_path(kPluginChoicesFile);
-  if (!std::holds_alternative<CanonicalRoot>(root) || !std::holds_alternative<RelativePath>(name)) return false;
-  return !write_private_file(std::get<CanonicalRoot>(root), std::get<RelativePath>(name), render_plugin_choices(choices),
-                             TokenStoreMode::replace)
-              .has_value();
+  return settings_.state_dir && write_plugin_choices(*settings_.state_dir, choices);
 }
 
 HttpResponse PluginRoutes::list() const {
@@ -238,6 +292,7 @@ HttpResponse PluginRoutes::list() const {
     auto read = read_config_file(*settings_.config_file);
     if (const auto* draft = std::get_if<FrontendConfigDraft>(&read)) values = values_in(*draft);
   }
+  const auto listed = settings_.tools ? settings_.tools() : std::map<std::string, std::vector<McpTool>>{};
   bool first = true;
   for (const auto& entry : discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen)) {
     std::set<std::string> secrets_set;
@@ -246,7 +301,9 @@ HttpResponse PluginRoutes::list() const {
         if (setting.kind == SettingKind::secret && plugin_secret_set(*settings_.secret_dir, entry.id, setting.name)) secrets_set.insert(setting.name);
       }
     }
-    out += (first ? "" : ",") + entry_json(entry, settings_.running.contains(entry.id), values[entry.id], secrets_set);
+    const auto tools = listed.find(entry.id);
+    out += (first ? "" : ",") + entry_json(entry, settings_.running.contains(entry.id), values[entry.id], secrets_set,
+                                           tools != listed.end() ? &tools->second : nullptr);
     first = false;
   }
   return json_answer(200, out + "]}\n");
@@ -390,6 +447,44 @@ HttpResponse PluginRoutes::save_settings(const std::string_view body) {
   }
   if (settings_.log) settings_.log("[strata] plugins: " + id + "'s settings were saved (they apply at the next start)");
   return json_answer(200, "{\"id\":" + json_text(id) + ",\"saved\":true,\"restart_needed\":true}\n");
+}
+
+}  // namespace secure_frontend
+
+namespace secure_frontend {
+
+HttpResponse PluginRoutes::try_tool(const std::string_view body) {
+  // {"id", "tool", "arguments": {...}}, nothing else
+  constexpr JsonLimits kTryLimits{.max_bytes = kModelControlBodyLimit, .max_depth = 4U, .max_container_entries = 64U, .max_string_bytes = 4096U,
+                                  .allow_fractions = true};
+  const auto parsed = parse_json(body, kTryLimits);
+  const auto* root = std::get_if<JsonValue>(&parsed);
+  const auto* members = root == nullptr ? nullptr : root->if_object();
+  const JsonValue* id = nullptr;
+  const JsonValue* tool = nullptr;
+  const JsonValue* arguments = nullptr;
+  if (members != nullptr && members->size() == 3U) {
+    id = member_of(*root, "id");
+    tool = member_of(*root, "tool");
+    arguments = member_of(*root, "arguments");
+  }
+  if (id == nullptr || id->if_string() == nullptr || tool == nullptr || tool->if_string() == nullptr || tool->if_string()->empty() ||
+      tool->if_string()->size() > 128U || arguments == nullptr || arguments->if_object() == nullptr) {
+    return make_error_response(ApiError::invalid_request);
+  }
+  const std::string& name = *id->if_string();
+  const auto chosen = choices();
+  if (!chosen) return unreadable_choices();
+  const auto entries = discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen);
+  const auto entry = std::find_if(entries.begin(), entries.end(), [&name](const PluginEntry& e) { return e.id == name; });
+  if (entry == entries.end()) return refused("there is no plugin " + name + " in the plugins folder");
+  if (!entry->manifest || entry->manifest->kind != PluginKind::tool) return refused(name + " is not a tool plugin");
+  if (!settings_.try_tool) return refused("this server runs no tool plugins: one runs once it is on and its settings are filled in, after a restart");
+  std::string arguments_json;
+  compact(*arguments, arguments_json);
+  const ToolResult result = settings_.try_tool(name, *tool->if_string(), arguments_json);
+  return json_answer(200, std::string{"{\"ok\":"} + (result.ok ? "true" : "false") + ",\"text\":" + json_text(result.text) +
+                              ",\"truncated\":" + (result.truncated ? "true" : "false") + ",\"ms\":" + std::to_string(result.took.count()) + "}\n");
 }
 
 }  // namespace secure_frontend

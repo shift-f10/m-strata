@@ -1,0 +1,23 @@
+{
+  "schema": "m-strata.plugin/1",
+  "id": "search",
+  "kind": "tool",
+  "name": "Web search",
+  "version": "1.0.0",
+  "publisher": "M-Strata",
+  "license": "AGPL-3.0-only",
+  "about": "Lets the model search the web through your SearXNG instance when it is unsure or the answer needs recent information. What the model searches for comes from the chat and leaves this PC for that instance; the searches a reply made are shown with it.",
+  "files": {"windows": ["strata-search.exe"], "linux": ["strata-search"]},
+  "tool": {
+    "program": {"windows": "strata-search.exe", "linux": "strata-search"},
+    "arguments": ["--url", "{url}", "--results", "{results}", "--timeout", "{timeout_s}"],
+    "network": "the SearXNG instance at {url}",
+    "note": "Today's date is {today}. What you know may be out of date: for anything recent, or anything that may have changed, search the web with web_search before you answer.",
+    "call_timeout_s": 365,
+    "settings": [
+      {"name": "url", "kind": "url", "label": "SearXNG address", "help": "http(s)://host[:port][/path], with the JSON format on (its settings.yml: search.formats lists json).", "required": true},
+      {"name": "results", "kind": "integer", "label": "Results per search", "help": "What the model gets from each search (1-10).", "default": 5, "min": 1, "max": 10},
+      {"name": "timeout_s", "kind": "integer", "label": "Time limit (seconds)", "help": "Each network step of a search (5-120 s).", "default": 30, "min": 5, "max": 120}
+    ]
+  }
+}

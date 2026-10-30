@@ -257,12 +257,14 @@ std::variant<PluginTemplate, std::string> parse_template(const std::string_view 
 // A tool's or notifier's block (spec section 10); or why not.
 std::variant<PluginRun, std::string> parse_run(const JsonValue& block, const PluginKind kind, const std::vector<std::string>& files) {
   const std::string_view block_name = kind == PluginKind::tool ? "tool" : "notifier";
-  constexpr std::array<std::string_view, 7> kRunKeys{"program", "arguments", "environment", "network", "note", "settings", "presets"};
+  constexpr std::array<std::string_view, 8> kRunKeys{"program", "arguments", "environment", "network", "note", "call_timeout_s",
+                                                     "settings", "presets"};
   for (const auto& entry : *block.if_object()) {
-    if (std::find(kRunKeys.begin(), kRunKeys.end(), entry.key) == kRunKeys.end() || (entry.key == "note" && kind != PluginKind::tool)) {
-      return std::string{block_name} + ": " + (entry.key == "note" ? std::string{"a notifier has no note"}
-                                                                     : "unknown key " + (printable(entry.key) && entry.key.size() <= 64U ? entry.key
-                                                                                                                                        : std::string{"(unprintable)"}));
+    const bool tool_only = entry.key == "note" || entry.key == "call_timeout_s";
+    if (tool_only && kind != PluginKind::tool) return std::string{block_name} + ": a notifier has no " + entry.key;
+    if (std::find(kRunKeys.begin(), kRunKeys.end(), entry.key) == kRunKeys.end()) {
+      return std::string{block_name} + ": unknown key " +
+             (printable(entry.key) && entry.key.size() <= 64U ? entry.key : std::string{"(unprintable)"});
     }
   }
   PluginRun run;
@@ -290,6 +292,13 @@ std::variant<PluginRun, std::string> parse_run(const JsonValue& block, const Plu
     for (const auto& item : *list) {
       auto parsed = parse_template("arguments", item, run.settings, false);
       if (const auto* problem = std::get_if<std::string>(&parsed)) return *problem;
+      // (an argument always has its value: a setting it names is required, or has a default)
+      if (const auto& name = std::get<PluginTemplate>(parsed).setting; !name.empty()) {
+        const PluginSetting* setting = setting_of(run.settings, name);
+        if (!setting->required && !setting->default_value) {
+          return "arguments name " + name + ": a setting an argument names needs a value - make it required, or give it a default";
+        }
+      }
       run.arguments.push_back(std::get<PluginTemplate>(std::move(parsed)));
     }
   }
@@ -325,6 +334,11 @@ std::variant<PluginRun, std::string> parse_run(const JsonValue& block, const Plu
   }
   if (const auto names = names_in(run.note); !names || std::any_of(names->begin(), names->end(), [](const std::string& n) { return n != "today"; })) {
     return std::string{"note may hold only {today}"};
+  }
+  if (const JsonValue* limit = member(block, "call_timeout_s")) {
+    const auto* seconds = limit->if_integer();
+    if (seconds == nullptr || *seconds < 1 || *seconds > 600) return std::string{"call_timeout_s must be a whole number of seconds, 1-600"};
+    run.call_timeout = std::chrono::seconds(*seconds);
   }
   if (const JsonValue* presets = member(block, "presets")) {
     const auto* list = presets->if_array();

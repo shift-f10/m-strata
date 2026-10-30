@@ -136,7 +136,7 @@ void renders_mayas_tool_prompts_byte_for_byte() {
   // every literal a special token (as Maya's fixture marks them), or none (each then text, the same bytes)
   const std::vector<std::string_view> all(literals.begin(), literals.end());
   const std::vector<std::vector<std::string_view>> specials{all, {}};
-  // the search service's form ({"name", "description", "parameters"}) and the OpenAI form render alike
+  // the tool hub's form ({"name", "description", "parameters"}) and the OpenAI form render alike
   const std::vector<std::vector<std::string>> forms{{secure_frontend::python_json_text(*tool)},
                                                     {"{\"type\": \"function\", \"function\": " + secure_frontend::python_json_text(*tool) + "}"}};
   std::size_t seen = 0U;
@@ -423,7 +423,7 @@ void the_route_plans_minimax_searches() {
   request.messages = {{"user", "Hi"}};
   const auto pack = minimax_pack(true);
   for (const secure_frontend::MinimaxThinking& thinking : {secure_frontend::MinimaxThinking{.effort = "high"}, secure_frontend::MinimaxThinking{.off = true}}) {
-    const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, !thinking.off, {}, ToolFormat::minimax, thinking};
+    const secure_frontend::SearchTurn turn{request, {{{"web_search", {"query"}}, kTool}}, !thinking.off, {}, ToolFormat::minimax, thinking};
     const auto planned = secure_frontend::search_first_plan(config, turn, pack);
     const auto* plan = std::get_if<secure_frontend::ChatGenerationPlan>(&planned);
     const auto pieces = secure_frontend::render_minimax_tool_prompt(request.messages, std::vector<std::string>{kTool}, {}, thinking, kAllSpecial);
@@ -440,8 +440,8 @@ void the_route_plans_minimax_searches() {
     secure_frontend::ChatCompletionRequest later = request;
     later.messages = {{"user", "Who won the 2026 World Cup final?"}, {"assistant", "Spain won it 2-1 ([report](https://example.org/final))."},
                        {"user", "Who scored the goals?"}};
-    const secure_frontend::SearchTurn first_turn{request, {{"web_search", {"query"}}, kTool}, true, {}, ToolFormat::minimax, secure_frontend::MinimaxThinking{.effort = "high"}};
-    const secure_frontend::SearchTurn next_turn{later, {{"web_search", {"query"}}, kTool}, true, {}, ToolFormat::minimax, secure_frontend::MinimaxThinking{.effort = "high"}};
+    const secure_frontend::SearchTurn first_turn{request, {{{"web_search", {"query"}}, kTool}}, true, {}, ToolFormat::minimax, secure_frontend::MinimaxThinking{.effort = "high"}};
+    const secure_frontend::SearchTurn next_turn{later, {{{"web_search", {"query"}}, kTool}}, true, {}, ToolFormat::minimax, secure_frontend::MinimaxThinking{.effort = "high"}};
     const auto first = secure_frontend::search_first_plan(config, first_turn, pack);
     const auto next = secure_frontend::search_first_plan(config, next_turn, pack);
     const auto* a = std::get_if<secure_frontend::ChatGenerationPlan>(&first);
@@ -471,7 +471,7 @@ void the_real_pack_plans_its_search() {
   request.model = "m";
   request.messages = {{"user", "what is today's headlines?"}};
   for (const secure_frontend::MinimaxThinking& thinking : {secure_frontend::MinimaxThinking{}, secure_frontend::MinimaxThinking{.off = true}}) {
-    const secure_frontend::SearchTurn turn{request, {{"web_search", {"query"}}, kTool}, !thinking.off, {}, secure_frontend::ToolFormat::minimax,
+    const secure_frontend::SearchTurn turn{request, {{{"web_search", {"query"}}, kTool}}, !thinking.off, {}, secure_frontend::ToolFormat::minimax,
                                            thinking};
     const auto planned = secure_frontend::search_first_plan(config, turn, *pack);
     const auto* refused = std::get_if<secure_frontend::ChatGenerationPlanError>(&planned);
