@@ -111,6 +111,7 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
 
   // Step 5: exactly one `Bearer <non-empty>` the validator accepts — unless this is the
   // keyless loopback listener (listener.loopback_without_key; require_key false).
+  bool inference_only = false;  // gap L4: the inference-only key was presented
   if (config_.require_key) {
     const auto authorizations = head.values("authorization");
     if (authorizations.size() > 1U) return early(make_error_response(ApiError::invalid_request));
@@ -118,18 +119,24 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
     bool authorized = false;
     if (authorizations.size() == 1U && authorizations.front().size() > kBearer.size() &&
         authorizations.front().substr(0, kBearer.size()) == kBearer) {
+      const auto presented = authorizations.front().substr(kBearer.size());
       try {
-        authorized = config_.validator && config_.validator(authorizations.front().substr(kBearer.size()));
+        authorized = config_.validator && config_.validator(presented);
+        // gap L4: else the inference-only key, which the route decides below
+        if (!authorized && config_.inference_validator && config_.inference_validator(presented)) authorized = inference_only = true;
       } catch (...) {
         authorized = false;
+        inference_only = false;
       }
     }
     if (!authorized) return early(make_error_response(ApiError::invalid_api_key));
   }
 
   // One server, the apps manage it (owner 2026-10-31): a key holder's fresh one-time login link (an app attached to a
-  // server already running opens the page with it), only while its handler is set. JSON, small.
+  // server already running opens the page with it), only while its handler is set. JSON, small. Never for the
+  // inference-only key: the link hands out the server's own key.
   if (config_.new_login_link && head.target == kNewLoginLinkPath) {
+    if (inference_only) return early(make_error_response(ApiError::key_scope_refused));
     if (head.method != "POST") return early(make_error_response(ApiError::method_not_allowed, {.allow = "POST"}));
     const auto types = head.values("content-type");
     if (types.size() != 1U || !is_json_content_type(types.front())) return early(make_error_response(ApiError::unsupported_media_type));
@@ -213,6 +220,12 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
     return early(make_error_response(ApiError::method_not_allowed, {.allow = allow}));
   }
   decision.route = matched->id;
+  // gap L4: the inference-only key reaches the chat side alone, before any body is read
+  if (inference_only && decision.route != RouteId::chat && decision.route != RouteId::models && decision.route != RouteId::model &&
+      decision.route != RouteId::health && decision.route != RouteId::metrics && decision.route != RouteId::strata_about &&
+      decision.route != RouteId::strata_models) {
+    return early(make_error_response(ApiError::key_scope_refused));
+  }
   // Step 7: the chat route's header checks.
   if (decision.route == RouteId::chat) {
     const auto types = head.values("content-type");
@@ -451,7 +464,8 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
       }
       case RouteId::strata_config:
       case RouteId::strata_config_settings:
-      case RouteId::strata_key_rotate: {
+      case RouteId::strata_key_rotate:
+      case RouteId::strata_key_inference: {
         RouteResult result = config_.settings.handle(decision.route, body, context);
         if (auto* complete = std::get_if<HttpResponse>(&result)) {
           response = std::move(*complete);

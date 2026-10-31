@@ -47,6 +47,7 @@
 #include "secure_frontend/privilege_check.hpp"
 #include "secure_frontend/process_defaults.hpp"
 #include "secure_frontend/request_log.hpp"
+#include "secure_frontend/secret_source.hpp"
 #include "secure_frontend/serve_monitor.hpp"
 #include "secure_frontend/shutdown_signal.hpp"
 #include "secure_frontend/subsystem_limits.hpp"
@@ -806,6 +807,26 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
     }
     validator = secure_frontend::make_bearer_validator(std::make_shared<const secure_frontend::TokenVerifier>(std::move(*token)));
   }
+  // The owner's external client (2026-10-31, gap L4): the inference-only key, where the server reads its own key from the
+  // data folder's store - the one Settings made earlier, read now; Settings makes or removes it while the server runs.
+  const auto inference_key = std::make_shared<secure_frontend::InferenceKey>();
+  const bool key_store = !keyless && config.token.kind() == secure_frontend::SecretSourceKind::protected_file &&
+                         config.roots.secret.has_value();
+  if (key_store) {
+    std::error_code ignored;
+    if (std::filesystem::exists(config.roots.secret->path() / std::string{secure_frontend::kInferenceTokenFile}, ignored)) {
+      const auto source = secure_frontend::make_protected_file_secret_source(secure_frontend::kInferenceTokenFile);
+      auto read = std::holds_alternative<secure_frontend::SecretSource>(source)
+                      ? secure_frontend::read_token(std::get<secure_frontend::SecretSource>(source), *config.roots.secret)
+                      : secure_frontend::TokenReadResult{secure_frontend::TokenReadError{}};
+      if (auto* key = std::get_if<secure_frontend::SecretBytes>(&read)) {
+        inference_key->hold(std::move(*key));
+        std::cerr << "[strata] keys: the inference key is held (chat and the models list only)\n";
+      } else {
+        std::cerr << "[strata] keys: the inference key could not be read; it is not accepted (Settings makes a new one)\n";
+      }
+    }
+  }
   secure_frontend::ChatHandler login_link_handler;
   secure_frontend::ChatHandler new_login_link_handler;
   if (login_links.has_value()) {
@@ -1151,6 +1172,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
     if (config.token.kind() == secure_frontend::SecretSourceKind::protected_file && config.roots.secret.has_value()) {
       settings.secret_dir = config.roots.secret->path();
       settings.token_file = config.token.location();
+      settings.inference = inference_key;  // gap L4
     }
     settings.log = [](const std::string_view line) { std::cerr << line << '\n'; };
     // start at boot (pinned and hot models, spec parts 5-6): what this PC starts the server with, read when asked
@@ -1207,7 +1229,11 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       .search = std::move(search_route_handler),
       .settings = std::move(settings_route_handler),
       .login_link = std::move(login_link_handler),
-      .new_login_link = std::move(new_login_link_handler)});
+      .new_login_link = std::move(new_login_link_handler),
+      .inference_validator = key_store ? secure_frontend::BearerTokenValidator{[inference_key](const std::string_view presented) {
+                                           return inference_key->matches(presented);
+                                         }}
+                                       : secure_frontend::BearerTokenValidator{}});
   const secure_frontend::ConnectionLimits connection_bounds = secure_frontend::connection_limits(config);
   std::string bind_error;
   auto server = secure_frontend::HttpSocketServer::bind(listener, static_cast<int>(config.listener.backlog), &bind_error);

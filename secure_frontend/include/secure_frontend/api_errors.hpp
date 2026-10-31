@@ -27,6 +27,8 @@ enum class ApiError {
   calibration_unsupported, not_calibrating,
   // (spec 2026-10-27 §5a) the page's settings.
   settings_refused,
+  // The owner's external client (2026-10-31, gap L4): the inference-only key on a route it may not use.
+  key_scope_refused,
 };
 
 struct ApiErrorRow final {

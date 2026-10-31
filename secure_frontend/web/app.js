@@ -3202,6 +3202,12 @@
     $("key-rotate").disabled = !rotatable;
     $("key-rotate-confirm").disabled = !rotatable;
     $("key-state").textContent = rotatable ? "" : "This server's key comes from an environment variable (a development start): it is not rotated here.";
+    // the inference-only key (an external client's ask, 2026-10-31): made where the key store is, this page's PC only
+    var inference = !!(serverConfig.data && serverConfig.data.key && serverConfig.data.key.inference === true);
+    $("key-inference").hidden = !rotatable;
+    $("key-inference-state").textContent = inference ? "An inference key is in use; making a new one replaces it." : "No inference key.";
+    $("key-inference-create").textContent = inference ? "Make a new inference key" : "Make an inference key";
+    $("key-inference-remove").disabled = !inference;
   }
   function showKeyError(text) { $("key-error").textContent = text || ""; $("key-error").hidden = !text; }
   async function rotateKey() {
@@ -3217,6 +3223,20 @@
     $("key-new-value").textContent = String(r.key || "");
     $("key-new").hidden = !r.key;
     $("settings-restart-note").hidden = false;
+  }
+
+  async function changeInferenceKey(action) {
+    showKeyError("");
+    $("key-inference-create").disabled = true;
+    $("key-inference-remove").disabled = true;
+    var answer = await downloadsAnswer(api("/v1/strata/key/inference", jsonPost({ action: action })));
+    $("key-inference-create").disabled = false;
+    if (answer.signedOut) { return; }
+    if (answer.error) { showKeyError(answer.error); renderKey(); return; }
+    var r = answer.body || {};
+    $("key-inference-value").textContent = action === "create" ? String(r.key || "") : "";
+    $("key-inference-new").hidden = !(action === "create" && r.key);
+    await refreshServerConfig();
   }
 
   // ---------------------------------------------------------------- Settings: the server's own settings
@@ -3945,6 +3965,9 @@
     $("key-copy").addEventListener("click", function () { if (state.key) { copyText(state.key); } });
     $("key-rotate").addEventListener("click", rotateKey);
     $("key-new-copy").addEventListener("click", function () { copyText($("key-new-value").textContent); });
+    $("key-inference-create").addEventListener("click", function () { changeInferenceKey("create"); });
+    $("key-inference-remove").addEventListener("click", function () { changeInferenceKey("remove"); });
+    $("key-inference-copy").addEventListener("click", function () { copyText($("key-inference-value").textContent); });
     document.querySelectorAll("[data-save]").forEach(function (button) {
       button.addEventListener("click", function () { saveServerConfig(button.getAttribute("data-save")); });
     });

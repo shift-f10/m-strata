@@ -736,6 +736,13 @@ asks quoted there.
   every other route and loopback only (`control_not_allowed` otherwise); it answers a new code
   (`no-store`), which replaces the one before it - so a key holder on this PC (strata-window
   attached to a server already running) can open the page signed in. It never answers the key.
+- **The inference key** (2026-10-31, an external client's ask: "a serving credential can't stop models or rotate
+  keys"). A second bearer key, optional, in the key store beside the server's own (`inference-token`, read and written by
+  the store's own rules), held by `InferenceKey` and compared as the server's key is. The router decides its scope before
+  any body is read: it reaches chat, `/v1/models`, `/health`, `/metrics`, About and the models list, and is 403
+  `key_scope_refused` on every other route - above all the fresh sign-in link, which would exchange it for the server's
+  key. Only the server's own key, from this PC, makes or removes it (`POST /v1/strata/key/inference`); a change applies to
+  the next request. A keyless or `--token-env` server has none.
 - **Start at boot** (2026-10-31). The installers make it, with the owner's sudo or administrator approval; the server
   and the page never change it. install.sh's units run the server with no new privileges and the system and home
   read-only but for the data folder; install.ps1's tasks run with the account's least privileges (an administrator's

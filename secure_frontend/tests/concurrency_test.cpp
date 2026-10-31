@@ -347,6 +347,7 @@ void request_log_format_and_token_bucket() {
       {R::strata_search, "strata_search"},             {R::strata_search_settings, "strata_search_settings"},
       {R::strata_search_test, "strata_search_test"},   {R::strata_config, "strata_config"},
       {R::strata_config_settings, "strata_config_settings"}, {R::strata_key_rotate, "strata_key_rotate"},
+      {R::strata_key_inference, "strata_key_inference"},
       {R::strata_folders, "strata_folders"},           {R::strata_folder_private, "strata_folder_private"},
       {R::strata_folder_new, "strata_folder_new"},     {R::strata_card_add, "strata_card_add"},
       {R::strata_card_folder, "strata_card_folder"},   {R::strata_card_delete_begin, "strata_card_delete_begin"},

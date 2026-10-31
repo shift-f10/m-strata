@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <system_error>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -130,14 +131,15 @@ ConfigRoutes::ConfigRoutes(ConfigRouteSettings settings) : settings_(std::move(s
 
 HttpResponse ConfigRoutes::answer(const RouteId route, const std::string_view body, const RequestContext& context) {
   // the key is this PC's business alone; the other settings the business of the clients the other settings answer
-  const bool allowed = route == RouteId::strata_key_rotate ? context.loopback_peer
-                                                           : (settings_.client_allowed ? settings_.client_allowed(context)
-                                                                                       : context.loopback_peer);
+  const bool keys = route == RouteId::strata_key_rotate || route == RouteId::strata_key_inference;
+  const bool allowed = keys ? context.loopback_peer
+                            : (settings_.client_allowed ? settings_.client_allowed(context) : context.loopback_peer);
   if (!allowed) return make_error_response(ApiError::control_not_allowed);
   switch (route) {
     case RouteId::strata_config: return settings_json();
     case RouteId::strata_config_settings: return save(body);
     case RouteId::strata_key_rotate: return rotate(body);
+    case RouteId::strata_key_inference: return inference(body);
     default: return make_error_response(ApiError::not_found);
   }
 }
@@ -163,7 +165,8 @@ HttpResponse ConfigRoutes::settings_json() const {
     out += ",\"help\":" + json_text(key->description) + "}";
     first = false;
   }
-  out += std::string{"],\"key\":{\"rotatable\":"} + (settings_.secret_dir ? "true" : "false") + "}";
+  out += std::string{"],\"key\":{\"rotatable\":"} + (settings_.secret_dir ? "true" : "false") +
+         ",\"inference\":" + (settings_.inference && settings_.inference->held() ? "true" : "false") + "}";
   if (settings_.running) out += ",\"running\":" + settings_.running();  // gap O3: the running model's option values
   if (settings_.boot) out += ",\"boot\":" + settings_.boot();  // start at boot, read only (boot_state.hpp)
   out += "}\n";
@@ -245,6 +248,43 @@ HttpResponse ConfigRoutes::rotate(const std::string_view body) {
   if (key == nullptr) return refused("the new key could not be read back");
   if (settings_.log) settings_.log("[strata] settings: the API key was rotated (the new one applies at the next start)");
   return json_answer(200, "{\"key\":" + json_text(key->view()) + ",\"restart_needed\":true}\n");
+}
+
+// The owner's external client (2026-10-31, gap L4): the inference-only key, made (a new one replaces it) or removed in
+// the data folder's key store - the store's own write, as rotation's - and held for the router at once.
+HttpResponse ConfigRoutes::inference(const std::string_view body) {
+  const auto parsed = parse_json(body, kBodyLimits);
+  const auto* root = std::get_if<JsonValue>(&parsed);
+  const auto* members = root == nullptr ? nullptr : root->if_object();
+  const auto* action = members != nullptr && members->size() == 1U && (*members)[0].key == "action" ? (*members)[0].value.if_string()
+                                                                                                    : nullptr;
+  if (action == nullptr || (*action != "create" && *action != "remove")) return make_error_response(ApiError::invalid_request);
+  if (!settings_.secret_dir.has_value() || !settings_.inference) {
+    return refused("this server's key comes from an environment variable (a development start): there is no key store");
+  }
+  const auto store = open_root(*settings_.secret_dir);
+  const auto file = parse_relative_path(kInferenceTokenFile);
+  const auto source = make_protected_file_secret_source(kInferenceTokenFile);
+  if (!std::holds_alternative<CanonicalRoot>(store) || !std::holds_alternative<RelativePath>(file) ||
+      !std::holds_alternative<SecretSource>(source)) {
+    return refused("the key store could not be opened");
+  }
+  const std::scoped_lock lock(file_);
+  if (*action == "remove") {
+    std::error_code ignored;
+    std::filesystem::remove(*settings_.secret_dir / std::string{kInferenceTokenFile}, ignored);
+    settings_.inference->hold(std::nullopt);
+    if (settings_.log) settings_.log("[strata] settings: the inference key was removed");
+    return json_answer(200, "{\"removed\":true}\n");
+  }
+  if (generate_token(std::get<CanonicalRoot>(store), std::get<RelativePath>(file), true)) return refused("a new key could not be written");
+  auto read = read_token(std::get<SecretSource>(source), std::get<CanonicalRoot>(store));
+  auto* key = std::get_if<SecretBytes>(&read);
+  if (key == nullptr) return refused("the new key could not be read back");
+  std::string answer = "{\"key\":" + json_text(key->view()) + ",\"scope\":\"inference\"}\n";
+  settings_.inference->hold(std::move(*key));
+  if (settings_.log) settings_.log("[strata] settings: a new inference key was made (it applies at once)");
+  return json_answer(200, std::move(answer));
 }
 
 }  // namespace secure_frontend

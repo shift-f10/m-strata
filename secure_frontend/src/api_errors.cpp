@@ -9,7 +9,7 @@
 namespace secure_frontend {
 namespace {
 
-constexpr std::array<ApiErrorRow, 44> kTable{{
+constexpr std::array<ApiErrorRow, 45> kTable{{
     {ApiError::invalid_request, 400, "invalid_request_error", "invalid_request", "The request is malformed or not supported."},
     {ApiError::invalid_json, 400, "invalid_request_error", "invalid_json", "The request body is not valid JSON within the allowed limits."},
     {ApiError::unsupported_parameter, 400, "invalid_request_error", "unsupported_parameter", "This parameter is not supported by this server."},
@@ -57,6 +57,8 @@ constexpr std::array<ApiErrorRow, 44> kTable{{
     {ApiError::calibration_unsupported, 422, "invalid_request_error", "calibration_unsupported", "This model's engine has no calibration here yet."},
     {ApiError::not_calibrating, 409, "invalid_request_error", "not_calibrating", "No calibration is running."},
     {ApiError::settings_refused, 422, "invalid_request_error", "settings_refused", "These settings can't be used."},
+    // The owner's external client (2026-10-31, gap L4): the inference-only key on a route it may not use.
+    {ApiError::key_scope_refused, 403, "permission_error", "key_scope_refused", "This key may only run chats and read the models; use the server's own key for this."},
 }};
 
 constexpr std::array<std::string_view, 21> kFixedParamKeys{

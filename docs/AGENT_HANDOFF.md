@@ -280,6 +280,46 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### 2026-10-31 z94 (Windows box; owner-directed)
+
+The owner's external client's gaps, L4: an inference-only key. The client: "One bearer currently authorizes
+/v1/chat/completions, /v1/strata/models/stop, and /v1/strata/key/rotate. Provide an inference-only scope vs a
+control/admin scope ... so a serving credential can't stop models or rotate keys."
+- **The key:** `InferenceKey` (token_verifier.hpp: hold, matches, held; swapped under a mutex so a change applies to the
+  next request), in the key store as `inference-token` (`kInferenceTokenFile`), read at the server's start where its own
+  key is in the store (`key_store`), never with `--token-env` or keyless.
+- **The router:** `ApiRouterConfig::inference_validator`, tried when the server's key does not match; its routes are
+  chat, models, model, health, metrics, About and the models list; any other is 403 `key_scope_refused` (a new error
+  row) before a body or handler - the fresh sign-in link too, which would exchange it for the server's key.
+- **The route:** `POST /v1/strata/key/inference` (`kConfigRoutes`, `RouteId::strata_key_inference`, logged
+  `strata_key_inference`), this PC only, the server's own key: `{"action": "create"}` makes a new one (the store's
+  `generate_token`, as rotation) and answers it once with `"scope": "inference"`; `{"action": "remove"}` deletes it. The
+  settings answer's `"key"` gains `"inference"`.
+- **The page:** the API key card's inference section (make, show once, copy, replace, remove; shown where the key store
+  is).
+- **Docs:** both READMEs (the API key), the threat model (The inference key).
+- **z92's test** asks a start or stop again while the launcher answers 409 `switch_in_progress` (`post_when_free`), as a
+  client does, and waits for the `engine` phase up to 10 s (see the proof).
+- **Tests:** the router 2 (`an_inference_key_reaches_only_the_chat_side`; `the_page_makes_and_removes_the_inference_key`),
+  config routes 1 (`an_inference_key_is_made_and_removed_here`: made, shown, held and matched; replaced; refused from
+  another PC and for a body that is not an action; removed at once with its file; refused without a key store), the error
+  table's new row; the settings' key object now names `"inference"` in the two tests that match it whole.
+- **Proof:** RED - the router case with the two refusals stubbed out (the inference key reached start, stop, downloads
+  and settings), the settings case before its route (404), the page case against the committed page. GREEN.
+  - Live (Windows, a scratch data folder with its own key store, port 18094, no key ever printed): an inference key
+    made with the server's key; with it `/v1/models`, the models list and `/health` 200; a start, both config reads, a
+    rotation and a fresh sign-in link 403; a restarted server read it back (200); removed, it was 401 at once while the
+    server's key still worked; neither key in the server's output.
+  - main (this worktree; z92-z94 cherry-picked from plugins, the error table without the plugins row - 45 rows here -
+    and the key route in main's own settings dispatch): Windows (MSVC, the main-check tree with the window on,
+    everything built, no warnings) 1454 of 1460 - the release-only pair, the two maya parity scans (engines/maya-ref is
+    not checked out here), and switch_waits_for_the_generation_then_swaps and failed_start_keeps_the_server_usable,
+    which failed while the Linux trees built beside them and passed 3 of 3 alone (z92's test with them).
+  - main on Linux (WSL, -Werror, no warnings): main-gcc 1507/1512 and main-clang 1507/1512 (the release-only pair and
+    the two maya parity scans; egress passes alone), main-window-gcc Release 1462/1467 with the GTK window built (the two
+    maya parity scans; egress, net01_workers and net01_ipv6 pass alone).
+  - The proofs of z92 and z93 above are plugins'; main's runs here cover all three.
+
 ### 2026-10-31 z93 (Windows box; owner-directed)
 
 The owner's external client's gaps, O3: the settings are read with a GET, with the running model's values. The client:

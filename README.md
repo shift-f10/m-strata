@@ -591,7 +591,9 @@ clients that may add and delete models).
 - **API key:** the key this page signed in with, hidden until you press Show, and Copy. "Rotate the key" (type ROTATE
   first; only in a browser on this PC) makes a new key in `data/secret`, shows it once to copy, and works after the
   server restarts - every app then needs the new key. A server started with `--token-env` (a development start) has no
-  key file to rotate.
+  key file to rotate. **An inference key** (for a chat client on another PC): "Make an inference key" shows a second key
+  once; it may only chat and read the models list (to see a model start), never start or stop a model, change a setting
+  or a key - those answer 403. It works at once; "Remove it" stops it at once; making a new one replaces it.
 - **Server and network:** the listen address and port, the two opt-ins for serving other PCs, the host names clients
   use, and which PCs or subnets may manage models.
 - **Limits and timeouts:** the longest answer and model start (seconds), the largest prompt and answer (tokens), and

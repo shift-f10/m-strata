@@ -97,6 +97,10 @@ struct ApiRouterConfig final {
   // One server, the apps manage it (owner 2026-10-31): set, POST /v1/strata/login-link/new (keyed) mints a fresh one-time
   // code for a key holder on this PC (the handler checks the client), which the claim above exchanges.
   ChatHandler new_login_link{};
+  // The owner's external client (2026-10-31, gap L4): a second key, the inference-only one - it reaches the chat side
+  // alone (chat, /v1/models, /health, /metrics, About, the models list) and is 403 key_scope_refused anywhere else. Empty:
+  // no such key.
+  BearerTokenValidator inference_validator{};
 };
 
 // application/json, optionally followed by `; charset=utf-8`; ASCII

@@ -41,6 +41,7 @@ std::string_view route_name(const RouteId route) {
     case RouteId::strata_config: return "strata_config";
     case RouteId::strata_config_settings: return "strata_config_settings";
     case RouteId::strata_key_rotate: return "strata_key_rotate";
+    case RouteId::strata_key_inference: return "strata_key_inference";
     case RouteId::strata_folders: return "strata_folders";
     case RouteId::strata_folder_private: return "strata_folder_private";
     case RouteId::strata_folder_new: return "strata_folder_new";

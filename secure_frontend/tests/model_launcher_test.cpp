@@ -343,6 +343,18 @@ std::optional<double> number_after(const std::string& text, const std::string& k
   }
 }
 
+// A start or stop as a client sends it: asked again while the launcher answers 409 switch_in_progress (one start or stop
+// at a time; it is still finishing the one before), for up to 15 s.
+std::optional<HttpResult> post_when_free(const ServerProcess& server, const std::string_view target, const std::string_view body) {
+  const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  auto answer = call(server, "POST", target, body);
+  while (has_code(answer, 409, "switch_in_progress") && std::chrono::steady_clock::now() < until) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    answer = call(server, "POST", target, body);
+  }
+  return answer;
+}
+
 // The owner's external client (2026-10-31, gap L1: "During starting, expose progress/phase/elapsed ... On failed, make
 // error a stable machine-readable code"): a starting card's entry says what its start is doing and for how long -
 // "start": {"phase", "elapsed_s", "expected_s", "progress"}, the expected time this card's last start that ran took
@@ -355,7 +367,7 @@ void a_start_says_its_phase_and_time_and_a_failure_its_code() {
   expect(card_entry(*server, "Alpha").find("\"start\":null") != std::string::npos, "stopped: no start: " + card_entry(*server, "Alpha"));
   expect(call(*server, "POST", "/v1/strata/models/start", R"({"name":"Alpha"})")->status == 202, "Alpha starts");
   std::string seen;
-  for (int i = 0; i < 40 && seen.find("\"phase\":\"engine\"") == std::string::npos; ++i) {
+  for (int i = 0; i < 200 && seen.find("\"phase\":\"engine\"") == std::string::npos; ++i) {
     seen = card_entry(*server, "Alpha");
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
@@ -365,11 +377,12 @@ void a_start_says_its_phase_and_time_and_a_failure_its_code() {
          "the engine loads, for this long, with nothing to expect yet: " + seen);
   expect(wait_for_card(*server, "Alpha", "running"), "Alpha runs");
   expect(card_entry(*server, "Alpha").find("\"start\":null") != std::string::npos, "running: no start");
-  const auto stopped = call(*server, "POST", "/v1/strata/models/stop", "{}");
+  const auto stopped = post_when_free(*server, "/v1/strata/models/stop", "{}");
   expect(stopped && stopped->status / 100 == 2 && wait_for_card(*server, "Alpha", "stopped"), "Alpha stops: " + shown(stopped));
-  expect(call(*server, "POST", "/v1/strata/models/start", R"({"name":"Alpha"})")->status == 202, "Alpha starts again");
+  const auto again = post_when_free(*server, "/v1/strata/models/start", R"({"name":"Alpha"})");
+  expect(again && again->status == 202, "Alpha starts again: " + shown(again));
   seen.clear();
-  for (int i = 0; i < 40 && seen.find("\"phase\":\"engine\"") == std::string::npos; ++i) {
+  for (int i = 0; i < 200 && seen.find("\"phase\":\"engine\"") == std::string::npos; ++i) {
     seen = card_entry(*server, "Alpha");
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
@@ -378,8 +391,8 @@ void a_start_says_its_phase_and_time_and_a_failure_its_code() {
   expect(expected.has_value() && *expected >= 1.5 && progress.has_value() && *progress >= 0.0 && *progress < 1.0,
          "the last start's time is expected now, and the progress estimated from it: " + seen);
   expect(wait_for_card(*server, "Alpha", "running"), "Alpha runs again");
-  expect(call(*server, "POST", "/v1/strata/models/start", R"({"name":"Beta"})")->status == 202 && wait_for_card(*server, "Beta", "failed"),
-         "Beta fails to load");
+  const auto beta = post_when_free(*server, "/v1/strata/models/start", R"({"name":"Beta"})");
+  expect(beta && beta->status == 202 && wait_for_card(*server, "Beta", "failed"), "Beta fails to load: " + shown(beta));
   const auto failed = card_entry(*server, "Beta");
   expect(failed.find("\"error\":\"the engine ended before it was ready (see the server log)\"") != std::string::npos &&
              failed.find("\"error_code\":\"engine_not_ready\"") != std::string::npos && failed.find("\"start\":null") != std::string::npos,

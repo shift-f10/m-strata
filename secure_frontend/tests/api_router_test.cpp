@@ -418,6 +418,23 @@ void the_page_shows_the_start_at_boot() {
          "read only: no control");
 }
 
+// The owner's external client (2026-10-31, gap L4): Settings' API key card makes the inference-only key (shown once, as
+// text), replaces it and removes it, where the server's key store is (the card's rotatable), and says whether one is held.
+void the_page_makes_and_removes_the_inference_key() {
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  const std::string html{secure_frontend::find_web_asset("/")->body};
+  for (const char* id : {"id=\"key-inference\"", "id=\"key-inference-create\"", "id=\"key-inference-remove\"",
+                         "id=\"key-inference-value\"", "id=\"key-inference-state\""}) {
+    expect(html.find(id) != std::string::npos, std::string{"the page has "} + id);
+  }
+  expect(js.find("api(\"/v1/strata/key/inference\", jsonPost({ action: action }))") != std::string::npos &&
+             js.find("changeInferenceKey(\"create\")") != std::string::npos && js.find("changeInferenceKey(\"remove\")") != std::string::npos,
+         "make and remove go to the key's route");
+  expect(js.find("$(\"key-inference-value\").textContent = ") != std::string::npos, "the new key is shown as text");
+  expect(js.find("serverConfig.data.key.inference === true") != std::string::npos && js.find("$(\"key-inference\").hidden = !rotatable;") != std::string::npos,
+         "it says whether one is held, and shows only where the key store is");
+}
+
 // Owner 2026-10-27 (item 46's fix, "Page omits it"): a running card whose profile refuses reasoning_effort (the list's
 // "reasoning_effort": false - a GLM card) gets no reasoning_effort from the page; every other chat still sends the
 // level (the server says so per card; with model control off the page cannot tell and sends it as before).
@@ -1620,6 +1637,84 @@ secure_frontend::HttpResponse request(secure_frontend::ApiRouter& router, const 
 // One server, the apps manage it (owner 2026-10-31, spec section 6): POST /v1/strata/login-link/new mints a fresh one-time
 // login link for a key holder - an app attached to a server already running opens the page with it. Keyed like every
 // route (unlike the claim), POST only, a small JSON body; with its handler unset it is no route.
+// The owner's external client (2026-10-31, gap L4: "Provide an inference-only scope vs a control/admin scope ... so a
+// serving credential can't stop models or rotate keys"): the inference key reaches the chat side - chat, the model
+// lists, /health, /metrics, About - and nothing else: control, downloads, settings, the keys and a fresh sign-in link
+// (which would hand out the server's key) are 403 key_scope_refused before any handler. The server's own key reaches
+// everything; a key that is neither is 401.
+void an_inference_key_reaches_only_the_chat_side() {
+  constexpr std::string_view kInference = "inference-key-0123456789abcdefghijklmnopqrstuvwxyz";
+  std::vector<std::string> calls;
+  const auto handled = [&calls](std::string what) -> secure_frontend::RouteResult {
+    calls.push_back(std::move(what));
+    return secure_frontend::HttpResponse{.status = 200, .headers = {}, .body = "{}\n", .log_code = "ok"};
+  };
+  secure_frontend::SecretBytes secret;
+  (void)secret.assign(kRouterToken);
+  secure_frontend::ModelControl control;
+  control.list = [&handled](const secure_frontend::RequestContext&) { return handled("list"); };
+  control.start = [&handled](const std::string_view, const secure_frontend::RequestContext&) { return handled("start"); };
+  control.stop = [&handled](const secure_frontend::RequestContext&) { return handled("stop"); };
+  secure_frontend::ModelCardRoutes settings;
+  settings.handle = [&handled](const secure_frontend::RouteId, const std::string_view, const secure_frontend::RequestContext&) {
+    return handled("settings");
+  };
+  secure_frontend::ModelDownloads downloads;
+  downloads.handle = [&handled](const secure_frontend::RouteId, const std::string_view, const secure_frontend::RequestContext&) {
+    return handled("downloads");
+  };
+  secure_frontend::ApiRouter router({
+      .policy = secure_frontend::make_http_policy(*secure_frontend::parse_listener_address("127.0.0.1"), 8080, {}, {}),
+      .validator = secure_frontend::make_bearer_validator(std::make_shared<const secure_frontend::TokenVerifier>(std::move(secret))),
+      .model_id = "", .owned_by = "local", .chat_body_limit = 49152,
+      .health = [] { return secure_frontend::HealthView{true, "none", ""}; },
+      .chat = {},
+      .metrics = [] { return std::string{"{}"}; },
+      .about = [] { return std::string{"{}"}; },
+      .served = [] { return secure_frontend::ServedModels{}; },
+      .control = std::move(control),
+      .downloads = std::move(downloads),
+      .settings = std::move(settings),
+      .new_login_link = [&handled](const std::string_view, const secure_frontend::RequestContext&) { return handled("link"); },
+      .inference_validator = [kInference](const std::string_view presented) { return presented == kInference; }});
+  const auto with_key = [&router](const std::string_view key, const std::string& method, const std::string& target,
+                                  const std::string& body = "") {
+    auto head = head_of(method, target);
+    head.fields = {{"Host", "127.0.0.1:8080"}, {"Authorization", "Bearer " + std::string{key}}};
+    if (!body.empty() || method == "POST") {
+      head.fields.emplace_back("Content-Type", "application/json");
+      head.content_length = body.size();
+    }
+    const auto decision = router.authorize(head);
+    if (decision.early) return *decision.early;
+    secure_frontend::RequestContext context;
+    context.loopback_peer = true;
+    return complete(router.handle(head, body, decision, context));
+  };
+  const auto scope_refused = [](const secure_frontend::HttpResponse& response) {
+    return response.status == 403 && response.body.find("\"code\":\"key_scope_refused\"") != std::string::npos;
+  };
+  for (const auto& [method, target] : std::vector<std::pair<std::string, std::string>>{
+           {"GET", "/health"}, {"GET", "/v1/models"}, {"GET", "/metrics"}, {"GET", "/v1/strata/about"}, {"GET", "/v1/strata/models"}}) {
+    const auto answer = with_key(kInference, method, target);
+    expect(answer.status == 200, "the inference key reads " + target + ": " + std::to_string(answer.status));
+  }
+  const auto chat = with_key(kInference, "POST", "/v1/chat/completions", R"({"model":"x","messages":[]})");
+  expect(chat.status != 401 && chat.status != 403, "the inference key reaches the chat: " + std::to_string(chat.status));
+  calls.clear();
+  for (const auto& [method, target] : std::vector<std::pair<std::string, std::string>>{
+           {"POST", "/v1/strata/models/start"}, {"POST", "/v1/strata/models/stop"}, {"GET", "/v1/strata/downloads"},
+           {"POST", "/v1/strata/config"}, {"GET", "/v1/strata/config"}, {"POST", "/v1/strata/config/settings"},
+           {"POST", "/v1/strata/key/rotate"}, {"POST", "/v1/strata/key/inference"}, {"POST", "/v1/strata/login-link/new"}}) {
+    const auto answer = with_key(kInference, method, target, method == "POST" ? "{}" : "");
+    expect(scope_refused(answer), "the inference key may not " + method + " " + target + ": " + std::to_string(answer.status) + " " + answer.body);
+  }
+  expect(calls.empty(), "no handler ran for it");
+  expect(with_key(kRouterToken, "POST", "/v1/strata/models/start", "{}").status == 200 && calls == std::vector<std::string>{"start"},
+         "the server's own key starts a model");
+  expect(with_key("not-a-key-0123456789abcdefghijklmnopqrstuvwxyz", "GET", "/v1/models").status == 401, "neither key: 401");
+}
+
 void a_fresh_login_link_is_for_a_key_holder() {
   secure_frontend::SecretBytes secret;
   (void)secret.assign(kRouterToken);
@@ -2065,6 +2160,7 @@ int main(int argc, char** argv) {
       {"the_pin_route_reaches_its_handler", the_pin_route_reaches_its_handler},
       {"login_link_route_answers_without_the_key_only_when_on", login_link_route_answers_without_the_key_only_when_on},
       {"a_fresh_login_link_is_for_a_key_holder", a_fresh_login_link_is_for_a_key_holder},
+      {"an_inference_key_reaches_only_the_chat_side", an_inference_key_reaches_only_the_chat_side},
       {"model_download_routes_need_the_switch_and_the_key", model_download_routes_need_the_switch_and_the_key},
       {"model_card_routes_need_the_switch_and_the_key", model_card_routes_need_the_switch_and_the_key},
       {"calibration_routes_need_their_handlers_and_the_key", calibration_routes_need_their_handlers_and_the_key},
@@ -2081,6 +2177,7 @@ int main(int argc, char** argv) {
       {"web_ui_has_email_alert_settings", web_ui_has_email_alert_settings},
       {"web_ui_has_server_settings", web_ui_has_server_settings},
       {"the_page_shows_the_start_at_boot", the_page_shows_the_start_at_boot},
+      {"the_page_makes_and_removes_the_inference_key", the_page_makes_and_removes_the_inference_key},
       {"web_ui_claims_a_login_link_at_load_and_on_hashchange", web_ui_claims_a_login_link_at_load_and_on_hashchange},
       {"web_ui_opens_the_view_its_address_names", web_ui_opens_the_view_its_address_names},
       {"web_ui_has_web_search_settings", web_ui_has_web_search_settings},
