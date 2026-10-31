@@ -1,6 +1,7 @@
 #include "secure_frontend/model_options.hpp"
 
 #include "secure_frontend/family_descriptor.hpp"
+#include "secure_frontend/plugin_manifest.hpp"
 
 #include <algorithm>
 #include <array>
@@ -345,9 +346,54 @@ void drop_card_flag(FrontendConfigDraft& draft, const std::string_view flag) {
   *list = std::move(kept);
 }
 
+// An engine plugin's declared option (nullptr: the server's, or not one).
+const PluginEngineOption* plugin_option(const PluginEngine& engine, const std::string_view name) {
+  const auto found = std::find_if(engine.options.begin(), engine.options.end(),
+                                  [name](const PluginEngineOption& option) { return option.name == name; });
+  return found == engine.options.end() ? nullptr : &*found;
+}
+
+// A plugin's option writes its flag as its manifest's argument takes it: a boolean on a flag without a value is there or
+// not, on on_off "on" or "off"; a number as it is (a fraction at the three places the arguments' check takes), integer
+// kinds' auto no flag (the engine decides); a choice its text. Its GPUs write engine.gpu, as every engine's do.
+void write_plugin_option(const PluginEngine& engine, const PluginEngineOption& option, const ModelOptionValue& value,
+                         std::vector<std::string>& flags, FrontendConfigDraft& draft) {
+  const auto* text = std::get_if<std::string>(&value);
+  if (option.kind == Kind::devices) {
+    if (text != nullptr && *text != "auto") set_entry(draft, "engine.gpu", ConfigDraftValue{std::in_place_type<std::string>, *text});
+    return;
+  }
+  const auto argument = std::find_if(engine.arguments.begin(), engine.arguments.end(),
+                                     [&option](const PluginArgument& each) { return each.flag == option.flag; });
+  if (argument == engine.arguments.end()) return;  // (the manifest's reader refuses such an option)
+  if (const auto* on = std::get_if<bool>(&value)) {
+    if (argument->value == PluginArgumentValue::on_off) {
+      flags.push_back(option.flag);
+      flags.emplace_back(*on ? "on" : "off");
+    } else if (*on) {
+      flags.push_back(option.flag);
+    }
+  } else if (const auto* integer = std::get_if<std::int64_t>(&value)) {
+    flags.push_back(option.flag);
+    flags.push_back(std::to_string(*integer));
+  } else if (const auto* decimal = std::get_if<double>(&value)) {
+    flags.push_back(option.flag);
+    flags.push_back(decimal_text(std::round(*decimal * 1000.0) / 1000.0));
+  } else if (text != nullptr && !(option.kind == Kind::integer_or_auto && *text == "auto")) {
+    flags.push_back(option.flag);
+    flags.push_back(*text);
+  }
+}
+
 void write_option(const EngineProfile profile, const std::string_view name, const ModelOptionValue& value, const bool draft_layer_on,
                   std::vector<std::string>& flags, FrontendConfigDraft& draft) {
   const auto& family = family_descriptor(profile);
+  if (family.plugin != nullptr) {
+    if (const auto* declared = plugin_option(*family.plugin, name)) {
+      write_plugin_option(*family.plugin, *declared, value, flags, draft);
+      return;
+    }
+  }
   const auto* integer = std::get_if<std::int64_t>(&value);
   const auto* decimal = std::get_if<double>(&value);
   const auto* text = std::get_if<std::string>(&value);
@@ -489,6 +535,12 @@ std::vector<std::string_view> option_flags(const EngineProfile profile, const st
   const auto& family = family_descriptor(profile);
   // the glm_pack engine's (glm53, raon1): typed rows only
   if (find_model_option(profile, name) == nullptr || family.glm_pack_rows) return {};
+  if (family.plugin != nullptr) {
+    // an engine plugin's declared option: its flag (its GPUs and the server's options: none)
+    const auto* declared = plugin_option(*family.plugin, name);
+    if (declared == nullptr || declared->flag.empty()) return {};
+    return {declared->flag};
+  }
   if (name == "max_context") {
     if (family.yarn_trained_context) return {"--max-context", "--rope-scaling", "--rope-scale"};
     return {"--max-context"};
@@ -522,10 +574,10 @@ const ModelOptionSpec* find_model_option(const EngineProfile profile, const std:
 }
 
 bool is_model_option_name(const std::string_view name) noexcept {
-  // every family's: an option may be one engine's alone (the GLM engine's RAM headroom)
-  const auto families = family_descriptors();
+  // every family's: an option may be one engine's alone (the GLM engine's RAM headroom, an engine plugin's own)
+  const auto families = all_families();
   return std::any_of(families.begin(), families.end(),
-                     [name](const FamilyDescriptor& family) { return find_model_option(family.profile, name) != nullptr; });
+                     [name](const FamilyDescriptor* family) { return find_model_option(family->profile, name) != nullptr; });
 }
 
 std::variant<std::vector<ModelOptionLimits>, ConfigErrors> parse_card_options(const EngineProfile profile,

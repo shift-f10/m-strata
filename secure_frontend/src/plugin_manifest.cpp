@@ -559,6 +559,8 @@ std::variant<PluginEngineOption, std::string> parse_engine_option(const JsonValu
   if (std::any_of(engine.options.begin(), engine.options.end(), [&name](const PluginEngineOption& other) { return other.name == *name; })) {
     return "engine.options names " + *name + " twice";
   }
+  // (a plugin family's cards have the server's options after its own: plugin_family.hpp)
+  if (server_card_option(*name) != nullptr) return "engine.options: " + *name + " is one of the server's own options (every card has it)";
   const std::string where = "engine.options: " + *name;
   PluginEngineOption option;
   option.name = *name;

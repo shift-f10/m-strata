@@ -1,6 +1,8 @@
 #include "secure_frontend/engine_arguments.hpp"
 
+#include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/json.hpp"
+#include "secure_frontend/plugin_manifest.hpp"
 
 #include <algorithm>
 #include <array>
@@ -13,6 +15,7 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace secure_frontend {
 namespace {
@@ -29,8 +32,9 @@ std::string_view flag_name(const std::string_view argument) {
 
 // The serve flags of an engine built on our own family code (Gemma 4 plan 1 Task 1, spec §4.8; flint), a closed
 // allowlist: each flag at most once, in the `--flag VALUE` spelling only, its value bounded.
-// gguf_file: the absolute path of a .gguf file (Gemma 4's MTP draft file); never echoed in a refusal.
-enum class FamilyValue { none, integer, kv_precision, gibibytes, fraction, on_off, mm3_kv_cache, gguf_file };
+// gguf_file: the absolute path of a .gguf file (Gemma 4's MTP draft file); never echoed in a refusal. choice: one of an
+// engine plugin's declared choices for the flag.
+enum class FamilyValue { none, integer, kv_precision, gibibytes, fraction, on_off, mm3_kv_cache, gguf_file, choice };
 struct FamilyFlag final {
   std::string_view name;
   FamilyValue kind;
@@ -191,8 +195,10 @@ bool absolute_gguf(const std::string_view value) {
   return extension == ".gguf" && path_from_utf8(value).is_absolute();
 }
 
+// `plugin`: an engine plugin's block, whose arguments hold each choice flag's choices.
 std::optional<EngineArgumentsError> validate_family_arguments(const FamilyArguments& family,
-                                                              const std::vector<std::string>& user_arguments) {
+                                                              const std::vector<std::string>& user_arguments,
+                                                              const PluginEngine* plugin = nullptr) {
   std::vector<std::string_view> seen;
   for (std::size_t i = 0; i < user_arguments.size(); ++i) {
     const std::string_view argument = user_arguments[i];
@@ -251,6 +257,25 @@ std::optional<EngineArgumentsError> validate_family_arguments(const FamilyArgume
           refused = family_refusal(family, EngineArgumentsErrorCode::invalid_value, flag->name, "takes the absolute path of a .gguf file");
         }
         break;
+      case FamilyValue::choice: {
+        const PluginArgument* declared = nullptr;
+        if (plugin != nullptr) {
+          for (const auto& each : plugin->arguments) {
+            if (each.flag == flag->name) declared = &each;
+          }
+        }
+        if (declared == nullptr || std::find(declared->choices.begin(), declared->choices.end(), value) == declared->choices.end()) {
+          std::string choices;
+          if (declared != nullptr) {
+            for (std::size_t c = 0; c < declared->choices.size(); ++c) {
+              choices += c == 0 ? "" : c + 1 == declared->choices.size() ? " or " : ", ";
+              choices += declared->choices[c];
+            }
+          }
+          refused = family_refusal(family, EngineArgumentsErrorCode::invalid_value, flag->name, "must be " + choices);
+        }
+        break;
+      }
     }
     if (refused) return refused;
   }
@@ -325,10 +350,35 @@ std::optional<EngineArgumentsError> validate_unified_arguments(const std::vector
   }
   return std::nullopt;
 }
-}  // namespace
 
-std::optional<EngineArgumentsError> validate_engine_user_arguments(const EngineArgumentsProfile profile,
-                                                                   const std::vector<std::string>& user_arguments) {
+// An engine plugin's flags (plugin_manifest.hpp, PluginArgument) as the family checks read them: each at most once, in
+// the `--flag VALUE` spelling, its value of its declared kind within its bounds.
+std::optional<EngineArgumentsError> validate_plugin_arguments(const FamilyDescriptor& family,
+                                                              const std::vector<std::string>& user_arguments) {
+  const PluginEngine& plugin = *family.plugin;
+  std::vector<FamilyFlag> flags;
+  for (const auto& argument : plugin.arguments) {
+    FamilyValue kind = FamilyValue::none;
+    switch (argument.value) {
+      case PluginArgumentValue::none: kind = FamilyValue::none; break;
+      case PluginArgumentValue::integer: kind = FamilyValue::integer; break;
+      case PluginArgumentValue::fraction: kind = FamilyValue::fraction; break;
+      case PluginArgumentValue::gibibytes: kind = FamilyValue::gibibytes; break;
+      case PluginArgumentValue::on_off: kind = FamilyValue::on_off; break;
+      case PluginArgumentValue::gguf_file: kind = FamilyValue::gguf_file; break;
+      case PluginArgumentValue::choice: kind = FamilyValue::choice; break;
+    }
+    const bool fraction = argument.value == PluginArgumentValue::fraction;
+    flags.push_back(FamilyFlag{argument.flag, kind, fraction ? 0 : argument.minimum, fraction ? 1 : argument.maximum});
+  }
+  const std::string engine = std::string{family.engine_words} + "'s";
+  const FamilyArguments arguments{family.id, engine, flags, {}};
+  return validate_family_arguments(arguments, user_arguments, &plugin);
+}
+
+// NUL, the frontend's own flags and the modes it does not run, for every engine.
+std::optional<EngineArgumentsError> shared_argument_checks(const EngineArgumentsProfile profile,
+                                                           const std::vector<std::string>& user_arguments) {
   for (const auto& argument : user_arguments) {
     if (argument.find('\0') != std::string::npos) {
       return EngineArgumentsError{EngineArgumentsErrorCode::invalid_value, "engine argument contains NUL"};
@@ -354,12 +404,31 @@ std::optional<EngineArgumentsError> validate_engine_user_arguments(const EngineA
       }
     }
   }
+  return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<EngineArgumentsError> validate_engine_user_arguments(const EngineArgumentsProfile profile,
+                                                                   const std::vector<std::string>& user_arguments) {
+  if (auto refused = shared_argument_checks(profile, user_arguments)) return refused;
+  if (profile == EngineArgumentsProfile::plugin) {
+    // (an engine plugin's flags are its family's: validate_engine_user_arguments(family, ...))
+    return EngineArgumentsError{EngineArgumentsErrorCode::not_accepted, "an engine plugin's arguments are checked by its family"};
+  }
   if (profile == EngineArgumentsProfile::strata_gemma4) return validate_family_arguments(kGemma4Arguments, user_arguments);
   if (profile == EngineArgumentsProfile::strata_flint) return validate_family_arguments(kFlintArguments, user_arguments);
   if (profile == EngineArgumentsProfile::maya_ds4) return validate_family_arguments(kMayaDs4Arguments, user_arguments);
   if (profile == EngineArgumentsProfile::maya_mm3) return validate_family_arguments(kMayaMm3Arguments, user_arguments);
   if (profile == EngineArgumentsProfile::unified) return validate_unified_arguments(user_arguments);
   return std::nullopt;
+}
+
+std::optional<EngineArgumentsError> validate_engine_user_arguments(const FamilyDescriptor& family,
+                                                                   const std::vector<std::string>& user_arguments) {
+  if (family.plugin == nullptr) return validate_engine_user_arguments(family.arguments_profile, user_arguments);
+  if (auto refused = shared_argument_checks(family.arguments_profile, user_arguments)) return refused;
+  return validate_plugin_arguments(family, user_arguments);
 }
 
 namespace {

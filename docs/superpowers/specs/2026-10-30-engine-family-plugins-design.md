@@ -229,6 +229,35 @@ A new model nearly always ships a Jinja chat template in its GGUF. Two ways to s
 - **Composing a plugin card's engine arguments.** The server writes `--family <id> --family-sha256 <hex>`, the model
   (`--native <gguf>` or `--pack <dir>`), then each option's flag from the allowlist, then the calibration's flags.
 
+**As built (2026-10-31, phase 2's second step, first part).** `PluginFamily` (plugin_family.hpp) makes a descriptor from
+an engine plugin's manifest block and its library's SHA-256:
+- **The profile is a place.** `EngineProfile` keeps its seven built-ins; a plugin family's profile is one past them
+  (`kFirstPluginProfile` + its place), handed out only by `family_named`. The persisted form was the id all along
+  (engine.profile, a card's "profile"), so cards and configs name a plugin family by its id. `family_descriptor` finds a
+  built-in or a plugin family by its profile; `family_named` looks among the built-ins first, so no plugin takes a
+  built-in's name; `family_choices` and `all_families` list the plugins after the built-ins.
+- **The families the server runs** (`set_plugin_families`): set once at the start, before any thread reads one (as the
+  Debugging plugin's logs are); an engine plugin's manifest each, in order; another kind, a built-in's id or an id twice is
+  left out. A later call replaces them and keeps the ones it replaced, since a reader may still hold one.
+- **The descriptor**: its renderer, dialect, tokenizer (mode and source) as declared; the strata environment (its
+  closed allowlist alone); `EngineArgumentsProfile::plugin`; reasoning_effort per request as its renderer's own family
+  takes it; qwen's launch rows refused in its own words ("the Acme-3 engine"); pictures, the MTP file check and its draft
+  layer from its capabilities; its calibration's margin and first start; its sampling; `plugin` (its block) and
+  `library_sha256`. No built-in family's rows, tails or files.
+- **Its cards' options**: its declared ones in its order (but its GPUs), then the server's - temperature and top_p,
+  top_k and min_p when its sampling names them, answer_minutes, web_search when it searches - then its GPUs. A declared
+  option may not take a server option's name (the manifest's reader refuses it). Each declared option writes its flag as
+  its argument takes it (a boolean on a flag without a value is there or not, on on_off "on" or "off"; numbers as they
+  are, a fraction at three places; an integer kind's auto no flag; a choice its text); its GPUs write engine.gpu; the
+  flags its options own are the ones a card's engine.args may not fix.
+- **Its engine's arguments** (`validate_engine_user_arguments(family, ...)`, the config reader's check): the shared
+  checks (NUL, --native, --serve, --gpu, the modes the server does not run), then only the flags its manifest declares,
+  each once, as `--flag VALUE`, of its kind within its bounds (a choice among its choices), refused in its family's words
+  ("engine.profile acme3: --kv must be f16 or q8"). The plugin arguments profile alone takes nothing.
+- **Not yet**: nothing calls `set_plugin_families` (the server will, from its approved engine plugins), so no plugin
+  family runs; a plugin card's start (the launch composition: --family, --family-sha256, the model, --gpu, --serve),
+  its calibration steps and its Monitor keys; cards from Add a model by architecture; a thinking option.
+
 ### 6. Trust (decision 2)
 
 A plugin is code that runs as the user, with the model files and the GPU. That is a trust decision, recorded in
@@ -546,7 +575,8 @@ Either way, the tests are:
    - `FamilyDescriptor` for the built-ins, with no behaviour change (every existing suite stays green). Done: the
      engine each family talks to, its config rows, launching and calibration (`family_descriptor.hpp`), then its card
      options (the tables moved beside the descriptors), how they are written, and its cards' draft layer.
-   - Then manifest-driven descriptors for plugins: cards, options, arguments, calibration, Monitor, capabilities.
+   - Then manifest-driven descriptors for plugins: cards, options, arguments, calibration, Monitor, capabilities. Begun
+     (section 5, as built): the descriptor, the families the server runs, its options and its engine's arguments.
 3. **Prompt format.** The declarative template renderer, if decision 1 is (a), with its refusal tests.
 4. **Downloads.** Plugin entries in Download models, `prepare: plugin`, and the MTP and picture files.
 5. **Trust and the Plugins tab.** Discovery of every kind, approval and pinning, first-party trust through the build

@@ -181,7 +181,7 @@ secure_frontend_add_library(secure_frontend_search_url SOURCES src/search_url.cp
 # A plugin's .zip (plugin spec 2026-10-30 section 12): the inflater and the zip reader, written here.
 secure_frontend_add_library(secure_frontend_zip SOURCES src/inflate.cpp src/zip_reader.cpp)
 # The engine families (plugin spec 2026-10-30 section 5): one descriptor per family, under the config layer.
-secure_frontend_add_library(secure_frontend_families SOURCES src/family_descriptor.cpp)
+secure_frontend_add_library(secure_frontend_families SOURCES src/family_descriptor.cpp src/plugin_family.cpp)
 add_library(secure_frontend_typed_config src/frontend_config.cpp src/config_file.cpp)
 target_compile_features(secure_frontend_typed_config PUBLIC cxx_std_20)
 target_include_directories(secure_frontend_typed_config PUBLIC
@@ -830,7 +830,7 @@ endif()
 # Plugins (owner 2026-10-30; docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md): manifests.
 secure_frontend_add_library(secure_frontend_plugins SOURCES src/plugin_manifest.cpp src/plugin_registry.cpp src/plugin_signature.cpp
     LINKS secure_frontend_json secure_frontend_sha256 secure_frontend_paths secure_frontend_token_store
-          secure_frontend_release_manifest)
+          secure_frontend_release_manifest secure_frontend_families)
 # trust by key (plugin spec section 11): plugin.sig is the release envelope's form, verified with secure_frontend_ed25519
 target_include_directories(secure_frontend_plugins PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # The Plugins tab's server half (plugin_routes.hpp): the list, an approval, on/off, in <roots.state>/plugins.json.
@@ -2405,6 +2405,13 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_plugin_manifest_tests
         the_shipped_debugging_plugin_is_one the_shipped_search_plugin_is_one the_shipped_email_plugin_is_one a_diagnostics_manifest_is_read
         a_tool_manifest_says_how_its_program_runs a_wrong_run_block_is_refused_by_name values_are_checked_against_the_settings a_code_plugin_names_this_platforms_files a_wrong_manifest_is_refused_by_name an_engine_block_declares_its_family a_wrong_engine_block_is_refused_by_name
+        LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+    # an engine plugin's family (plugin spec section 5, phase 2's second step)
+    secure_frontend_add_test_executable(secure_frontend_plugin_family_tests tests/plugin_family_test.cpp secure_frontend_plugins
+        secure_frontend_model_cards)
+    secure_frontend_add_cases(secure_frontend_plugin_family_tests
+        an_engine_plugin_makes_its_family its_cards_offer_its_options_then_the_servers a_manifest_may_not_take_a_server_options_name
+        the_server_finds_the_families_it_runs its_options_write_their_flags its_engine_takes_only_its_flags a_card_names_a_plugin_family
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_test_executable(secure_frontend_plugin_registry_tests tests/plugin_registry_test.cpp secure_frontend_plugins)
     target_compile_definitions(secure_frontend_plugin_registry_tests PRIVATE

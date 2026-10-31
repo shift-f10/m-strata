@@ -3,9 +3,12 @@
 // pins every value.
 #include "secure_frontend/family_descriptor.hpp"
 
+#include "secure_frontend/plugin_family.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 
 namespace secure_frontend {
@@ -481,13 +484,27 @@ static_assert(in_order(), "one descriptor a profile, in EngineProfile's order");
 
 std::span<const FamilyDescriptor> family_descriptors() noexcept { return kFamilies; }
 
-const FamilyDescriptor& family_descriptor(const EngineProfile profile) noexcept { return kFamilies[static_cast<std::size_t>(profile)]; }
+const FamilyDescriptor& family_descriptor(const EngineProfile profile) noexcept {
+  if (static_cast<int>(profile) < kFirstPluginProfile) return kFamilies[static_cast<std::size_t>(profile)];
+  const auto* plugin = plugin_family(profile);
+  // (a plugin's profile comes only from family_named, so its family is there; were it not, nothing may run as another)
+  if (plugin == nullptr) std::abort();
+  return plugin->descriptor();
+}
+
+std::vector<const FamilyDescriptor*> all_families() {
+  std::vector<const FamilyDescriptor*> out;
+  for (const auto& family : kFamilies) out.push_back(&family);
+  for (const auto* plugin : plugin_families()) out.push_back(&plugin->descriptor());
+  return out;
+}
 
 std::string family_choices() {
+  const auto families = all_families();
   std::string words;
-  for (std::size_t i = 0; i < kFamilies.size(); ++i) {
-    if (i > 0) words += i + 1 == kFamilies.size() ? " or " : ", ";
-    words += kFamilies[i].id;
+  for (std::size_t i = 0; i < families.size(); ++i) {
+    if (i > 0) words += i + 1 == families.size() ? " or " : ", ";
+    words += families[i]->id;
   }
   return words;
 }
@@ -495,6 +512,14 @@ std::string family_choices() {
 const FamilyDescriptor* family_named(const std::string_view id) noexcept {
   for (const auto& family : kFamilies) {
     if (family.id == id) return &family;
+  }
+  const auto* plugin = plugin_family_named(id);
+  return plugin == nullptr ? nullptr : &plugin->descriptor();
+}
+
+const ModelOptionSpec* server_card_option(const std::string_view name) noexcept {
+  for (const auto* spec : {&kTemperature, &kTopP, &kTopK, &kMinP, &kAnswerMinutes, &kWebSearch}) {
+    if (spec->name == name) return spec;
   }
   return nullptr;
 }

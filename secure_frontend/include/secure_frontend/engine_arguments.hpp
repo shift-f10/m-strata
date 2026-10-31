@@ -2,6 +2,7 @@
 
 #include "secure_frontend/canonical_path.hpp"
 #include "secure_frontend/engine_family_kinds.hpp"
+#include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/model_inventory.hpp"
 #include "secure_frontend/tokenizer_pack.hpp"
 
@@ -162,5 +163,9 @@ void append_parallel_batch_arguments(std::vector<std::string>& arguments, const 
 // calls it; the config validator calls it so a bad engine.args fails before startup.
 [[nodiscard]] std::optional<EngineArgumentsError> validate_engine_user_arguments(
     EngineArgumentsProfile profile, const std::vector<std::string>& user_arguments);
+// The same for a family: a built-in's by its arguments profile; an engine plugin's against the flags its manifest
+// declares (plugin_family.hpp), and nothing else.
+[[nodiscard]] std::optional<EngineArgumentsError> validate_engine_user_arguments(
+    const FamilyDescriptor& family, const std::vector<std::string>& user_arguments);
 
 }  // namespace secure_frontend

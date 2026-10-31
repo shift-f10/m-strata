@@ -4,7 +4,7 @@
 // server's switches on EngineProfile decided - its persisted name, its engine dialect and arguments, its tokenizer, the
 // config rows it takes, how it launches and calibrates. The built-in families get theirs from this table, in
 // EngineProfile's order; their code (renderers, parsers, argv composers, sweep plans) stays as it is, chosen by family.
-// A plugin's descriptor will come from its manifest (phase 2's next step).
+// An engine plugin's comes from its manifest (plugin_family.hpp), with a profile past the built-ins'.
 
 #include "secure_frontend/engine_family_kinds.hpp"
 #include "secure_frontend/model_option_spec.hpp"
@@ -14,8 +14,11 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace secure_frontend {
+
+struct PluginEngine;  // plugin_manifest.hpp: an engine plugin's manifest block
 
 // Where a launch's tokenizer comes from: the tokenizer pack; the GGUF itself; the GGUF for a card's launch, the pack
 // otherwise (qwen: the operator's single-model --expert keeps its pack).
@@ -87,14 +90,26 @@ struct FamilyDescriptor final {
   std::optional<std::int64_t> draft_spec{};  // a draft layer added to a card brings these defaults with it
   double draft_spec_min_p{0.5};
   bool maya_pack_model_file{false};  // its model file is found through the pack beside it (native_experts.txt, sources.json)
+  // an engine plugin's (nullptr, empty: a built-in family): its manifest's block - the only flags its engine takes, each
+  // option's flag, its calibration, its Monitor keys, its models - and its library's SHA-256 (the launcher's
+  // --family-sha256)
+  const PluginEngine* plugin{nullptr};
+  std::string_view library_sha256{};
 };
 
-// Every family, in EngineProfile's order.
+// The built-in families, in EngineProfile's order.
 [[nodiscard]] std::span<const FamilyDescriptor> family_descriptors() noexcept;
+// A family by its profile: a built-in's, or a plugin's that family_named handed out.
 [[nodiscard]] const FamilyDescriptor& family_descriptor(EngineProfile profile) noexcept;
-// The family a persisted name names (nullptr: none), by its id exactly.
+// The family a persisted name names (nullptr: none), by its id exactly: a built-in, then an engine plugin's.
 [[nodiscard]] const FamilyDescriptor* family_named(std::string_view id) noexcept;
-// Every family's name, as an error message lists them: "qwen, glm53, ... or minimax".
+// Every family's name, as an error message lists them: "qwen, glm53, ... or minimax" (the plugins' after them).
 [[nodiscard]] std::string family_choices();
+// Every family: the built-ins, then the engine plugins'.
+[[nodiscard]] std::vector<const FamilyDescriptor*> all_families();
+
+// The options the server gives a card whatever its engine (temperature, top_p, top_k, min_p, answer_minutes,
+// web_search), as the built-in tables hold them (nullptr: not one); an engine plugin's table ends with them.
+[[nodiscard]] const ModelOptionSpec* server_card_option(std::string_view name) noexcept;
 
 }  // namespace secure_frontend

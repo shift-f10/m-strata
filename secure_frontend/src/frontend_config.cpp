@@ -1255,8 +1255,7 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
         "must be name or name:tag, each 1-128 characters of [A-Za-z0-9._-], starting with a letter or digit");
   }
   const auto args = read.strings("engine.args");
-  const auto arguments_profile = arguments_profile_for(profile.value_or(EngineProfile::qwen));
-  if (const auto rejected = validate_engine_user_arguments(arguments_profile, args)) {
+  if (const auto rejected = validate_engine_user_arguments(family_descriptor(profile.value_or(EngineProfile::qwen)), args)) {
     add(errors, "engine.args", ConfigIssueCode::invalid_value, rejected->message);
   }
   // SP5 M2 Task 7 (D-8, C-5): the SP1 rule "glm53 requires at least one --engine-arg" is

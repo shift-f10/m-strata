@@ -280,7 +280,36 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
-### Claude Code session, 2026-10-31 z77 (Windows box; owner-directed)
+### Claude Code session, 2026-10-31 z78 (Windows box; owner-directed)
+
+The engine-family phases go on (the owner: "continue working on other things while I test the vm"): phase 2's second
+step, its first part - an engine plugin's manifest makes its family (spec section 5, "As built"). (main, the same turn:
+z76 and z77 cherry-picked there, `cab1b71f` and `ba57904d`, not pushed.)
+- **`PluginFamily`** (plugin_family.hpp, in `secure_frontend_families`): the descriptor from the manifest's engine block and
+  its library's SHA-256 - renderer, dialect, tokenizer as declared; the strata environment; `EngineArgumentsProfile::
+  plugin`; reasoning_effort as its renderer's family takes it; qwen's launch rows refused in its words; pictures, the MTP
+  file check, the draft layer, calibration and sampling from its blocks; `plugin` and `library_sha256` on the descriptor.
+- **Its cards' options**: its own (in its order, but its GPUs), then the server's (`server_card_option`: temperature,
+  top_p, top_k and min_p when its sampling names them, answer_minutes, web_search when it searches), then its GPUs. The
+  manifest's reader refuses a declared option named as one of the server's.
+- **The profile is a place**: `kFirstPluginProfile` (one past minimax) and on, handed out by `family_named` (built-ins
+  first); `set_plugin_families` sets the families once at the start (none yet: the server does not call it), replacing
+  keeps the old ones readable; `family_descriptor`, `family_choices`, `all_families` and `is_model_option_name` see them.
+- **Writing and checking**: a declared option writes its flag as its argument takes it (model_options' write_option,
+  option_flags); its GPUs engine.gpu. `validate_engine_user_arguments(family, ...)` checks a plugin family's engine.args
+  against its declared flags only (engine_arguments' family checks, with a choice kind); the config reader uses it.
+- **Tests**: `secure_frontend_plugin_family_tests` (7: the descriptor pinned for a full and a least manifest; the option
+  table and each option as declared; the server options' names refused; the families the server runs - kinds, built-in
+  ids and repeats left out, replaced, still readable; each option's flag written; the engine's flags accepted and each
+  refusal in its words; a card naming acme3 - its options, a fixed flag refused, its whole start config validated with
+  the family's profile and flags, a flag out of bounds refused in engine.args).
+- **Proof**: RED against a stub family holding only its id and profile (40 failures in the 7 cases); the config reader
+  on its old check, RED (2: "an engine plugin's arguments are checked by its family"); then GREEN.
+  - Windows (MSVC, the shares tree, everything built, no warnings): the whole suite 1522 of 1524 (the two release-only
+    cases).
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc 1571/1576 and full-clang 1573/1576 (the two
+    release-only cases; dos02, the search card, egress pass alone), window-gcc Release 1529/1531 (egress and net01 pass
+    alone).
 
 The owner's Azure VM, after z76: the Qwen3.8-Flash-Next IQ2_XS card's calibration failed ("the engine ended before it
 was ready"), then "Yes, build it" (upstream's low-RAM mode).

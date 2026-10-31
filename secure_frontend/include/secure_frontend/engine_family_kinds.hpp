@@ -13,6 +13,9 @@ namespace secure_frontend {
 // binary over the converged `unified` protocol flavor; qwen/glm53/gemma4 keep their own flavors.
 // flint (multiengine_flint) speaks Gemma 4's strata_0143 serve loop with its own template and tokenizer.
 enum class EngineProfile { qwen, glm53, gemma4, deepseek, raon1, flint, minimax };
+// An engine plugin's family (plugin_family.hpp) holds a profile past the built-ins': the first plugin's is this one, the
+// next one's the one after it. Only family_named hands one out.
+inline constexpr int kFirstPluginProfile = static_cast<int>(EngineProfile::minimax) + 1;
 
 // An explicit startup-selected prompt/tokenizer contract.  This is not
 // inferred from a model name or tokenizer asset: that would allow a model
@@ -69,7 +72,8 @@ enum class EngineFamily { strata, glm };
 // Which engine CLI the argv tail is built for. `unified` is the merged engine (deepseek, raon1):
 // a closed allowlist of the merged engine's own flags, with --native/--gpu frontend-composed.
 // strata_flint is multiengine_flint's own serve flags (engine/src/flint/f_cli.cpp), a closed allowlist like Gemma's.
-enum class EngineArgumentsProfile { strata_0143, lighttransport_glm53, strata_gemma4, unified, strata_flint, maya_ds4, maya_mm3 };
+// plugin is an engine plugin's: the flags its manifest declares (its family's descriptor holds them), nothing else.
+enum class EngineArgumentsProfile { strata_0143, lighttransport_glm53, strata_gemma4, unified, strata_flint, maya_ds4, maya_mm3, plugin };
 
 // The Monitor's expert-tier whitelist (owner: the VRAM and RAM cards show experts loaded; serve_monitor.cpp): the
 // engines' own key names, INFO split for the main engine and STAT for the GLM engine. Owner 2026-10-28 ("the System Ram
