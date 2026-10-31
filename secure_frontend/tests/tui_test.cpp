@@ -816,6 +816,42 @@ void downloads_say_what_is_on_this_pc() {
   expect(out.requests.size() == 1U && out.requests[0].body == R"({"id":"e"})", "and Enter makes its card");
 }
 
+// A message - a value refused as it is typed, an action's answer - is shown whole on the key line, before the keys, which
+// take the room it leaves until it clears (the owner, 2026-10-31: "pressing w on the tui is not saving": the reason was
+// the line's last few words, cut off).
+void a_message_is_shown_whole_before_the_keys() {
+  t::App app(t::Capabilities{}, std::optional<std::string>{"secret-key-for-test"});
+  (void)app.key(character("4"));
+  app.answer({"settings", "POST", "/v1/strata/config", "{}"}, 200, kSettings);
+  t::Screen screen(120, 30);
+  const auto bottom = [&screen] { return row_text(screen, screen.height() - 1); };
+  // a number out of range, refused as it is entered: nothing to save, and why, whole
+  (void)app.key(plain(t::Key::Kind::enter));
+  for (int i = 0; i < 8; ++i) (void)app.key(plain(t::Key::Kind::backspace));
+  for (const char* c : {"7", "0", "0", "0", "0"}) (void)app.key(character(c));
+  (void)app.key(plain(t::Key::Kind::enter));
+  app.tick(100);
+  app.draw(screen, 100);
+  expect(bottom().find("listener.port takes a whole number from 1 to 65535") != std::string::npos, "the refusal, whole: " + bottom());
+  expect(bottom().find("q  Quit") != std::string::npos, "the keys after it, in the room it leaves: " + bottom());
+  expect(app.key(character("w")).requests.empty(), "nothing to save");
+  // a save the server refuses: its reason whole
+  (void)app.key(plain(t::Key::Kind::down));
+  (void)app.key(plain(t::Key::Kind::enter));
+  const auto out = app.key(character("w"));
+  expect(out.requests.size() == 1U, "w saves the switch");
+  const std::string reason = "listener.allow_remote needs a listener.host other machines can reach";
+  app.answer(out.requests.at(0), 422,
+             R"({"error":{"message":")" + reason + R"(","type":"invalid_request_error","param":null,"code":"settings_refused"}})");
+  app.tick(200);
+  app.draw(screen, 200);
+  expect(bottom().find("save settings: " + reason) != std::string::npos, "the server's refusal, whole: " + bottom());
+  // the keys come back once it clears
+  app.tick(200 + t::App::kStatusSeconds);
+  app.draw(screen, 200 + t::App::kStatusSeconds);
+  expect(bottom().rfind("  q  Quit   Tab  View", 0) == 0U && bottom().find(reason) == std::string::npos, "then the keys alone: " + bottom());
+}
+
 void settings_are_edited_then_saved() {
   t::App app(t::Capabilities{}, std::optional<std::string>{"secret-key-for-test"});
   (void)app.key(character("4"));
@@ -1013,6 +1049,7 @@ int main(int argc, char** argv) {
       {"the_monitor_draws_the_servers_readings", the_monitor_draws_the_servers_readings},
       {"the_views_switch_and_keys_become_requests", the_views_switch_and_keys_become_requests},
       {"settings_are_edited_then_saved", settings_are_edited_then_saved},
+      {"a_message_is_shown_whole_before_the_keys", a_message_is_shown_whole_before_the_keys},
       {"downloads_say_what_is_on_this_pc", downloads_say_what_is_on_this_pc},
       {"quitting_asks_first", quitting_asks_first},
   }, failures);

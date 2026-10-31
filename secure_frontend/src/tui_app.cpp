@@ -929,14 +929,17 @@ void App::draw_keys(Screen& screen) const {
     case View::about: break;
   }
   int x = 1;
+  // a message first, whole (a value refused as it is typed, an action's answer): the keys take the room it leaves until
+  // it clears (owner 2026-10-31: after the keys, a refusal's reason was cut to its first words)
+  if (!status_.empty()) {
+    const int width = std::min(text_width(status_), screen.width() - 2);
+    screen.field(x, y, width, status_, Style{status_error_ ? kRed : kGreen, kPanel});
+    x += width + 2;
+  }
   for (const auto& [name, what] : keys) {
     if (x + text_width(name) + text_width(what) + 3 >= screen.width()) break;
     x += screen.text(x, y, " " + name + " ", Style{kText, kBorder, true});
     x += screen.text(x, y, " " + what + "  ", Style{kMuted, kPanel});
-  }
-  if (!status_.empty() && screen.width() - x > 10) {
-    const int room = screen.width() - x - 1;
-    screen.field(x, y, room, status_, Style{status_error_ ? kRed : kGreen, kPanel});
   }
 }
 
