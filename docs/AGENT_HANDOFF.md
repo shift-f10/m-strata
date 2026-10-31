@@ -280,6 +280,23 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z73 (Windows box; owner-directed)
+
+strata-tui: a message is shown whole (the owner, reviewing the TUI: "pressing w on the tui is not saving").
+- **What it was**: `w` saves in the Settings view and in a plugin's settings - both work, driven live on the current
+  build and on the review's own (the config file changed). But a value refused as it is typed (out of its range) leaves
+  nothing to save, and a save the server refuses keeps its changes unsaved; each says why on the key line, after the
+  keys, where the Settings view's long key list left room for a few words: "listener.port takes a whole number from ...".
+  So w seemed to do nothing.
+- **Now** a message (a refusal, an action's answer) takes the key line first, whole, and the keys take the room it
+  leaves until it clears (ten seconds); then the keys alone, as before.
+- **Tests**: `a_message_is_shown_whole_before_the_keys` (a number out of range, then a refused save: each reason whole
+  on the bottom line, the keys after it, the keys alone once it clears); the publisher-keys case checks the trust's
+  answer whole on that line, then a and Esc once it clears.
+- **Proof**: RED (2 failures: the reasons cut to "from ..." and "nee..."), then GREEN, every TUI case on MSVC and in the
+  gcc, clang and gcc Release trees (17 of 17 each). Driven in a real console (scratch install, port 18093): "tools.max_
+  rounds takes a whole number from 1 to 8" in full, then the keys; after ten seconds the keys alone.
+
 ### Claude Code session, 2026-10-30 z72 (Windows box; owner-directed)
 
 Adding and removing plugins from the page, the last steps (spec section 12; the owner: "enable the ability to add and
