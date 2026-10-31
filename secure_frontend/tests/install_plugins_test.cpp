@@ -125,11 +125,51 @@ void a_tool_whose_settings_do_not_fit_is_left_out() {
   expect(secure_frontend::read_plugin_choices(install.state)->enabled.at("lookup") == false, "the choices file reads back");
 }
 
+#if defined(_WIN32)
+const std::string kLibrary = "multiengine_acme3.dll";
+#else
+const std::string kLibrary = "libmultiengine_acme3.so";
+#endif
+
+const std::string kAcme3 = R"({"schema": "m-strata.plugin/1", "id": "acme3", "kind": "engine", "name": "Acme-3", "version": "0.1.0",
+  "publisher": "Example Labs", "license": "Apache-2.0", "about": "",
+  "files": {"windows": ["multiengine_acme3.dll"], "linux": ["libmultiengine_acme3.so"]},
+  "engine": {"abi": 1, "dialect": "strata_0143", "chat": "qwen", "tokenizer": {"source": "pack", "mode": "byte_bpe"},
+    "models": {"gguf_architectures": ["acme3"], "context_key": "acme3.context_length"},
+    "arguments": [{"flag": "--max-context", "value": "integer", "min": 4096, "max": 262144}],
+    "capabilities": {"vision": false, "web_search": false, "mtp": "none"}}})";
+
+// The engine plugins an install runs are its families (plugin spec section 5): each one that is on, with its manifest and
+// its library's SHA-256 (what a start hands the launcher). One waiting for approval, turned off, or changed since it was
+// approved makes none; nor does a plugin of another kind.
+void an_installs_engine_plugins_that_are_on_are_its_families() {
+  Install install;
+  secure_frontend_test::make_private_directory(install.root / "plugins" / "acme3");
+  secure_frontend_test::write_file(install.root / "plugins" / "acme3" / "plugin.json", kAcme3);
+  secure_frontend_test::write_file(install.root / "plugins" / "acme3" / kLibrary, "library", 0700);
+  const auto families = [&install] { return secure_frontend::engine_families(secure_frontend::install_plugins(install.engine, install.state)); };
+  expect(families().empty(), "an engine plugin never approved makes no family (and the tool plugin none ever)");
+  secure_frontend::PluginChoices choices;
+  choices.approved["acme3"] = {.manifest = hex_sha256(kAcme3), .files = {{kLibrary, hex_sha256("library")}}};
+  expect(secure_frontend::write_plugin_choices(install.state, choices), "the approval is written");
+  const auto approved = families();
+  expect(approved.size() == 1U && approved[0].manifest.id == "acme3" && approved[0].manifest.engine.has_value() &&
+             approved[0].library_sha256 == hex_sha256("library"),
+         "approved, it is a family: its manifest and its library's SHA-256 (" + std::to_string(approved.size()) + ")");
+  choices.enabled["acme3"] = false;
+  expect(secure_frontend::write_plugin_choices(install.state, choices) && families().empty(), "turned off: none");
+  choices.enabled["acme3"] = true;
+  expect(secure_frontend::write_plugin_choices(install.state, choices) && families().size() == 1U, "on again: it is one again");
+  secure_frontend_test::write_file(install.root / "plugins" / "acme3" / kLibrary, "another library", 0700);
+  expect(families().empty(), "its library changed since it was approved: none until it is approved again");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"a_tool_runs_with_its_settings_filled_in", a_tool_runs_with_its_settings_filled_in},
       {"a_tool_whose_settings_do_not_fit_is_left_out", a_tool_whose_settings_do_not_fit_is_left_out},
+      {"an_installs_engine_plugins_that_are_on_are_its_families", an_installs_engine_plugins_that_are_on_are_its_families},
   }, failures);
 }

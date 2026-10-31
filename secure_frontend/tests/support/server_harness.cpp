@@ -474,6 +474,7 @@ std::unique_ptr<ServerProcess> ServerProcess::start(const ServerOptions& options
       listed += (i ? "," : "") + secure_frontend_test::json_literal(utf8_path(file));
     }
     config_literals["models.cards"] = listed + "]";
+    if (options.default_engine) config_literals["models.default_engine"] = secure_frontend_test::json_literal(utf8_path(server->engine_path_));
   }
   if (!options.managed_vision && !launcher) arguments.emplace_back("--expert");  // the managed path launches from the manifest
   // Gemma 4 plan 1 Task 11: engine.profile (an --expert key; the managed path refuses it).

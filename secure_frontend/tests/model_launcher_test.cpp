@@ -1603,6 +1603,90 @@ void experts_show_as_soon_as_a_model_runs() {
   expect(server->wait_exit(std::chrono::seconds(20)) == std::optional<int>{0}, "a clean exit");
 }
 
+// An engine plugin (plugin spec section 5): its family a qwen-rendered one over a byte tokenizer pack, so the fake
+// engine answers its cards; its library a file the launcher would load (the fake engine, standing in for the launcher,
+// loads nothing).
+#if defined(_WIN32)
+const std::string kAcmeLibrary = "multiengine_acme3.dll";
+#else
+const std::string kAcmeLibrary = "libmultiengine_acme3.so";
+#endif
+const std::string kAcmeManifest = R"({"schema": "m-strata.plugin/1", "id": "acme3", "kind": "engine", "name": "Acme-3",
+  "version": "0.1.0", "publisher": "Example Labs", "license": "Apache-2.0", "about": "A family.",
+  "files": {"windows": ["multiengine_acme3.dll"], "linux": ["libmultiengine_acme3.so"]},
+  "engine": {"abi": 1, "dialect": "strata_0143", "chat": "qwen", "tokenizer": {"source": "pack", "mode": "byte_bpe"},
+    "models": {"gguf_architectures": ["acme3"], "context_key": "acme3.context_length"},
+    "arguments": [{"flag": "--max-context", "value": "integer", "min": 4096, "max": 262144}],
+    "options": [{"name": "max_context", "kind": "integer", "label": "Context length", "flag": "--max-context",
+                 "min": 4096, "max": 262144, "values": [8192, 32768, 65536], "default": 65536}],
+    "capabilities": {"vision": false, "web_search": false, "mtp": "none"}}})";
+
+ServerOptions acme_install(const std::filesystem::path& library, const bool first_party, std::vector<CardOptions> cards) {
+  ServerOptions options;
+  options.plugins = {{.id = "acme3", .manifest = kAcmeManifest, .on = true, .files = {{kAcmeLibrary, library}}, .first_party = first_party}};
+  options.default_engine = true;
+  options.model_cards = std::move(cards);
+  options.fake_engine_options = {"--dump-file=acme.dump"};
+  options.config_literals = {{"models.control", "true"}};
+  return options;
+}
+
+// An engine plugin that is on is a family from the server's start, read before the cards: a card naming it is read with
+// the others, listed with its family and its options, and started through the launcher - --family and its library's
+// SHA-256 ahead of --serve, its declared flags, --native last - and it answers.
+void an_engine_plugins_card_starts_through_the_launcher() {
+  const auto library = test_support::make_temp_dir("acme3-library") / "library.bin";
+  secure_frontend_test::write_file(library, "the Acme-3 library");
+  auto server = ServerProcess::start(acme_install(
+      library, true, {CardOptions{.name = "Acme", .profile = "acme3", .options_json = R"({"max_context": {"default": 65536}})"}}));
+  expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots with its card: " + (server ? server->stderr_text() : ""));
+  if (!server) return;
+  expect(server->stderr_text().find("[strata] plugins: the Acme-3 engine family (acme3) is on") != std::string::npos,
+         "the log says its family runs: " + server->stderr_text());
+  const auto plugins = call(*server, "POST", "/v1/strata/plugins", "{}");
+  expect(plugins && plugins->body.find(R"("id":"acme3")") != std::string::npos && plugins->body.find(R"("state":"on")") != std::string::npos,
+         "the Plugins tab shows it on: " + shown(plugins));
+  const auto listed = call(*server, "GET", "/v1/strata/models");
+  expect(listed && listed->body.find(R"("name":"Acme","profile":"acme3")") != std::string::npos &&
+             listed->body.find(R"("name":"max_context")") != std::string::npos,
+         "its card is listed, with its family and its option: " + shown(listed));
+  const auto started = call(*server, "POST", "/v1/strata/models/start", R"({"name":"Acme","options":{"max_context":32768}})");
+  expect(started && started->status == 202, "its start is accepted: " + shown(started));
+  expect(wait_for_card(*server, "Acme", "running"), "Acme runs: " + server->stderr_text());
+  const auto argv = dumped_argv(server->root() / "state" / "engine" / "acme.dump");
+  expect(argv.size() >= 9U && argv[1] == "--family" && argv[2] == "acme3" && argv[3] == "--family-sha256" &&
+             argv[4] == test_support::sha256_hex("the Acme-3 library") && argv[5] == "--serve",
+         "the launcher's arguments, then --serve: " + joined(argv));
+  expect(has_pair(argv, "--max-context", "32768") && argv.size() >= 2U && argv[argv.size() - 2U] == "--native" &&
+             argv.back().find("fake-model.gguf") != std::string::npos,
+         "its declared flag as the page set it, then --native: " + joined(argv));
+  const auto chat = call(*server, "POST", "/v1/chat/completions", chat_body("Acme"));
+  expect(chat && chat->status == 200 && chat->body.find("\"model\":\"Acme\"") != std::string::npos, "Acme answers: " + shown(chat));
+  const auto stopped = call(*server, "POST", "/v1/strata/models/stop", "{}");
+  expect(stopped && stopped->status == 202 && wait_for_card(*server, "Acme", "stopped"), "Acme stops");
+  server->stop(ServerProcess::Stop::ctrl_break);
+  expect(server->wait_exit(std::chrono::seconds(20)) == std::optional<int>{0}, "a clean exit");
+}
+
+// A card naming an engine plugin that is not on - one waiting for approval, here - is refused at the start, as a card of
+// any family the server does not run is; the server serves its other cards.
+void a_card_of_an_engine_plugin_that_is_not_on_is_refused() {
+  const auto library = test_support::make_temp_dir("acme3-waiting") / "library.bin";
+  secure_frontend_test::write_file(library, "the Acme-3 library");
+  auto server = ServerProcess::start(
+      acme_install(library, false, {CardOptions{.name = "Acme", .profile = "acme3"}, CardOptions{.name = "Plain", .profile = "qwen"}}));
+  expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots");
+  if (!server) return;
+  expect(server->stderr_text().find("model card 1 (Acme) refused: profile") != std::string::npos &&
+             server->stderr_text().find("engine family (acme3)") == std::string::npos,
+         "its card is refused by name, and no family of it runs: " + server->stderr_text());
+  const auto plugins = call(*server, "POST", "/v1/strata/plugins", "{}");
+  expect(plugins && plugins->body.find(R"("state":"waiting")") != std::string::npos, "the Plugins tab shows it waiting: " + shown(plugins));
+  expect(card_state(*server, "Acme").empty() && card_state(*server, "Plain") == "stopped", "only the other card is listed");
+  server->stop(ServerProcess::Stop::ctrl_break);
+  expect(server->wait_exit(std::chrono::seconds(20)) == std::optional<int>{0}, "a clean exit");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1644,5 +1728,7 @@ int main(int argc, char** argv) {
       {"failures_raise_alerts", failures_raise_alerts},
       {"a_failed_calibration_writes_a_report", a_failed_calibration_writes_a_report},
       {"bad_card_refused_at_boot_and_main_rows_refused", bad_card_refused_at_boot_and_main_rows_refused},
+      {"an_engine_plugins_card_starts_through_the_launcher", an_engine_plugins_card_starts_through_the_launcher},
+      {"a_card_of_an_engine_plugin_that_is_not_on_is_refused", a_card_of_an_engine_plugin_that_is_not_on_is_refused},
   }, failures);
 }

@@ -2043,6 +2043,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_calibration_can_be_cancelled
         removing_a_card_removes_its_calibration a_card_short_of_ram_starts_in_the_low_ram_mode a_card_with_room_keeps_its_experts_in_ram a_card_that_fixes_its_experts_flag_keeps_it failures_raise_alerts a_failed_calibration_writes_a_report
         a_stop_waits_for_an_engine_still_ending
+        an_engine_plugins_card_starts_through_the_launcher a_card_of_an_engine_plugin_that_is_not_on_is_refused
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
 
     # Model downloads (plan 2026-10-23-model-downloads Task 4): the download manager over a scripted child.
@@ -2427,6 +2428,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_install_plugins secure_frontend_sha256)
     secure_frontend_add_cases(secure_frontend_install_plugins_tests
         a_tool_runs_with_its_settings_filled_in a_tool_whose_settings_do_not_fit_is_left_out
+        an_installs_engine_plugins_that_are_on_are_its_families
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # A tool's or notifier's secret settings (owner 2026-10-30, decision 6).
     # trust by key (plugin spec section 11): the Python signer's committed fixtures, verified here

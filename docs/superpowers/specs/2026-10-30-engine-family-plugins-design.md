@@ -200,7 +200,8 @@ plugin_manifest.hpp), its types those of the built-in families' descriptors:
 - `monitor`: its tiers' keys, from the Monitor's list (`kExpertReadingKeys`);
 - `capabilities`: vision, web search, and mtp (none, file or in_model).
 Any other key, anywhere in the block, is refused by name. `downloads` waits for phase 4, the declarative template for
-phase 3. Nothing runs from the block yet: the descriptor made from it is phase 2's second step.
+phase 3. The descriptor made from it is phase 2's second step (section 5, as built), and the server runs the families
+of the engine plugins that are on.
 
 ### 4. Prompt format (decision 1)
 
@@ -254,8 +255,8 @@ an engine plugin's manifest block and its library's SHA-256:
   checks (NUL, --native, --serve, --gpu, the modes the server does not run), then only the flags its manifest declares,
   each once, as `--flag VALUE`, of its kind within its bounds (a choice among its choices), refused in its family's words
   ("engine.profile acme3: --kv must be f16 or q8"). The plugin arguments profile alone takes nothing.
-- **Not yet**: nothing calls `set_plugin_families` (the server will, from its approved engine plugins), so no plugin
-  family runs; cards from Add a model by architecture; a thinking option.
+- **Not yet** (then): the server calling `set_plugin_families` (the third part, below); cards from Add a model by
+  architecture; a thinking option.
 
 **As built (2026-10-31, phase 2's second step, second part): a plugin card's start.**
 - **Its command line**: `multiengine --family <id> --family-sha256 <its library's SHA-256> --serve <its card's flags>
@@ -278,6 +279,24 @@ an engine plugin's manifest block and its library's SHA-256:
   (one that counts experts) and its RAM tier from its key (a count, or arena_mib in MiB, pinned_gib or ram_gb in GiB as
   bytes), and no other key, for as long as its engine runs (`ServeMonitor::engine_changed(tiers)`). The manifest's
   reader refuses a VRAM key that counts nothing and a RAM key that is neither.
+
+**As built (2026-10-31, phase 2's second step, third part): the server runs its engine plugins' families.**
+- **Which run**: an engine plugin is a kind the server runs (`plugin_kind_runs`, all four kinds now). Trusted as any
+  plugin is, it is on or off, waiting or changed; the Plugins tab and the TUI approve it and turn it on or off, from the
+  next start. Each one that is on when the server starts is one of its families (`engine_families`, install_plugins.hpp:
+  its manifest and its library's SHA-256, `engine_library_file`'s, as the registry hashed and trusted it), handed to
+  `set_plugin_families` once, and the start says so for each ("[strata] plugins: the Acme-3 engine family (acme3) is
+  on: its cards start through the engine's launcher").
+- **Before the cards**: a card names its family by its id, so the plugins are read first - beside models.default_engine,
+  the main config's own rows as `card_less_server_config` validates them, with the owner's choices in roots.state - and
+  the cards after. A config without models.default_engine reads them after its cards, beside its first card's engine, as
+  before, so none of its models.cards may name a plugin's family. `--check` reads them the same way, writing nothing. A
+  card naming a family that is not on is refused at the start, as a card of an unknown family is, the families listed
+  (the built-ins, then the plugins that are on).
+- **A start, end to end** (`an_engine_plugins_card_starts_through_the_launcher`): the real server over the fake engine
+  standing in for the launcher lists the card with its family and its options, starts it as `--family acme3
+  --family-sha256 <its library's> --serve --max-context 32768 --native <gguf>`, and it answers and stops.
+- **Not yet**: cards from Add a model by architecture; a thinking option; a plugin's downloads (phase 4).
 
 ### 6. Trust (decision 2)
 
@@ -598,7 +617,8 @@ Either way, the tests are:
      options (the tables moved beside the descriptors), how they are written, and its cards' draft layer.
    - Then manifest-driven descriptors for plugins: cards, options, arguments, calibration, Monitor, capabilities. Begun
      (section 5, as built): the descriptor, the families the server runs, its options and its engine's arguments; a
-     plugin card's start, its calibration and its Monitor.
+     plugin card's start, its calibration and its Monitor; the server running the families of its engine plugins that
+     are on, a card of one started end to end.
 3. **Prompt format.** The declarative template renderer, if decision 1 is (a), with its refusal tests.
 4. **Downloads.** Plugin entries in Download models, `prepare: plugin`, and the MTP and picture files.
 5. **Trust and the Plugins tab.** Discovery of every kind, approval and pinning, first-party trust through the build

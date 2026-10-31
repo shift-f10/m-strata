@@ -982,7 +982,7 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`; as a plugin,
 - Plugins (owner 2026-10-30; spec
   `docs/superpowers/specs/2026-10-30-engine-family-plugins-design.md`,
   section 8): the server reads `<install>/plugins/<id>/plugin.json`; the
-  `diagnostics`, `tool` and `notifier` kinds run. A diagnostics plugin runs no code: a manifest
+  `diagnostics`, `tool`, `notifier` and `engine` kinds run. A diagnostics plugin runs no code: a manifest
   that names which of three fixed switches it turns on (`logging.requests`,
   `logging.engine_output`, Settings > Troubleshooting), refused if it names
   anything else. A plugin is on only when it is trusted - make's record in
@@ -1105,6 +1105,39 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`; as a plugin,
   `call_timeout_s` (1-600 s); a program that dies is started again by the next
   chat, one that does not start is left out for a minute
   (`tools_are_listed_and_tried`, `a_third_party_tool_plugin_runs_once_approved`).
+- Engine plugins (owner 2026-10-30, decision 2; spec section 5; running since
+  2026-10-31): an engine plugin is a library the engine's launcher loads into the
+  engine's own process (`multiengine --family <id> --family-sha256 <hex>`), never
+  into the server; the server runs that process as it runs every engine (its job
+  object or process group, its closed environment, standard I/O only). It is
+  trusted as any plugin is - make's record, a trusted key's signature, or the
+  owner's approval of the SHA-256s of its manifest and every file it names - and
+  only one that is on when the server starts is one of its families
+  (`engine_families`), read before the cards (beside `models.default_engine`), so a
+  card naming one that is not on is refused at the start. Its manifest's engine
+  block makes the family's descriptor from the server's closed lists (a reviewed
+  renderer and tokenizer mode, a wire dialect, value kinds): it never widens the
+  environment allowlist, control-token refusal, the limits, the listener or the
+  key. Its engine gets only the flags its manifest declares, each checked by kind
+  and bound (a card's `engine.args` and the page's options alike), and the
+  server's own (`--serve`, `--gpu`, `--native`); each file a `gguf_file` flag
+  names is held to the model folders' rule at each start. The server hands the
+  launcher the library's SHA-256 as it was trusted; the launcher hashes the
+  library it opens (`plugins/<id>/` beside itself) and loads only that one, so a
+  library changed after the server started does not run. **What its code does is
+  not confined** beyond the engine's own limits: approving an engine plugin is
+  trusting its publisher with what the engine can reach - the model files, the
+  GPU, what the server's user can read - as a tool plugin's approval is, and the
+  Plugins tab says a code plugin runs with the server's rights. Residual: the
+  launcher checks only the library itself when it loads it - another file the
+  manifest names (a library it loads in turn) is checked when the server starts
+  and not again - and a card whose `engine.executable` is another launcher loads
+  that launcher's `../plugins/<id>/` library (still only one with the approved
+  SHA-256); such a card is the owner's own file, since the page's cards start
+  `models.default_engine` (`an_installs_engine_plugins_that_are_on_are_its_families`,
+  `an_engine_plugins_card_starts_through_the_launcher`,
+  `a_card_of_an_engine_plugin_that_is_not_on_is_refused`,
+  `its_card_starts_through_the_launcher`).
 - Remote command execution is absent. MCP and tool execution are only the
   tool plugins' (above), which no request, model, card or configuration key
   can add; a card or a request can only turn tools off. A notifier plugin
@@ -1113,9 +1146,9 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`; as a plugin,
   the server's events (an event names a card or a model and what happened,
   never a path, a prompt or a key); what it answers is shown as text, cut at
   400 characters (`a_notifier_plugin_hears_the_start_and_answers_a_test`). An
-  engine plugin runs nothing yet: enabling one requires its own reviewed step,
-  and none can be enabled through a model manifest, HTTP request, or
-  unrecognized configuration key.
+  engine plugin's code runs only in its engine's process (above), and only one
+  trusted as above: a model manifest, a card, a chat request or an unrecognized
+  configuration key cannot add one.
 
 ## Out of scope and residual risks
 

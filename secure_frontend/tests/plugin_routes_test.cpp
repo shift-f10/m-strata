@@ -161,8 +161,8 @@ void approval_and_switching_are_kept() {
   expect(!f.logged.empty() && f.logged.back().find("debugging") != std::string::npos, "the server log says so");
 }
 
-// Refusals say why: no such plugin; one that waits cannot be switched; one of a kind this server does not run yet can be
-// approved but not turned on; a trusted one is not approved again; a body that is not one; a choices file that is not one.
+// Refusals say why: no such plugin; one that waits cannot be switched; a trusted one is not approved again; a body that is
+// not one; a choices file that is not one. (Every kind runs: a notifier and an engine plugin are approved and turned on.)
 void refusals_say_why() {
   Fixture f;
   const auto refused = [&f](const RouteId route, const std::string& body, const std::string& why) {
@@ -174,7 +174,9 @@ void refusals_say_why() {
   expect(f.post(RouteId::strata_plugins_approve, R"({"id":"mailer"})").status == 200, "a notifier plugin can be approved");
   expect(f.post(RouteId::strata_plugins_switch, R"({"id":"mailer","on":true})").status == 200, "and turned on: notifiers run");
   expect(f.post(RouteId::strata_plugins_approve, R"({"id":"acme"})").status == 200, "an engine plugin can be approved");
-  refused(RouteId::strata_plugins_switch, R"({"id":"acme","on":true})", "does not run engine plugins yet");
+  const auto engine_on = f.post(RouteId::strata_plugins_switch, R"({"id":"acme","on":true})");
+  expect(engine_on.status == 200 && has(engine_on, R"("id":"acme","state":"on","restart_needed":true)"),
+         "and turned on: its family runs from the next start: " + shown(engine_on));
   expect(f.post(RouteId::strata_plugins_approve, R"({"id":"debugging"})").status == 200, "approved");
   refused(RouteId::strata_plugins_approve, R"({"id":"debugging"})", "already");
   expect(f.post(RouteId::strata_plugins_approve, "{}").status == 400 && f.post(RouteId::strata_plugins_switch, R"({"id":"debugging"})").status == 400 &&

@@ -73,7 +73,8 @@ struct PluginEntry final {
   std::string reason;                      // refused, changed or waiting: why, in words
 };
 
-// The kinds this server runs (more as their phases land).
+// The kinds this server runs: all four, an engine plugin's as the family its manifest makes (install_plugins.hpp,
+// engine_families). A kind a later manifest schema adds would not run until this server does.
 [[nodiscard]] bool plugin_kind_runs(PluginKind kind) noexcept;
 
 // Every plugin in `plugins_dir`, by id; an entry that is not a folder holding a plugin.json is not one. The keys trusted:

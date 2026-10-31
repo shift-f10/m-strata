@@ -280,6 +280,33 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z80 (Windows box; owner-directed)
+
+Phase 2's second step, its third part (the owner: "Yes, go on"): the server runs the families of its engine plugins that
+are on (spec section 5, "As built ... third part"; threat model, "Engine plugins").
+- **The registry**: `plugin_kind_runs` takes the engine kind, so an engine plugin is on, off, waiting or changed (no
+  longer refused for its kind); the Plugins tab and the TUI approve it and switch it, from the next start.
+- **Its families**: `engine_families(InstallPlugins)` (install_plugins.hpp) - each engine plugin that is on, its manifest
+  and its library's SHA-256 (`engine_library_file`, plugin_manifest.hpp, shared with the manifest reader). The server's
+  `start_plugins` hands them to `set_plugin_families` and logs each ("the Acme-3 engine family (acme3) is on").
+- **Before the cards**: the launcher's run and `--check` read the plugins beside models.default_engine
+  (`plugin_rows`: `card_less_server_config`'s validated main rows) before the cards; without models.default_engine,
+  after them as before. A card's unknown family is refused with `family_choices()` (the plugins that are on included).
+- **Tests**: install plugins 1 (approved, off, on again, its library changed); the registry's and the routes' kind checks
+  now expect an engine plugin to run; the launcher 2 (a first-party engine plugin's card listed, started through the
+  launcher's arguments and answering; a waiting plugin's card refused at the start, the other card served); the
+  harness's `ServerOptions::default_engine`.
+- **Proof**: RED against a stub `engine_families` and the registry as it was: 14 failures in 4 cases (the install's
+  families, the registry's and the routes' kind checks, the launcher's start); the waiting plugin's refusal passes before
+  and after (a guard). Then GREEN, after the start's test card was given its max_context row (a card offers the
+  options its file lists; RED had refused the card itself, before any option).
+  - Windows (MSVC, the shares tree, everything built, no warnings): the whole suite 1530 of 1532 (the two release-only
+    cases).
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc 1580/1584 and full-clang 1579/1584 (the two
+    release-only cases; net01_ipv6_loopback_listener_only, egress_table_scan_during_lifecycle and, once on clang,
+    a_card_started_without_web_search_never_searches pass alone - the web search and launcher suites then passed three
+    times under -j 8), window-gcc Release 1537/1539 (net01_workers_add_no_listener and egress pass alone).
+
 ### Claude Code session, 2026-10-31 z79 (Windows box; owner-directed)
 
 Phase 2's second step, its second part (the owner: "Yes, go on"): a plugin card's start, its calibration and its Monitor

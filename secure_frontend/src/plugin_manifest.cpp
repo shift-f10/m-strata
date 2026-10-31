@@ -692,7 +692,7 @@ std::variant<PluginEngine, std::string> parse_engine(const JsonValue& block, con
   }
   PluginEngine engine;
   // its library: the file the launcher loads
-  const std::string library = kPlatform == "windows" ? "multiengine_" + id + ".dll" : "libmultiengine_" + id + ".so";
+  const std::string library = engine_library_file(id);
   if (std::find(files.begin(), files.end(), library) == files.end()) {
     return "files must name its engine library, " + library + " (the file the engine's launcher loads)";
   }
@@ -954,6 +954,10 @@ std::string_view plugin_kind_name(const PluginKind kind) noexcept {
     if (value == kind) return name;
   }
   return "diagnostics";  // unreachable: every kind is in kKinds
+}
+
+std::string engine_library_file(const std::string_view id) {
+  return kPlatform == "windows" ? "multiengine_" + std::string{id} + ".dll" : "libmultiengine_" + std::string{id} + ".so";
 }
 
 std::string_view diagnostic_switch_name(const DiagnosticSwitch value) noexcept {

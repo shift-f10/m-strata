@@ -24,6 +24,18 @@ InstallPlugins install_plugins(const std::filesystem::path& engine_folder, const
   return plugins;
 }
 
+std::vector<PluginFamilySource> engine_families(const InstallPlugins& plugins) {
+  std::vector<PluginFamilySource> families;
+  for (const auto& entry : plugins.entries) {
+    if (entry.state != PluginState::on || !entry.manifest || entry.manifest->kind != PluginKind::engine || !entry.manifest->engine) continue;
+    // its library as the registry hashed it, the SHA-256 its trust holds (the manifest reader made sure it is listed)
+    const auto library = entry.pin.files.find(engine_library_file(entry.id));
+    if (library == entry.pin.files.end()) continue;
+    families.push_back(PluginFamilySource{.manifest = *entry.manifest, .library_sha256 = library->second});
+  }
+  return families;
+}
+
 std::vector<PluginProgram> plugin_programs(
     const InstallPlugins& plugins, const PluginKind kind, const PluginSettingsConfig& config,
     const std::optional<std::filesystem::path>& secret_dir,

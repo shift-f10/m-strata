@@ -6,6 +6,7 @@
 // Debugging plugin turns on; strata-window and strata-tui ask before they start a server while it is on.
 
 #include "secure_frontend/frontend_config.hpp"
+#include "secure_frontend/plugin_family.hpp"
 #include "secure_frontend/plugin_registry.hpp"
 
 #include <filesystem>
@@ -31,6 +32,11 @@ struct InstallPlugins final {
 // so make's record alone decides a first-party plugin). An unreadable choices file lets nothing run.
 [[nodiscard]] InstallPlugins install_plugins(const std::filesystem::path& engine_folder,
                                              const std::optional<std::filesystem::path>& state_dir);
+
+// The engine plugins that are on, as the families the server runs (plugin spec section 5; set_plugin_families takes
+// them): each one's manifest and its library's SHA-256 - engine_library_file's, as it was hashed and trusted - in the
+// plugins' order. A plugin waiting for approval, turned off, changed since it was approved or refused makes none.
+[[nodiscard]] std::vector<PluginFamilySource> engine_families(const InstallPlugins& plugins);
 
 // A tool's or notifier's program as the server runs it (plugin spec section 10): its file in its folder, its arguments
 // and environment filled in from its settings - each value as the config holds it, or its default - with a secret read

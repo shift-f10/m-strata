@@ -105,6 +105,9 @@ struct ServerOptions final {
   // file gets models.cards, and the model flags (--expert, --profile, --models-root,
   // --tokenizer-pack, --engine, --model-id, --engine-arg) are left out: the cards hold them.
   std::vector<CardOptions> model_cards{};
+  // Launcher mode: models.default_engine names the engine copy, the engine the page's cards start (an engine plugin's
+  // cards: the server reads the plugins beside it before the cards).
+  bool default_engine{false};
   // Web search: the expert launch's pack is the byte pack with Qwen's reasoning and tool tags (tool_byte_tokenizer).
   bool tool_tokenizer{false};
   // Plugins (owner 2026-10-30): each manifest as <root>/plugins/<id>/plugin.json, beside the engine's folder as make

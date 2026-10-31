@@ -181,8 +181,8 @@ void refusals_say_why() {
   refused("shared", "other users");
   expect(entries.size() == 6U && entry_of(entries, "empty") == nullptr && entry_of(entries, "stray.txt") == nullptr,
          "only folders with a plugin.json: " + std::to_string(entries.size()));
-  // a tool or notifier plugin runs once approved (the owner's decision 7, plugin spec section 10), its file hashed; a
-  // kind this server does not run yet (an engine, until its phases) is refused even when trusted
+  // a tool or notifier plugin runs once approved (the owner's decision 7, plugin spec section 10), its file hashed; so
+  // does an engine plugin, its family the server's from its next start (spec section 5)
   secure_frontend::PluginChoices choices;
   const auto* search = entry_of(entries, "search");
   const auto* mailer = entry_of(entries, "mailer");
@@ -199,13 +199,13 @@ void refusals_say_why() {
   const auto* notifier = entry_of(approved, "mailer");
   expect(notifier != nullptr && notifier->state == secure_frontend::PluginState::on, "a notifier plugin runs once approved: " + state_of(notifier));
   const auto* engine = entry_of(approved, "acme4");
-  expect(engine != nullptr && engine->state == secure_frontend::PluginState::refused && engine->reason.find("engine") != std::string::npos,
-         "an engine plugin does not run yet: " + state_of(engine));
+  expect(engine != nullptr && engine->state == secure_frontend::PluginState::on && engine->reason.empty(),
+         "an engine plugin runs once approved: " + state_of(engine));
   expect(secure_frontend::plugin_kind_runs(secure_frontend::PluginKind::diagnostics) &&
              secure_frontend::plugin_kind_runs(secure_frontend::PluginKind::tool) &&
              secure_frontend::plugin_kind_runs(secure_frontend::PluginKind::notifier) &&
-             !secure_frontend::plugin_kind_runs(secure_frontend::PluginKind::engine),
-         "the kinds that run");
+             secure_frontend::plugin_kind_runs(secure_frontend::PluginKind::engine),
+         "the kinds that run: all four");
 }
 
 // The owner's choices file round-trips, and anything else is refused.

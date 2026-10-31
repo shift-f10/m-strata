@@ -100,7 +100,8 @@ std::variant<ModelCard, ConfigErrors> parse_model_card(const std::string_view te
       const auto* value = member.value.if_string();
       if (const auto* family = value != nullptr ? family_named(*value) : nullptr) card.profile = family->profile;
       else {
-        add(errors, "profile", ConfigIssueCode::invalid_value, "must be qwen, gemma4, glm53, deepseek, raon1, flint or minimax");
+        // the built-in families, then the engine plugins' that are on (a plugin's that is not is no family here)
+        add(errors, "profile", ConfigIssueCode::invalid_value, "must be " + family_choices());
       }
       profiled = true;
     } else if (member.key == "source") {

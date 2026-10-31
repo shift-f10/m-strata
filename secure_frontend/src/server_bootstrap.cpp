@@ -329,15 +329,43 @@ void warn_of_network_shares(const FrontendConfig& config) {
                "off in Settings > Model folders when you do not need it.\n";
 }
 
-// What runs is decided when the server starts (owner 2026-10-30; install_plugins.hpp): the install's plugins beside the
-// engine, each with its state, and from here on what the Debugging plugin turns on (the logging rows a config leaves
-// unset).
-secure_frontend::InstallPlugins start_plugins(const FrontendConfig& config) {
+// The install's plugins beside the engine, each with its state, as `config` places them (install_plugins.hpp).
+secure_frontend::InstallPlugins read_plugins(const FrontendConfig& config) {
   const auto engine = config.models.default_engine.value_or(config.engine.executable.path());
-  auto plugins = secure_frontend::install_plugins(engine.parent_path(), config.roots.state);
+  return secure_frontend::install_plugins(engine.parent_path(), config.roots.state);
+}
+
+// The families this server runs (plugin spec section 5): its engine plugins that are on, each saying so.
+void run_engine_families(const secure_frontend::InstallPlugins& plugins, const bool say) {
+  auto families = secure_frontend::engine_families(plugins);
+  if (say) {
+    for (const auto& family : families) {
+      std::cerr << "[strata] plugins: the " << family.manifest.name << " engine family (" << family.manifest.id
+                << ") is on: its cards start through the engine's launcher\n";
+    }
+  }
+  secure_frontend::set_plugin_families(std::move(families));
+}
+
+// What runs is decided when the server starts (owner 2026-10-30; install_plugins.hpp): the install's plugins beside the
+// engine, each with its state; the engine plugins' families; and from here on what the Debugging plugin turns on (the
+// logging rows a config leaves unset).
+secure_frontend::InstallPlugins start_plugins(const FrontendConfig& config) {
+  auto plugins = read_plugins(config);
+  run_engine_families(plugins, true);
   const auto on = secure_frontend::diagnostics_on(plugins.entries);
   secure_frontend::set_debugging_logs({.requests = on.log_requests, .engine_output = on.log_engine_output});
   return plugins;
+}
+
+// The main config's own rows, with models.default_engine as its engine (card_less_server_config), when it has one: the
+// plugins beside that engine are read before the cards, since a card names an engine plugin's family by its id. A
+// config without models.default_engine reads them beside its first card's engine, after its cards, so none of its
+// cards may name a plugin's family.
+std::shared_ptr<const FrontendConfig> plugin_rows(const secure_frontend::FrontendConfigDraft& main) {
+  auto rows = secure_frontend::card_less_server_config(main);
+  auto* valid = std::get_if<secure_frontend::ValidatedConfig>(&rows);
+  return valid == nullptr ? nullptr : valid->shared();
 }
 
 // Owner 2026-10-29, then 2026-10-30 as a plugin: while the Debugging plugin is on, every start says what it logs and where
@@ -647,6 +675,8 @@ std::optional<UsableCards> usable_cards(const secure_frontend::FrontendConfigDra
 }
 
 int launcher_check_impl(const secure_frontend::FrontendConfigDraft& main, const std::vector<std::string>& overridden) {
+  // the families its cards may name, as a start would run them (nothing written: no old choice handed on)
+  if (const auto rows = plugin_rows(main)) run_engine_families(read_plugins(*rows), false);
   const auto usable = usable_cards(main);
   if (!usable) return EXIT_FAILURE;
   const FrontendConfig& config = *usable->server;
@@ -845,13 +875,23 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
                       const secure_frontend::OldPluginChoices& old) {
   // Ruling T13-c: server-grade process defaults (idempotent).
   secure_frontend::install_process_defaults();
+  // the plugins before the cards, which may name an engine plugin's family (plugin_rows); else after them
+  std::optional<secure_frontend::InstallPlugins> started;
+  if (const auto rows = plugin_rows(main)) {
+    if (!state_dir_is_usable(*rows)) return EXIT_FAILURE;
+    hand_old_choices(*rows, old);
+    started = start_plugins(*rows);
+  }
   auto usable = usable_cards(main);
   if (!usable) return EXIT_FAILURE;
   const std::shared_ptr<const FrontendConfig> server_config = usable->server;
   const FrontendConfig& config = *server_config;
   if (!state_dir_is_usable(config)) return EXIT_FAILURE;
-  hand_old_choices(config, old);
-  const secure_frontend::InstallPlugins plugins = start_plugins(config);
+  if (!started) {
+    hand_old_choices(config, old);
+    started = start_plugins(config);
+  }
+  const secure_frontend::InstallPlugins plugins = std::move(*started);
   if (const auto issues = secure_frontend::create_runtime_roots(config); !issues.empty()) {
     for (const auto& issue : issues) std::cerr << "Configuration error: " << secure_frontend::format_issue(issue) << '\n';
     return EXIT_FAILURE;

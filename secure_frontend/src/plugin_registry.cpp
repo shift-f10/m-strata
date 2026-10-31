@@ -120,7 +120,8 @@ std::string_view plugin_state_name(const PluginState state) noexcept {
 }
 
 bool plugin_kind_runs(const PluginKind kind) noexcept {
-  return kind == PluginKind::diagnostics || kind == PluginKind::tool || kind == PluginKind::notifier;
+  // an engine plugin since its family runs (plugin spec section 5: the server's families, its cards through the launcher)
+  return kind == PluginKind::diagnostics || kind == PluginKind::tool || kind == PluginKind::notifier || kind == PluginKind::engine;
 }
 
 std::string render_plugin_choices(const PluginChoices& choices) {

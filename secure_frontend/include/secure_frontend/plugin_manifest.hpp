@@ -41,6 +41,9 @@ namespace secure_frontend {
 
 enum class PluginKind { engine, tool, notifier, diagnostics };
 [[nodiscard]] std::string_view plugin_kind_name(PluginKind kind) noexcept;
+// An engine plugin's library on this platform, the file the engine's launcher loads: multiengine_<id>.dll on Windows,
+// libmultiengine_<id>.so on Linux.
+[[nodiscard]] std::string engine_library_file(std::string_view id);
 
 // What a diagnostics plugin turns on while it is on (what a `--debugging` build did): one log line per request, the
 // engine's own output in the log, and Settings > Troubleshooting.
