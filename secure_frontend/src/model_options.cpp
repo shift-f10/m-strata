@@ -799,6 +799,17 @@ std::optional<ModelOptionValue> remembered_value(const JsonValue& json) {
 
 }  // namespace
 
+std::string option_values_json(const ModelOptionValues& values) {
+  std::string out = "{";
+  for (const auto& [name, value] : values) {
+    if (out.size() > 1U) out += ',';
+    append_json_string(&out, name);
+    out += ':';
+    append_value(out, value, true);
+  }
+  return out + "}";
+}
+
 std::string option_value_label(const ModelOptionSpec& spec, const std::int64_t value) {
   if (value == 0 && !spec.zero_label.empty()) return std::string{spec.zero_label};
   if (value > 0 && value % 1048576 == 0) return std::to_string(value / 1048576) + "M";

@@ -110,6 +110,8 @@ void apply_option_values(EngineProfile profile, const ModelOptionValues& values,
 // default, min and max (integer kinds and decimal), choices (choice), and value (from
 // `values`, else the default).
 [[nodiscard]] std::string describe_options_json(const std::vector<ModelOptionLimits>& limits, const ModelOptionValues& values);
+// Option values as one JSON object, {"<name>": <value>, ...} (a decimal keeps its decimal point).
+[[nodiscard]] std::string option_values_json(const ModelOptionValues& values);
 
 // D7: the remembered options file under roots.state, {"<card name>": {"<option>": value}}.
 // Rendering is strict JSON with a final newline. Parsing is lenient by design: a file that is

@@ -389,6 +389,31 @@ void a_start_says_its_phase_and_time_and_a_failure_its_code() {
   expect(server->wait_exit(std::chrono::seconds(20)) == std::optional<int>{0}, "a clean exit");
 }
 
+// The owner's external client (2026-10-31, gap O3: "GET /v1/strata/config -> 405 ... A read endpoint would let the
+// operator console display active defaults (thinking/temperature)"): GET /v1/strata/config reads the settings, and names
+// the running model with the option values its start used (its defaults where the start named none); null while none
+// runs.
+void the_settings_say_the_running_models_values() {
+  auto server = ServerProcess::start(two_cards());
+  expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots");
+  if (!server) return;
+  const auto idle = call(*server, "GET", "/v1/strata/config");
+  expect(idle && idle->status == 200 && idle->body.find("\"settings\":[") != std::string::npos &&
+             idle->body.find("\"running\":null") != std::string::npos,
+         "a GET reads the settings; nothing runs: " + shown(idle));
+  const auto started = call(*server, "POST", "/v1/strata/models/start", R"({"name":"Beta","options":{"temperature":0.3}})");
+  expect(started && started->status == 202 && wait_for_card(*server, "Beta", "running"), "Beta runs: " + shown(started));
+  const auto read = call(*server, "GET", "/v1/strata/config");
+  const auto at = read ? read->body.find("\"running\":{\"name\":\"Beta\",\"options\":{") : std::string::npos;
+  const std::string running = at == std::string::npos ? std::string{} : read->body.substr(at, read->body.find('}', at) - at);
+  // (this fixture's Qwen card has no Thinking option - its test tokenizer has no thinking tags - so a default the start
+  // did not name is its top_p)
+  expect(!running.empty() && running.find("\"temperature\":0.3") != std::string::npos && running.find("\"top_p\":0.95") != std::string::npos,
+         "the running model, the temperature its start named and a default it did not: " + shown(read));
+  server->stop(ServerProcess::Stop::ctrl_break);
+  expect(server->wait_exit(std::chrono::seconds(20)) == std::optional<int>{0}, "a clean exit");
+}
+
 void start_refusals_name_the_problem() {
   auto server = ServerProcess::start(two_cards({"--ready-delay-ms=1500"}));
   expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots");
@@ -1989,6 +2014,7 @@ int main(int argc, char** argv) {
       {"failed_start_keeps_the_server_usable", failed_start_keeps_the_server_usable},
       {"start_refusals_name_the_problem", start_refusals_name_the_problem},
       {"a_start_says_its_phase_and_time_and_a_failure_its_code", a_start_says_its_phase_and_time_and_a_failure_its_code},
+      {"the_settings_say_the_running_models_values", the_settings_say_the_running_models_values},
       {"options_are_remembered", options_are_remembered},
       {"models_start_and_control_off", models_start_and_control_off},
       {"experts_show_as_soon_as_a_model_runs", experts_show_as_soon_as_a_model_runs},

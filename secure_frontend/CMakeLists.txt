@@ -1977,7 +1977,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_test_paths(secure_frontend_model_launcher_tests)
     secure_frontend_add_cases(secure_frontend_model_launcher_tests
         launcher_boots_idle_and_starts_a_card a_card_reads_pictures_with_its_encoder switch_waits_for_the_generation_then_swaps failed_start_keeps_the_server_usable
-        start_refusals_name_the_problem a_start_says_its_phase_and_time_and_a_failure_its_code options_are_remembered models_start_and_control_off
+        start_refusals_name_the_problem a_start_says_its_phase_and_time_and_a_failure_its_code the_settings_say_the_running_models_values options_are_remembered models_start_and_control_off
         bad_card_refused_at_boot_and_main_rows_refused experts_show_as_soon_as_a_model_runs
         downloads_serve_the_catalog_and_load_download_cards
         cards_can_be_added_while_serving page_cards_can_be_replaced_and_removed a_gguf_card_reads_its_tokenizer_from_the_gguf
@@ -2265,6 +2265,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_config_routes_tests
         the_settings_are_listed_with_their_rules a_save_is_held_to_the_start_up_rules the_key_is_rotated_in_its_store
         troubleshooting_is_offered_only_in_a_debugging_build the_boot_start_is_said_with_the_settings
+        the_running_models_values_are_said_with_the_settings
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # strata-window's portable half (spec 2026-10-28-server-window-design, Part 2), the server child driven with a fake

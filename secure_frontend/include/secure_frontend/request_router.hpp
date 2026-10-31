@@ -118,8 +118,9 @@ inline constexpr std::array<RouteEntry, 3> kSearchRoutes{{
 }};
 // The page's Settings tab (spec 2026-10-28-server-window-design, Part 1): the server's settings - read, save - and the API
 // key rotated in its store. Served with models.control (every build); keyed; POST, small JSON bodies.
-inline constexpr std::array<RouteEntry, 3> kConfigRoutes{{
+inline constexpr std::array<RouteEntry, 4> kConfigRoutes{{
     {"POST", "/v1/strata/config", false, RouteId::strata_config},
+    {"GET", "/v1/strata/config", false, RouteId::strata_config},  // the owner's external client (2026-10-31, gap O3)
     {"POST", "/v1/strata/config/settings", false, RouteId::strata_config_settings},
     {"POST", "/v1/strata/key/rotate", false, RouteId::strata_key_rotate},
 }};
