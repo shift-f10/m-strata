@@ -280,6 +280,20 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### 2026-10-31 z91 (Windows box; owner-directed)
+
+This PC caught up with z87's rewrite, and the owner said to push both lines ("push both when ready").
+- **main:** its three commits after `e23c4ab` were moved onto GitHub's rewritten main as z87 says (`git rebase --onto
+  origin/main e23c4ab main`) and lost their trailers; the code is byte for byte what was tested (only the rule files,
+  the commit-ID map and this handoff differ from the old tip `535da84`). Pushed as a fast-forward: `d954354..bcbcbd4`.
+- **plugins:** its 48 commits after the split point `528ee32` (now `60de4e5`) were moved onto `60de4e5` the same way and
+  lost their trailers; each new commit has its original's tree, author and dates (checked pair by pair), the tip's
+  tree is the old tip's (`f6c95a8` became `0512d7f`), and it shares main's root. It then took z87's two commits (the
+  no-agent-credit rule and the commit-ID map), so its CLAUDE.md, AGENTS.md and briefs say what main's do. Pushed, on
+  the owner's word, as its own GitHub branch `plugins` - never into `main`.
+- **Entries renumbered:** this PC's 2026-10-31 entries after z86 are z88-z90 (the RTX 5090 PC's z87 came between), in
+  z87's heading style.
+
 ### 2026-10-31 z90 (Windows box; owner-directed)
 
 Pinned and hot models, part 6 (spec part 6, "As built"): the Windows start, and Settings' Start at boot. The owner, on
