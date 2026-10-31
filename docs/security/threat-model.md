@@ -44,6 +44,14 @@ Trust boundaries:
   `--listen`/configuration opt-in.
 - Wildcard addresses (`0.0.0.0` and `::`) require a second, distinct opt-in;
   selecting a remote listener alone must never expose every interface.
+- The Host check (DNS rebinding): a request's Host must be the bound address with its port, `localhost:<port>` on a
+  loopback bind, or a listed alias (`listener.host_aliases`); its Origin, when sent, that name's `http://` origin or a
+  listed CORS origin. Since 2026-10-31 (the owner, on an Azure VM: "I am getting request origin not allowed") a
+  wildcard bind also takes its own loopback names - `127.0.0.1:<port>` (`[::1]:<port>` for `::`) and `localhost:<port>`,
+  where its TUI and window reach it, which it had refused - and an alias written without a port also names the
+  listener's port, as a browser sends it. A page on any other name, a rebinding attacker's, is still refused, and a
+  wildcard bind always needs the key (`loopback_without_key` is refused there)
+  (`a_wildcard_bind_takes_its_loopback_names_and_bare_aliases`).
 - Every API route, including health and model discovery, requires a non-empty
   bearer token by default. A token must be generated with a cryptographically
   secure RNG, never logged, and compared in constant time.

@@ -1425,7 +1425,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_http_policy_tests tests/http_policy_test.cpp secure_frontend_http_policy
         secure_frontend_api_core secure_frontend_config secure_frontend_http_request_handler)
     secure_frontend_add_cases(secure_frontend_http_policy_tests
-        web01_host_matrix web02_host_name_case_is_folded web03_origin_matrix web06_preflight_rules_unit cors_and_alias_grammar)
+        web01_host_matrix web02_host_name_case_is_folded web03_origin_matrix web06_preflight_rules_unit cors_and_alias_grammar
+        a_wildcard_bind_takes_its_loopback_names_and_bare_aliases)
 
     secure_frontend_add_test_executable(secure_frontend_http_parser_tests tests/http_parser_test.cpp
         secure_frontend_api_core secure_frontend_http_request_handler)
