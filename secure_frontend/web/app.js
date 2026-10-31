@@ -1496,6 +1496,12 @@
     // Owner 2026-10-28: the card can be taken off the list, its files kept - the running one too (stopped first)
     $("model-remove-box").hidden = !pageCard;
     $("model-remove").disabled = launcher.acting || card.state === "starting" || card.state === "calibrating";
+    // Owner 2026-10-31: the card that starts with the server, one at a time (pinning one moves the pin)
+    var pinned = card.pinned === true;
+    $("model-pin-note").textContent = pinned ? "This model starts whenever the server starts."
+                                             : "Start this model whenever the server starts. One model is pinned at a time.";
+    $("model-pin").textContent = pinned ? "Unpin" : "Pin";
+    $("model-pin").disabled = launcher.acting;
     var inUse = card.state === "running" || card.state === "starting" || d.running === card.name;
     $("model-delete").disabled = inUse || launcher.acting;
     $("model-delete").title = inUse ? "Stop the model first" : "";
@@ -1699,7 +1705,7 @@
       row.setAttribute("aria-pressed", card.name === launcher.selected ? "true" : "false");
       var text = el("span", "model-row__text");
       text.appendChild(el("span", "model-row__name", card.name));
-      text.appendChild(el("span", "muted small", profileText(card.profile)));
+      text.appendChild(el("span", "muted small", profileText(card.profile) + (card.pinned === true ? " \u00b7 starts with the server" : "")));
       row.appendChild(text);
       row.appendChild(stateBadge(card.state));
       row.addEventListener("click", function () {
@@ -1711,6 +1717,40 @@
       list.appendChild(row);
     });
     renderDetail(findCard(launcher.selected), rebuild || launcher.formFor !== launcher.selected);
+    renderStartup();
+  }
+
+  // Owner 2026-10-31 ("pin a model to start at startup in the settings"): Settings' choice is the Models tab's pin, by name.
+  function renderStartup() {
+    var box = $("startup-settings");
+    var d = launcher.data;
+    box.hidden = !launcher.enabled || !d;
+    if (box.hidden) { return; }
+    var select = $("startup-card");
+    if (document.activeElement === select) { return; }   // the owner is choosing
+    var cards = cardsOf(d);
+    var pinned = "";
+    cards.forEach(function (card) { if (card.pinned === true) { pinned = card.name; } });
+    clear(select);
+    var none = el("option", "", "None: the server starts with no model");
+    none.value = "";
+    select.appendChild(none);
+    cards.forEach(function (card) {
+      var option = el("option", "", card.name);
+      option.value = card.name;
+      select.appendChild(option);
+    });
+    select.value = pinned;
+  }
+  async function saveStartup() {
+    var name = $("startup-card").value;
+    var box = $("startup-error");
+    box.hidden = true;
+    var answer = await downloadsAnswer(api("/v1/strata/models/pin", jsonPost({ name: name === "" ? null : name })));
+    if (answer.signedOut) { return; }
+    if (answer.error) { box.textContent = answer.error; box.hidden = false; return; }
+    toast("success", name === "" ? "No model starts with the server" : name + " starts with the server", "");
+    await refreshLauncher();
   }
 
   function setComposerAvailable(on, text) {
@@ -1729,6 +1769,7 @@
     $("models-subtab-download").hidden = !on && !downloads.enabled;
     if (on) { return; }
     launcher.data = null;
+    $("startup-settings").hidden = true;
     stopLauncherPoll();
     setComposerAvailable(true);
     if (!$("view-models").hidden) { showView("chat"); }
@@ -1738,6 +1779,7 @@
   function setLauncherDenied() {
     launcher.enabled = false;
     launcher.data = null;
+    $("startup-settings").hidden = true;
     stopLauncherPoll();
     setComposerAvailable(true);
     $("tab-btn-models").hidden = false;
@@ -2924,6 +2966,24 @@
     await refreshLauncher();
   }
 
+  // Owner 2026-10-31 ("pin a model to start at startup"): the card the server starts when it starts - one at a time, so
+  // pinning one moves the pin; Unpin leaves none. It changes nothing that runs now.
+  async function pinCard() {
+    var card = findCard(launcher.selected);
+    if (!card) { return; }
+    showStartError("");
+    var pin = card.pinned !== true;
+    launcher.acting = true;
+    renderDetail(card, false);
+    var answer = await downloadsAnswer(api("/v1/strata/models/pin", jsonPost({ name: pin ? card.name : null })));
+    launcher.acting = false;
+    if (answer.signedOut) { return; }
+    if (answer.error) { showStartError(answer.error); await refreshLauncher(); return; }
+    toast("success", pin ? card.name + " starts with the server" : "No model starts with the server",
+          pin ? "Pinning another model moves the pin." : "");
+    await refreshLauncher();
+  }
+
   // Owner 2026-10-28 ("an ability to remove an active model card but not delete files"): the card goes off the list, its
   // model files stay; a running model is stopped first (the server removes the card once it has stopped).
   async function removeCard() {
@@ -3899,6 +3959,8 @@
     $("model-draft-change").addEventListener("click", function () { pointDraft(findCard(launcher.selected)); });
     $("model-delete").addEventListener("click", beginDelete);
     $("model-remove").addEventListener("click", removeCard);
+    $("model-pin").addEventListener("click", pinCard);
+    $("startup-save").addEventListener("click", saveStartup);
     $("model-calibrate").addEventListener("click", calibrateModel);
     $("model-calibrate-cancel").addEventListener("click", cancelCalibration);
     $("model-calibration-auto").addEventListener("change", setAutoRecalibrate);

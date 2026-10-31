@@ -553,6 +553,34 @@ void the_monitor_draws_the_servers_readings() {
   expect(all_text(blank).find("starting") != std::string::npos, "the server's state while it starts");
 }
 
+// Pinned and hot models (owner 2026-10-31, spec part 1): in the Models view p pins the card under the cursor (its name),
+// or unpins it when it is the pinned one (null); the list marks the pinned card and its page says it starts with the server.
+void p_pins_the_card_under_the_cursor() {
+  t::App app(t::Capabilities{}, std::nullopt);
+  app.server_state("http://127.0.0.1:8080", true);
+  app.answer({"models", "GET", "/v1/strata/models", {}}, 200,
+             R"({"object":"list","running":null,"state":"stopped","error":null,"data":[)"
+             R"({"name":"Qwen3.8","profile":"qwen","state":"stopped","error":null,"page_card":true,"options":[],"calibration":null,)"
+             R"("reasoning_effort":true,"pinned":true},)"
+             R"({"name":"Gemma","profile":"gemma4","state":"stopped","error":null,"page_card":true,"options":[],"calibration":null,)"
+             R"("reasoning_effort":true,"pinned":false}]})");
+  (void)app.key(character("2"));
+  expect(app.view() == t::View::models, "2 is the Models view");
+  t::Screen screen(120, 30);
+  app.draw(screen, 0);
+  const std::string shown = all_text(screen);
+  expect(shown.find("Qwen3.8 *") != std::string::npos && shown.find("Gemma *") == std::string::npos &&
+             shown.find("starts with the server") != std::string::npos && shown.find("Pin") != std::string::npos,
+         "the pinned card is marked, its page says so, the keys name p: " + shown.substr(0, 600));
+  auto out = app.key(character("p"));
+  expect(out.requests.size() == 1U && out.requests[0].path == "/v1/strata/models/pin" && out.requests[0].body == R"({"name":null})",
+         "p on the pinned card unpins it: " + (out.requests.empty() ? std::string{} : out.requests[0].body));
+  (void)app.key(plain(t::Key::Kind::down));
+  out = app.key(character("p"));
+  expect(out.requests.size() == 1U && out.requests[0].path == "/v1/strata/models/pin" && out.requests[0].body == R"({"name":"Gemma"})",
+         "p on another card pins it: " + (out.requests.empty() ? std::string{} : out.requests[0].body));
+}
+
 void the_views_switch_and_keys_become_requests() {
   t::App app(t::Capabilities{}, std::nullopt);
   app.server_state("http://127.0.0.1:8080", true);
@@ -1048,6 +1076,7 @@ int main(int argc, char** argv) {
       {"keys_decode_from_vt_sequences", keys_decode_from_vt_sequences},
       {"the_monitor_draws_the_servers_readings", the_monitor_draws_the_servers_readings},
       {"the_views_switch_and_keys_become_requests", the_views_switch_and_keys_become_requests},
+      {"p_pins_the_card_under_the_cursor", p_pins_the_card_under_the_cursor},
       {"settings_are_edited_then_saved", settings_are_edited_then_saved},
       {"a_message_is_shown_whole_before_the_keys", a_message_is_shown_whole_before_the_keys},
       {"downloads_say_what_is_on_this_pc", downloads_say_what_is_on_this_pc},

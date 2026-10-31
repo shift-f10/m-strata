@@ -24,6 +24,7 @@
 #include "secure_frontend/chat_schema.hpp"
 #include "secure_frontend/config.hpp"
 #include "secure_frontend/config_routes.hpp"
+#include "secure_frontend/config_writer.hpp"
 #include "secure_frontend/connection_pool.hpp"
 #include "secure_frontend/crt_environment.hpp"
 #include "secure_frontend/download_catalog.hpp"
@@ -581,7 +582,29 @@ secure_frontend::HttpResponse json_answer(const int status, std::string body) {
 }
 
 secure_frontend::HttpResponse refusal_answer(const secure_frontend::ModelLauncher::Refusal& refusal) {
-  return secure_frontend::make_error_response(refusal.error, {.param = refusal.param});
+  return secure_frontend::make_error_response(refusal.error, {.param = refusal.param, .reason = refusal.reason});
+}
+
+// Pinned and hot models (owner 2026-10-31, spec part 1): POST /v1/strata/models/pin {"name": "<card>"} or {"name": null}.
+secure_frontend::HttpResponse pin_answer(secure_frontend::ModelLauncher& launcher, const std::string_view body) {
+  constexpr secure_frontend::JsonLimits kLimits{.max_bytes = secure_frontend::kModelControlBodyLimit, .max_depth = 2U,
+                                                .max_container_entries = 2U, .max_string_bytes = 256U};
+  const auto parsed = secure_frontend::parse_json(body, kLimits);
+  const auto* root = std::get_if<secure_frontend::JsonValue>(&parsed);
+  if (root == nullptr) return secure_frontend::make_error_response(secure_frontend::ApiError::invalid_json);
+  const auto* members = root->if_object();
+  if (members == nullptr || members->size() != 1U || (*members)[0].key != "name") {
+    return secure_frontend::make_error_response(secure_frontend::ApiError::invalid_request);
+  }
+  const auto& value = (*members)[0].value;
+  std::optional<std::string> name;
+  if (const auto* text = value.if_string()) name = *text;
+  else if (value.kind() != secure_frontend::JsonKind::null) return secure_frontend::make_error_response(secure_frontend::ApiError::invalid_request);
+  if (const auto refused = launcher.pin(name)) return refusal_answer(*refused);
+  std::string text = "{\"pinned\":";
+  if (name.has_value()) secure_frontend::append_json_string(&text, *name);
+  else text += "null";
+  return json_answer(200, text + "}\n");
 }
 
 // POST /v1/strata/models/start: {"name": "<card>", "options": {...}, "calibrate": false} (options optional; calibrate
@@ -913,6 +936,20 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
     facts.gpus = listed->gpus;
     return facts;
   };
+  // Pinned and hot models (owner 2026-10-31, spec part 1): the boot's pin, kept as models.start in the config file the
+  // server started with (none: a pin is refused).
+  launcher_settings.pinned = config.models.start;
+  if (config_file.has_value()) {
+    launcher_settings.save_pin = [file = *config_file](const std::optional<std::string>& name) {
+      return !secure_frontend::update_config_file(file, [&name](secure_frontend::FrontendConfigDraft& draft) {
+                if (name.has_value()) {
+                  draft.entries["models.start"] = secure_frontend::ConfigDraftEntry{*name, secure_frontend::ConfigSource::file};
+                } else {
+                  draft.entries.erase("models.start");
+                }
+              }).has_value();
+    };
+  }
   secure_frontend::ModelLauncher launcher(std::move(launcher_settings));
   // D2: model control for key holders on loopback; remote clients only with models.control_remote, and only from
   // models.control_remote_networks when it lists any (owner 2026-10-27).
@@ -963,6 +1000,11 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
                                                       const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {
       if (!allowed(context)) return secure_frontend::make_error_response(secure_frontend::ApiError::control_not_allowed);
       return calibration_report_answer(launcher, body);
+    };
+    control.pin = [&launcher, allowed](const std::string_view body,
+                                       const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {
+      if (!allowed(context)) return secure_frontend::make_error_response(secure_frontend::ApiError::control_not_allowed);
+      return pin_answer(launcher, body);
     };
   }
   // Model downloads (O1-O4): every transfer and link lookup a `strata` child, the prepare step

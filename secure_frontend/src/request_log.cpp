@@ -19,6 +19,7 @@ std::string_view route_name(const RouteId route) {
     case RouteId::strata_models: return "strata_models";
     case RouteId::strata_start: return "strata_start";
     case RouteId::strata_stop: return "strata_stop";
+    case RouteId::strata_pin: return "strata_pin";
     case RouteId::strata_downloads: return "strata_downloads";
     case RouteId::strata_download_start: return "strata_download_start";
     case RouteId::strata_download_pause: return "strata_download_pause";

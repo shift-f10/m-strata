@@ -1519,7 +1519,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 120)
     secure_frontend_add_test_executable(secure_frontend_api_router_tests tests/api_router_test.cpp secure_frontend_api_router)
     secure_frontend_add_cases(secure_frontend_api_router_tests
-        model_control_routes_need_the_switch_and_the_key model_download_routes_need_the_switch_and_the_key
+        model_control_routes_need_the_switch_and_the_key the_pin_route_reaches_its_handler model_download_routes_need_the_switch_and_the_key
         model_card_routes_need_the_switch_and_the_key calibration_routes_need_their_handlers_and_the_key
         alert_routes_need_their_handler_and_the_key search_routes_need_their_handler_and_the_key
         config_routes_need_their_handler_and_the_key
@@ -1542,7 +1542,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         web_ui_leaves_every_api_route_authenticated web_ui_still_checks_host_and_origin
         web_ui_assets_are_bundled_and_inert keyless_router_answers_without_a_key
         metrics_route_needs_the_key_and_the_switch about_route_needs_the_key_and_answers_its_provider
-        web_ui_has_the_monitor_and_four_thinking_levels the_chat_settings_follow_the_running_card the_page_sends_reasoning_effort_only_where_it_is_taken
+        web_ui_has_the_monitor_and_four_thinking_levels the_chat_settings_follow_the_running_card the_page_sends_reasoning_effort_only_where_it_is_taken the_page_pins_a_card_to_start_at_startup
         web_ui_has_the_models_tab_hidden_until_the_server_offers_it web_ui_models_tab_starts_stops_and_polls
         web_ui_chat_follows_the_running_model web_ui_models_tab_has_a_downloads_section
         web_ui_downloads_profile_picker_and_multipart
@@ -1989,6 +1989,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_calibration_can_be_cancelled
         removing_a_card_removes_its_calibration a_card_short_of_ram_starts_in_the_low_ram_mode a_card_with_room_keeps_its_experts_in_ram a_card_that_fixes_its_experts_flag_keeps_it failures_raise_alerts a_failed_calibration_writes_a_report
         a_stop_waits_for_an_engine_still_ending
+        a_card_is_pinned_and_its_removal_unpins_it a_pinned_card_starts_with_the_server_and_the_pin_is_kept
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
 
     # Model downloads (plan 2026-10-23-model-downloads Task 4): the download manager over a scripted child.
@@ -2270,7 +2271,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_tui_tests tests/tui_test.cpp secure_frontend_tui)
     secure_frontend_add_cases(secure_frontend_tui_tests
         the_screen_draws_text_boxes_and_gauges charts_are_braille_or_blocks only_the_changes_are_written
-        keys_decode_from_vt_sequences the_monitor_draws_the_servers_readings the_views_switch_and_keys_become_requests
+        keys_decode_from_vt_sequences the_monitor_draws_the_servers_readings the_views_switch_and_keys_become_requests p_pins_the_card_under_the_cursor
         settings_are_edited_then_saved a_message_is_shown_whole_before_the_keys quitting_asks_first downloads_say_what_is_on_this_pc a_debugging_build_waits_for_y
         an_uncalibrated_start_asks_to_calibrate_first)
 

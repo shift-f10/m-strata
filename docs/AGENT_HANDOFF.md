@@ -280,6 +280,32 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z83 (Windows box; owner-directed)
+
+Pinned and hot models, part 1 (the owner: "pin a model to start at startup in the settings and an option to make loaded
+models hot ... a prime feature we must have on both main and branch"; his answers: hot = idle unload, paging, crashes and
+restarts; the pin in Settings and on each card; Linux boot start both ways, chosen at install). Spec
+`docs/superpowers/specs/2026-10-31-pinned-and-hot-models-design.md` (parts 1-5; part 1 as built).
+- **The route**: `POST /v1/strata/models/pin` `{"name": "<card>" | null}` (`RouteId::strata_pin`, `ModelControl::pin`,
+  `pin_answer` in server_bootstrap): model control's clients and key; 200 `{"pinned": ...}`, 404 `model_not_found`, 422
+  `settings_refused` with a reason (`ModelLauncher::Refusal::reason`, passed by `refusal_answer` now), 400 for a body
+  that is not one.
+- **The launcher**: `pin()` / `pinned()`; `LauncherSettings::pinned` (the boot's `models.start`) and `save_pin` (the
+  config file, through `update_config_file`; none without a config file); each card's `"pinned"` last in the list;
+  `forget_card` unpins a removed pinned card.
+- **The page**: a card's Start at startup box (Pin / Unpin, toast), "starts with the server" in the list, Settings' Start
+  at startup card (the same route). **The TUI**: `p` on the Models view, `*` in the list, a Startup row, `p Pin` in the
+  keys.
+- **Tests**: the router 1 (keyed, POST, JSON, small, its handler; no route with control off), the launcher 2 (the boot's
+  pin listed, a pin kept first, an unknown card, a pin not kept, removal unpins, null; a pinned card starts with the
+  server, the route moves it in the config file and takes it out, bad bodies), the page 1, the TUI 1.
+- **Not yet** (spec parts 2-5): hot (kept loaded, warmed, restarted), the Linux boot service.
+- **Proof** (main, cherry-picked from plugins 407b4bbf, where the RED and GREEN ran; main's server_bootstrap.cpp gained the
+  config_writer.hpp include plugins already had): MSVC built whole, no warnings, 1432 of 1436 (the two release-only cases
+  and the two Maya parity scans, which need engines/maya-ref, not checked out in main's worktree - as before); Linux gcc
+  13.3 and clang 18.1 built whole with -Werror, no warnings, 1481/1488 and 1483/1488 (the same four; net01_ipv6, net01_workers
+  and egress pass alone).
+
 ### Claude Code session, 2026-10-31 z82 (Windows box; owner-directed)
 
 The owner's client compatibility spec (pasted 2026-10-31, then again for the gemma4 profile; the owner: "make it work for

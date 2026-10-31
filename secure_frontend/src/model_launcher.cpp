@@ -445,6 +445,19 @@ void ModelLauncher::forget_card(const std::string& name) {
     std::filesystem::remove(*settings_.calibration_dir / path_from_utf8(prefill_file_name(name)), ec);
   }
   log("[strata] models: removed " + name);
+  // a removed card that was pinned is unpinned, so the next start names no missing card
+  const std::lock_guard pin_lock(pin_mutex_);
+  {
+    std::lock_guard lock(mutex_);
+    if (settings_.pinned != name) return;
+    settings_.pinned.reset();
+  }
+  if (settings_.save_pin && settings_.save_pin(std::nullopt)) {
+    log("[strata] models: " + name + " was pinned: no card is pinned now");
+  } else {
+    log("[strata] models: " + name + " was pinned, and its pin could not be taken out of the config file: the next start "
+                                     "names no usable card");
+  }
 }
 
 std::optional<ModelLauncher::HeldCard> ModelLauncher::card(const std::string_view name) const {
@@ -452,6 +465,32 @@ std::optional<ModelLauncher::HeldCard> ModelLauncher::card(const std::string_vie
   const auto found = find_card(name);
   if (!found.has_value()) return std::nullopt;
   return HeldCard{settings_.cards[*found], page_card_[*found], status_[*found].state};
+}
+
+// Pinned and hot models (owner 2026-10-31, spec part 1): kept first, then held, one pin at a time - a card removed while
+// it is pinned waits for the pin in hand and then unpins it (forget_card).
+std::optional<ModelLauncher::Refusal> ModelLauncher::pin(const std::optional<std::string>& name) {
+  const std::lock_guard pin_lock(pin_mutex_);
+  if (name.has_value()) {
+    std::lock_guard lock(mutex_);
+    if (!find_card(*name).has_value()) return Refusal{ApiError::model_not_found};
+  }
+  if (!settings_.save_pin) {
+    return Refusal{ApiError::settings_refused, {}, "this server was started without a config file to keep the pin in"};
+  }
+  if (!settings_.save_pin(name)) return Refusal{ApiError::settings_refused, {}, "the pin could not be written to the config file"};
+  {
+    std::lock_guard lock(mutex_);
+    settings_.pinned = name;
+  }
+  log(name.has_value() ? "[strata] models: " + *name + " is pinned: it starts with the server"
+                       : std::string{"[strata] models: no card is pinned: the server starts with none"});
+  return std::nullopt;
+}
+
+std::optional<std::string> ModelLauncher::pinned() const {
+  std::lock_guard lock(mutex_);
+  return settings_.pinned;
 }
 
 std::vector<ModelCard> ModelLauncher::cards() const {
@@ -1621,7 +1660,9 @@ std::string ModelLauncher::list_json() const {
     out += ",\"calibration\":" + calibration_json(i, card, values.empty() ? default_option_values(card) : values);
     // whether a request may name reasoning_effort for this card (the chat schema's own rule): the page omits it where
     // not (owner 2026-10-27, item 46: a GLM card's profile refuses it)
-    out += std::string{",\"reasoning_effort\":"} + (per_request_reasoning_effort_for(card.profile) ? "true" : "false") + "}";
+    out += std::string{",\"reasoning_effort\":"} + (per_request_reasoning_effort_for(card.profile) ? "true" : "false");
+    // the card pinned to start at startup (owner 2026-10-31), last, after the fields the page has read all along
+    out += std::string{",\"pinned\":"} + (settings_.pinned == card.name ? "true" : "false") + "}";
   }
   out += "]}\n";
   return out;

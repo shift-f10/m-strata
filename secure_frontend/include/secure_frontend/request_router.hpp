@@ -21,11 +21,11 @@ namespace secure_frontend {
 // web: one of the built-in page's bundled files (listener.web_ui; web_ui.hpp), public and
 // outside kRouteTable, which stays the authenticated API.
 // strata_models / strata_start / strata_stop: the model launcher's control routes
-// (kModelControlRoutes; plan 2026-10-23 Task 4).
+// (kModelControlRoutes; plan 2026-10-23 Task 4); strata_pin, the card started at startup (owner 2026-10-31).
 // strata_downloads...strata_download_link: the model downloads' routes (kModelDownloadRoutes;
 // plan 2026-10-23-model-downloads Task 4).
 enum class RouteId {
-  health, models, model, chat, other, web, metrics, strata_models, strata_start, strata_stop,
+  health, models, model, chat, other, web, metrics, strata_models, strata_start, strata_stop, strata_pin,
   strata_calibrate, strata_calibrate_cancel, strata_calibrate_auto, strata_calibrate_report,
   strata_downloads, strata_download_start, strata_download_pause, strata_download_cancel, strata_download_link,
   strata_login_link,
@@ -64,10 +64,11 @@ inline constexpr std::array<RouteEntry, 6> kRouteTable{{
 // every server serves).
 // GUI-first start-up (spec 2026-10-27 §5.3): calibrate a card, cancel it, and its "recalibrate when settings change"
 // switch - served only while their handlers are set; and (owner 2026-10-30) a calibration's report for a bug report.
-inline constexpr std::array<RouteEntry, 7> kModelControlRoutes{{
+inline constexpr std::array<RouteEntry, 8> kModelControlRoutes{{
     {"GET", "/v1/strata/models", false, RouteId::strata_models},
     {"POST", "/v1/strata/models/start", false, RouteId::strata_start},
     {"POST", "/v1/strata/models/stop", false, RouteId::strata_stop},
+    {"POST", "/v1/strata/models/pin", false, RouteId::strata_pin},
     {"POST", "/v1/strata/models/calibrate", false, RouteId::strata_calibrate},
     {"POST", "/v1/strata/models/calibrate/cancel", false, RouteId::strata_calibrate_cancel},
     {"POST", "/v1/strata/models/calibrate/auto", false, RouteId::strata_calibrate_auto},
