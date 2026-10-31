@@ -163,14 +163,14 @@ void each_family_lists_its_options() {
     std::vector<std::string_view> flags;
   };
   const std::array<Row, 7> rows{{
-      {EngineProfile::qwen, 19U, "max_context", "gpus",
+      {EngineProfile::qwen, 20U, "max_context", "gpus",
        {"--max-context", "--rope-scaling", "--rope-scale", "--kv", "--kv-resident", "--kv-grow", "--spec", "--spec-min-p", "--expert-cache", "--prefill"}},
-      {EngineProfile::glm53, 10U, "max_context", "gpus", {}},
-      {EngineProfile::gemma4, 14U, "max_context", "gpus", {"--max-context", "--chunk", "--expert-vram", "--spec", "--spec-min-p"}},
-      {EngineProfile::deepseek, 9U, "max_context", "gpus", {"--max-context"}},
-      {EngineProfile::raon1, 10U, "max_context", "gpus", {}},
-      {EngineProfile::flint, 11U, "max_context", "gpus", {"--max-context", "--chunk", "--expert-vram"}},
-      {EngineProfile::minimax, 8U, "max_context", "gpus", {"--max-context", "--kv-cache"}},
+      {EngineProfile::glm53, 11U, "max_context", "gpus", {}},
+      {EngineProfile::gemma4, 15U, "max_context", "gpus", {"--max-context", "--chunk", "--expert-vram", "--spec", "--spec-min-p"}},
+      {EngineProfile::deepseek, 10U, "max_context", "gpus", {"--max-context"}},
+      {EngineProfile::raon1, 11U, "max_context", "gpus", {}},
+      {EngineProfile::flint, 12U, "max_context", "gpus", {"--max-context", "--chunk", "--expert-vram"}},
+      {EngineProfile::minimax, 9U, "max_context", "gpus", {"--max-context", "--kv-cache"}},
   }};
   for (const auto& row : rows) {
     const auto& family = family_descriptor(row.profile);

@@ -280,6 +280,30 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z84 (Windows box; owner-directed)
+
+Pinned and hot models, part 2 (spec part 2, "As built"): Keep loaded.
+- **What idle unload is with cards** (found building it): the server refuses `engine.idle_unload_s` and `engine.lazy_load`
+  with `models.cards` (frontend_config.cpp: the launcher starts and stops each engine); `glm.idle_unload_s` is a main row,
+  refused on any family but GLM-5.3 and raon1. So a card's only idle unload is the GLM engine's.
+- **The option**: `kHot` ("Keep loaded", boolean) in every built-in table after the longest answer and in
+  `server_card_option` (a plugin family gets it after its answer_minutes; a manifest may not declare `hot`); `offer_hot` in
+  the launcher (off unless a card file lists it); `write_option` - on, a GLM-engine card's `glm.idle_unload_s` 0. No Settings
+  row (one tried first was refused at start with cards and came out).
+- **Tests**: the option tables (every family's list, a plugin's), `every_card_offers_keep_loaded`, the card config
+  (`a_card_kept_loaded_never_idle_unloads`: a GLM card's 60 s becomes 0, off keeps it, a qwen card kept loaded validates),
+  the launcher (`a_card_kept_loaded_never_unloads_when_idle`: a card started hot runs, loaded; every card offers it) and
+  each card's offered defaults (`hot=false`).
+- **Proof**: RED with the option's code stashed: every family's option list, the plugin's, the option's own case
+  (Keep loaded and its write on every family), the launcher's start with it on and the card config's (a GLM card's 60 s
+  stays 60 kept loaded) all failed; the first design's Settings row and engine.idle_unload_s write were refused at start
+  with cards, so both came out. Then GREEN.
+  - Windows (MSVC, the shares tree, everything built, no warnings): the whole suite 1542 of 1545 (the two release-only
+    cases and family_descriptor's option counts, raised by one each then and passing whole).
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc 1593/1597 and full-clang 1592/1597 (the two
+    release-only cases; the family descriptor suite built before its count fix, then 8/8 rebuilt; egress and
+    net01_workers_add_no_listener pass alone), window-gcc Release 1551/1552 (egress passes alone).
+
 ### Claude Code session, 2026-10-31 z83 (Windows box; owner-directed)
 
 Pinned and hot models, part 1 (the owner: "pin a model to start at startup in the settings and an option to make loaded

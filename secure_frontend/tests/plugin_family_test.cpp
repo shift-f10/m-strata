@@ -174,7 +174,7 @@ void its_cards_offer_its_options_then_the_servers() {
   const PluginFamily family{acme3(), kSha, static_cast<EngineProfile>(secure_frontend::kFirstPluginProfile)};
   const auto& d = family.descriptor();
   expect(names_of(d) == Strings{"max_context", "expert_vram", "pcie_frac", "cpu_lane", "graph_off", "kv", "temperature", "top_p",
-                                "top_k", "min_p", "answer_minutes", "web_search", "gpus"},
+                                "top_k", "min_p", "answer_minutes", "hot", "web_search", "gpus"},
          "its options: " + joined(names_of(d)));
   const auto spec = [&d](const std::string_view name) {
     const auto found = std::find_if(d.options.begin(), d.options.end(), [name](const auto& each) { return each.name == name; });
@@ -205,13 +205,13 @@ void its_cards_offer_its_options_then_the_servers() {
          "each option's flag");
 
   const PluginFamily beta{manifest_of("beta", "Beta", kBetaEngine), kSha, static_cast<EngineProfile>(secure_frontend::kFirstPluginProfile + 1)};
-  expect(names_of(beta.descriptor()) == Strings{"temperature", "top_p", "answer_minutes"},
+  expect(names_of(beta.descriptor()) == Strings{"temperature", "top_p", "answer_minutes", "hot"},
          "the least plugin: the server's options only (no top_k or min_p, no search, no GPUs): " + joined(names_of(beta.descriptor())));
 }
 
 // A declared option may not take a server option's name: its cards have that one already.
 void a_manifest_may_not_take_a_server_options_name() {
-  for (const std::string name : {"temperature", "top_p", "top_k", "min_p", "answer_minutes", "web_search"}) {
+  for (const std::string name : {"temperature", "top_p", "top_k", "min_p", "answer_minutes", "hot", "web_search"}) {
     std::string engine = kBetaEngine;
     const std::string arguments = R"("arguments": [{"flag": "--max-context", "value": "integer", "min": 1, "max": 65536}])";
     engine.replace(engine.find(arguments), arguments.size(),

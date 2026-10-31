@@ -403,6 +403,15 @@ void write_option(const EngineProfile profile, const std::string_view name, cons
     flags.push_back(std::move(argument));
   };
   const auto integer_or_auto = [integer, text]() { return integer != nullptr ? std::to_string(*integer) : *text; };
+  if (name == "hot") {
+    // every engine (owner 2026-10-31, Keep loaded): with model cards no engine idle-unloads but the GLM engine's, through
+    // its own glm.idle_unload_s (engine.idle_unload_s is refused there: the launcher starts and stops each engine) - on, a
+    // GLM-engine card's is 0 for this start; any other card has none to turn off. Off, the card's own row stands.
+    if (on != nullptr && *on && family.glm_pack_rows) {
+      set_entry(draft, "glm.idle_unload_s", ConfigDraftValue{std::in_place_type<std::int64_t>, 0});
+    }
+    return;
+  }
   if (name == "answer_minutes") {
     // every engine: the card's generation timeout (chat_execution's deadline), never an engine flag
     if (integer != nullptr) {

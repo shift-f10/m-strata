@@ -363,6 +363,33 @@ void a_cards_longest_answer_is_its_generation_timeout() {
          "the card's choice wins over the server's row");
 }
 
+// Pinned and hot models (owner 2026-10-31, spec part 2): with model cards the one idle unload is the GLM engine's - the
+// main config's glm.idle_unload_s, read by a GLM-engine card's start; Keep loaded makes it 0 for that start, and a card of
+// another family kept loaded validates as it is.
+void a_card_kept_loaded_never_idle_unloads() {
+  ConfigFixture f;
+  const auto idle_of = [&f](const ModelCard& card, const secure_frontend::ModelOptionValues& values,
+                            const std::map<std::string, std::string>& main_rows = {}) {
+    const auto result = secure_frontend::card_config(main_draft(f, main_rows), card, values);
+    const auto* validated = std::get_if<secure_frontend::ValidatedConfig>(&result);
+    expect(validated != nullptr, card.name + " validates: " + (validated ? std::string{} : issues_text(std::get<ConfigErrors>(result))));
+    return validated == nullptr ? std::int64_t{-1}
+                                : static_cast<std::int64_t>(validated->get().engine.idle_unload.count());
+  };
+  const auto glm_parsed = secure_frontend::parse_model_card(card_text("GLM-5.3-Flash", "glm53", card_config_object(f)), f.dir);
+  const auto* glm = std::get_if<ModelCard>(&glm_parsed);
+  expect(glm != nullptr, "a GLM card parses: " + (glm ? std::string{} : issues_text(std::get<ConfigErrors>(glm_parsed))));
+  if (glm != nullptr) {
+    const std::map<std::string, std::string> idle{{"glm.idle_unload_s", "60"}};
+    expect(idle_of(*glm, {}, idle) == 60, "as it is, it unloads after the server's 60 idle seconds: " + std::to_string(idle_of(*glm, {}, idle)));
+    expect(idle_of(*glm, {{"hot", true}}, idle) == 0, "kept loaded, never: " + std::to_string(idle_of(*glm, {{"hot", true}}, idle)));
+    expect(idle_of(*glm, {{"hot", false}}, idle) == 60, "Keep loaded off: the server's row stands");
+  }
+  const auto qwen_parsed = secure_frontend::parse_model_card(card_text("Qwen3.8-Flash", "qwen", card_config_object(f)), f.dir);
+  const auto* qwen = std::get_if<ModelCard>(&qwen_parsed);
+  expect(qwen != nullptr && idle_of(*qwen, {{"hot", true}}) == 0, "a qwen card kept loaded validates, and never idle-unloads");
+}
+
 // Model downloads (plan 2026-10-23-model-downloads Task 3): strata's own verbs (pull, hf-info,
 // list) read a models.cards config with models.downloads_root as their store (roots.models), the
 // server's settings from the main config and the first usable card; without the root they refuse.
@@ -401,6 +428,7 @@ int main(int argc, char** argv) {
       {"glm_ram_headroom_reaches_the_engine_environment", glm_ram_headroom_reaches_the_engine_environment},
       {"a_cards_config_keeps_the_servers_engine_output_logging", a_cards_config_keeps_the_servers_engine_output_logging},
       {"a_cards_longest_answer_is_its_generation_timeout", a_cards_longest_answer_is_its_generation_timeout},
+      {"a_card_kept_loaded_never_idle_unloads", a_card_kept_loaded_never_idle_unloads},
       {"launcher_store_config_uses_the_downloads_root", launcher_store_config_uses_the_downloads_root},
   }, failures);
 }

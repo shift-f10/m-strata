@@ -609,6 +609,24 @@ void a_pinned_card_starts_with_the_server_and_the_pin_is_kept() {
   expect(server->wait_exit(std::chrono::seconds(20)) == std::optional<int>{0}, "a clean exit");
 }
 
+// Pinned and hot models (owner 2026-10-31, spec part 2): every card offers Keep loaded, and a card started with it on
+// starts and answers (its start writes no row the server refuses with model cards: never engine.idle_unload_s).
+void a_card_kept_loaded_never_unloads_when_idle() {
+  auto server = ServerProcess::start(two_cards({}, {}, {{"models.control", "true"}, {"listener.monitor", "true"}}));
+  expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots");
+  if (!server) return;
+  const auto hot = call(*server, "POST", "/v1/strata/models/start", R"({"name":"Beta","options":{"hot":true}})");
+  expect(hot && hot->status == 202 && wait_for_card(*server, "Beta", "running"), "Beta runs, kept loaded: " + shown(hot));
+  expect(call(*server, "POST", "/v1/chat/completions", chat_body("Beta"))->status == 200, "Beta answers");
+  const auto metrics = call(*server, "GET", "/metrics");
+  expect(metrics && metrics->body.find("\"unloaded\":false") != std::string::npos, "it is loaded: " + shown(metrics));
+  const auto listed = call(*server, "GET", "/v1/strata/models");
+  expect(listed && listed->body.find(R"({"name":"hot","kind":"boolean","label":"Keep loaded")") != std::string::npos,
+         "every card offers Keep loaded: " + shown(listed));
+  server->stop(ServerProcess::Stop::ctrl_break);
+  expect(server->wait_exit(std::chrono::seconds(20)) == std::optional<int>{0}, "a clean exit");
+}
+
 // GUI-first start-up (spec 2026-10-27 §4.2): a card the page built from a GGUF names no tokenizer pack; a start reads
 // the tokenizer from the model file's own header, in the profile's mode, and refuses one that is not the profile's.
 void a_gguf_card_reads_its_tokenizer_from_the_gguf() {
@@ -1502,16 +1520,16 @@ void cards_offer_their_models_recommended_sampling() {
     }
     return out;
   };
-  expect(defaults_of("Q") == "temperature=1 top_p=0.95 top_k=20 answer_minutes=30 gpus=\"auto\"", "Qwen3.8 / 3.6 (upstream's card): " + defaults_of("Q"));
-  expect(defaults_of("G") == "ram_headroom=16 temperature=1 top_p=0.95 answer_minutes=30 gpus=\"auto\"", "GLM-5.3 (Maya's): " + defaults_of("G"));
-  expect(defaults_of("R") == "ram_headroom=16 temperature=1 top_p=0.95 top_k=20 answer_minutes=30 gpus=\"auto\"", "raon1 (KRAFTON's): " + defaults_of("R"));
-  expect(defaults_of("F") == "temperature=1 top_p=0.95 top_k=20 answer_minutes=30 gpus=\"auto\"", "flint (its card's): " + defaults_of("F"));
-  expect(defaults_of("E") == "temperature=1 top_p=0.95 top_k=64 min_p=0.05 answer_minutes=30 gpus=\"auto\"", "Gemma 4 (Google's): " + defaults_of("E"));
-  expect(defaults_of("D") == "temperature=1 top_p=1 answer_minutes=30 gpus=\"auto\"", "DeepSeek-V4.1 (upstream's card): " + defaults_of("D"));
-  expect(defaults_of("M") == "temperature=1 top_p=0.95 answer_minutes=30 gpus=\"auto\"", "MiniMax (its card's): " + defaults_of("M"));
-  expect(defaults_of("Own") == "thinking=\"high\" temperature=0.6 top_p=0.95 top_k=20 vision=\"gpu\" answer_minutes=30 gpus=\"auto\"",
+  expect(defaults_of("Q") == "temperature=1 top_p=0.95 top_k=20 answer_minutes=30 hot=false gpus=\"auto\"", "Qwen3.8 / 3.6 (upstream's card): " + defaults_of("Q"));
+  expect(defaults_of("G") == "ram_headroom=16 temperature=1 top_p=0.95 answer_minutes=30 hot=false gpus=\"auto\"", "GLM-5.3 (Maya's): " + defaults_of("G"));
+  expect(defaults_of("R") == "ram_headroom=16 temperature=1 top_p=0.95 top_k=20 answer_minutes=30 hot=false gpus=\"auto\"", "raon1 (KRAFTON's): " + defaults_of("R"));
+  expect(defaults_of("F") == "temperature=1 top_p=0.95 top_k=20 answer_minutes=30 hot=false gpus=\"auto\"", "flint (its card's): " + defaults_of("F"));
+  expect(defaults_of("E") == "temperature=1 top_p=0.95 top_k=64 min_p=0.05 answer_minutes=30 hot=false gpus=\"auto\"", "Gemma 4 (Google's): " + defaults_of("E"));
+  expect(defaults_of("D") == "temperature=1 top_p=1 answer_minutes=30 hot=false gpus=\"auto\"", "DeepSeek-V4.1 (upstream's card): " + defaults_of("D"));
+  expect(defaults_of("M") == "temperature=1 top_p=0.95 answer_minutes=30 hot=false gpus=\"auto\"", "MiniMax (its card's): " + defaults_of("M"));
+  expect(defaults_of("Own") == "thinking=\"high\" temperature=0.6 top_p=0.95 top_k=20 vision=\"gpu\" answer_minutes=30 hot=false gpus=\"auto\"",
          "a card's own temperature stays, the rest in the profile's order: " + defaults_of("Own"));
-  expect(defaults_of("Rows") == "ram_headroom=16 temperature=0.8 top_p=0.95 top_k=40 answer_minutes=30 gpus=\"auto\"",
+  expect(defaults_of("Rows") == "ram_headroom=16 temperature=0.8 top_p=0.95 top_k=40 answer_minutes=30 hot=false gpus=\"auto\"",
          "a card's own defaults.sampling rows are its defaults: " + defaults_of("Rows"));
 }
 
@@ -1804,6 +1822,7 @@ int main(int argc, char** argv) {
       {"cards_can_be_added_while_serving", cards_can_be_added_while_serving},
       {"a_card_is_pinned_and_its_removal_unpins_it", a_card_is_pinned_and_its_removal_unpins_it},
       {"a_pinned_card_starts_with_the_server_and_the_pin_is_kept", a_pinned_card_starts_with_the_server_and_the_pin_is_kept},
+      {"a_card_kept_loaded_never_unloads_when_idle", a_card_kept_loaded_never_unloads_when_idle},
       {"page_cards_can_be_replaced_and_removed", page_cards_can_be_replaced_and_removed},
       {"cards_say_whether_their_profile_takes_reasoning_effort", cards_say_whether_their_profile_takes_reasoning_effort},
       {"cards_offer_web_search_when_the_server_has_it", cards_offer_web_search_when_the_server_has_it},

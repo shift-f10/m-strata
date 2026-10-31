@@ -53,6 +53,7 @@ PluginFamily::PluginFamily(const PluginManifest& manifest, std::string library_s
   if (engine_.sampling.top_k) server("top_k");
   if (engine_.sampling.min_p) server("min_p");
   server("answer_minutes");
+  server("hot");
   if (engine_.web_search) server("web_search");
   if (devices != nullptr) options_.push_back(spec_of(*devices));
 
