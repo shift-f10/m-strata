@@ -439,6 +439,60 @@ the server verifies with `secure_frontend_ed25519`, its own RFC 8032 verifier (v
 Monocypher would have been a second Ed25519 implementation beside a tested one. The reference signer is not
 constant-time; it signs on the owner's own PC, where no one times it.
 
+### 12. Adding and removing plugins from the page (the owner, 2026-10-30)
+
+"enable the ability to add and remove plugins via the webui". His decisions: add from a folder on the server's PC **and**
+by uploading a .zip, but "it should check the trust before processing it" - only a plugin signed by a key the server
+trusts (section 11: the install's own, or a publisher key he added) is added, the signature and every SHA-256 checked
+before anything is copied or unpacked; unsigned plugins can still be put in the folder by hand and approved. Allowed
+from the control networks too (`models.control_remote_networks`), as the other plugin changes are. The .zip is
+inflated by code written here from RFC 1951, with its own tests (no vendored decompressor). Removing moves a plugin
+aside, from where it can be put back or deleted for good; the built-in plugins (make's: Debugging, Web search, Email)
+are only turned off.
+
+**Adding** (`POST /v1/strata/plugins/add`):
+- **From a folder** (`{"folder": "<absolute path on this PC>"}`): its `plugin.json` and `plugin.sig` are read (the
+  manifest at most 64 KiB, the signature 16 KiB), the manifest checked as discovery checks one, the signature verified
+  under the trusted keys for this platform and this id; then each file the manifest lists for this platform is hashed
+  where it is and compared with the statement. Only then are exactly those files (and the manifest and signature)
+  copied into a staging folder in the state root, hashed again as written, and the staging folder renamed into
+  `<install>/plugins/<id>`. A folder that is a link, a file that is not a regular file, a name outside the folder, an
+  id already installed (or moved aside under that id and not deleted) is refused.
+- **From a .zip** (the request body, `Content-Type: application/zip`, within `limits.http.max_request_bytes`): the zip is
+  read from memory - its end record, its central directory (at most 256 entries; no ZIP64, no encryption, no links, no
+  name that is absolute, has `..`, a drive, a backslash or a control character; entries stored or deflated only), each
+  entry's local header agreeing with the directory. The entries may sit in one top folder or at the root. `plugin.json`
+  and `plugin.sig` are inflated first and checked as above; then every listed file is inflated with its CRC-32 and
+  SHA-256 checked against the statement, and the sizes bounded (each entry at most its declared size, the whole at most
+  1 GiB, and an entry's inflated size at most 1000 times its compressed size). An entry the manifest does not list is
+  refused. Nothing is written until the signature and the statement agree; then the files go to staging and into
+  `<install>/plugins/<id>` as from a folder.
+- Either way the plugin is new: it is discovered at the next start, trusted through its signature, and starts on (a
+  tool or notifier once its required settings are filled in). The answer names the plugin, its publisher and the key
+  that signed it, and says it applies when the server restarts.
+- **Refusals say why**, before anything is written: not signed; signed with a key this server does not trust (trust
+  its publisher's key first); signed for another platform or another plugin; a file that is not the one signed;
+  the zip's own problems.
+
+**Removing** (`POST /v1/strata/plugins/remove {"id"}`): a built-in plugin is refused ("turn it off instead"); a plugin
+whose program runs is stopped first (the tool or notifier host); an engine plugin a running model uses is refused
+until the model stops. Its folder moves to `<state>/plugins-removed/<id>-<UTC time>/`, and its approval, its config rows
+(`plugins.<id>.*`) and its secrets (`plugin-<id>-*`) are forgotten. `POST /v1/strata/plugins/removed` lists what was moved
+aside (id, name, version, when); `POST /v1/strata/plugins/restore {"entry"}` moves one back (refused while a plugin of
+that id is installed; it then waits for approval unless still trusted by its signature); `POST
+/v1/strata/plugins/purge {"entry"}` deletes it for good.
+
+**The page**: the Plugins tab gets an "Add a plugin" card (a folder path, or a .zip to upload), a Remove button on
+every plugin that is not built in (asked first: what it removes, that it applies at the next start), and a "Moved
+aside" card with Put back and Delete permanently (asked first: it cannot be undone).
+
+**The threat model**: adding code from the page means an API-key holder on this PC or a control network can install a
+plugin - but only one a trusted key signed, so the power is the trust by key's (section 11), not more; the zip reader is
+new attack surface, bounded and tested (malformed, truncated, overlapping, oversized and traversing archives refused).
+
+**Build order**: the inflater and its tests; the zip reader and its tests; adding (folder and zip) and removing, putting
+back and deleting as library functions with their tests; the routes; the page; the docs.
+
 ## Proof (decision 3)
 
 - **(a) Recommended: re-package flint as a plugin.** flint is the smallest family: GGUF in, no pack, the strata_0143
