@@ -73,6 +73,8 @@ constexpr ModelOptionSpec kOneGpu = devices_option("The graphics card this model
 constexpr std::array<std::string_view, 4> kQwenKv{"fp16", "int8", "q4_0", "k8v4"};
 // reasoning.effort's levels (frontend_config.cpp, the reasoning.effort row and its reader).
 constexpr std::array<std::string_view, 4> kQwenThinking{"none", "low", "medium", "high"};
+// Upstream's low-RAM mode (owner 2026-10-31; upstream setup.py --low-ram): auto, on, resident, mmap, off (low_ram.hpp).
+constexpr std::array<std::string_view, 5> kQwenLowRam{"auto", "on", "resident", "mmap", "off"};
 // Vision for cards (spec 2026-10-28-vision-for-cards-design.md): upstream setup's --vision gpu|cpu|no, as card rows.
 constexpr std::array<std::string_view, 3> kVisionModes{"off", "gpu", "cpu"};
 // The Gemma spec's D10: thinking off or on (reasoning.effort none or high).
@@ -139,7 +141,7 @@ constexpr ModelOptionSpec kAnswerMinutes = listed(
 // draft must reach, core/mtp.cpp:1689); --expert-cache :2541-2544 (auto or a count of expert blobs
 // in VRAM, >= -1 :3304; at most the 48 x 512 experts there are, core/geometry.hpp:25/:53);
 // --prefill :2558-2565 (auto or a chunk of N prompt tokens; auto's largest is 32,768, :2564).
-constexpr std::array<ModelOptionSpec, 18> kQwenOptions{{
+constexpr std::array<ModelOptionSpec, 19> kQwenOptions{{
     listed(integer_option("max_context", "Context length",
                           "Tokens of context the engine allocates; past the trained 256K the engine stretches the model with "
                           "YaRN rope scaling (experimental, upstream's own rule)",
@@ -161,6 +163,11 @@ constexpr std::array<ModelOptionSpec, 18> kQwenOptions{{
                    Kind::integer_or_auto),
     integer_option("prefill", "Prompt chunk", "Prompt tokens processed per batch, or auto for the largest that fits", 1, 32768,
                    Kind::integer_or_auto),
+    choice_option("low_ram", "Low-RAM mode",
+                  "When this PC's RAM cannot hold the model's experts with 10 GB beside them, read them from the model's files: "
+                  "auto decides by this PC's RAM and GPU (upstream's rule), on always, resident keeps the ones the GPU does not "
+                  "hold in RAM, mmap reads them through the file cache, off keeps them all in RAM",
+                  kQwenLowRam),
     choice_option("thinking", "Thinking", "The thinking level for requests that name none", kQwenThinking),
     kTemperature,
     kTopP,
@@ -701,6 +708,10 @@ void write_option(const EngineProfile profile, const std::string_view name, cons
     if (draft_layer_on) flag_with("--spec-min-p", decimal_text(floor_p));
   } else if ((name == "expert_cache" || name == "prefill") && (integer != nullptr || text != nullptr)) {
     flag_with(name == "expert_cache" ? "--expert-cache" : "--prefill", integer_or_auto());
+  } else if (name == "low_ram" && text != nullptr) {
+    // upstream's low-RAM mode: the variant a start resolved (auto and on are resolved by the launcher, low_ram.hpp)
+    if (*text == "mmap") flags.emplace_back("--mmap-experts");
+    if (*text == "resident") flags.emplace_back("--resident-experts");
   } else if (name == "chunk" && integer != nullptr) flag_with("--chunk", std::to_string(*integer));
   else if (name == "expert_vram" && integer != nullptr) flag_with("--expert-vram", std::to_string(*integer));  // auto: no flag
   else if (name == "thinking" && text != nullptr) {
@@ -781,6 +792,7 @@ std::vector<std::string_view> option_flags(const EngineProfile profile, const st
     return {"--max-context"};
   }
   if (profile == EngineProfile::minimax && name == "kv") return {"--kv-cache"};  // maya-mm3's own
+  if (name == "low_ram") return {"--mmap-experts", "--resident-experts"};
   static constexpr std::array<std::pair<std::string_view, std::string_view>, 9> kFlags{{
       {"kv", "--kv"}, {"kv_resident", "--kv-resident"}, {"kv_grow", "--kv-grow"}, {"spec", "--spec"},
       {"spec_min_p", "--spec-min-p"}, {"expert_cache", "--expert-cache"}, {"prefill", "--prefill"}, {"chunk", "--chunk"},

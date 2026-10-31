@@ -1053,6 +1053,142 @@ void a_stop_waits_for_an_engine_still_ending() {
   expect(f.launcher->engine_left_unreaped(), "and reports the engine left behind");
 }
 
+// Upstream's low-RAM mode at a start (owner 2026-10-31, the Azure VM: "Yes, build it"): a Qwen3.8 card as a download
+// makes it (card_for_pack: its pack, the model folder's first shard, the expert profile; 128K, int8), this PC's RAM and
+// GPUs given (LauncherSettings::host_memory), the launcher's lines and every engine command recorded.
+struct QwenPackFixture final {
+  std::filesystem::path root = secure_frontend_test::make_scratch_directory();
+  std::filesystem::path models = root / "models";
+  std::filesystem::path pack = root / "packs" / "q";
+  secure_frontend::DataFolder data = secure_frontend::data_folder_layout(root / "data");
+  std::shared_ptr<std::mutex> mutex = std::make_shared<std::mutex>();
+  std::shared_ptr<std::vector<std::vector<std::string>>> commands = std::make_shared<std::vector<std::vector<std::string>>>();
+  std::shared_ptr<std::vector<std::string>> lines = std::make_shared<std::vector<std::string>>();
+  test_support::FakeFactory fakes{[](test_support::FakeChild& child, std::uint64_t) { child.push_line("READY 32768 stop"); }};
+  std::unique_ptr<secure_frontend::ModelLauncher> launcher;
+  const std::string name = "Q";
+
+  // extra_args: more of the card's own engine.args (after its pack's)
+  QwenPackFixture(const std::uint64_t ram_bytes, const std::vector<std::uint64_t>& vram, const std::vector<std::string>& extra_args = {}) {
+    secure_frontend_test::make_private_directory(models);
+    secure_frontend_test::make_private_directory(root / "packs");
+    secure_frontend_test::make_private_directory(pack);
+    secure_frontend_test::write_file(models / "q-00001-of-00002.gguf",
+                                     test_support::gguf_with_tokenizer(test_support::byte_tokenizer(), "gpt2", "qwen4exp")
+                                         .u32("qwen4exp.expert_count", 512U)
+                                         .bytes());
+    secure_frontend_test::write_file(models / "q-00002-of-00002.gguf", "shard two");
+    // the VM pack's own header: 35,454,976,000 bytes of experts
+    secure_frontend_test::write_file(pack / "native_experts.txt",
+                                     "# strata native experts v3: layer gu_type d_type offset blob_bytes gate_off up_off down_off [shard] "
+                                     "(n_expert 512, total 35454976000; absolute offsets in q-00001-of-00002.gguf, or in the named shard beside it)\n");
+    const auto bin = root / "bin";
+    secure_frontend_test::make_private_directory(bin);
+    const std::filesystem::path fake{STRATA_FAKE_ENGINE_PATH};
+    const auto engine = bin / fake.filename();
+    std::error_code ec;
+    std::filesystem::copy_file(fake, engine, ec);
+    secure_frontend_test::make_private_directory(bin / "profiles");
+    secure_frontend_test::write_file(bin / "profiles" / "expert-profile.bin", "profile");
+    (void)secure_frontend::ensure_data_folder(data, engine);
+    const auto main = std::get<secure_frontend::FrontendConfigDraft>(
+        secure_frontend::parse_config_text(secure_frontend_test::read_file(data.config_file), data.root));
+    auto made = secure_frontend::card_for_pack({.family = secure_frontend::PackedFamily::qwen38, .name = name, .engine = engine,
+                                                .source = "download:q", .pack = pack, .folder = models, .model_id = "q-00001-of-00002",
+                                                .expert_profile = bin / "profiles" / "expert-profile.bin"});
+    if (!extra_args.empty()) {
+      std::string more;
+      for (const auto& a : extra_args) more += ",\"" + a + "\"";
+      made.json.insert(made.json.find("]},\"roots\""), more);
+    }
+    auto parsed = secure_frontend::parse_model_card(made.json, data.root);
+    secure_frontend::LauncherSettings settings{.main = main, .cards = {}, .operator_cards = 0U, .memory_file = {}, .gate = {}};
+    settings.log = [mutex = mutex, lines = lines](const std::string_view line) {
+      std::lock_guard lock(*mutex);
+      lines->emplace_back(line);
+    };
+    settings.factory = [mutex = mutex, commands = commands, fakes = fakes](secure_frontend::EngineLaunchPlan plan) {
+      {
+        std::lock_guard lock(*mutex);
+        commands->push_back(plan.command.arguments);
+      }
+      return fakes.factory();
+    };
+    settings.host_memory = [ram_bytes, vram] {
+      secure_frontend::HostMemory facts;
+      facts.ram_bytes = ram_bytes;
+      for (unsigned i = 0; i < vram.size(); ++i) facts.gpus.push_back({.index = i, .name = "Test GPU", .mem_total_bytes = vram[i]});
+      return facts;
+    };
+    launcher = std::make_unique<secure_frontend::ModelLauncher>(std::move(settings));
+    expect(std::holds_alternative<secure_frontend::ModelCard>(parsed) && launcher->add_card(std::get<secure_frontend::ModelCard>(std::move(parsed))),
+           "the Qwen3.8 card is added");
+  }
+  ~QwenPackFixture() { launcher->shutdown(); }
+  QwenPackFixture(const QwenPackFixture&) = delete;
+  QwenPackFixture& operator=(const QwenPackFixture&) = delete;
+  // the engine command of a start with these options (nullptr: none), the card stopped after
+  [[nodiscard]] std::vector<std::string> started(const secure_frontend::JsonValue* options = nullptr) {
+    const bool ran = !launcher->start(name, options, false).has_value() && launcher->wait_until_settled(std::chrono::seconds(30)) &&
+                     launcher->state_of(name) == secure_frontend::CardState::running;
+    expect(ran, "the card runs");
+    (void)launcher->stop(false);
+    expect(launcher->wait_until_settled(std::chrono::seconds(30)), "it stops");
+    std::lock_guard lock(*mutex);
+    return commands->empty() ? std::vector<std::string>{} : commands->back();
+  }
+  [[nodiscard]] std::string said(const std::string_view part) const {
+    std::lock_guard lock(*mutex);
+    for (const auto& line : *lines) {
+      if (line.find(part) != std::string::npos) return line;
+    }
+    return {};
+  }
+};
+
+bool has_argument(const std::vector<std::string>& argv, const std::string_view flag) {
+  return std::find(argv.begin(), argv.end(), flag) != argv.end();
+}
+
+// The owner's VM: 27.4 GiB of RAM and a 16 GiB T4 cannot hold the pack's 35.45 GB of experts with 10 GB beside them, and
+// the rest the T4 does not hold (about 26 GB) does not fit the RAM either: the card offers low_ram (auto) and starts
+// with --mmap-experts, and the launcher says why. A start's auto stays auto (what is remembered is not the PC's answer).
+void a_card_short_of_ram_starts_in_the_low_ram_mode() {
+  QwenPackFixture f(static_cast<std::uint64_t>(27.4 * static_cast<double>(1ULL << 30U)), {16ULL << 30U});
+  const std::string listed = f.launcher->list_json();
+  expect(listed.find(R"("name":"low_ram","kind":"choice")") != std::string::npos &&
+             listed.find(R"("choices":["auto","on","resident","mmap","off"],"value":"auto")") != std::string::npos,
+         "the card offers the low-RAM mode, auto: " + listed);
+  const auto argv = f.started();
+  expect(has_argument(argv, "--mmap-experts") && !has_argument(argv, "--resident-experts"), "it starts mapped: " + joined(argv));
+  expect(f.said("low-RAM mode").find("--mmap-experts") != std::string::npos, "the log says so: " + f.said("low-RAM mode"));
+  expect(f.launcher->list_json().find(R"("choices":["auto","on","resident","mmap","off"],"value":"auto")") != std::string::npos,
+         "auto is what is remembered");
+  const auto off = json_of(R"({"low_ram":"off"})");
+  const auto kept = f.started(&off);
+  expect(!has_argument(kept, "--mmap-experts") && !has_argument(kept, "--resident-experts"), "off keeps them in RAM: " + joined(kept));
+}
+
+// Where the RAM holds what the GPU does not (32 GiB and 24 GiB: about 18 GB left, the card's expert profile there) the
+// resident variant; where it holds them all with room beside (64 GiB), neither flag.
+void a_card_with_room_keeps_its_experts_in_ram() {
+  QwenPackFixture resident(32ULL << 30U, {24ULL << 30U});
+  const auto copied = resident.started();
+  expect(has_argument(copied, "--resident-experts") && !has_argument(copied, "--mmap-experts"), "32 GiB + 24 GiB: resident: " + joined(copied));
+  QwenPackFixture roomy(64ULL << 30U, {24ULL << 30U});
+  const auto whole = roomy.started();
+  expect(!has_argument(whole, "--mmap-experts") && !has_argument(whole, "--resident-experts"), "64 GiB: neither: " + joined(whole));
+}
+
+// A card whose own engine.args already choose (an operator's --mmap-experts) keeps its choice and is not offered one.
+void a_card_that_fixes_its_experts_flag_keeps_it() {
+  QwenPackFixture f(64ULL << 30U, {24ULL << 30U}, {"--mmap-experts"});
+  expect(f.launcher->list_json().find(R"("name":"low_ram")") == std::string::npos, "no low_ram on it: " + f.launcher->list_json());
+  const auto argv = f.started();
+  expect(std::count(argv.begin(), argv.end(), "--mmap-experts") == 1 && !has_argument(argv, "--resident-experts"),
+         "its own flag, once: " + joined(argv));
+}
+
 // §4.5: a page card removed (the danger zone's delete) takes its calibration and its switch with it, so a later card
 // of the same name starts uncalibrated.
 void removing_a_card_removes_its_calibration() {
@@ -1501,6 +1637,9 @@ int main(int argc, char** argv) {
       {"a_prefill_calibration_falls_back_to_the_default_chunk", a_prefill_calibration_falls_back_to_the_default_chunk},
       {"a_calibration_can_be_cancelled", a_calibration_can_be_cancelled},
       {"removing_a_card_removes_its_calibration", removing_a_card_removes_its_calibration},
+      {"a_card_short_of_ram_starts_in_the_low_ram_mode", a_card_short_of_ram_starts_in_the_low_ram_mode},
+      {"a_card_with_room_keeps_its_experts_in_ram", a_card_with_room_keeps_its_experts_in_ram},
+      {"a_card_that_fixes_its_experts_flag_keeps_it", a_card_that_fixes_its_experts_flag_keeps_it},
       {"a_stop_waits_for_an_engine_still_ending", a_stop_waits_for_an_engine_still_ending},
       {"failures_raise_alerts", failures_raise_alerts},
       {"a_failed_calibration_writes_a_report", a_failed_calibration_writes_a_report},

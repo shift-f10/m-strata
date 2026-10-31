@@ -280,6 +280,46 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z77 (Windows box; owner-directed)
+
+The owner's Azure VM, after z76: the Qwen3.8-Flash-Next IQ2_XS card's calibration failed ("the engine ended before it
+was ready"), then "Yes, build it" (upstream's low-RAM mode).
+- **Why it failed**: the engine's `ArenaExpertSource` maps all of the experts into RAM (35.4 GB here); the anonymous
+  mapping failed on 27.4 GiB with no swap (`pinned.cu`: the note ends "using 4 KB pages" only when that mmap fails).
+  Upstream's setup never starts such a PC that way: `low_ram_needed` (RAM < arena + LOW_RAM_HEADROOM_GB 10) puts it in
+  the low-RAM mode, `--mmap-experts` (the experts read from the pack: its experts.bin, or a native pack's GGUF shards in
+  place, generate.cpp's CS-T) or `--resident-experts` (what the GPUs do not hold copied into RAM once) by
+  `low_ram_resident` (RAM >= the rest + 10), the GPU's share by `low_ram_gpu_gb` (VRAM - 5 - 1 for MTP - the KV past 32K;
+  700 MiB more for a picture encoder on it; each GPU's own on a split).
+- **Now**: `low_ram.hpp` (`choose_low_ram`: that rule in upstream's units, GiB of RAM against GB of experts;
+  `pack_expert_bytes`: native_experts.txt's header total, else experts.bin's size). A Qwen card's `low_ram` option
+  (auto, on, resident, mmap, off: upstream's --low-ram) is offered on every card that runs a pack and fixes none of
+  `--mmap-experts`, `--resident-experts`, `--resident-budget-gib` (old cards too, as `gpus`). At each start and
+  calibration the launcher turns auto and on into resident, mmap or off (`launch_values`) from `LauncherSettings::
+  host_memory` (production: the RAM's total, nvidia-smi's GPU list once) and the card's own context, KV, draft layer,
+  picture encoder, GPUs and expert profile (`--resident-experts` needs one: generate.cpp), logs why, and writes the
+  flag; what is remembered stays auto. The threat model and the README say so.
+- **Tests**: `secure_frontend_low_ram_tests` (6: the VM's numbers - mapped, the T4 holding 10 of 35.45 GB; 32 GiB with
+  24 GiB resident, 64 GiB neither; the draft layer, picture encoder and long-context KV; two GPUs; the choices; the
+  pack's header, CRLF, experts.bin, a broken total); `low_ram_writes_the_engines_flag` (options); the launcher's
+  `a_card_short_of_ram_starts_in_the_low_ram_mode`, `a_card_with_room_keeps_its_experts_in_ram`,
+  `a_card_that_fixes_its_experts_flag_keeps_it` (a Qwen3.8 pack card, its engine command recorded); the Qwen option
+  table pins 19 options (on main: model_options' qwen names, low_ram after prefill).
+- **Proof**: RED (9: "the VM: the low-RAM mode, mapped: off ...", "mmap: --mmap-experts: [--pack ...]", "the card
+  offers the low-RAM mode, auto"), then GREEN.
+  - Windows (MSVC, the shares tree, everything built): the whole suite 1509 of the 1511 others (the two release-only cases); the new test first failed to compile there (near and small are Windows header macros: renamed), then the low-RAM, options, family and launcher suites 74/74.
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror): those suites 74/74 on gcc and clang; whole suites full-gcc and full-clang 1565/1569 (the two release-only cases; net01 and egress pass alone), window-gcc Release 1523/1524 (egress passes alone).
+  - main (cherry-picked with z76; its option tables are still in model_options.cpp, so low_ram went in there): MSVC built whole, 1424 of 1428 (the two release-only cases and the two Maya parity scans, which need engines/maya-ref, not checked out in main's worktree); Linux gcc 13.3 and clang 18.1 built whole with -Werror, 1467/1480 and 1474/1480 (the same four; the rest pass alone: net01, egress and, on the loaded gcc run, six launcher cases - its launcher, low-RAM, options, child and download suites then 108/108 twice).
+- **On the VM** (2026-10-31 05:40-05:49 UTC, owner: "you fix it yourself"): the owner's idle server and strata-tui
+  stopped (SIGTERM, no engine running), the new build started in a tmux session (`strata`), the card pointed at its
+  draft layer (POST /v1/strata/cards/mtp) and started at his calibration's options (16K, q4_0, KV streaming off). The
+  server logged "the low-RAM mode (low_ram auto): ... (--mmap-experts) ... the GPU holds about 28%"; the engine read
+  the GGUF shards in place, the T4 held 7,656 experts (10.3 GiB) and the 807 MiB draft layer, and ran after ~3.5 min.
+  A chat answered ("Red, yellow, blue"): prompt 443 tokens in 263 s (1.7 tok/s), 6 tokens in 16 s (0.4 tok/s), drafts
+  accepted 2 of 9, cache hit rate 56.5%, 30 GB read from the drive (rotational, ~0.15 GB/s; the page cache holds 23.5
+  of the 26.9 GiB file tier). Upstream's own numbers said so (31.4 GB of RAM and VRAM against 35.5). The engine also
+  warned of 495 MiB of free VRAM (below 512 MiB: #2065, `--vram-reserve-mib 768` or a smaller expert cache).
+
 ### Claude Code session, 2026-10-31 z76 (Windows box; owner-directed)
 
 The owner's Azure VM, after a Qwen3.8-Flash-Next IQ2_XS download: "it did not download the mtp files"; "look at the

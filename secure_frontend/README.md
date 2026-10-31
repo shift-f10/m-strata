@@ -2091,7 +2091,10 @@ One model runs at a time.
   `--kv-resident`; a dropdown of Off, 20K, 32K, 64K, 128K, 256K and 512K resident tokens, never
   more than the context), `kv_grow` (`--kv-grow`), `mtp` (off = `engine.mtp` false: the draft
   layer's flags are dropped; `--spec` stays for prompt lookup), `spec` (2-8), `spec_min_p`,
-  `expert_cache` (`auto` or a count), `prefill` (`auto` or a chunk), `thinking`
+  `expert_cache` (`auto` or a count), `prefill` (`auto` or a chunk), `low_ram` (upstream's
+  **low-RAM mode**, offered on a card that runs a pack: auto|on|resident|mmap|off; auto and on are
+  decided at each start by upstream setup's rule from this PC's RAM, the GPUs' memory and the
+  pack's experts, and write `--mmap-experts` or `--resident-experts`), `thinking`
   (none|low|medium|high) and the sampling defaults. The `gemma4` engine: `max_context` (the same
   dropdown up to its trained 256K), `chunk`, `expert_vram` (GiB or `auto`), `thinking` (off|on)
   and the sampling defaults (it has no KV streaming yet, D8). The GLM engine (`glm53`, `raon1`):

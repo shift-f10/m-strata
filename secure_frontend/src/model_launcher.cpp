@@ -7,6 +7,7 @@
 #include "secure_frontend/engine_stdio_process.hpp"
 #include "secure_frontend/host_readings.hpp"
 #include "secure_frontend/launch_composition.hpp"
+#include "secure_frontend/low_ram.hpp"
 #include "secure_frontend/minimax_prompt_renderer.hpp"
 #include "secure_frontend/subsystem_limits.hpp"
 #include "secure_frontend/token_store.hpp"
@@ -16,10 +17,12 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <cstdlib>
 #include <deque>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <system_error>
 #include <utility>
 #include <variant>
 
@@ -242,10 +245,64 @@ void offer_at_row(ModelCard& card, const FrontendConfigDraft& main, const std::s
   card.options.insert(later, std::move(limit));
 }
 
+const std::vector<std::string>* engine_args_of(const ModelCard& card) {
+  const auto found = card.config.entries.find("engine.args");
+  return found == card.config.entries.end() ? nullptr : std::get_if<std::vector<std::string>>(&found->second.value);
+}
+
+// `flag` or `flag=...` among the card's engine.args
+bool has_flag(const std::vector<std::string>& args, const std::string_view flag) {
+  return std::any_of(args.begin(), args.end(), [flag](const std::string& a) {
+    return a == flag || (a.size() > flag.size() && a.compare(0, flag.size(), flag) == 0 && a[flag.size()] == '=');
+  });
+}
+
+// The value after `flag` (`flag VALUE` or `flag=VALUE`), the last one given
+std::optional<std::string> value_of(const std::vector<std::string>& args, const std::string_view flag) {
+  std::optional<std::string> value;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == flag && i + 1U < args.size()) value = args[i + 1U];
+    else if (args[i].size() > flag.size() && args[i].compare(0, flag.size(), flag) == 0 && args[i][flag.size()] == '=') {
+      value = args[i].substr(flag.size() + 1U);
+    }
+  }
+  return value;
+}
+
+// Upstream's low-RAM mode (owner 2026-10-31, the Azure VM: "Yes, build it"): a card that runs a pack on the Qwen engine
+// (--pack) offers low_ram, auto unless its file lists it, in the table's order - not one whose own engine.args already
+// choose (--mmap-experts, --resident-experts, or upstream's RAM budget --resident-budget-gib).
+void offer_low_ram(ModelCard& card) {
+  const auto* spec = find_model_option(card.profile, "low_ram");
+  if (spec == nullptr) return;
+  if (std::any_of(card.options.begin(), card.options.end(), [spec](const ModelOptionLimits& limit) { return limit.spec == spec; })) return;
+  const auto* args = engine_args_of(card);
+  if (args == nullptr || !has_flag(*args, "--pack") || has_flag(*args, "--mmap-experts") || has_flag(*args, "--resident-experts") ||
+      has_flag(*args, "--resident-budget-gib")) {
+    return;
+  }
+  ModelOptionLimits limit;
+  limit.spec = spec;
+  limit.default_value = std::string{"auto"};
+  for (const auto choice : spec->choices) limit.choices.emplace_back(choice);
+  const auto order = model_options_for(card.profile);
+  const auto place = [&order](const ModelOptionSpec* listed) { return static_cast<std::size_t>(listed - order.data()); };
+  const auto later = std::find_if(card.options.begin(), card.options.end(), [&](const ModelOptionLimits& listed) {
+    return listed.spec != nullptr && place(listed.spec) > place(spec);
+  });
+  card.options.insert(later, std::move(limit));
+}
+
+// One decimal place ("35.5")
+std::string tenths(const double value) {
+  const long long scaled = std::llround(value * 10.0);
+  return std::to_string(scaled / 10) + "." + std::to_string(std::llabs(scaled % 10));
+}
+
 // The options a card offers beyond its file's: its engine's RAM headroom (owner 2026-10-29: a GLM-engine card's, at the
 // server's glm.ram_headroom_gb), its model's recommended sampling, its longest answer (owner 2026-10-29: every card's,
 // at the server's limits.engine.generation_timeout_s in minutes, a part of a minute counted whole), Web search with the
-// server's, then its GPUs.
+// server's, then its GPUs, and a Qwen pack's low-RAM mode (owner 2026-10-31).
 void offer_options(ModelCard& card, const FrontendConfigDraft& main, const ToolRunner* tools) {
   offer_at_row(card, main, "ram_headroom", "glm.ram_headroom_gb", [](const std::int64_t gigabytes) { return gigabytes; });
   offer_sampling(card);
@@ -253,6 +310,7 @@ void offer_options(ModelCard& card, const FrontendConfigDraft& main, const ToolR
                [](const std::int64_t seconds) { return (seconds + 59) / 60; });
   offer_web_search(card, tools);
   offer_gpus(card);
+  offer_low_ram(card);
 }
 
 // The card's options as the page sees them: without the server's web search, no Web search checkbox.
@@ -449,7 +507,7 @@ std::optional<ModelLauncher::Refusal> ModelLauncher::start(const std::string_vie
     release();
     return Refusal{ApiError::invalid_option, option_of(*issues)};
   }
-  auto validated = card_config(settings_.main, chosen, std::get<ModelOptionValues>(values));
+  auto validated = card_config(settings_.main, chosen, launch_values(chosen, std::get<ModelOptionValues>(values), true));
   if (const auto* issues = std::get_if<ConfigErrors>(&validated)) {
     for (const auto& issue : *issues) log("[strata] models: " + chosen.name + ": " + format_issue(issue));
     release();
@@ -551,7 +609,7 @@ std::optional<ModelLauncher::Refusal> ModelLauncher::calibrate(const std::string
     release();
     return Refusal{ApiError::invalid_option, option_of(*issues)};
   }
-  auto config = config_with(chosen, std::get<ModelOptionValues>(values), {});
+  auto config = config_with(chosen, std::get<ModelOptionValues>(values), {}, true);
   if (config == nullptr) {
     release();
     return Refusal{ApiError::invalid_request};
@@ -591,9 +649,75 @@ bool ModelLauncher::calibration_supported(const ModelCard& card) const {
   return text("roots.models") && text("engine.model_id") && text("engine.executable");
 }
 
+ModelOptionValues ModelLauncher::launch_values(const ModelCard& card, ModelOptionValues values, const bool say) const {
+  const auto found = values.find("low_ram");
+  const auto* asked = found == values.end() ? nullptr : std::get_if<std::string>(&found->second);
+  if (asked == nullptr || (*asked != "auto" && *asked != "on" && *asked != "resident")) return values;
+  const std::string choice = *asked;
+  static const std::vector<std::string> kNone;
+  const auto* listed = engine_args_of(card);
+  const auto& args = listed == nullptr ? kNone : *listed;
+  const auto option_text = [&values](const std::string_view name) -> std::optional<std::string> {
+    const auto at = values.find(name);
+    const auto* text = at == values.end() ? nullptr : std::get_if<std::string>(&at->second);
+    return text == nullptr ? std::nullopt : std::optional<std::string>{*text};
+  };
+  LowRamFacts facts;
+  if (const auto pack = value_of(args, "--pack")) facts.expert_bytes = pack_expert_bytes(path_from_utf8(*pack)).value_or(0U);
+  HostMemory host;
+  if (settings_.host_memory) {
+    host = settings_.host_memory();
+  } else if (const auto memory = read_memory()) {
+    host.ram_bytes = memory->total_bytes;
+  }
+  facts.ram_bytes = host.ram_bytes.value_or(0U);
+  // the GPUs it runs on: its gpus option's ("auto": the first), as nvidia-smi numbers them
+  const std::string gpus = option_text("gpus").value_or("auto");
+  if (gpus == "auto") {
+    if (!host.gpus.empty()) facts.vram_bytes.push_back(host.gpus.front().mem_total_bytes.value_or(0U));
+  } else {
+    std::istringstream list(gpus);
+    for (std::string index; std::getline(list, index, ',');) {
+      const auto gpu = std::find_if(host.gpus.begin(), host.gpus.end(),
+                                    [&index](const GpuListing& g) { return std::to_string(g.index) == index; });
+      if (gpu != host.gpus.end()) facts.vram_bytes.push_back(gpu->mem_total_bytes.value_or(0U));
+    }
+  }
+  if (const auto at = values.find("max_context"); at != values.end() && std::holds_alternative<std::int64_t>(at->second)) {
+    facts.context = std::get<std::int64_t>(at->second);
+  } else if (const auto context = value_of(args, "--max-context")) {
+    std::int64_t parsed = 0;
+    if (std::from_chars(context->data(), context->data() + context->size(), parsed).ec == std::errc{} && parsed > 0) facts.context = parsed;
+  }
+  facts.kv = option_text("kv").value_or(value_of(args, "--kv").value_or("int8"));
+  const auto mtp = values.find("mtp");
+  facts.mtp = has_flag(args, "--mtp") && !(mtp != values.end() && std::holds_alternative<bool>(mtp->second) && !std::get<bool>(mtp->second));
+  facts.vision_gpu = option_text("vision") == std::optional<std::string>{"gpu"};
+  facts.expert_profile = has_flag(args, "--expert-profile");
+  const auto picked = choose_low_ram(facts, choice);
+  values[std::string{"low_ram"}] = std::string{low_ram_value(picked.mode)};
+  if (!say) return values;
+  const std::string share = std::to_string(std::lround(picked.gpu_share * 100.0)) + "%";
+  if (picked.mode == LowRamMode::mmap) {
+    log("[strata] models: " + card.name + ": the low-RAM mode (low_ram " + choice + "): its experts (" + tenths(picked.arena_gb) +
+        " GB) are read from the model's files through the OS file cache (--mmap-experts) instead of a copy in RAM (" +
+        tenths(picked.ram_gib) + " GiB); the GPU holds about " + share + " of them" +
+        (picked.gpu_share < 0.6 ? "; most are read from the disk while it answers: expect it to be much slower than with enough RAM"
+                                : ""));
+  } else if (picked.mode == LowRamMode::resident) {
+    log("[strata] models: " + card.name + ": the low-RAM mode (low_ram " + choice + "): the GPU holds about " + share + " of its experts (" +
+        tenths(picked.arena_gb) + " GB) and the other " + tenths(picked.rest_gb) + " GB stay in RAM (" + tenths(picked.ram_gib) +
+        " GiB), read once from the model's files (--resident-experts)");
+  } else if (choice != "auto") {
+    log("[strata] models: " + card.name + ": low_ram " + choice + ": its experts' size is not known (its pack has no "
+        "native_experts.txt or experts.bin), so they stay in RAM");
+  }
+  return values;
+}
+
 std::shared_ptr<const FrontendConfig> ModelLauncher::config_with(const ModelCard& card, const ModelOptionValues& values,
-                                                                 const std::vector<std::string>& args) const {
-  FrontendConfigDraft draft = card_draft(settings_.main, card, values);
+                                                                 const std::vector<std::string>& args, const bool say) const {
+  FrontendConfigDraft draft = card_draft(settings_.main, card, launch_values(card, values, say));
   // the flags join engine.args and the rows (the GLM engine's environment) the draft; the card's own stay
   if (!args.empty() && !apply_calibration(draft, args)) return nullptr;
   auto validated = validate(draft);

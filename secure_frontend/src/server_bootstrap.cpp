@@ -895,6 +895,24 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       return machine;
     };
   }
+  // Upstream's low-RAM mode (owner 2026-10-31): the RAM at each start, the GPUs as nvidia-smi lists them (read once, on
+  // the first start that asks, as the Monitor runs it: from the system directory, a fixed argv and environment)
+  struct ListedGpus final {
+    std::once_flag once;
+    std::vector<secure_frontend::GpuListing> gpus;
+  };
+  launcher_settings.host_memory = [listed = std::make_shared<ListedGpus>()] {
+    secure_frontend::HostMemory facts;
+    if (const auto memory = secure_frontend::read_memory()) facts.ram_bytes = memory->total_bytes;
+    std::call_once(listed->once, [&listed] {
+      listed->gpus = secure_frontend::list_gpus({.executable = secure_frontend::nvidia_smi_path(),
+                                                 .arguments = secure_frontend::nvidia_smi_list_arguments(),
+                                                 .environment = secure_frontend::nvidia_smi_environment(),
+                                                 .no_new_privileges = true, .insert_serve = false});
+    });
+    facts.gpus = listed->gpus;
+    return facts;
+  };
   secure_frontend::ModelLauncher launcher(std::move(launcher_settings));
   // D2: model control for key holders on loopback; remote clients only with models.control_remote, and only from
   // models.control_remote_networks when it lists any (owner 2026-10-27).
