@@ -2393,7 +2393,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         SECURE_FRONTEND_REPO_PLUGINS="${CMAKE_CURRENT_SOURCE_DIR}/../plugins")
     secure_frontend_add_cases(secure_frontend_plugin_manifest_tests
         the_shipped_debugging_plugin_is_one the_shipped_search_plugin_is_one the_shipped_email_plugin_is_one a_diagnostics_manifest_is_read
-        a_tool_manifest_says_how_its_program_runs a_wrong_run_block_is_refused_by_name values_are_checked_against_the_settings a_code_plugin_names_this_platforms_files a_wrong_manifest_is_refused_by_name
+        a_tool_manifest_says_how_its_program_runs a_wrong_run_block_is_refused_by_name values_are_checked_against_the_settings a_code_plugin_names_this_platforms_files a_wrong_manifest_is_refused_by_name an_engine_block_declares_its_family a_wrong_engine_block_is_refused_by_name
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_test_executable(secure_frontend_plugin_registry_tests tests/plugin_registry_test.cpp secure_frontend_plugins)
     target_compile_definitions(secure_frontend_plugin_registry_tests PRIVATE

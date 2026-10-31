@@ -52,7 +52,7 @@ const std::string kMailer = R"({"schema": "m-strata.plugin/1", "id": "mailer", "
 
 // An engine plugin, its library there: a kind this server does not run yet.
 const std::string kEngine = R"({"schema": "m-strata.plugin/1", "id": "acme", "kind": "engine", "name": "Acme",
-  "version": "0.1.0", "publisher": "Example Labs", "license": "Apache-2.0", "about": "", "engine": {},
+  "version": "0.1.0", "publisher": "Example Labs", "license": "Apache-2.0", "about": "", "engine": {"abi": 1, "dialect": "strata_0143", "chat": "flint", "tokenizer": {"source": "gguf", "mode": "flint_bpe"}, "models": {"gguf_architectures": ["acme"], "context_key": "acme.context_length"}, "arguments": [{"flag": "--max-context", "value": "integer", "min": 1, "max": 262144}], "capabilities": {"vision": false, "web_search": false, "mtp": "none"}},
   "files": {"windows": ["multiengine_acme.dll"], "linux": ["libmultiengine_acme.so"]}})";
 
 // An install's plugins folder and a data folder's state, secret folder and config file, and the routes over them.

@@ -4,6 +4,9 @@
 // is made of, apart from the code that uses them, so the descriptor sits under the config layer. Each header that
 // held one includes this one; they are moved unchanged, with their comments.
 
+#include <array>
+#include <string_view>
+
 namespace secure_frontend {
 
 // deepseek and raon1 (unified-engine design §2.5/§3.3) are served by the one merged engine
@@ -68,4 +71,13 @@ enum class EngineFamily { strata, glm };
 // strata_flint is multiengine_flint's own serve flags (engine/src/flint/f_cli.cpp), a closed allowlist like Gemma's.
 enum class EngineArgumentsProfile { strata_0143, lighttransport_glm53, strata_gemma4, unified, strata_flint, maya_ds4, maya_mm3 };
 
+// The Monitor's expert-tier whitelist (owner: the VRAM and RAM cards show experts loaded; serve_monitor.cpp): the
+// engines' own key names, INFO split for the main engine and STAT for the GLM engine. Owner 2026-10-28 ("the System Ram
+// reports MB usage only"): each family's own words for its RAM tier too - the GLM and raon1 INFO's ram_slots/vram_slots,
+// DeepSeek's ram_experts, MiniMax's experts_vram, Gemma 4's and flint's pinned_gib, upstream's engine's arena_mib
+// (engine_memory_view reads them). An engine plugin's monitor block names its tiers from this list.
+inline constexpr std::array<std::string_view, 15> kExpertReadingKeys{
+    "expert_slots", "expert_slots_primary", "expert_cache_mib", "expert_cache_primary_mib", "vram_free_mib",
+    "vram_used", "ram_used", "vram_gb", "ram_gb", "ram_slots", "vram_slots", "ram_experts", "experts_vram",
+    "pinned_gib", "arena_mib"};
 }  // namespace secure_frontend

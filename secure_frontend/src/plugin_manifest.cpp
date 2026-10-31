@@ -4,7 +4,10 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
+#include <initializer_list>
 #include <limits>
+#include <system_error>
 #include <tuple>
 #include <utility>
 
@@ -12,7 +15,7 @@ namespace secure_frontend {
 namespace {
 
 constexpr JsonLimits kLimits{.max_bytes = kMaxPluginManifestBytes, .max_depth = 8U, .max_container_entries = 256U,
-                             .max_string_bytes = 4096U, .allow_fractions = false};
+                             .max_string_bytes = 4096U, .allow_fractions = true};  // (an engine's sampling and margin)
 
 constexpr std::array<std::pair<std::string_view, PluginKind>, 4> kKinds{
     {{"engine", PluginKind::engine}, {"tool", PluginKind::tool}, {"notifier", PluginKind::notifier}, {"diagnostics", PluginKind::diagnostics}}};
@@ -367,6 +370,491 @@ std::variant<PluginRun, std::string> parse_run(const JsonValue& block, const Plu
   return run;
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// The engine block (plugin spec section 3, as built; plugin_manifest.hpp): what an engine plugin's family descriptor
+// will hold, each part from a closed list this server implements, and a wrong one refused by name.
+
+constexpr std::array<std::pair<std::string_view, EngineProtocolFlavor>, 2> kDialects{
+    {{"strata_0143", EngineProtocolFlavor::strata_0143}, {"unified", EngineProtocolFlavor::unified}}};
+constexpr std::array<std::pair<std::string_view, NativeChatProfile>, 7> kRenderers{
+    {{"qwen", NativeChatProfile::qwen}, {"glm53", NativeChatProfile::glm53}, {"gemma4", NativeChatProfile::gemma4},
+     {"deepseek", NativeChatProfile::deepseek}, {"raon1", NativeChatProfile::raon1}, {"flint", NativeChatProfile::flint},
+     {"minimax", NativeChatProfile::minimax}}};
+constexpr std::array<std::pair<std::string_view, TokenizerMode>, 7> kTokenizerModes{
+    {{"byte_bpe", TokenizerMode::byte_bpe}, {"spm_bpe", TokenizerMode::spm_bpe}, {"raon_bpe", TokenizerMode::raon_bpe},
+     {"flint_bpe", TokenizerMode::flint_bpe}, {"deepseek_bpe", TokenizerMode::deepseek_bpe}, {"glm_bpe", TokenizerMode::glm_bpe},
+     {"minimax_bpe", TokenizerMode::minimax_bpe}}};
+constexpr std::array<std::pair<std::string_view, PluginArgumentValue>, 7> kArgumentValues{
+    {{"none", PluginArgumentValue::none}, {"integer", PluginArgumentValue::integer}, {"fraction", PluginArgumentValue::fraction},
+     {"gibibytes", PluginArgumentValue::gibibytes}, {"on_off", PluginArgumentValue::on_off},
+     {"gguf_file", PluginArgumentValue::gguf_file}, {"choice", PluginArgumentValue::choice}}};
+constexpr std::array<std::pair<std::string_view, ModelOptionKind>, 6> kOptionKinds{
+    {{"boolean", ModelOptionKind::boolean}, {"integer", ModelOptionKind::integer}, {"decimal", ModelOptionKind::decimal},
+     {"choice", ModelOptionKind::choice}, {"integer_or_auto", ModelOptionKind::integer_or_auto}, {"devices", ModelOptionKind::devices}}};
+constexpr std::array<std::pair<std::string_view, DraftLayerKind>, 3> kMtpKinds{
+    {{"none", DraftLayerKind::none}, {"file", DraftLayerKind::file}, {"in_model", DraftLayerKind::in_model}}};
+// what the server composes for every engine plugin: never one of its own flags
+constexpr std::array<std::string_view, 6> kComposedFlags{"--native", "--pack", "--family", "--family-sha256", "--gpu", "--serve"};
+constexpr std::size_t kMaxEngineArguments = 32U;
+constexpr std::size_t kMaxEngineOptions = 24U;
+constexpr std::size_t kMaxEngineChoices = 16U;
+constexpr std::size_t kMaxOptionValues = 32U;
+constexpr std::size_t kMaxCalibrationSteps = 4U;
+constexpr std::size_t kMaxCandidates = 8U;
+constexpr std::int64_t kMaxEngineInteger = std::int64_t{1} << 40U;
+
+template <typename T, std::size_t N>
+std::optional<T> named(const std::array<std::pair<std::string_view, T>, N>& table, const JsonValue* value) {
+  const std::string* text = value == nullptr ? nullptr : value->if_string();
+  if (text == nullptr) return std::nullopt;
+  for (const auto& [name, item] : table) {
+    if (name == *text) return item;
+  }
+  return std::nullopt;
+}
+template <typename T, std::size_t N>
+std::string name_in(const std::array<std::pair<std::string_view, T>, N>& table, const T value) {
+  for (const auto& [name, item] : table) {
+    if (item == value) return std::string{name};
+  }
+  return {};
+}
+
+// `object` holds only the keys in `allowed` and every one in `required`; else why not, at `where`.
+std::optional<std::string> keys_problem(const JsonValue* object, const std::string& where, const std::initializer_list<std::string_view> allowed,
+                                        const std::initializer_list<std::string_view> required) {
+  if (object == nullptr || object->if_object() == nullptr) return where + " must be an object";
+  for (const auto& entry : *object->if_object()) {
+    if (std::find(allowed.begin(), allowed.end(), entry.key) == allowed.end()) {
+      return where + " has an unknown key " + (printable(entry.key) && entry.key.size() <= 64U ? entry.key : std::string{"(unprintable)"});
+    }
+  }
+  for (const auto key : required) {
+    if (member(*object, key) == nullptr) return where + " needs " + std::string{key};
+  }
+  return std::nullopt;
+}
+
+std::optional<double> number_of(const JsonValue* value) {
+  if (value == nullptr) return std::nullopt;
+  if (const auto* whole = value->if_integer()) return static_cast<double>(*whole);
+  if (const auto* decimal = value->if_decimal()) return *decimal;
+  return std::nullopt;
+}
+
+// Lowercase letters and digits, and `extra`; 1 to `most` characters, the first a letter or a digit.
+bool word(const std::string_view text, const std::size_t most, const std::string_view extra) {
+  const auto plain = [](const char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'); };
+  return !text.empty() && text.size() <= most && plain(text.front()) &&
+         std::all_of(text.begin(), text.end(), [&](const char c) { return plain(c) || extra.find(c) != std::string_view::npos; });
+}
+bool flag_name(const std::string_view text) { return text.starts_with("--") && word(text.substr(2U), 31U, "-"); }
+
+std::string decimal_text(const double value) {
+  char buffer[32];
+  const auto [end, error] = std::to_chars(buffer, buffer + sizeof buffer, value);
+  return error == std::errc{} ? std::string(buffer, end) : std::string{"0"};
+}
+
+// 1 to 16, as a calibration candidate's N or M is written: one or two digits
+int small_number(const std::string_view digits) {
+  if (digits.empty() || digits.size() > 2U || !std::all_of(digits.begin(), digits.end(), [](const char c) { return c >= '0' && c <= '9'; })) {
+    return 0;
+  }
+  const int value = digits.size() == 1U ? digits[0] - '0' : (digits[0] - '0') * 10 + (digits[1] - '0');
+  return value >= 1 && value <= 16 ? value : 0;
+}
+
+// A calibration candidate for `argument` (an integer or fraction flag): {cores}, {threads}, {cores/N}, {cores*N/M}, or a
+// number within its bounds.
+bool candidate(const std::string_view text, const PluginArgument& argument) {
+  if (text == "{cores}" || text == "{threads}") return true;
+  if (text.starts_with("{cores") && text.ends_with("}")) {
+    const auto rest = text.substr(6U, text.size() - 7U);
+    if (rest.starts_with("/")) return small_number(rest.substr(1U)) != 0;
+    if (!rest.starts_with("*")) return false;
+    const auto slash = rest.find('/');
+    return slash != std::string_view::npos && small_number(rest.substr(1U, slash - 1U)) != 0 && small_number(rest.substr(slash + 1U)) != 0;
+  }
+  if (text.empty() || text.size() > 16U ||
+      !std::all_of(text.begin(), text.end(), [](const char c) { return (c >= '0' && c <= '9') || c == '.'; })) {
+    return false;
+  }
+  if (argument.value == PluginArgumentValue::fraction) {
+    double value = 0.0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    return error == std::errc{} && end == text.data() + text.size() && value >= 0.0 && value <= 1.0;
+  }
+  std::int64_t value = 0;
+  const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+  return error == std::errc{} && end == text.data() + text.size() && value >= argument.minimum && value <= argument.maximum;
+}
+
+// One "arguments" entry; why not, naming its flag.
+std::variant<PluginArgument, std::string> parse_engine_argument(const JsonValue& item, const std::vector<PluginArgument>& before) {
+  if (auto problem = keys_problem(&item, "engine.arguments' entry", {"flag", "value", "min", "max", "choices"}, {"flag", "value"})) {
+    return *problem;
+  }
+  const std::string* flag = member(item, "flag")->if_string();
+  if (flag == nullptr || !flag_name(*flag)) {
+    return std::string{"engine.arguments: a flag must be --name (lowercase letters, digits and '-', at most 33 characters)"};
+  }
+  if (std::find(kComposedFlags.begin(), kComposedFlags.end(), *flag) != kComposedFlags.end()) {
+    return "engine.arguments: " + *flag + " is the server's own (it composes --native, --pack, --family, --family-sha256, --gpu and --serve)";
+  }
+  if (std::any_of(before.begin(), before.end(), [&flag](const PluginArgument& other) { return other.flag == *flag; })) {
+    return "engine.arguments names " + *flag + " twice";
+  }
+  PluginArgument argument;
+  argument.flag = *flag;
+  const auto value = named(kArgumentValues, member(item, "value"));
+  if (!value) return "engine.arguments: " + *flag + "'s value must be none, integer, fraction, gibibytes, on_off, gguf_file or choice";
+  argument.value = *value;
+  const JsonValue* low = member(item, "min");
+  const JsonValue* high = member(item, "max");
+  if (*value == PluginArgumentValue::integer || *value == PluginArgumentValue::gibibytes) {
+    const bool gib = *value == PluginArgumentValue::gibibytes;
+    const auto* lowest = low == nullptr ? nullptr : low->if_integer();
+    const auto* highest = high == nullptr ? nullptr : high->if_integer();
+    if (lowest == nullptr || highest == nullptr || *lowest > *highest || *lowest < -kMaxEngineInteger || *highest > kMaxEngineInteger ||
+        (gib && (*lowest < 0 || *highest > 1024))) {
+      return "engine.arguments: " + *flag + " needs min and max, whole numbers, min at most max" + (gib ? std::string{" (0 to 1024 GiB)"} : std::string{});
+    }
+    argument.minimum = *lowest;
+    argument.maximum = *highest;
+  } else if (low != nullptr || high != nullptr) {
+    return "engine.arguments: " + *flag + " takes no min or max";
+  }
+  const JsonValue* choices = member(item, "choices");
+  if (*value == PluginArgumentValue::choice) {
+    const auto* list = choices == nullptr ? nullptr : choices->if_array();
+    const std::string bad = "engine.arguments: " + *flag +
+                            " needs its choices, 1 to 16, each once (lowercase letters, digits, '.', '_' or '-', at most 32)";
+    if (list == nullptr || list->empty() || list->size() > kMaxEngineChoices) return bad;
+    for (const auto& each : *list) {
+      const std::string* text = each.if_string();
+      if (text == nullptr || !word(*text, 32U, "._-") ||
+          std::find(argument.choices.begin(), argument.choices.end(), *text) != argument.choices.end()) {
+        return bad;
+      }
+      argument.choices.push_back(*text);
+    }
+  } else if (choices != nullptr) {
+    return "engine.arguments: " + *flag + " takes no choices";
+  }
+  return argument;
+}
+
+// One "options" entry, on a declared flag; why not, naming the option.
+std::variant<PluginEngineOption, std::string> parse_engine_option(const JsonValue& item, const PluginEngine& engine) {
+  if (auto problem = keys_problem(&item, "engine.options' entry",
+                                  {"name", "kind", "label", "help", "flag", "min", "max", "values", "choices", "default"},
+                                  {"name", "kind", "label"})) {
+    return *problem;
+  }
+  const std::string* name = member(item, "name")->if_string();
+  if (name == nullptr || !valid_plugin_id(*name)) {
+    return std::string{"engine.options: a name must be a lowercase letter, then lowercase letters, digits or '_' (at most 32)"};
+  }
+  if (std::any_of(engine.options.begin(), engine.options.end(), [&name](const PluginEngineOption& other) { return other.name == *name; })) {
+    return "engine.options names " + *name + " twice";
+  }
+  const std::string where = "engine.options: " + *name;
+  PluginEngineOption option;
+  option.name = *name;
+  const auto kind = named(kOptionKinds, member(item, "kind"));
+  if (!kind) return where + "'s kind must be boolean, integer, decimal, choice, integer_or_auto or devices";
+  option.kind = *kind;
+  auto label = text_of(item, "label", 1U, 64U);
+  if (label.index() == 1U) return where + "'s " + std::get<1>(label);
+  option.label = std::get<0>(std::move(label));
+  if (member(item, "help") != nullptr) {
+    auto help = text_of(item, "help", 0U, 200U);
+    if (help.index() == 1U) return where + "'s " + std::get<1>(help);
+    option.help = std::get<0>(std::move(help));
+  }
+  const JsonValue* flag = member(item, "flag");
+  const JsonValue* low = member(item, "min");
+  const JsonValue* high = member(item, "max");
+  const JsonValue* values = member(item, "values");
+  const JsonValue* choices = member(item, "choices");
+  const JsonValue* fallback = member(item, "default");
+  if (*kind == ModelOptionKind::devices) {
+    if (flag != nullptr) return where + " takes no flag: the server composes --gpu from it";
+    const auto* most = high == nullptr ? nullptr : high->if_integer();
+    if (most == nullptr || *most < 1 || *most > 64) return where + "'s max is how many GPUs it takes, 1 to 64";
+    if (low != nullptr || values != nullptr || choices != nullptr) return where + " takes only a label, help, max and default";
+    if (fallback != nullptr) {
+      if (fallback->if_string() == nullptr || *fallback->if_string() != "auto") return where + "'s default can only be auto";
+      option.default_value = "auto";
+    }
+    option.maximum = *most;
+    return option;
+  }
+  const std::string* flag_text = flag == nullptr ? nullptr : flag->if_string();
+  if (flag_text == nullptr) return where + " needs the flag it sets";
+  const auto argument = std::find_if(engine.arguments.begin(), engine.arguments.end(),
+                                     [&flag_text](const PluginArgument& each) { return each.flag == *flag_text; });
+  if (argument == engine.arguments.end()) return where + "'s flag " + *flag_text + " is not among its arguments";
+  option.flag = *flag_text;
+  const bool integer = *kind == ModelOptionKind::integer || *kind == ModelOptionKind::integer_or_auto;
+  const bool fits = (*kind == ModelOptionKind::boolean && (argument->value == PluginArgumentValue::on_off || argument->value == PluginArgumentValue::none)) ||
+                    (integer && (argument->value == PluginArgumentValue::integer || argument->value == PluginArgumentValue::gibibytes)) ||
+                    (*kind == ModelOptionKind::decimal && argument->value == PluginArgumentValue::fraction) ||
+                    (*kind == ModelOptionKind::choice && argument->value == PluginArgumentValue::choice);
+  if (!fits) {
+    return where + " (" + name_in(kOptionKinds, *kind) + ") cannot set " + *flag_text + " (" + name_in(kArgumentValues, argument->value) + ")";
+  }
+  if (integer) {
+    const auto* lowest = low == nullptr ? nullptr : low->if_integer();
+    const auto* highest = high == nullptr ? nullptr : high->if_integer();
+    if (lowest == nullptr || highest == nullptr || *lowest > *highest || *lowest < argument->minimum || *highest > argument->maximum) {
+      return where + "'s min and max must be whole numbers within " + *flag_text + "'s, " + std::to_string(argument->minimum) + " to " +
+             std::to_string(argument->maximum);
+    }
+    option.minimum = *lowest;
+    option.maximum = *highest;
+    if (values != nullptr) {
+      const auto* list = values->if_array();
+      const std::string bad = where + "'s values must rise, within its min and max (1 to 32 of them)";
+      if (list == nullptr || list->empty() || list->size() > kMaxOptionValues) return bad;
+      for (const auto& each : *list) {
+        const auto* number = each.if_integer();
+        if (number == nullptr || *number < option.minimum || *number > option.maximum || (!option.values.empty() && *number <= option.values.back())) {
+          return bad;
+        }
+        option.values.push_back(*number);
+      }
+    }
+    if (choices != nullptr) return where + " takes no choices";
+  } else if (*kind == ModelOptionKind::decimal) {
+    const auto lowest = number_of(low);
+    const auto highest = number_of(high);
+    if (!lowest || !highest || *lowest < 0.0 || *lowest > *highest || *highest > 1.0) return where + "'s min and max must be within 0 to 1";
+    option.minimum_decimal = *lowest;
+    option.maximum_decimal = *highest;
+    if (values != nullptr || choices != nullptr) return where + " takes no values or choices";
+  } else if (*kind == ModelOptionKind::choice) {
+    const auto* list = choices == nullptr ? nullptr : choices->if_array();
+    const std::string bad = where + "'s choices must be among " + *flag_text + "'s, each once";
+    if (list == nullptr || list->empty()) return bad;
+    for (const auto& each : *list) {
+      const std::string* text = each.if_string();
+      if (text == nullptr || std::find(argument->choices.begin(), argument->choices.end(), *text) == argument->choices.end() ||
+          std::find(option.choices.begin(), option.choices.end(), *text) != option.choices.end()) {
+        return bad;
+      }
+      option.choices.push_back(*text);
+    }
+    if (low != nullptr || high != nullptr || values != nullptr) return where + " takes no min, max or values";
+  } else if (low != nullptr || high != nullptr || values != nullptr || choices != nullptr) {
+    return where + " takes no min, max, values or choices";
+  }
+  if (fallback != nullptr) {
+    const std::string bad = where + "'s default is not one it takes";
+    const auto in_values = [&option](const std::int64_t number) {
+      return option.values.empty() || std::find(option.values.begin(), option.values.end(), number) != option.values.end();
+    };
+    if (*kind == ModelOptionKind::boolean) {
+      if (fallback->if_boolean() == nullptr) return bad;
+      option.default_value = *fallback->if_boolean() ? "true" : "false";
+    } else if (integer) {
+      if (*kind == ModelOptionKind::integer_or_auto && fallback->if_string() != nullptr && *fallback->if_string() == "auto") {
+        option.default_value = "auto";
+      } else {
+        const auto* number = fallback->if_integer();
+        if (number == nullptr || *number < option.minimum || *number > option.maximum || !in_values(*number)) return bad;
+        option.default_value = std::to_string(*number);
+      }
+    } else if (*kind == ModelOptionKind::decimal) {
+      const auto number = number_of(fallback);
+      if (!number || *number < option.minimum_decimal || *number > option.maximum_decimal) return bad;
+      option.default_value = decimal_text(*number);
+    } else {
+      const std::string* text = fallback->if_string();
+      if (text == nullptr || std::find(option.choices.begin(), option.choices.end(), *text) == option.choices.end()) return bad;
+      option.default_value = *text;
+    }
+  }
+  return option;
+}
+
+std::variant<PluginEngine, std::string> parse_engine(const JsonValue& block, const std::string& id, const std::vector<std::string>& files) {
+  if (auto problem = keys_problem(&block, "engine",
+                                  {"abi", "dialect", "chat", "tokenizer", "models", "arguments", "options", "sampling", "calibration",
+                                   "monitor", "capabilities"},
+                                  {"abi", "dialect", "chat", "tokenizer", "models", "arguments", "capabilities"})) {
+    return *problem;
+  }
+  PluginEngine engine;
+  // its library: the file the launcher loads
+  const std::string library = kPlatform == "windows" ? "multiengine_" + id + ".dll" : "libmultiengine_" + id + ".so";
+  if (std::find(files.begin(), files.end(), library) == files.end()) {
+    return "files must name its engine library, " + library + " (the file the engine's launcher loads)";
+  }
+  const auto* abi = member(block, "abi")->if_integer();
+  if (abi == nullptr || *abi != 1) return std::string{"engine.abi must be 1, this server's engine ABI"};
+  const auto dialect = named(kDialects, member(block, "dialect"));
+  if (!dialect) return std::string{"engine.dialect must be strata_0143 or unified (a vendor's own engine dialect is not a plugin's)"};
+  engine.dialect = *dialect;
+  const auto chat = named(kRenderers, member(block, "chat"));
+  if (!chat) return std::string{"engine.chat must name a reviewed renderer: qwen, glm53, gemma4, deepseek, raon1, flint or minimax"};
+  engine.chat = *chat;
+
+  const JsonValue* tokenizer = member(block, "tokenizer");
+  if (auto problem = keys_problem(tokenizer, "engine.tokenizer", {"source", "mode"}, {"source", "mode"})) return *problem;
+  const std::string* source = member(*tokenizer, "source")->if_string();
+  if (source == nullptr || (*source != "gguf" && *source != "pack")) return std::string{"engine.tokenizer.source must be gguf or pack"};
+  engine.tokenizer_source = *source == "gguf" ? TokenizerSource::gguf : TokenizerSource::pack;
+  const auto mode = named(kTokenizerModes, member(*tokenizer, "mode"));
+  if (!mode) {
+    return std::string{"engine.tokenizer.mode must be one this server implements: byte_bpe, spm_bpe, raon_bpe, flint_bpe, deepseek_bpe, "
+                       "glm_bpe or minimax_bpe"};
+  }
+  engine.tokenizer_mode = *mode;
+
+  const JsonValue* models = member(block, "models");
+  if (auto problem = keys_problem(models, "engine.models", {"gguf_architectures", "context_key", "mtp_key"}, {"gguf_architectures", "context_key"})) {
+    return *problem;
+  }
+  const auto* architectures = member(*models, "gguf_architectures")->if_array();
+  const std::string bad_architectures =
+      "engine.models.gguf_architectures must list 1 to 8 GGUF architectures, each once (lowercase letters, digits, '.', '_' or '-', at most 32)";
+  if (architectures == nullptr || architectures->empty() || architectures->size() > 8U) return bad_architectures;
+  for (const auto& item : *architectures) {
+    const std::string* text = item.if_string();
+    if (text == nullptr || !word(*text, 32U, "._-") ||
+        std::find(engine.gguf_architectures.begin(), engine.gguf_architectures.end(), *text) != engine.gguf_architectures.end()) {
+      return bad_architectures;
+    }
+    engine.gguf_architectures.push_back(*text);
+  }
+  for (const auto& [key, field] : {std::pair<std::string_view, std::string*>{"context_key", &engine.context_key},
+                                   std::pair<std::string_view, std::string*>{"mtp_key", &engine.mtp_key}}) {
+    const JsonValue* value = member(*models, key);
+    if (value == nullptr) continue;
+    const std::string* text = value->if_string();
+    if (text == nullptr || !word(*text, 64U, "._-")) {
+      return "engine.models." + std::string{key} + " must be a GGUF key (lowercase letters, digits, '.', '_' or '-', at most 64)";
+    }
+    *field = *text;
+  }
+
+  const auto* arguments = member(block, "arguments")->if_array();
+  if (arguments == nullptr || arguments->empty() || arguments->size() > kMaxEngineArguments) {
+    return std::string{"engine.arguments must list 1 to 32 flags: the only ones that reach its engine"};
+  }
+  for (const auto& item : *arguments) {
+    auto argument = parse_engine_argument(item, engine.arguments);
+    if (auto* problem = std::get_if<std::string>(&argument)) return *problem;
+    engine.arguments.push_back(std::get<PluginArgument>(std::move(argument)));
+  }
+
+  if (const JsonValue* options = member(block, "options")) {
+    const auto* list = options->if_array();
+    if (list == nullptr || list->size() > kMaxEngineOptions) return std::string{"engine.options must list at most 24 options"};
+    for (const auto& item : *list) {
+      auto option = parse_engine_option(item, engine);
+      if (auto* problem = std::get_if<std::string>(&option)) return *problem;
+      engine.options.push_back(std::get<PluginEngineOption>(std::move(option)));
+    }
+  }
+
+  if (const JsonValue* sampling = member(block, "sampling")) {
+    if (auto problem = keys_problem(sampling, "engine.sampling", {"temperature", "top_p", "top_k", "min_p"}, {"temperature", "top_p"})) {
+      return *problem;
+    }
+    const auto temperature = number_of(member(*sampling, "temperature"));
+    if (!temperature || *temperature < 0.0 || *temperature > 2.0) return std::string{"engine.sampling.temperature must be 0 to 2"};
+    const auto top_p = number_of(member(*sampling, "top_p"));
+    if (!top_p || *top_p <= 0.0 || *top_p > 1.0) return std::string{"engine.sampling.top_p must be above 0, at most 1"};
+    engine.sampling.temperature = *temperature;
+    engine.sampling.top_p = *top_p;
+    if (const JsonValue* top_k = member(*sampling, "top_k")) {
+      const auto* number = top_k->if_integer();
+      if (number == nullptr || *number < 1 || *number > 1000) return std::string{"engine.sampling.top_k must be a whole number from 1 to 1000"};
+      engine.sampling.top_k = *number;
+    }
+    if (const JsonValue* min_p = member(*sampling, "min_p")) {
+      const auto number = number_of(min_p);
+      if (!number || *number < 0.0 || *number > 1.0) return std::string{"engine.sampling.min_p must be 0 to 1"};
+      engine.sampling.min_p = *number;
+    }
+  }
+
+  if (const JsonValue* calibration = member(block, "calibration")) {
+    if (auto problem = keys_problem(calibration, "engine.calibration", {"before_first_start", "keep_margin", "steps"}, {"steps"})) {
+      return *problem;
+    }
+    if (const JsonValue* before = member(*calibration, "before_first_start")) {
+      if (before->if_boolean() == nullptr) return std::string{"engine.calibration.before_first_start must be true or false"};
+      engine.calibrates_before_first_start = *before->if_boolean();
+    }
+    if (const JsonValue* margin = member(*calibration, "keep_margin")) {
+      const auto number = number_of(margin);
+      if (!number || *number < 0.0 || *number > 0.2) return std::string{"engine.calibration.keep_margin must be 0 to 0.2"};
+      engine.keep_margin = *number;
+    }
+    const auto* steps = member(*calibration, "steps")->if_array();
+    if (steps == nullptr || steps->size() > kMaxCalibrationSteps) return std::string{"engine.calibration.steps must list at most 4 steps"};
+    for (const auto& item : *steps) {
+      if (auto problem = keys_problem(&item, "engine.calibration's step", {"flag", "values"}, {"flag", "values"})) return *problem;
+      const std::string* flag = member(item, "flag")->if_string();
+      const auto argument = flag == nullptr ? engine.arguments.end()
+                                            : std::find_if(engine.arguments.begin(), engine.arguments.end(),
+                                                           [&flag](const PluginArgument& each) { return each.flag == *flag; });
+      if (argument == engine.arguments.end() ||
+          (argument->value != PluginArgumentValue::integer && argument->value != PluginArgumentValue::fraction)) {
+        return std::string{"engine.calibration: a step's flag must be one of its integer or fraction flags"};
+      }
+      if (std::any_of(engine.calibration.begin(), engine.calibration.end(), [&flag](const PluginCalibrationStep& other) { return other.flag == *flag; })) {
+        return "engine.calibration names " + *flag + " twice";
+      }
+      PluginCalibrationStep step;
+      step.flag = *flag;
+      const auto* values = member(item, "values")->if_array();
+      const std::string bad = "engine.calibration: " + *flag +
+                              "'s candidates must be numbers within its bounds, {cores}, {threads}, {cores/N} or {cores*N/M} (1 to 8 of them)";
+      if (values == nullptr || values->empty() || values->size() > kMaxCandidates) return bad;
+      for (const auto& each : *values) {
+        const std::string* text = each.if_string();
+        if (text == nullptr || !candidate(*text, *argument)) return bad;
+        step.values.push_back(*text);
+      }
+      engine.calibration.push_back(std::move(step));
+    }
+  }
+
+  if (const JsonValue* monitor = member(block, "monitor")) {
+    if (auto problem = keys_problem(monitor, "engine.monitor", {"experts_vram", "experts_ram"}, {})) return *problem;
+    for (const auto& [key, field] : {std::pair<std::string_view, std::string*>{"experts_vram", &engine.monitor_experts_vram},
+                                     std::pair<std::string_view, std::string*>{"experts_ram", &engine.monitor_experts_ram}}) {
+      const JsonValue* value = member(*monitor, key);
+      if (value == nullptr) continue;
+      const std::string* text = value->if_string();
+      if (text == nullptr || std::find(kExpertReadingKeys.begin(), kExpertReadingKeys.end(), *text) == kExpertReadingKeys.end()) {
+        return "engine.monitor." + std::string{key} + " must be one of the engine keys the Monitor reads";
+      }
+      *field = *text;
+    }
+  }
+
+  const JsonValue* capabilities = member(block, "capabilities");
+  if (auto problem = keys_problem(capabilities, "engine.capabilities", {"vision", "web_search", "mtp"}, {"vision", "web_search", "mtp"})) {
+    return *problem;
+  }
+  for (const auto& [key, field] : {std::pair<std::string_view, bool*>{"vision", &engine.vision},
+                                   std::pair<std::string_view, bool*>{"web_search", &engine.web_search}}) {
+    const auto* flag = member(*capabilities, key)->if_boolean();
+    if (flag == nullptr) return "engine.capabilities." + std::string{key} + " must be true or false";
+    *field = *flag;
+  }
+  const auto mtp = named(kMtpKinds, member(*capabilities, "mtp"));
+  if (!mtp) return std::string{"engine.capabilities.mtp must be none, file or in_model"};
+  engine.mtp = *mtp;
+  return engine;
+}
+
 }  // namespace
 
 std::string_view setting_kind_name(const SettingKind kind) noexcept {
@@ -559,6 +1047,11 @@ std::variant<PluginManifest, std::string> parse_plugin_manifest(const std::strin
     auto run = parse_run(*member(*root, plugin_kind_name(manifest.kind)), manifest.kind, manifest.files);
     if (const auto* problem = std::get_if<std::string>(&run)) return *problem;
     manifest.run = std::get<PluginRun>(std::move(run));
+  }
+  if (manifest.kind == PluginKind::engine) {
+    auto engine = parse_engine(*member(*root, "engine"), manifest.id, manifest.files);
+    if (const auto* problem = std::get_if<std::string>(&engine)) return *problem;
+    manifest.engine = std::get<PluginEngine>(std::move(engine));
   }
   return manifest;
 }

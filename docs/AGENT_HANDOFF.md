@@ -280,6 +280,31 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z74 (Windows box; owner-directed)
+
+The engine-family phases go on (the owner: "continue working"): phase 1's last item, an engine plugin's manifest block,
+which declares what phase 2's plugin descriptors will hold (spec section 3, "As built").
+- **`PluginEngine`** (plugin_manifest.hpp), read from `"engine"` when the kind is engine, its types the built-in
+  descriptors' own (EngineProtocolFlavor, NativeChatProfile, TokenizerSource/Mode, ModelOptionKind, RecommendedSampling,
+  DraftLayerKind): abi 1; dialect strata_0143 or unified; chat, a reviewed renderer by name; tokenizer source and mode;
+  models (1-8 GGUF architectures, the context and MTP keys); arguments (1-32 flags, each value none, integer and
+  gibibytes with bounds, fraction, on_off, gguf_file, or choice with its choices - never --native, --pack, --family,
+  --family-sha256, --gpu or --serve, which the server composes); options (at most 24, each on a declared flag its kind
+  fits, within that flag's bounds, with its values, choices and default; devices has no flag); sampling; calibration
+  (before the first start, the keep margin up to 0.2, at most 4 steps over integer or fraction flags, candidates numbers
+  within bounds or {cores}, {threads}, {cores/N}, {cores*N/M}); monitor (keys from the Monitor's list); capabilities
+  (vision, web search, mtp none/file/in_model). The files must name its library, multiengine_<id>.dll
+  (libmultiengine_<id>.so). Any other key anywhere in it is refused by name.
+- **One list of the Monitor's keys**: `kExpertReadingKeys` moved from serve_monitor.cpp to engine_family_kinds.hpp, so the
+  Monitor and the monitor block read the same one.
+- A manifest's JSON now takes fractions (the sampling and the margin); integer fields still refuse them.
+- The registry's and routes' engine fixtures carry the least valid block (an empty `engine` is refused now). Nothing
+  runs from the block yet: phase 2's next step makes a family descriptor of it.
+- **Proof**: RED (the block not read: 1 and 33 failures), then GREEN. MSVC: the whole tree built, no warnings; 1504 of
+  1506 (the two release-only cases). Linux gcc 13.3, clang 18.1 and gcc Release: built whole, the whole suites pass but
+  the release-only pair and the timing cases, which pass alone; the manifest, registry and routes cases under ASan/UBSan,
+  no finding.
+
 ### Claude Code session, 2026-10-31 z73 (Windows box; owner-directed)
 
 strata-tui: a message is shown whole (the owner, reviewing the TUI: "pressing w on the tui is not saving").

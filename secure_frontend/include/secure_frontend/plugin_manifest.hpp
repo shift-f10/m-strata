@@ -22,6 +22,10 @@
 // Each kind has its own block, named after it ("engine", "tool", "notifier", "diagnostics"), and only its own. Every
 // other key is refused, as is any text that is not printable ASCII within its bound.
 
+#include "secure_frontend/engine_family_kinds.hpp"
+#include "secure_frontend/family_descriptor.hpp"
+#include "secure_frontend/model_option_spec.hpp"
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -89,6 +93,71 @@ struct PluginRun final {
   std::chrono::seconds call_timeout{120};                           // a tool's: one call's limit (1-600 s)
 };
 
+// An engine plugin's block (plugin spec section 3, as built): the family it adds, what its descriptor
+// (family_descriptor.hpp) will hold, each part from a closed list this server implements. Its library is the file the
+// launcher loads, multiengine_<id>.dll (libmultiengine_<id>.so on Linux), which its files must name.
+//   "engine": {"abi": 1, "dialect": "strata_0143" | "unified", "chat": a reviewed renderer (qwen, glm53, gemma4, deepseek,
+//              raon1, flint, minimax), "tokenizer": {"source": "gguf" | "pack", "mode": a tokenizer mode},
+//              "models": {"gguf_architectures": [...], "context_key", "mtp_key"?},
+//              "arguments": [{"flag", "value": none | integer | fraction | gibibytes | on_off | gguf_file | choice, "min",
+//                             "max", "choices"}],                               (the only flags that reach its engine)
+//              "options": [{"name", "kind", "label", "help", "flag", "min", "max", "values", "choices", "default"}]?,
+//              "sampling": {"temperature", "top_p", "top_k"?, "min_p"?}?,
+//              "calibration": {"before_first_start", "keep_margin", "steps": [{"flag", "values"}]}?,
+//              "monitor": {"experts_vram", "experts_ram"}?, "capabilities": {"vision", "web_search", "mtp"}}
+// The server composes --native/--pack, --family, --family-sha256, --gpu and --serve itself: no plugin declares them.
+enum class PluginArgumentValue { none, integer, fraction, gibibytes, on_off, gguf_file, choice };
+struct PluginArgument final {
+  std::string flag;
+  PluginArgumentValue value{PluginArgumentValue::none};
+  std::int64_t minimum{0};  // integer and gibibytes
+  std::int64_t maximum{0};
+  std::vector<std::string> choices{};  // choice
+};
+// A card's option on a declared flag, as the built-in tables declare theirs (model_option_spec.hpp); devices has no flag
+// (the server composes --gpu from it).
+struct PluginEngineOption final {
+  std::string name;
+  ModelOptionKind kind{ModelOptionKind::boolean};
+  std::string label;
+  std::string help;
+  std::string flag;
+  std::int64_t minimum{0};  // integer, integer_or_auto; devices: at most `maximum` GPUs
+  std::int64_t maximum{0};
+  double minimum_decimal{0.0};  // decimal
+  double maximum_decimal{0.0};
+  std::vector<std::string> choices{};    // choice
+  std::vector<std::int64_t> values{};    // integer kinds: the only values offered, ascending
+  std::optional<std::string> default_value{};  // as a card holds it: "true", "65536", "0.5", "auto", "q8"
+};
+// One calibration step: the candidates for a declared integer or fraction flag - numbers, or {cores}, {threads},
+// {cores/N} and {cores*N/M} (this PC's physical cores and threads).
+struct PluginCalibrationStep final {
+  std::string flag;
+  std::vector<std::string> values;
+};
+struct PluginEngine final {
+  int abi{1};
+  EngineProtocolFlavor dialect{EngineProtocolFlavor::strata_0143};
+  NativeChatProfile chat{NativeChatProfile::qwen};
+  TokenizerSource tokenizer_source{TokenizerSource::gguf};
+  TokenizerMode tokenizer_mode{TokenizerMode::byte_bpe};
+  std::vector<std::string> gguf_architectures;
+  std::string context_key;
+  std::string mtp_key{};  // empty: none
+  std::vector<PluginArgument> arguments;
+  std::vector<PluginEngineOption> options{};
+  RecommendedSampling sampling{};
+  bool calibrates_before_first_start{false};
+  double keep_margin{0.03};
+  std::vector<PluginCalibrationStep> calibration{};
+  std::string monitor_experts_vram{};  // the engine's STAT/INFO key for its VRAM tier (empty: none)
+  std::string monitor_experts_ram{};
+  bool vision{false};
+  bool web_search{false};
+  DraftLayerKind mtp{DraftLayerKind::none};
+};
+
 struct PluginManifest final {
   std::string id;          // its folder's name
   PluginKind kind{PluginKind::diagnostics};
@@ -100,6 +169,7 @@ struct PluginManifest final {
   std::vector<std::string> files;           // this platform's code files, relative to its folder ('/'-separated)
   std::vector<DiagnosticSwitch> switches;   // kind diagnostics
   std::optional<PluginRun> run;             // kinds tool and notifier
+  std::optional<PluginEngine> engine{};     // kind engine
 };
 
 inline constexpr std::size_t kMaxPluginSettings = 16U;

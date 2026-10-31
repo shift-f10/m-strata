@@ -135,7 +135,7 @@ void refusals_say_why() {
   Plugins plugins;
   plugins.add("broken", "{\"schema\": \"m-strata.plugin/1\"}");
   plugins.add("acme3", R"({"schema": "m-strata.plugin/1", "id": "acme3", "kind": "engine", "name": "Acme-3", "version": "0.1.0",
-    "publisher": "Example Labs", "license": "Apache-2.0", "about": "", "engine": {},
+    "publisher": "Example Labs", "license": "Apache-2.0", "about": "", "engine": {"abi": 1, "dialect": "strata_0143", "chat": "flint", "tokenizer": {"source": "gguf", "mode": "flint_bpe"}, "models": {"gguf_architectures": ["acme"], "context_key": "acme.context_length"}, "arguments": [{"flag": "--max-context", "value": "integer", "min": 1, "max": 262144}], "capabilities": {"vision": false, "web_search": false, "mtp": "none"}},
     "files": {"windows": ["multiengine_acme3.dll"], "linux": ["libmultiengine_acme3.so"]}})");
   plugins.add("search", R"({"schema": "m-strata.plugin/1", "id": "search", "kind": "tool", "name": "Web search", "version": "1.0.0",
     "publisher": "M-Strata", "license": "AGPL-3.0-only", "about": "", "tool": {"program": {"windows": "strata-search.exe", "linux": "strata-search"}},
@@ -154,7 +154,7 @@ void refusals_say_why() {
   secure_frontend_test::write_file(plugins.dir / "mailer" / "mailer", "notifier", 0700);
 #endif
   plugins.add("acme4", R"({"schema": "m-strata.plugin/1", "id": "acme4", "kind": "engine", "name": "Acme-4", "version": "0.1.0",
-    "publisher": "Example Labs", "license": "Apache-2.0", "about": "", "engine": {},
+    "publisher": "Example Labs", "license": "Apache-2.0", "about": "", "engine": {"abi": 1, "dialect": "strata_0143", "chat": "flint", "tokenizer": {"source": "gguf", "mode": "flint_bpe"}, "models": {"gguf_architectures": ["acme"], "context_key": "acme.context_length"}, "arguments": [{"flag": "--max-context", "value": "integer", "min": 1, "max": 262144}], "capabilities": {"vision": false, "web_search": false, "mtp": "none"}},
     "files": {"windows": ["multiengine_acme4.dll"], "linux": ["libmultiengine_acme4.so"]}})");
 #if defined(_WIN32)
   secure_frontend_test::write_file(plugins.dir / "acme4" / "multiengine_acme4.dll", "engine");

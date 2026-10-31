@@ -36,12 +36,49 @@ const std::string kDebugging = R"({
   "diagnostics": {"switches": ["logging.requests", "logging.engine_output", "troubleshooting"]}
 })";
 
-// a code kind's manifest, its files per platform
-std::string engine_manifest(const std::string& files) {
+// An engine plugin's block (plugin spec section 3, as built): the least a family declares.
+const std::string kMinimalEngine =
+    R"({"abi": 1, "dialect": "strata_0143", "chat": "flint", "tokenizer": {"source": "gguf", "mode": "flint_bpe"},
+        "models": {"gguf_architectures": ["acme3"], "context_key": "acme3.context_length"},
+        "arguments": [{"flag": "--max-context", "value": "integer", "min": 1, "max": 262144}],
+        "capabilities": {"vision": false, "web_search": false, "mtp": "none"}})";
+// ... and all it may declare
+const std::string kAcmeEngine = R"({
+    "abi": 1, "dialect": "strata_0143", "chat": "flint",
+    "tokenizer": {"source": "gguf", "mode": "flint_bpe"},
+    "models": {"gguf_architectures": ["acme3", "acme3moe"], "context_key": "acme3.context_length", "mtp_key": "acme3.nextn_predict_layers"},
+    "arguments": [
+      {"flag": "--max-context", "value": "integer", "min": 4096, "max": 262144},
+      {"flag": "--expert-vram", "value": "gibibytes", "min": 0, "max": 1024},
+      {"flag": "--cpu-threads", "value": "integer", "min": 1, "max": 256},
+      {"flag": "--pcie-frac", "value": "fraction"},
+      {"flag": "--cpu-lane", "value": "on_off"},
+      {"flag": "--no-graph", "value": "none"},
+      {"flag": "--kv", "value": "choice", "choices": ["f16", "q8"]},
+      {"flag": "--mtp", "value": "gguf_file"}],
+    "options": [
+      {"name": "max_context", "kind": "integer", "label": "Context length", "help": "Tokens the model reads.", "flag": "--max-context",
+       "min": 4096, "max": 262144, "values": [8192, 32768, 65536, 131072], "default": 65536},
+      {"name": "expert_vram", "kind": "integer_or_auto", "label": "Expert VRAM", "flag": "--expert-vram", "min": 0, "max": 1024, "default": "auto"},
+      {"name": "pcie_frac", "kind": "decimal", "label": "PCIe share", "flag": "--pcie-frac", "min": 0, "max": 1},
+      {"name": "cpu_lane", "kind": "boolean", "label": "CPU lane", "flag": "--cpu-lane", "default": true},
+      {"name": "kv", "kind": "choice", "label": "KV cache", "flag": "--kv", "choices": ["f16", "q8"], "default": "q8"},
+      {"name": "gpus", "kind": "devices", "label": "GPUs", "max": 8}],
+    "sampling": {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "min_p": 0.05},
+    "calibration": {"before_first_start": true, "keep_margin": 0.03,
+                    "steps": [{"flag": "--cpu-threads", "values": ["{cores}", "{cores*2/3}", "{cores/2}"]},
+                              {"flag": "--pcie-frac", "values": ["0", "0.25", "0.5", "0.75"]}]},
+    "monitor": {"experts_vram": "vram_slots", "experts_ram": "pinned_gib"},
+    "capabilities": {"vision": false, "web_search": true, "mtp": "file"}
+  })";
+
+// a code kind's manifest, its files per platform (no engine block: an empty `engine`)
+std::string engine_manifest(const std::string& files, const std::string& engine = kMinimalEngine) {
   return R"({"schema": "m-strata.plugin/1", "id": "acme3", "kind": "engine", "name": "Acme-3", "version": "0.1.0",
              "publisher": "Example Labs", "license": "Apache-2.0", "about": "A family.", "files": )" + files +
-         R"(, "engine": {}})";
+         (engine.empty() ? std::string{} : ", \"engine\": " + engine) + "}";
 }
+const std::string kAcmeFiles = R"({"windows": ["multiengine_acme3.dll"], "linux": ["libmultiengine_acme3.so"]})";
 
 std::string why(const std::variant<secure_frontend::PluginManifest, std::string>& parsed) {
   const auto* reason = std::get_if<std::string>(&parsed);
@@ -115,9 +152,7 @@ void a_wrong_manifest_is_refused_by_name() {
   refuse(with("\"about\": \"Verbose logs", "\"about\": \"\\u0001 Verbose logs"), "debugging", "about");
   refuse(with(",\n  \"diagnostics\": {\"switches\": [\"logging.requests\", \"logging.engine_output\", \"troubleshooting\"]}", ""),
          "debugging", "diagnostics");
-  refuse(engine_manifest(R"({"windows": ["a.dll"], "linux": ["a.so"]})").replace(
-             engine_manifest(R"({"windows": ["a.dll"], "linux": ["a.so"]})").find(", \"engine\": {}"), 14, ""),
-         "acme3", "engine");
+  refuse(engine_manifest(R"({"windows": ["a.dll"], "linux": ["a.so"]})", ""), "acme3", "engine");
   refuse(std::string(secure_frontend::kMaxPluginManifestBytes + 1U, ' '), "debugging", "large");
   expect(secure_frontend::valid_plugin_id("acme3_x") && !secure_frontend::valid_plugin_id("3acme") &&
              !secure_frontend::valid_plugin_id("") && !secure_frontend::valid_plugin_id(std::string(33U, 'a')) &&
@@ -344,6 +379,111 @@ void the_shipped_debugging_plugin_is_one() {
   }
 }
 
+// An engine plugin's block, read: the family it adds, every part of it.
+void an_engine_block_declares_its_family() {
+  const auto parsed = secure_frontend::parse_plugin_manifest(engine_manifest(kAcmeFiles, kAcmeEngine), "acme3");
+  const auto* manifest = std::get_if<secure_frontend::PluginManifest>(&parsed);
+  expect(manifest != nullptr && manifest->engine.has_value(), "read: " + why(parsed));
+  if (manifest == nullptr || !manifest->engine) return;
+  const auto& e = *manifest->engine;
+  using secure_frontend::PluginArgumentValue;
+  expect(e.abi == 1 && e.dialect == secure_frontend::EngineProtocolFlavor::strata_0143 && e.chat == secure_frontend::NativeChatProfile::flint &&
+             e.tokenizer_source == secure_frontend::TokenizerSource::gguf && e.tokenizer_mode == secure_frontend::TokenizerMode::flint_bpe,
+         "its dialect, renderer and tokenizer");
+  expect(e.gguf_architectures == std::vector<std::string>{"acme3", "acme3moe"} && e.context_key == "acme3.context_length" &&
+             e.mtp_key == "acme3.nextn_predict_layers",
+         "the models it cards");
+  expect(e.arguments.size() == 8U && e.arguments[0].flag == "--max-context" && e.arguments[0].value == PluginArgumentValue::integer &&
+             e.arguments[0].minimum == 4096 && e.arguments[0].maximum == 262144 && e.arguments[1].value == PluginArgumentValue::gibibytes &&
+             e.arguments[3].value == PluginArgumentValue::fraction && e.arguments[4].value == PluginArgumentValue::on_off &&
+             e.arguments[5].value == PluginArgumentValue::none && e.arguments[6].value == PluginArgumentValue::choice &&
+             e.arguments[6].choices == std::vector<std::string>{"f16", "q8"} && e.arguments[7].value == PluginArgumentValue::gguf_file,
+         "its flags' allowlist");
+  using K = secure_frontend::ModelOptionKind;
+  expect(e.options.size() == 6U, "its options");
+  if (e.options.size() == 6U) {
+    expect(e.options[0].name == "max_context" && e.options[0].kind == K::integer && e.options[0].label == "Context length" &&
+               e.options[0].help == "Tokens the model reads." && e.options[0].flag == "--max-context" && e.options[0].minimum == 4096 &&
+               e.options[0].maximum == 262144 && e.options[0].values == std::vector<std::int64_t>{8192, 32768, 65536, 131072} &&
+               e.options[0].default_value == std::optional<std::string>{"65536"},
+           "an integer option with its values and default");
+    expect(e.options[1].kind == K::integer_or_auto && e.options[1].default_value == std::optional<std::string>{"auto"}, "auto");
+    expect(e.options[2].kind == K::decimal && e.options[2].minimum_decimal == 0.0 && e.options[2].maximum_decimal == 1.0 &&
+               !e.options[2].default_value,
+           "a decimal");
+    expect(e.options[3].kind == K::boolean && e.options[3].default_value == std::optional<std::string>{"true"}, "a switch");
+    expect(e.options[4].kind == K::choice && e.options[4].choices == std::vector<std::string>{"f16", "q8"} &&
+               e.options[4].default_value == std::optional<std::string>{"q8"},
+           "a choice");
+    expect(e.options[5].kind == K::devices && e.options[5].flag.empty() && e.options[5].maximum == 8, "the GPUs (no flag: --gpu is the server's)");
+  }
+  expect(e.sampling.temperature == 1.0 && e.sampling.top_p == 0.95 && e.sampling.top_k == std::optional<std::int64_t>{64} &&
+             e.sampling.min_p == std::optional<double>{0.05},
+         "its recommended sampling");
+  expect(e.calibrates_before_first_start && e.keep_margin == 0.03 && e.calibration.size() == 2U && e.calibration[0].flag == "--cpu-threads" &&
+             e.calibration[0].values == std::vector<std::string>{"{cores}", "{cores*2/3}", "{cores/2}"} &&
+             e.calibration[1].values == std::vector<std::string>{"0", "0.25", "0.5", "0.75"},
+         "its calibration");
+  expect(e.monitor_experts_vram == "vram_slots" && e.monitor_experts_ram == "pinned_gib", "the Monitor's keys");
+  expect(!e.vision && e.web_search && e.mtp == secure_frontend::DraftLayerKind::file, "what cards may offer");
+  // the least it may declare: no options, the default sampling, no sweep, no Monitor keys
+  const auto least = secure_frontend::parse_plugin_manifest(engine_manifest(kAcmeFiles), "acme3");
+  const auto* minimal = std::get_if<secure_frontend::PluginManifest>(&least);
+  expect(minimal != nullptr && minimal->engine && minimal->engine->options.empty() && minimal->engine->sampling.temperature == 1.0 &&
+             minimal->engine->sampling.top_p == 0.95 && !minimal->engine->sampling.top_k && minimal->engine->calibration.empty() &&
+             !minimal->engine->calibrates_before_first_start && minimal->engine->monitor_experts_vram.empty() &&
+             minimal->engine->mtp == secure_frontend::DraftLayerKind::none,
+         "the least an engine declares: " + why(least));
+}
+
+// Every part of the block checked, and a wrong one refused by name: nothing outside the closed lists, no flag the
+// server composes, no option on a flag it did not declare or past that flag's bounds, the library among its files.
+void a_wrong_engine_block_is_refused_by_name() {
+  const auto refuse = [](const std::string& from, const std::string& to, const std::string& reason) {
+    std::string engine = kAcmeEngine;
+    const auto at = engine.find(from);
+    expect(at != std::string::npos, "the test's own text is there: " + from);
+    if (at != std::string::npos) engine.replace(at, from.size(), to);
+    const auto parsed = secure_frontend::parse_plugin_manifest(engine_manifest(kAcmeFiles, engine), "acme3");
+    expect(why(parsed).find(reason) != std::string::npos, from + " -> " + to + " refused for " + reason + ": " + why(parsed));
+  };
+  refuse(R"("abi": 1)", R"("abi": 2)", "abi");
+  refuse(R"("dialect": "strata_0143")", R"("dialect": "maya_118")", "dialect");
+  refuse(R"("chat": "flint")", R"("chat": "jinja")", "chat");
+  refuse(R"("mode": "flint_bpe")", R"("mode": "wordpiece")", "tokenizer");
+  refuse(R"("source": "gguf")", R"("source": "web")", "tokenizer");
+  refuse(R"(["acme3", "acme3moe"])", "[]", "gguf_architectures");
+  refuse(R"(["acme3", "acme3moe"])", R"(["Acme3"])", "gguf_architectures");
+  refuse(R"("context_key": "acme3.context_length", )", "", "context_key");
+  refuse(R"("flag": "--mtp")", R"("flag": "--native")", "--native");
+  refuse(R"("flag": "--mtp")", R"("flag": "--gpu")", "--gpu");
+  refuse(R"("flag": "--mtp")", R"("flag": "mtp")", "flag");
+  refuse(R"("flag": "--mtp")", R"("flag": "--kv")", "twice");
+  refuse(R"("value": "gguf_file")", R"("value": "path")", "value");
+  refuse(R"("value": "integer", "min": 1, "max": 256})", R"("value": "integer"})", "min");
+  refuse(R"("value": "fraction"})", R"("value": "fraction", "choices": ["a"]})", "choices");
+  refuse(R"("flag": "--mtp", "value": "gguf_file"})", R"("flag": "--mtp", "value": "gguf_file", "extra": 1})", "extra");
+  refuse(R"("flag": "--pcie-frac", "min")", R"("flag": "--nope", "min")", "--nope");
+  refuse(R"("kind": "decimal", "label": "PCIe share")", R"("kind": "integer", "label": "PCIe share")", "pcie_frac");
+  refuse(R"("min": 4096, "max": 262144, "values")", R"("min": 1, "max": 262144, "values")", "max_context");
+  refuse("[8192, 32768, 65536, 131072]", "[32768, 8192]", "values");
+  refuse(R"("default": 65536)", R"("default": 3)", "default");
+  refuse(R"("choices": ["f16", "q8"], "default")", R"("choices": ["f16", "q4"], "default")", "kv");
+  refuse(R"("name": "cpu_lane")", R"("name": "kv")", "twice");
+  refuse(R"("label": "GPUs", "max": 8)", R"("label": "GPUs", "flag": "--kv", "max": 8)", "gpus");
+  refuse(R"("temperature": 1.0)", R"("temperature": 3)", "temperature");
+  refuse(R"("flag": "--cpu-threads", "values")", R"("flag": "--kv", "values")", "calibration");
+  refuse(R"("{cores/2}")", R"("{gpus}")", "calibration");
+  refuse(R"("{cores/2}")", R"("9999")", "calibration");
+  refuse(R"("keep_margin": 0.03)", R"("keep_margin": 0.5)", "keep_margin");
+  refuse(R"("experts_ram": "pinned_gib")", R"("experts_ram": "gpu_temp")", "monitor");
+  refuse(R"("mtp": "file")", R"("mtp": "maybe")", "mtp");
+  refuse(R"("abi": 1, )", R"("abi": 1, "extra": 1, )", "extra");
+  const auto other_files = secure_frontend::parse_plugin_manifest(
+      engine_manifest(R"({"windows": ["other.dll"], "linux": ["other.so"]})", kAcmeEngine), "acme3");
+  expect(why(other_files).find("multiengine_acme3") != std::string::npos, "its library among its files: " + why(other_files));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -354,6 +494,8 @@ int main(int argc, char** argv) {
       {"a_diagnostics_manifest_is_read", a_diagnostics_manifest_is_read},
       {"a_code_plugin_names_this_platforms_files", a_code_plugin_names_this_platforms_files},
       {"a_wrong_manifest_is_refused_by_name", a_wrong_manifest_is_refused_by_name},
+      {"an_engine_block_declares_its_family", an_engine_block_declares_its_family},
+      {"a_wrong_engine_block_is_refused_by_name", a_wrong_engine_block_is_refused_by_name},
       {"a_tool_manifest_says_how_its_program_runs", a_tool_manifest_says_how_its_program_runs},
       {"a_wrong_run_block_is_refused_by_name", a_wrong_run_block_is_refused_by_name},
       {"values_are_checked_against_the_settings", values_are_checked_against_the_settings},

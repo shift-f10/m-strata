@@ -179,6 +179,29 @@ What each block drives:
   name. `prepare` is `none`, a built-in pack step, or `plugin` (the family's own `strata-prepare-<id>`, run as
   strata-prepare's download protocol: STEP / DONE / ERROR).
 
+**As built (m-strata.plugin/1, 2026-10-31).** An engine family is a plugin like the other kinds (section 8):
+`<install>/plugins/<id>/plugin.json` with `"kind": "engine"`, its files per platform - the library the launcher loads,
+`multiengine_<id>.dll` (`libmultiengine_<id>.so` on Linux), among them - and an `engine` block (`PluginEngine`,
+plugin_manifest.hpp), its types those of the built-in families' descriptors:
+- `abi` 1; `dialect` strata_0143 or unified (a vendor's own engine dialect is not a plugin's);
+- `chat`: a reviewed renderer by name (qwen, glm53, gemma4, deepseek, raon1, flint, minimax); phase 3 adds the
+  declarative template;
+- `tokenizer`: its source (gguf or pack) and a mode this server implements (byte_bpe, spm_bpe, raon_bpe, flint_bpe,
+  deepseek_bpe, glm_bpe, minimax_bpe);
+- `models`: 1 to 8 GGUF architectures, the context key, an MTP key;
+- `arguments`: 1 to 32 flags, each value none, integer and gibibytes (with bounds), fraction, on_off, gguf_file, or
+  choice (with its choices). The server composes --native, --pack, --family, --family-sha256, --gpu and --serve
+  itself, so none of them may be declared;
+- `options` (at most 24): each on a declared flag whose value it fits, within that flag's bounds, with the values or
+  choices it offers and a default; devices takes no flag (the server composes --gpu from it);
+- `sampling`: the recommended temperature, top_p, top_k, min_p;
+- `calibration`: whether it runs before the first start, the keep margin (at most 0.2), at most 4 steps over integer
+  or fraction flags, each candidate a number within the flag's bounds or {cores}, {threads}, {cores/N}, {cores*N/M};
+- `monitor`: its tiers' keys, from the Monitor's list (`kExpertReadingKeys`);
+- `capabilities`: vision, web search, and mtp (none, file or in_model).
+Any other key, anywhere in the block, is refused by name. `downloads` waits for phase 4, the declarative template for
+phase 3. Nothing runs from the block yet: the descriptor made from it is phase 2's second step.
+
 ### 4. Prompt format (decision 1)
 
 A new model nearly always ships a Jinja chat template in its GGUF. Two ways to support one without new server code:
@@ -517,8 +540,7 @@ Either way, the tests are:
 
 1. **The contract.**
    - The ABI header and the launcher's `--family` (ABI, id and SHA-256 checks). Done: 5beb6a12.
-   - The manifest schema and its validator. Done for every kind but the engine block (5d0fa754): that block declares
-     what a descriptor holds, so it follows phase 2's first step.
+   - The manifest schema and its validator. Done (5d0fa754), the engine block too (2026-10-31: section 3, as built).
    - The fake plugin and its tests.
 2. **The descriptors.**
    - `FamilyDescriptor` for the built-ins, with no behaviour change (every existing suite stays green). Done: the

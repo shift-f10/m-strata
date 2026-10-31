@@ -22,16 +22,8 @@ double milliseconds_between(const Steady::time_point from, const Steady::time_po
 
 void append_count(std::string* out, const std::uint64_t value) { out->append(std::to_string(value)); }
 
-// The Monitor's expert-tier whitelist (owner: the VRAM and RAM cards show experts
-// loaded): the engine's own key names, INFO split for the main engine and STAT for
-// the GLM engine. Only plain numbers are stored; the page adds the words.
-// Owner 2026-10-28 ("the System Ram reports MB usage only"): each family's own words for its RAM tier too - the GLM
-// and raon1 INFO's ram_slots/vram_slots, DeepSeek's ram_experts, MiniMax's experts_vram, Gemma 4's and flint's
-// pinned_gib, upstream's engine's arena_mib (engine_memory_view reads them).
-constexpr std::array<std::string_view, 15> kExpertReadingKeys{
-    "expert_slots", "expert_slots_primary", "expert_cache_mib", "expert_cache_primary_mib", "vram_free_mib",
-    "vram_used", "ram_used", "vram_gb", "ram_gb", "ram_slots", "vram_slots", "ram_experts", "experts_vram",
-    "pinned_gib", "arena_mib"};
+// The Monitor's expert-tier whitelist: kExpertReadingKeys (engine_family_kinds.hpp, which an engine plugin's monitor
+// block names from too). Only plain numbers are stored; the page adds the words.
 // The conversation cache's INFO (upstream's engine, generate.cpp:11117): its budget and slots.
 constexpr std::array<std::string_view, 2> kCacheReadingKeys{"conversation_cache_mib", "conversation_cache_slots"};
 
