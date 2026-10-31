@@ -250,3 +250,78 @@ def test_the_gcc_check_comes_before_any_install():
     assert sh.index("GCC 13 or newer is needed") < sh.index("step 'The plan'")
     assert sh.index("ppa:ubuntu-toolchain-r/test") < sh.index("step 'Installing the CUDA Toolkit 13.0'")
     assert 'os_release=${M_STRATA_OS_RELEASE:-/etc/os-release}' in sh
+
+
+# Start at boot (pinned and hot models, spec part 5; the owner, 2026-10-31: "have a systemd option so we can have it
+# autostart on boot, to which may require sudo", both ways chosen at install).
+BOOT_QUESTION = "Start the server when this PC starts?"
+
+
+def test_install_sh_starts_the_server_at_boot_as_chosen(tmp_path):
+    """install.sh asks where systemd runs (Enter, or no terminal: no; --yes asks nothing and takes no) or takes --boot
+    user|system|no. The plan says what it installs and shows the unit: the install's own server on its data folder with
+    no login link (its output is the journal), SP7's hardening with the whole data folder writable; a user service with
+    sudo loginctl enable-linger, or a system service run as this user that sudo installs. A plan writes nothing; a PC
+    without systemd, an --out folder with a space, or another word is refused."""
+    if not linux_installer_host():
+        pytest.skip("install.sh runs on Ubuntu or Debian")
+    systemd = tmp_path / "run-systemd"
+    systemd.mkdir()
+    out = tmp_path / "out"
+    owner = subprocess.run(["id", "-un"], capture_output=True, text=True, check=True).stdout.strip()
+
+    def run(*options: str, systemd_run: Path = systemd, out_dir: Path = out) -> subprocess.CompletedProcess:
+        env = dict(os.environ, XDG_CONFIG_HOME=str(tmp_path / "config"), M_STRATA_SYSTEMD_RUN=str(systemd_run))
+        env.pop("DISPLAY", None)
+        env.pop("WAYLAND_DISPLAY", None)
+        # (a session of its own: no terminal to read answers from)
+        return subprocess.run(["sh", str(ROOT / "install.sh"), "--plan", "--out", str(out_dir), "--with", "tui", *options],
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180, env=env, check=False,
+                              start_new_session=True)
+
+    asked = run("--without", "maya", "--debugging")
+    assert asked.returncode == 0 and BOOT_QUESTION in asked.stdout, asked.stdout + asked.stderr
+    assert "start at boot:" not in asked.stdout, "no answer: not at boot"
+    told = run("--yes")
+    assert told.returncode == 0 and BOOT_QUESTION not in told.stdout and "start at boot:" not in told.stdout
+    unit_lines = (f"ExecStart={out}/strata-unified-server --data-dir {out}/data --no-login-link", f"ReadWritePaths={out}/data",
+                  "Restart=on-failure", "NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=read-only", "PrivateTmp=yes",
+                  "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6")
+    user = run("--yes", "--boot", "user")
+    assert user.returncode == 0, user.stdout + user.stderr
+    assert f"the systemd user service {tmp_path / 'config'}/systemd/user/m-strata.service" in user.stdout
+    assert f"sudo loginctl enable-linger {owner}" in user.stdout
+    for line in unit_lines + ("WantedBy=default.target",):
+        assert f"    | {line}\n" in user.stdout, line
+    assert "    | User=" not in user.stdout and "network-online" not in user.stdout
+    assert not (tmp_path / "config" / "systemd").exists() and not out.exists(), "a plan writes nothing"
+    system = run("--yes", "--boot", "system")
+    assert system.returncode == 0, system.stdout + system.stderr
+    assert f"the systemd system service /etc/systemd/system/m-strata.service, run as {owner} (sudo installs" in system.stdout
+    for line in unit_lines + (f"User={owner}", "WantedBy=multi-user.target", "After=network-online.target"):
+        assert f"    | {line}\n" in system.stdout, line
+    assert "loginctl" not in system.stdout
+    refused = run("--yes", "--boot", "user", systemd_run=tmp_path / "no-systemd")
+    assert refused.returncode != 0 and "which this PC does not run" in refused.stdout + refused.stderr
+    refused = run("--yes", "--boot", "user", out_dir=tmp_path / "an out")
+    assert refused.returncode != 0 and "a systemd unit cannot hold" in refused.stdout + refused.stderr
+    refused = run("--yes", "--boot", "sometimes")
+    assert refused.returncode != 0 and "--boot takes user, system or no" in refused.stdout + refused.stderr
+
+
+def test_install_sh_installs_the_boot_unit_after_the_build():
+    """In the script itself: the unit is installed after make built the folder (step 8) and before Done; the data folder
+    is made owner-only first; sudo only for linger (a user service) or the system unit; the help shows the option."""
+    sh = text("install.sh")
+    build = sh.index('"$repo/make.sh" --out "$out"')
+    boot = sh.index("# --- 7. start at boot")
+    assert build < boot < sh.index("step 'Done'")
+    step = sh[boot:sh.index("step 'Done'")]
+    assert 'mkdir -m 700 "$out/data"' in step
+    assert [line.strip().split()[1] for line in step.splitlines() if line.strip().startswith("sudo ")] == [
+        "loginctl", "install", "systemctl", "systemctl"]
+    assert "systemctl --user enable" in step and 'sudo systemctl enable "$boot_unit_name"' in step
+    assert "--boot) boot=$2; boot_given=1; shift 2 ;;" in sh
+    help_range = re.search(r"sed -n '2,(\d+)p' \"\$0\"", sh)
+    assert help_range and "--boot user|system|no" in "\n".join(sh.splitlines()[1:int(help_range.group(1))])
+    assert sh.splitlines()[int(help_range.group(1))] == "set -eu", "the help ends where the header does"
