@@ -291,6 +291,16 @@ window app and the TUI.
 - **Proof**: the second run completed (952 MiB in its out folder). Its server, started once: the page 200, the API 200
   with the key and 401 without, a web search through the VM's SearXNG found results; stopped after.
 
+### Claude Code session, 2026-10-30 z66 (Windows box; owner-directed)
+
+(On main: replayed from the plugins branch; the row holds for main's own install too, z70.)
+
+The owner: "update the readme as well on the compatability, it is an Standard_NC4as_T4_v3". The README's compatibility
+section names the third machine - an Azure Standard_NC4as_T4_v3 (Ubuntu 22.04.5, AMD EPYC 7V12 with 4 vCPUs, a Tesla
+T4, 28 GB of RAM) - with a row for what passed there (install.sh with every engine family, the picture encoder, the
+window app and the TUI; the server, its page and API, web search through a local SearXNG; no model run yet), and its
+Linux line says the engines and the whole install were first built on Linux there.
+
 ### Claude Code session, 2026-10-30 z64 (Windows box; owner-directed; the first Linux GPU build)
 
 (On main: replayed from the plugins branch, where it was made and proven; the runs below are that branch's -
