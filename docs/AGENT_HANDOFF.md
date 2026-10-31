@@ -280,6 +280,39 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z82 (Windows box; owner-directed)
+
+The owner's client compatibility spec (pasted 2026-10-31, then again for the gemma4 profile; the owner: "make it work for
+both Qwen and Gemma4"): an external OpenAI-compatible client's two lanes, a JSON "analyst" lane and a streamed "red"
+lane, both refused. Each of its claims was checked against the code first:
+- **Fix 1, `response_format`** (was refused, `unsupported_parameter`): now its own branch in `chat_schema.cpp` -
+  `{"type":"text"}` changes nothing, `{"type":"json_object"}` sets `ChatCompletionRequest::json_object`, a `json_schema`
+  stays `unsupported_parameter` (named; no constrained decoder), any other shape is `invalid_request`. Out of `kSp5Keys`.
+- **Fix 2a, `reasoning_effort` per request**: already taken by every family but GLM-5.3, Qwen and Gemma 4 among them
+  (`per_request_reasoning_effort` from the family's descriptor, not a boot switch); GLM-5.3 still refuses it (owner item
+  46: its prompt always thinks).
+- **Fix 2b, the omitted effort**: a JSON-object request naming no `reasoning_effort` is one that names none
+  (`chat_route.cpp`, `effort_word`), for every family with a thinking switch; a request naming neither thinks as the
+  server's `reasoning.effort` says - the card's Thinking option. For a Qwen card High by default (the spec's
+  `qwen_thinking = true` is that already); for a Gemma 4 card Off by default (the Gemma spec's D10), so its card's
+  Thinking set On is the spec's `gemma4_thinking_default = true` (`gemma4_thinking_default()`: reasoning.effort set and
+  not none). No default was changed.
+- **Fix 3, streamed reasoning**: already incremental - `chat_stream.cpp` queues each decoded piece by channel and sends it
+  after a short hold, with the keepalive; nothing changed.
+- **Fix 4, transient errors**: already 503 (`server_busy`, `model_switching`, `no_model_running`, `engine_unavailable`,
+  `engine_error`, `server_shutting_down`); nothing changed.
+- Not done (the spec's optional polish and latent landmines): a json_object answer is not stripped of a ```json fence;
+  `top_k` and `repetition_penalty` per request stay refused (the client sends them only when its operator sets them).
+- **Tests**: the parser 1 (`response_format`'s shapes; the SP5 loop no longer lists it, as the spec changes its answer),
+  the API server 2, Qwen and Gemma 4 (Lane A answered and rendered as `none` renders it while a request naming neither
+  thinks - Gemma 4's card thinking by default, its prompts the fixture's thinking-off and thinking-on ones - Lane B
+  streamed with `none` and max_tokens 8192). README: the `response_format` note.
+- **Proof** (main, cherry-picked from plugins 8517c38f, where the RED and GREEN ran): MSVC built whole, no warnings,
+  1427 of 1431 (the two release-only cases and the two Maya parity scans, which need engines/maya-ref, not checked out
+  in main's worktree - as before this change); Linux gcc 13.3 and clang 18.1 built whole with -Werror, no warnings,
+  1476/1483 and 1478/1483 (the same four; net01_ipv6_loopback_listener_only, net01_workers_add_no_listener and egress
+  pass alone).
+
 ### Claude Code session, 2026-10-31 z77 (Windows box; owner-directed)
 
 The owner's Azure VM, after z76: the Qwen3.8-Flash-Next IQ2_XS card's calibration failed ("the engine ended before it

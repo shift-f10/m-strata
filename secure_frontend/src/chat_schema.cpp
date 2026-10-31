@@ -201,7 +201,7 @@ bool image_data_url_shape(const std::string_view url, const std::size_t max_b64_
 namespace {
 
 constexpr std::string_view kExtensionKeys[] = {"tools", "tool_choice", "functions", "function_call", "parallel_tool_calls", "mcp_servers"};
-constexpr std::string_view kSp5Keys[] = {"top_k", "min_p", "top_logprobs", "response_format"};
+constexpr std::string_view kSp5Keys[] = {"top_k", "min_p", "top_logprobs"};
 template <std::size_t N>
 std::string_view find_key(const std::string_view (&keys)[N], const std::string_view key) {
   for (const auto k : keys) {
@@ -412,6 +412,23 @@ ChatRequestResult parse_chat_request(const std::string_view json, const ChatSche
         return refuse(ApiError::invalid_request, "reasoning_effort");
       }
       request.reasoning_effort = std::string{*word};
+    } else if (key == "response_format") {
+      // The owner's client-compatibility spec (2026-10-31, Fix 1): {"type":"text"} changes nothing; {"type":"json_object"} asks for a
+      // JSON object - nothing constrains the decoding, the model writes it from the prompt. A json_schema is a schema
+      // this server cannot hold the decoding to: unsupported, named. Any other shape is invalid_request.
+      const auto* format = value.if_object();
+      const JsonValue* type = nullptr;
+      if (format != nullptr) {
+        for (const auto& part : *format) {
+          if (part.key == "type") type = &part.value;
+        }
+      }
+      const std::string* word = type == nullptr ? nullptr : type->if_string();
+      if (word != nullptr && *word == "json_schema") return refuse(ApiError::unsupported_parameter, "response_format");
+      if (format == nullptr || format->size() != 1U || word == nullptr || (*word != "text" && *word != "json_object")) {
+        return refuse(ApiError::invalid_request);
+      }
+      request.json_object = *word == "json_object";
     } else if (key == "strata_search") {
       // Owner 2026-10-28: the chat's web search checkbox; false turns the server's search off for this request.
       const auto* on = value.if_boolean();

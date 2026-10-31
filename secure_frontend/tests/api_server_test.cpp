@@ -804,6 +804,37 @@ void reasoning_effort_per_request_is_served() {
   expect(bad && bad->status == 400, "an unknown effort word is refused");
 }
 
+// The owner's client-compatibility spec (2026-10-31): its two lanes on a qwen model, its tokenizer holding the think tags. Lane A asks
+// for a JSON object and names no reasoning_effort: it is answered, and it does not think - its prompt is the one
+// reasoning_effort "none" renders, the closed think block - while a request naming neither still thinks (the server's
+// reasoning.effort, the card's Thinking option). Lane B streams, Accept: text/event-stream, with reasoning_effort "none"
+// and max_tokens 8192.
+void a_json_lane_and_a_streamed_lane_are_served() {
+  const auto record = test_support::make_temp_dir("client-lanes") / "record.txt";
+  test_support::ServerOptions options;
+  options.engine_args = {"--record-file=" + test_support::utf8_path(record)};
+  options.tool_tokenizer = true;
+  auto server = test_support::ServerProcess::start(options);
+  const bool ready = server != nullptr && server->wait_until_listening(10s) && server->wait_for_health(test_support::kHealthReady, 15s);
+  expect(ready, "server ready" + (server ? std::string{": "} + server->stderr_text() : std::string{}));
+  if (!ready) return;
+  const std::string head = R"({"model":"fake-model","messages":[{"role":"system","content":"Enrich."},{"role":"user","content":"Hi"}])";
+  const auto lane_a = raw(*server, chat_request(*server, head + R"(,"temperature":0.7,"top_p":0.8,"stream":false,"response_format":{"type":"json_object"}})"));
+  expect(lane_a && lane_a->status == 200 && lane_a->body.find("\"message\"") != std::string::npos,
+         "Lane A (response_format json_object) is answered: " + (lane_a ? std::to_string(lane_a->status) + " " + lane_a->body : std::string{"(none)"}));
+  const auto off = raw(*server, chat_request(*server, head + R"(,"temperature":0.7,"top_p":0.8,"stream":false,"reasoning_effort":"none"})"));
+  const auto default_effort = raw(*server, chat_request(*server, head + R"(,"temperature":0.7,"top_p":0.8,"stream":false})"));
+  expect(off && off->status == 200 && default_effort && default_effort->status == 200, "the same request with none, and with neither");
+  const auto gens = gen_lines(record_of(record));
+  const auto prompt_of = [&gens](const std::size_t i) { return i < gens.size() ? gens[i].substr(gens[i].rfind(' ') + 1U) : std::string{}; };
+  expect(gens.size() == 3U && !prompt_of(0).empty() && prompt_of(0) == prompt_of(1) && prompt_of(0) != prompt_of(2),
+         "a JSON-object request renders no-think, as none does; naming neither thinks (" + std::to_string(gens.size()) + " GEN lines)");
+  const auto lane_b = raw(*server, chat_request(*server, head + R"(,"temperature":0.3,"stream":true,"max_tokens":8192,"reasoning_effort":"none"})",
+                                                 {"Accept: text/event-stream"}));
+  expect(lane_b && lane_b->status == 200 && lane_b->body.find("data: [DONE]") != std::string::npos,
+         "Lane B (streamed, reasoning_effort none) is served: " + (lane_b ? std::to_string(lane_b->status) : std::string{"(none)"}));
+}
+
 void aliases_answer_like_the_primary_model() {
   auto r = start_recorded("aliases", {{"model.aliases", R"(["Alt.Model","fake-model","secondary"])"}});
   if (!r.server) return;
@@ -2088,6 +2119,32 @@ void gemma4_profile_chats_end_to_end() {
   }
 }
 
+// The owner's client-compatibility spec, Gemma 4 (2026-10-31): the same two lanes on a gemma4 model whose card thinks when a request
+// names nothing (its Thinking option on: reasoning.effort high, the spec's gemma4_thinking_default). Lane A asks for a JSON
+// object and names no reasoning_effort: it renders the thinking-off prompt, as "none" does; a request naming neither
+// renders the thinking-on one; Lane B streams with "none" and max_tokens 8192.
+void a_json_lane_and_a_streamed_lane_are_served_on_gemma4() {
+  auto started = start_gemma4("g4lanes", gemma4_join({kGemma4HiWorld, {"<turn|>"}}), {{"reasoning.effort", "\"high\""}});
+  if (!started.server) return;
+  auto& server = *started.server;
+  const std::string head = R"({"model":"fake-model","messages":[{"role":"user","content":")" + std::string{kGemma4UserContent} + R"("}])";
+  const auto lane_a = test_support::chat(server, head + R"(,"temperature":0.7,"top_p":0.8,"stream":false,"response_format":{"type":"json_object"}})");
+  expect(lane_a.head.status == 200 && test_support::complete_text(lane_a.body) == "Hi world" &&
+             !message_string(lane_a.body, "reasoning_content").has_value(),
+         "Lane A (response_format json_object) is answered on gemma4: " + head_of(lane_a));
+  const auto omitted = test_support::chat(server, head + R"(,"temperature":0.7,"top_p":0.8,"stream":false})");
+  expect(omitted.head.status == 200, "a request naming neither is answered: " + head_of(omitted));
+  const auto lane_b = test_support::chat(server, head + R"(,"temperature":0.3,"stream":true,"max_tokens":8192,"reasoning_effort":"none"})");
+  expect(lane_b.head.status == 200 && lane_b.streamed && lane_b.done_seen && test_support::stream_text(lane_b) == "Hi world",
+         "Lane B (streamed, reasoning_effort none) is served on gemma4: " + head_of(lane_b));
+  const auto gens = gen_lines(record_of(started.record));
+  expect(gens.size() == 3U, "one GEN per chat: " + std::to_string(gens.size()));
+  if (gens.size() != 3U) return;
+  expect(gen_ids(gens[0]) == gemma4_prompt_thinking_off(), "Lane A renders the thinking-off prompt: " + gens[0]);
+  expect(gen_ids(gens[1]) == gemma4_prompt_thinking_on(), "naming neither, the card's thinking-on prompt: " + gens[1]);
+  expect(gen_ids(gens[2]) == gemma4_prompt_thinking_off(), "Lane B's none, the thinking-off prompt: " + gens[2]);
+}
+
 // Plan Task 11 RED gemma4_thinking_round_trip: reasoning_effort "high" turns thinking on (the
 // system turn opens with <|think|>; the generation prompt is the open model turn). The fake
 // answers <|channel> "thought\n" <reasoning> <channel|> <answer> <turn|>, as the engine did on the
@@ -2232,6 +2289,8 @@ int main(int argc, char** argv) {
       {"aliases_answer_like_the_primary_model", aliases_answer_like_the_primary_model},
       {"model_name_replaces_the_file_name", model_name_replaces_the_file_name},
       {"reasoning_effort_per_request_is_served", reasoning_effort_per_request_is_served},
+      {"a_json_lane_and_a_streamed_lane_are_served", a_json_lane_and_a_streamed_lane_are_served},
+      {"a_json_lane_and_a_streamed_lane_are_served_on_gemma4", a_json_lane_and_a_streamed_lane_are_served_on_gemma4},
       {"absent_max_tokens_uses_auto", absent_max_tokens_uses_auto},
       {"sampling_passthrough_reaches_gen", sampling_passthrough_reaches_gen},
       {"dos01_context_rule_is_400_without_gen", dos01_context_rule_is_400_without_gen},

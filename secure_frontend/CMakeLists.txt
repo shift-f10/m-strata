@@ -1303,7 +1303,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         enc_round_trip_reaches_the_prompt image_rejections_name_image_url_before_any_write
         idle_unload_respawns_before_the_next_request
         queue_and_answer_room_limits_are_enforced
-        aliases_answer_like_the_primary_model model_name_replaces_the_file_name reasoning_effort_per_request_is_served
+        aliases_answer_like_the_primary_model model_name_replaces_the_file_name reasoning_effort_per_request_is_served a_json_lane_and_a_streamed_lane_are_served
+        a_json_lane_and_a_streamed_lane_are_served_on_gemma4
         absent_max_tokens_uses_auto sampling_passthrough_reaches_gen dos01_context_rule_is_400_without_gen
         chat_response_has_openai_shape dos02_excess_connections_get_503_retry_after dos02_queue_full_is_503
         dos02_queue_timeout_is_503 dos02_queue_is_fifo dos02_health_answers_while_generation_places_full
@@ -1443,7 +1444,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         wire_head_has_no_content_length route_result_seam_returns_complete_response
         dos01_status_matrix_415_417_505 content_type_variants_accepted auth_and_route_order_follows_spec
         dos01_json_depth_5_is_400 dos01_json_limits dos01_content_array_is_unsupported_parameter stream_flag_type_and_options_rules
-        sampling_neutral_values_are_no_ops sampling_bounds_rejected sampling_integer_forms_accepted)
+        sampling_neutral_values_are_no_ops sampling_bounds_rejected sampling_integer_forms_accepted
+        response_format_takes_text_and_json_object)
     target_link_libraries(secure_frontend_http_parser_tests PRIVATE
         secure_frontend_api_router secure_frontend_secrets secure_frontend_http_policy secure_frontend_chat_schema)
 

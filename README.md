@@ -809,6 +809,9 @@ for chunk in stream:
 - `stream: true` streams server-sent events; `stream_options: {"include_usage": true}` adds the usage at the end.
 - `reasoning_effort` sets how much a model that thinks reasons (`low`, `medium`, `high`; the card shows its
   choices); `none` answers directly.
+- `response_format`: `{"type": "json_object"}` asks for a JSON object - the model writes it from your prompt (nothing
+  constrains the decoding, so say in the prompt what to return), and such a request does not think unless it names a
+  `reasoning_effort`; `{"type": "text"}` changes nothing; a `json_schema` is refused (`unsupported_parameter`).
 - With web search on, the model searches by itself when it needs to. Ask for current facts, or say "search the web";
   give it room (`max_tokens` 8192 or more), since each search round has its own budget. The searches it made come
   back as `strata_search` events; `"strata_search": false` answers that request without searching. Do not send
