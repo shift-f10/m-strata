@@ -909,6 +909,10 @@ void a_downloaded_qwen38_fetches_and_builds_its_draft_layer() {
   expect(has(listed, "\"state\":\"ready\""), "ready - the layer built, a card made: " + listed);
   expect(f.spawner.recorded.size() == 4U, "four children: the pull, the pack, the layer's pull, the layer's build: " +
                                               std::to_string(f.spawner.recorded.size()));
+  // owner 2026-10-31 (on a umask-0002 VM the layer was built group-writable, and its card ran without it): every child
+  // the download starts writes into the private store owner-only
+  expect(std::all_of(f.spawner.recorded.begin(), f.spawner.recorded.end(), [](const Recorded& r) { return r.command.private_files; }),
+         "each child (the pulls, the pack, the layer's build) creates its files owner-only");
   if (f.spawner.recorded.size() != 4U || manifests.size() != 2U) return;
   const std::string& layer = manifests[1];
   expect(has(layer, "\"profile\":\"mtp\"") && has(layer, "\"path\":\"tensors/mtp.a.weight.bin\"") && has(layer, "\"source_offset\":64") &&

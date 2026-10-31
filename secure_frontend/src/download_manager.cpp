@@ -1275,6 +1275,7 @@ std::unique_ptr<LineChild> DownloadManager::spawn(std::vector<std::string> argum
   command.environment = settings_.child_environment;
   command.working_directory = settings_.work_dir;
   command.no_new_privileges = true;
+  command.private_files = true;   // the store is owner-only: so is everything a child writes into it
   command.insert_serve = false;
   return settings_.seams.spawn(command);
 }
@@ -1973,6 +1974,9 @@ bool DownloadManager::run_prepare_tool(const std::filesystem::path& tool, std::v
   command.environment = settings_.child_environment;
   command.working_directory = settings_.work_dir;
   command.no_new_privileges = true;
+  // owner 2026-10-31: on a umask-0002 VM the draft layer (<store>/mtp/rt) came out group-writable, and the server would
+  // not run it; a pack or layer is owner-only like the store
+  command.private_files = true;
   command.insert_serve = false;
   const auto failure = run_prepare_command(settings_.seams.spawn, command, [this] {
     std::lock_guard lock(mutex_);

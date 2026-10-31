@@ -280,6 +280,38 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z76 (Windows box; owner-directed)
+
+The owner's Azure VM, after a Qwen3.8-Flash-Next IQ2_XS download: "it did not download the mtp files"; "look at the
+upstream on how they download the mtp".
+- **What it was**: the layer was downloaded (`downloads/qwen3.8-flash-next-mtp`, 4.9 GB) and built (`downloads/mtp/rt`),
+  but the server logged "the MTP draft layer in .../mtp/rt is not private (other users of this PC can change it): ...
+  runs without it", so the card has no `--mtp`. The VM's umask is 0002: `strata-prepare mtp` made `rt` 0775 and its
+  files 0664, and a draft layer's root must not be group- or other-writable (`open_root`). Windows never showed it (a
+  child's files inherit the store's owner-only DACL).
+- **Upstream** (`setup.py` step 6): the layer is there when `<data>/mtp/rt/experts.bin` is; otherwise (or when
+  `mtp_fetch.py verify` finds a corrupt tensor) `mtp_fetch.py fetch` (3 tries, resumable), `mtp_pack.py`, `mtp_rt.py`.
+  Ours fetches the same 31 tensors at the same pin (206-only windows, SHA-256 each) and builds the same `rt`; the
+  privacy rule is ours alone, and upstream sets no file modes.
+- **Now**: `EngineCommand::private_files` (POSIX: umask 077 in the child before `execve`, `posix_child_launch.hpp`;
+  Windows: nothing). The download manager sets it on every child (`spawn`: the pulls, hf-info, the Python prepare;
+  `run_prepare_tool`: the native packs and the layer's build) and the card routes' pack step (server_bootstrap).
+  The threat model says so.
+- **Tests**: `a_private_files_child_creates_owner_only_files` (engine_child, Linux: the fake engine reports its
+  `Umask`; under the server's 0002 a child asked is 0077, one not asked keeps 0002); the draft-layer download test
+  checks every child it starts asks for it. The fake engine's IDS line has `umask`.
+- **Proof**: RED ("the child's umask is 0077 when asked: 0002"; "each child (the pulls, the pack, the layer's build)
+  creates its files owner-only"), then GREEN.
+  - Windows (MSVC, the shares tree, everything built): 1505/1507, the two release-only cases (raw_profile_rejected_in_release_build, release_binary_lacks_hook_marker).
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror): the three suites 46/46 on gcc and clang; whole suites full-gcc and full-clang 1556/1559 (the two release-only cases; egress_table_scan_during_lifecycle passes alone), window-gcc Release 1511/1514 (the three pass alone: timing).
+- **The VM's existing layer** is still 0775 (built before the fix): it needs `chmod` (or the page's "make private") and
+  the card's MTP draft layer chosen again; not changed by this commit.
+- **Found, not changed**: the owner's calibration on the VM failed ("the engine ended before it was ready"). The engine's
+  `ArenaExpertSource` could not map its 35.4 GB expert arena (`pinned.cu`: the anonymous mapping failed) on 27.4 GiB of
+  RAM with no swap; the server's NO_NEW_PRIVS hint does not apply. Upstream's setup puts such a PC in the low-RAM mode
+  (`low_ram_needed`: RAM < arena + 10 GB) and starts the engine with `--mmap-experts` (a native pack without
+  experts.bin reads the GGUF shards in place) or `--resident-experts`; our cards never do.
+
 ### Claude Code session, 2026-10-31 z75 (Windows box; owner-directed)
 
 (On main: replayed from the plugins branch, e6322e45. Its runs on main are main's own, below.)

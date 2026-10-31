@@ -51,6 +51,7 @@
 
 #include <fcntl.h>
 #include <pthread.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 #if defined(__linux__)
@@ -121,6 +122,8 @@ struct PreparedExec {
   std::string working_directory{};
   // Linux: PR_SET_NO_NEW_PRIVS before execve (spec §3.12, G2).
   bool no_new_privileges{false};
+  // umask 077 before execve (EngineCommand::private_files).
+  bool private_files{false};
 };
 
 inline void prepare(PreparedExec& out, const EngineCommand& command, const bool insert_serve) {
@@ -128,6 +131,7 @@ inline void prepare(PreparedExec& out, const EngineCommand& command, const bool 
   out.executable = command.executable.string();
   out.working_directory = command.working_directory.string();
   out.no_new_privileges = command.no_new_privileges;
+  out.private_files = command.private_files;
   out.argument_storage.reserve(command.arguments.size() + 2);
   out.argument_storage.push_back(out.executable);
   if (insert_serve) out.argument_storage.emplace_back("--serve");
@@ -287,6 +291,8 @@ inline void close_above_report(const int* kept, const std::size_t count, const i
   // through setuid/setgid bits or file capabilities.
   if (prepared.no_new_privileges && prctl(PR_SET_NO_NEW_PRIVS, 1UL, 0UL, 0UL, 0UL) != 0) fail(kReportFd);
 #endif
+  // EngineCommand::private_files: what the child creates is owner-only, whatever the server's own umask.
+  if (prepared.private_files) (void)umask(S_IRWXG | S_IRWXO);
   // The sweep spares the lifted descriptors: sort a copy (insertion sort, no allocation).
   int spared[kMaxKeepFds];
   for (std::size_t index = 0; index < kept; ++index) {
