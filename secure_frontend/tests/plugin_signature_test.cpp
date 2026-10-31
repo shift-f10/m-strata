@@ -117,12 +117,51 @@ void every_other_signature_says_why() {
   expect(has(huge.problem, "16 KiB"), "a file larger than 16 KiB: " + huge.problem);
 }
 
+// Before any file is looked at (spec section 12: a plugin added from the page is trusted first): a signature under a
+// trusted key, for this plugin and this platform, gives the manifest's and files' SHA-256s they must have - and anything
+// else says why, in check_plugin_signature's words.
+void a_trusted_statement_is_read_before_the_files() {
+  const Folder folder;
+  const auto read = secure_frontend::read_trusted_statement(folder.envelope, "signedtool", kTrusted);
+  const auto* statement = std::get_if<secure_frontend::TrustedStatement>(&read);
+  expect(statement != nullptr, "read: " + (statement == nullptr ? std::get<std::string>(read) : std::string{}));
+  if (statement != nullptr) {
+    expect(statement->key == kRfcPublic && statement->signer == "Example Labs", "its key and signer");
+    expect(statement->manifest_sha256 == folder.manifest && statement->files == folder.files, "the SHA-256s the files must have");
+  }
+  const auto problem = [](const std::variant<secure_frontend::TrustedStatement, std::string>& r) {
+    return std::holds_alternative<std::string>(r) ? std::get<std::string>(r) : std::string{"(read)"};
+  };
+  std::string named;
+  expect(has(problem(secure_frontend::read_trusted_statement(
+                 folder.envelope, "signedtool", {{.key = kOtherPublic, .name = "Someone", .install = false}}, &named)),
+             "does not trust"),
+         "under a key not trusted");
+  expect(named == kRfcPublic, "a refusal can name the key it was signed with");
+  expect(has(problem(secure_frontend::read_trusted_statement(folder.envelope, "lookup", kTrusted)), "another plugin"), "for another plugin");
+  const std::string other_platform =
+      fixture(secure_frontend::plugin_signature_platform() == "windows" ? "plugin.sig.linux" : "plugin.sig.windows");
+  expect(has(problem(secure_frontend::read_trusted_statement(other_platform, "signedtool", kTrusted)), "another platform"),
+         "for another platform");
+  std::string flipped = folder.envelope;
+  char& changed_char = flipped[flipped.find("--STRATA-SIGNATURE-V1\n") + 26U];
+  changed_char = changed_char == 'A' ? 'B' : 'A';
+  expect(has(problem(secure_frontend::read_trusted_statement(flipped, "signedtool", kTrusted)), "does not verify"), "a changed signature");
+  expect(has(problem(secure_frontend::read_trusted_statement("not a signature", "signedtool", kTrusted)), "not a signature"),
+         "not a signature");
+  expect(has(problem(secure_frontend::read_trusted_statement(std::string(secure_frontend::kMaxPluginSignatureBytes + 1U, 'x'),
+                                                             "signedtool", kTrusted)),
+             "16 KiB"),
+         "larger than 16 KiB");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"the_statement_is_the_signers", the_statement_is_the_signers},
       {"a_signature_under_a_trusted_key_is_taken", a_signature_under_a_trusted_key_is_taken},
+      {"a_trusted_statement_is_read_before_the_files", a_trusted_statement_is_read_before_the_files},
       {"every_other_signature_says_why", every_other_signature_says_why},
   }, failures);
 }

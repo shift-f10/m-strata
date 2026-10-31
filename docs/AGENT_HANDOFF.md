@@ -280,6 +280,18 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z69 (Windows box; owner-directed)
+
+Adding plugins from the page, step three (spec section 12): a plugin's trust is read before its files are looked at.
+- **read_trusted_statement** (`plugin_signature.hpp`): plugin.sig verified under a key this server trusts, for this
+  plugin and this platform, giving the trusted key, its signer and the manifest's and each file's SHA-256 the files must
+  have - so a folder or a zip can be refused before anything is hashed, copied or inflated. A refusal is
+  check_plugin_signature's sentence; the key the statement names is handed back when asked for, trusted or not, so a
+  refusal can name it.
+- **check_plugin_signature** is rebuilt on it, its refusals word for word as before (its cases unchanged and green).
+- **Proof**: RED against a stub (7 failures), then GREEN on MSVC (the four signature cases); gcc and clang compile both
+  files with -Werror at -O0 and -O2.
+
 ### Claude Code session, 2026-10-30 z68 (Windows box; owner-directed)
 
 Adding plugins from the page, step two (spec section 12): the zip reader, written here (`zip_reader.hpp`, in

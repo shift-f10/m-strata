@@ -17,6 +17,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace secure_frontend {
@@ -43,6 +44,20 @@ struct PluginSignature final {
 // The statement a signature over this folder covers: what scripts/plugin_signing.py's statement() writes.
 [[nodiscard]] std::string plugin_signature_statement(std::string_view key, std::string_view id, std::string_view platform,
                                                      std::string_view manifest_sha256, const std::map<std::string, std::string>& files);
+
+// What a trusted signature says, before the files are looked at (spec section 12: a plugin added from the page is
+// trusted before anything is copied or unpacked): `envelope` verified under a key this server trusts, for plugin `id`
+// on this platform - the manifest's and each file's SHA-256 the files must then have. Else why not (check's words).
+// `named_key`, when given, gets the key the statement names once it is read, trusted or not (a refusal can name it).
+struct TrustedStatement final {
+  std::string key;      // 64 hex
+  std::string signer;   // the trusted key's name
+  std::string manifest_sha256;
+  std::map<std::string, std::string> files;  // this platform's files: name -> SHA-256
+};
+[[nodiscard]] std::variant<TrustedStatement, std::string> read_trusted_statement(std::string_view envelope, std::string_view id,
+                                                                                const std::vector<TrustedKey>& keys,
+                                                                                std::string* named_key = nullptr);
 
 // `envelope` (plugin.sig's bytes) checked for plugin `id` whose manifest and files hash as given now, on this platform.
 [[nodiscard]] PluginSignature check_plugin_signature(std::string_view envelope, std::string_view id, std::string_view manifest_sha256,

@@ -2407,7 +2407,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     target_compile_definitions(secure_frontend_plugin_signature_tests PRIVATE
         SECURE_FRONTEND_PLUGIN_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/plugins")
     secure_frontend_add_cases(secure_frontend_plugin_signature_tests
-        the_statement_is_the_signers a_signature_under_a_trusted_key_is_taken every_other_signature_says_why
+        the_statement_is_the_signers a_signature_under_a_trusted_key_is_taken a_trusted_statement_is_read_before_the_files every_other_signature_says_why
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_test_executable(secure_frontend_smtp_password_tests tests/smtp_password_test.cpp secure_frontend_smtp_password)
     secure_frontend_add_cases(secure_frontend_smtp_password_tests

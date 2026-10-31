@@ -91,40 +91,42 @@ std::string plugin_signature_statement(const std::string_view key, const std::st
   return out;
 }
 
-PluginSignature check_plugin_signature(const std::string_view envelope, const std::string_view id, const std::string_view manifest_sha256,
-                                       const std::map<std::string, std::string>& files, const std::vector<TrustedKey>& keys) {
-  PluginSignature checked;
-  if (envelope.size() > kMaxPluginSignatureBytes) {
-    checked.problem = "its plugin.sig is larger than 16 KiB";
-    return checked;
-  }
+std::variant<TrustedStatement, std::string> read_trusted_statement(const std::string_view envelope, const std::string_view id,
+                                                                  const std::vector<TrustedKey>& keys, std::string* const named_key) {
+  if (envelope.size() > kMaxPluginSignatureBytes) return std::string{"its plugin.sig is larger than 16 KiB"};
   std::string_view signed_bytes;
   std::array<std::uint8_t, 64> signature{};
   if (split_signed_envelope(envelope, &signed_bytes, &signature).has_value()) {
-    checked.problem = "its plugin.sig is not a signature this server reads";
-    return checked;
+    return std::string{"its plugin.sig is not a signature this server reads"};
   }
-  const auto statement = read_statement(signed_bytes);
-  if (!statement) {
-    checked.problem = "its plugin.sig's statement is not one this server reads";
-    return checked;
+  auto read = read_statement(signed_bytes);
+  if (!read) return std::string{"its plugin.sig's statement is not one this server reads"};
+  Statement& statement = *read;
+  if (named_key != nullptr) *named_key = statement.key;
+  if (!ed25519_verify(key_bytes(statement.key), signed_bytes, signature)) {
+    return std::string{"its signature does not verify under the key it names"};
   }
-  checked.key = statement->key;
-  if (!ed25519_verify(key_bytes(statement->key), signed_bytes, signature)) {
-    checked.problem = "its signature does not verify under the key it names";
-    return checked;
-  }
-  const auto trusted = std::find_if(keys.begin(), keys.end(), [&statement](const TrustedKey& key) { return key.key == statement->key; });
-  if (trusted == keys.end()) {
-    checked.problem = "it is signed with a key this server does not trust";
-  } else if (statement->id != id) {
-    checked.problem = "its signature is for another plugin (" + statement->id + ")";
-  } else if (statement->platform != plugin_signature_platform()) {
-    checked.problem = "its signature is for another platform (" + statement->platform + ")";
-  } else if (statement->manifest != manifest_sha256 || statement->files != files) {
+  const auto trusted = std::find_if(keys.begin(), keys.end(), [&statement](const TrustedKey& key) { return key.key == statement.key; });
+  if (trusted == keys.end()) return std::string{"it is signed with a key this server does not trust"};
+  if (statement.id != id) return "its signature is for another plugin (" + statement.id + ")";
+  if (statement.platform != plugin_signature_platform()) return "its signature is for another platform (" + statement.platform + ")";
+  return TrustedStatement{.key = std::move(statement.key),
+                          .signer = trusted->name,
+                          .manifest_sha256 = std::move(statement.manifest),
+                          .files = std::move(statement.files)};
+}
+
+PluginSignature check_plugin_signature(const std::string_view envelope, const std::string_view id, const std::string_view manifest_sha256,
+                                       const std::map<std::string, std::string>& files, const std::vector<TrustedKey>& keys) {
+  PluginSignature checked;
+  auto read = read_trusted_statement(envelope, id, keys, &checked.key);
+  if (auto* const problem = std::get_if<std::string>(&read)) {
+    checked.problem = std::move(*problem);
+  } else if (const auto& statement = std::get<TrustedStatement>(read);
+             statement.manifest_sha256 != manifest_sha256 || statement.files != files) {
     checked.problem = "its manifest or a file changed since it was signed";
   } else {
-    checked.signer = trusted->name;
+    checked.signer = statement.signer;
   }
   return checked;
 }
