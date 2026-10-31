@@ -392,12 +392,23 @@ The owner: "ensure when pushing you do not reference any agents as contributors,
   `Co-Authored-By:` trailer, no `Claude-Session:` line, no session links and no "Generated with" line. It replaces
   2026-10-27's one-trailer rule. The trailer lines in older plans, briefs and reports are history, not instructions.
   This commit is the first made without a trailer.
-- **Pushed history:** all 63 commits on `main` (up to `e23c4ab`) carry an agent trailer, so GitHub lists the agent as
-  a co-author. Removing them means rewriting all of `main` and force-pushing. The other PC's checkout would then have
-  to be reset to the new `main`. Not done: it waits on the owner's word.
-- **m-strata-rust:** the owner's new private repository for a Rust port, set up from this PC with M-Strata at
-  `e23c4ab` as its read-only reference submodule. Its first commit is rewritten without the trailer, as the owner
-  asked.
+- **Pushed history rewritten** (the owner: "Rewrite m-strata"). All 63 commits on `main` up to `e23c4ab` had
+  `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`, so GitHub listed the agent as a co-author.
+  - **What changed:** each commit was rebuilt with the trailer line removed. Its tree, author and committer lines and
+    dates are byte for byte the same. Before the push it was checked per commit: same tree, same identities and dates,
+    the message differing only by the trailer, `git interpret-trailers --parse` empty, connectivity-only `fsck` clean.
+    `main` was then force-pushed with a lease on `e23c4ab`.
+  - **New IDs:** every commit ID changed, and `e23c4ab` is now `c75f6b5`. IDs cited before this entry name the old
+    commits; [`commit-id-map-2026-10-31.md`](commit-id-map-2026-10-31.md) maps each one.
+  - **Old history:** kept on the RTX 5090 PC only, as the local branch `history-before-2026-10-31` (never pushed).
+- **The development PC must catch up before its next commit.** Its `main` still has the old history, so a plain pull
+  would merge the two. `git fetch origin`, then one of:
+  - with no local commits after `e23c4ab`: `git reset --keep origin/main`;
+  - with local commits: `git rebase --onto origin/main e23c4ab main`, then remove their trailers before pushing.
+  The branch `history-before-2026-10-27` there is unaffected.
+- **m-strata-rust:** the owner's new private repository for a Rust port, set up from this PC. M-Strata is its
+  read-only reference submodule, pinned at `e23c4ab` and re-pinned to `c75f6b5` (the same tree) after this rewrite.
+  Its own first commit was rewritten without the trailer, as the owner asked.
 
 ### Claude Code session, 2026-10-31 z86 (Windows box; owner-directed)
 
