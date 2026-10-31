@@ -1530,7 +1530,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         web_ui_monitor_shows_stopped_and_the_model web_ui_monitor_is_even_and_shows_memory_disk_and_cache
         web_ui_about_lists_the_engines_and_this_pc
         web_ui_search_box_limit_note_and_engine_table web_ui_chat_can_turn_search_off
-        login_link_route_answers_without_the_key_only_when_on
+        login_link_route_answers_without_the_key_only_when_on a_fresh_login_link_is_for_a_key_holder
         served_models_follow_the_running_card
         web_ui_listed_integers_are_dropdowns
         health_samples_status_before_state_once_each health_includes_engine_state_when_provided
@@ -1990,6 +1990,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         removing_a_card_removes_its_calibration a_card_short_of_ram_starts_in_the_low_ram_mode a_card_with_room_keeps_its_experts_in_ram a_card_that_fixes_its_experts_flag_keeps_it failures_raise_alerts a_failed_calibration_writes_a_report
         a_stop_waits_for_an_engine_still_ending
         a_card_is_pinned_and_its_removal_unpins_it a_pinned_card_starts_with_the_server_and_the_pin_is_kept
+        a_key_holder_gets_a_fresh_login_link
         a_card_kept_loaded_never_unloads_when_idle a_card_kept_loaded_is_warmed_at_its_start_and_while_idle
         a_card_kept_loaded_is_started_again_after_its_engine_failed a_card_kept_loaded_starts_again_with_the_server
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
@@ -2274,11 +2275,12 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_tui_tests
         the_screen_draws_text_boxes_and_gauges charts_are_braille_or_blocks only_the_changes_are_written
         keys_decode_from_vt_sequences the_monitor_draws_the_servers_readings the_views_switch_and_keys_become_requests p_pins_the_card_under_the_cursor
-        settings_are_edited_then_saved a_message_is_shown_whole_before_the_keys quitting_asks_first downloads_say_what_is_on_this_pc a_debugging_build_waits_for_y
+        settings_are_edited_then_saved a_message_is_shown_whole_before_the_keys quitting_asks_first quitting_an_attached_server_leaves_it_running downloads_say_what_is_on_this_pc a_debugging_build_waits_for_y
         an_uncalibrated_start_asks_to_calibrate_first)
 
     secure_frontend_add_test_executable(secure_frontend_window_shell_tests tests/window_shell_test.cpp
-        secure_frontend_window_shell secure_frontend_first_start secure_frontend_token_reader)
+        secure_frontend_window_shell secure_frontend_first_start secure_frontend_token_reader
+        secure_frontend_config_writer)
     secure_frontend_add_cases(secure_frontend_window_shell_tests
         the_sign_in_link_is_read_and_never_logged a_debugging_build_says_what_it_logs_before_it_starts
         the_listening_line_names_the_pages_origin
@@ -2286,7 +2288,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         the_log_rotates_at_its_bound the_log_view_keeps_the_newest_lines_in_its_bound the_log_view_holds_text_a_view_can_show
         the_log_view_saves_what_it_shows the_window_starts_the_server_beside_it)
     secure_frontend_add_cases(secure_frontend_window_shell_tests
-        the_servers_key_is_read_as_key_show_reads_it LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+        the_servers_key_is_read_as_key_show_reads_it a_server_already_running_is_found
+        an_attached_window_signs_in_with_a_fresh_link LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_cases(secure_frontend_window_shell_tests
         the_server_child_stops_in_order a_server_that_ignores_the_stop_is_killed a_server_that_exits_is_reported
         a_missing_server_is_a_message every_start_gets_the_windows_first_environment
@@ -2324,7 +2327,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     target_link_libraries(secure_frontend_server_cli_tests PRIVATE secure_frontend_token_reader secure_frontend_server_cli
         secure_frontend_acquire)
     # Unit case (parse + validate in process, no child): unlabeled, so it also runs under wine.
-    secure_frontend_add_cases(secure_frontend_server_cli_tests cli_sp2_flags_map_to_schema_keys TIMEOUT 120)
+    secure_frontend_add_cases(secure_frontend_server_cli_tests cli_sp2_flags_map_to_schema_keys cli_no_login_link_turns_the_link_off TIMEOUT 120)
     # SP4 §4.9 d: pure argv parsing, so wine runs it too.
     secure_frontend_add_cases(secure_frontend_server_cli_tests cli_expert_flag_parsing usage_names_the_three_profiles)
 

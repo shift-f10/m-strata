@@ -230,6 +230,26 @@ void serve_requires_state_root() {
 
 // Task 29: each SP2 option sets exactly one SP1 schema key (a regression pin
 // for the rows Tasks 18, 19 and 26 landed).
+// Pinned and hot models (owner 2026-10-31, spec parts 5-6): a boot service starts the server with --no-login-link, so its
+// one-time login link never reaches the journal or a service's log (listener.login_link false for that start); the apps'
+// own starts, which read the link from the server's output, are unchanged. Once only.
+void cli_no_login_link_turns_the_link_off() {
+  const char* argv[] = {"strata-unified-server", "--data-dir", "/srv/data", "--no-login-link"};
+  const auto parsed = secure_frontend::parse_server_command_line(static_cast<int>(std::size(argv)), argv);
+  const auto* invocation = std::get_if<secure_frontend::ServerInvocation>(&parsed);
+  expect(invocation != nullptr, "--no-login-link parses with --data-dir");
+  if (invocation != nullptr) {
+    const auto found = invocation->flags.entries.find("listener.login_link");
+    expect(found != invocation->flags.entries.end() && std::holds_alternative<bool>(found->second.value) &&
+               !std::get<bool>(found->second.value),
+           "it sets listener.login_link false for this start");
+  }
+  const char* twice[] = {"strata-unified-server", "--no-login-link", "--no-login-link"};
+  expect(std::holds_alternative<secure_frontend::CliError>(
+             secure_frontend::parse_server_command_line(static_cast<int>(std::size(twice)), twice)),
+         "given twice: refused");
+}
+
 void cli_sp2_flags_map_to_schema_keys() {
   const char* argv[] = {"strata-unified-server", "--state-dir", "/srv/state", "--engine-lib-dir", "/opt/a",
                         "--engine-lib-dir", "/opt/b", "--gpu", "0,1", "--allow-new-privileges"};
@@ -557,6 +577,7 @@ int main(int argc, char** argv) {
       {"auth04_no_switch_disables_auth", auth04_no_switch_disables_auth},
       {"serve_requires_state_root", serve_requires_state_root},
       {"cli_sp2_flags_map_to_schema_keys", cli_sp2_flags_map_to_schema_keys},
+      {"cli_no_login_link_turns_the_link_off", cli_no_login_link_turns_the_link_off},
       {"serve_prints_ready_then_serves", serve_prints_ready_then_serves},
       {"serve_runs_foreground_and_shuts_clean_on_sigterm", serve_runs_foreground_and_shuts_clean_on_sigterm},
   }, failures);

@@ -323,6 +323,12 @@ std::variant<ServerSetup, std::string> server_setup(const std::vector<std::strin
 }
 
 std::optional<ServerKey> server_key(const ServerSetup& setup) {
+  auto found = server_address(setup);
+  if (!found) return std::nullopt;
+  return std::move(found->key);
+}
+
+std::optional<ServerAddress> server_address(const ServerSetup& setup) {
   auto parsed = parse_arguments(setup.arguments);
   auto* invocation = std::get_if<ServerInvocation>(&parsed);
   if (invocation == nullptr) return std::nullopt;
@@ -335,12 +341,53 @@ std::optional<ServerKey> server_key(const ServerSetup& setup) {
   const auto* validated = std::get_if<ValidatedConfig>(&checked);
   if (validated == nullptr) return std::nullopt;
   const FrontendConfig& config = validated->get();
-  if (config.listener.loopback_without_key) return ServerKey{.key = std::nullopt, .keyless = true};
+  // the listener's address as a browser on this PC opens it: a wildcard bind is this PC's own address
+  std::string host = config.listener.host.canonical_text();
+  if (config.listener.host.scope() == AddressScope::wildcard) host = config.listener.host.family() == IpFamily::v6 ? "::1" : "127.0.0.1";
+  if (host.find(':') != std::string::npos) host = "[" + host + "]";
+  ServerAddress found{.origin = "http://" + host + ":" + std::to_string(config.listener.port), .key = {}};
+  if (config.listener.loopback_without_key) {
+    found.key = ServerKey{.key = std::nullopt, .keyless = true};
+    return found;
+  }
   const auto read = config.roots.secret.has_value() ? read_token(config.token, *config.roots.secret)
                                                     : read_token(config.token, std::filesystem::path{"."});
   const auto* key = std::get_if<SecretBytes>(&read);
   if (key == nullptr) return std::nullopt;
-  return ServerKey{.key = std::string{key->view()}, .keyless = false};
+  found.key = ServerKey{.key = std::string{key->view()}, .keyless = false};
+  return found;
+}
+
+Running running_server(const ServerAddress& address, const std::chrono::milliseconds timeout) {
+  if (!address.key.keyless && !address.key.key) return Running::none;
+  const auto answer = loopback_request(address.origin, "GET", "/health", address.key.key ? &*address.key.key : nullptr, {}, timeout);
+  if (!answer) {
+    // nothing listens, or what does never answers: is the port free? (a held port that says nothing is not ours)
+    const auto target = loopback_target(address.origin);
+    if (!target) return Running::none;
+    return LoopbackStreamConnection::open(target->first, target->second, timeout) ? Running::other : Running::none;
+  }
+  // the server's health body (api_router.cpp's /health): {"status":"ok"|"unavailable","engine":...}, or its fail-closed 503
+  const bool health = answer->body.starts_with("{\"status\":\"") && answer->body.find("\"engine\":\"") != std::string::npos;
+  const bool closed = answer->status == 503 && answer->body.find("\"code\":\"engine_unavailable\"") != std::string::npos;
+  return ((answer->status == 200 || answer->status == 503) && health) || closed ? Running::ours : Running::other;
+}
+
+std::optional<std::string> fresh_sign_in(const ServerAddress& address, const std::chrono::milliseconds timeout) {
+  if (!address.key.key) return std::nullopt;  // a keyless server: the page needs no key
+  const auto answer = loopback_request(address.origin, "POST", "/v1/strata/login-link/new", &*address.key.key, "{}", timeout);
+  if (!answer || answer->status != 200) return std::nullopt;
+  constexpr JsonLimits kLimits{.max_bytes = 4096U, .max_depth = 2U, .max_container_entries = 4U, .max_string_bytes = 256U};
+  const auto parsed = parse_json(answer->body, kLimits);
+  const auto* root = std::get_if<JsonValue>(&parsed);
+  const auto* members = root != nullptr ? root->if_object() : nullptr;
+  if (members == nullptr) return std::nullopt;
+  for (const auto& member : *members) {
+    const auto* code = member.key == "code" ? member.value.if_string() : nullptr;
+    // the link as the server prints it, by the same rule (this PC's address, the page's rule for a code)
+    if (code != nullptr) return sign_in_url(std::string{kSignInPrefix} + address.origin + "/#login=" + *code);
+  }
+  return std::nullopt;
 }
 
 std::vector<std::string> current_environment() {

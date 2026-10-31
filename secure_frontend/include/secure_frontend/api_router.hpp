@@ -94,6 +94,9 @@ struct ApiRouterConfig final {
   // GUI-first start-up (spec 2026-10-27 §3, D1; listener.login_link): set, POST /v1/strata/login-link answers without
   // the key (it hands the key out once, to a loopback client with the one-time code; the handler checks both).
   ChatHandler login_link{};
+  // One server, the apps manage it (owner 2026-10-31): set, POST /v1/strata/login-link/new (keyed) mints a fresh one-time
+  // code for a key holder on this PC (the handler checks the client), which the claim above exchanges.
+  ChatHandler new_login_link{};
 };
 
 // application/json, optionally followed by `; charset=utf-8`; ASCII

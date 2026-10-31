@@ -125,6 +125,64 @@ may require sudo"; asked how, his answer: both ways, chosen at install.
 - **Settings** (Linux): a Start at boot section shows which is on - read from the unit files and the linger flag - and the
   commands that turn it on or off; the server only reads them.
 - A pinned card (part 1) is what such a boot then starts.
+- **Found before building it (2026-10-31):** the Linux install runs `strata-unified-server` on its data folder
+  (`<install>/data`: state, logs, cache, secret, downloads, models), while SP7's unit runs `strata --config ... serve` with
+  only roots.state/logs/cache writable - under `ProtectHome=read-only` a download or a new model folder could not be
+  written. And the first start prints its one-time login link on stdout, which under systemd is the journal - a log, where
+  that link must never go. So the boot unit is the install's own: `ExecStart=<install>/strata-unified-server --data-dir
+  <data>`, the whole data folder writable (the rest of home read-only, as before: a model folder elsewhere is read, never
+  changed, so "make it private" there is done before), and the unit starts the server with `--no-login-link`, which
+  prints none (sign in with the API key, `strata key show`, or through an app) - the server change this part adds. (A
+  check for "stdout is not a terminal" was the first idea; strata-window reads its link from the server's piped output,
+  so the flag is explicit instead.)
+
+## 6. One server, the apps manage it; Windows start too (the owner, 2026-10-31)
+
+The owner: "we need the strata-unified-server binary as the main binary running the services, the window and tui should
+be the ones we need to manage it so that we can launch it and either use the tui or window app and would still work
+without erroring that the server is running already. This then would work seamlessly with the linux boot start and even
+have a windows start option." His answers: Windows start both ways, chosen at install; an app that attached to a running
+server keeps it running when it quits.
+
+- **`strata-unified-server` runs the service**, whoever starts it: a boot service (part 5, and the Windows start below), a
+  shell, or an app. strata-window and strata-tui manage it; neither is needed for it to run.
+- **An app attaches to the server already running for its data folder** instead of failing on the port: before it starts
+  one, it reads the data folder's config (the listener's host and port) and asks that address's `/health`; a server that
+  answers with the data folder's own key (read from its secret folder, as the app reads it today) is used as it is - the
+  page, the tray, the TUI's views - and the app says it attached. Only when none answers does it start the server itself,
+  as today. A port held by something that is not this data folder's server is refused by name, as today.
+- **Quitting**: an app that attached leaves the server running (it is not the app's); an app that started the server asks,
+  as today, whether to stop it; a server a boot service runs is never stopped by an app's quit (the service would only
+  start it again).
+- **Windows start, chosen at install** (install.ps1, `-Boot logon|service|no`; `--yes` takes no):
+  - **at log-on**: the Task Scheduler task `strata service enable` already makes (LeastPrivilege, the current user), its
+    action the install's `strata-unified-server --data-dir <data>`;
+  - **at boot**: a Windows service that runs `strata-unified-server --data-dir <data>` as the owner's account, created
+    once at install with the owner's administrator approval (the installer's elevation; the server and the apps never
+    elevate), set to start automatically and to restart on failure.
+- **Settings** (Windows too): Start at boot shows which is on - the task, the service, or neither - and the commands that
+  change it; the server only reads.
+- **The login link**: a service's start (`--no-login-link`) prints no one-time login link (part 5), on Windows as on
+  Linux; the apps sign in with the key from the data folder.
+
+**As built (2026-10-31, part 6: the apps attach).**
+- **The server**: `--no-login-link` sets `listener.login_link` false for that start. A keyed server with the page always
+  holds its login links and serves the claim; `listener.login_link` only prints the start's link. `POST
+  /v1/strata/login-link/new` (`kNewLoginLinkPath`, `RouteId::strata_login_link_new`, `ApiRouterConfig::new_login_link`):
+  keyed, POST, a small JSON body, loopback only; it answers `{"code": ...}` (`no-store`), a fresh one-time code that
+  replaces the one before it.
+- **The shared check** (window_shell): `server_address(setup)` - the config's `listener.host`/`listener.port` (a wildcard
+  bind as 127.0.0.1 or ::1) and the key (`server_key` is now its key half); `running_server(address, timeout)` - GET
+  /health with the key: 200 or 503 with the health body (or the fail-closed 503) is `ours`; any other answer, or a port
+  that holds the connection and never answers, is `other`; a refused connection is `none`; `fresh_sign_in(address)` - the
+  new route's code as the link the server would print (`sign_in_url`'s rule), none for a keyless server.
+- **strata-tui**: looks before the Debugging gate; attached, it skips the gate and the child, takes the address and key,
+  says so in its Log, asks "Quit? The server keeps running." (`App::server_attached`) and prints that on the way out.
+- **strata-window** (Windows and GTK): looks before the Debugging gate; attached, `attach_server()` opens the page with
+  `fresh_sign_in`'s link (on a thread; none: the page's own sign-in), the tray lists the models from it, offers no
+  Restart and **Exit (the server keeps running)**, which quits without a stop (a signal too, on Linux).
+- A `--token-env` key is read once (the read scrubs the variable): the start's listening line falls back to the key the
+  look read.
 
 ## Proof
 

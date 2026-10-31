@@ -109,6 +109,13 @@ std::variant<ServerInvocation, CliError> parse_server_command_line(const int arg
       invocation.data_dir = path_from_utf8(value);
       continue;
     }
+    if (argument == "--no-login-link") {
+      // a boot service's start (pinned and hot models, spec parts 5-6): no one-time login link on its output, which the
+      // journal or a service's log keeps; the apps' own starts read it from theirs
+      if (entries.find("listener.login_link") != entries.end()) return CliError{"duplicate --no-login-link"};
+      entries["listener.login_link"] = ConfigDraftEntry{false, ConfigSource::command_line};
+      continue;
+    }
     const FlagSpec* spec = find_flag(argument);
     if (spec == nullptr) {
       const auto equals = argument.find('=');
@@ -183,6 +190,8 @@ std::string server_usage() {
       "                           in engine.args are the operator's (no managed model);\n"
       "                           --check then validates that mode\n"
       "  --help                   Print this help\n"
+      "  --no-login-link          Print no one-time login link (a boot service's start:\n"
+      "                           its output is a log; sign in with the API key)\n"
       "\n"
       "init writes FILE (owner-only, atomic) from the options given and generates a\n"
       "43-character token at token.source below roots.secret (default: FILE's\n"

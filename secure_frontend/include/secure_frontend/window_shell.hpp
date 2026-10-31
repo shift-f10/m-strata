@@ -101,6 +101,27 @@ struct ServerKey final {
 };
 [[nodiscard]] std::optional<ServerKey> server_key(const ServerSetup& setup);
 
+// --------------------------------------------------------------------------- a server already running
+// One server, the apps manage it (owner 2026-10-31, spec 2026-10-31-pinned-and-hot-models-design.md section 6): before
+// the window or the TUI starts the server, it looks for the one already running for its data folder (a boot service's, a
+// shell's, another app's) and uses it instead of starting one that could not bind the port.
+// Where this setup's server listens - its config's listener.host and listener.port, a wildcard bind as this PC's address
+// ("http://127.0.0.1:8080") - and the key it checks (server_key); nullopt when its config or its key cannot be read.
+struct ServerAddress final {
+  std::string origin;
+  ServerKey key;
+};
+[[nodiscard]] std::optional<ServerAddress> server_address(const ServerSetup& setup);
+// What answers there: `ours` - GET /health with the key answers 200 or 503 with the server's health body (this data
+// folder's server, its model ready or not); `other` - something else answers (another program, a server with another
+// key); `none` - nothing listens, or no answer within `timeout`.
+enum class Running { none, ours, other };
+[[nodiscard]] Running running_server(const ServerAddress& address, std::chrono::milliseconds timeout);
+// The window's sign-in on a server it attached to (which printed its own link, if any, to its own output): a fresh
+// one-time login link from it (POST /v1/strata/login-link/new with the key; "<origin>/#login=<code>"), or nullopt - a
+// keyless server, or no link (the page's own sign-in then).
+[[nodiscard]] std::optional<std::string> fresh_sign_in(const ServerAddress& address, std::chrono::milliseconds timeout);
+
 // --------------------------------------------------------------------------- the server's log
 // The server's console lines (but the sign-in link) in <data>/logs/server.log, at most two files of `max_bytes`: the
 // current one and server.log.1 before it. Created owner-only in the data folder's private logs folder.

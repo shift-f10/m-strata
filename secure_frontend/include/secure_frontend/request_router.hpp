@@ -28,7 +28,7 @@ enum class RouteId {
   health, models, model, chat, other, web, metrics, strata_models, strata_start, strata_stop, strata_pin,
   strata_calibrate, strata_calibrate_cancel, strata_calibrate_auto, strata_calibrate_report,
   strata_downloads, strata_download_start, strata_download_pause, strata_download_cancel, strata_download_link,
-  strata_login_link,
+  strata_login_link, strata_login_link_new,
   strata_alerts, strata_alerts_settings, strata_alerts_password, strata_alerts_test,
   strata_search, strata_search_settings, strata_search_test,
   strata_config, strata_config_settings, strata_key_rotate,
@@ -128,6 +128,8 @@ inline constexpr std::size_t kModelControlBodyLimit = 4096;
 // GUI-first start-up (spec 2026-10-27 §3, D1): the one-time login link, POST {"code": "..."} without the key.
 inline constexpr std::string_view kLoginLinkPath = "/v1/strata/login-link";
 inline constexpr std::size_t kLoginLinkBodyLimit = 512;
+// One server, the apps manage it (owner 2026-10-31): a fresh one-time login link for a key holder, POST {} with the key.
+inline constexpr std::string_view kNewLoginLinkPath = "/v1/strata/login-link/new";
 
 struct RouteDecision final {
   std::optional<HttpResponse> early;      // set: answer now, the body is never read

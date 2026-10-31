@@ -518,7 +518,9 @@ strata-unified-server --help                              # every option
 Until 2026-10-28 the server was named `strata-secure-server`; an older out folder may still hold that file.
 
 Options such as `--port`, `--host` or `--token-env` apply to that start on top of the data folder's `config.json`; to
-keep a port, set `listener.port` there. A relative `--data-dir` is taken from the current folder. `--data-dir` and
+keep a port, set `listener.port` there. `--no-login-link` prints no one-time login link (a start whose output is a
+log, such as a boot service's; `strata key show` gives the key, and the apps sign in on their own). A relative
+`--data-dir` is taken from the current folder. `--data-dir` and
 `--config` exclude each other; `config.example.json` shows the config file's shape. (A start that names its model by
 flags, `--expert`, `--models-root`, `--engine`, `--model-id`, is the older bring-up mode and reads no data folder.)
 
@@ -727,8 +729,10 @@ this PC's CPU, memory, GPU and system.
 
 A build with `--with window` has `strata-window` beside the server. Start it instead of the server, with the same
 options (`.\strata-window.exe`, `.\strata-window.exe --port 9090`, ...): it starts the server without a console,
-opens the page signed in on the Monitor, and puts an icon in the tray. Closing the window hides it; the server keeps running. The
-tray icon's menu (right-click; on Linux, its menu) opens the window, starts or stops a model, restarts the server
+opens the page signed in on the Monitor, and puts an icon in the tray. When the server already runs for its data folder
+(started at boot, from a shell, or by `strata-tui`), it uses that one instead: the page signs in with a fresh one-time
+link the server gives it, the tray offers no Restart, and **Exit (the server keeps running)** leaves the server running.
+Closing the window hides it; the server keeps running. The tray icon's menu (right-click; on Linux, its menu) opens the window, starts or stops a model, restarts the server
 (how saved settings take effect) and exits. The server's output goes to `data/logs/server.log` (two files of at most
 4 MiB; the one-time login link is never written there). Starting it a second time shows the running window.
 **Server log** (the tray menu, Ctrl+Shift+L, or on Windows the title bar's menu) shows the server's lines live, newest
@@ -748,10 +752,12 @@ tray icon's menu while the model runs (2026-10-29).*
 ### The terminal
 
 A build with `--with tui` has `strata-tui` beside the server. Start it in a terminal instead of the server, with the
-same options (`.\strata-tui.exe`, `./strata-tui --port 9090`, ...). It needs a terminal that shows colours and UTF-8,
+same options (`.\strata-tui.exe`, `./strata-tui --port 9090`, ...). When the server already runs for its data folder
+(started at boot, from a shell, or by `strata-window`), it uses that one and leaves it running when you quit; otherwise
+it starts the server and stops it when you quit. It needs a terminal that shows colours and UTF-8,
 which is any current one: Windows Terminal, the Windows 10/11 console, or a Linux terminal over SSH. `NO_COLOR` turns
-the colours off; the Linux text console (`TERM=linux`) gets block charts instead of braille. It starts the server and
-opens on the Monitor:
+the colours off; the Linux text console (`TERM=linux`) gets block charts instead of braille. It opens on the
+Monitor:
 
 | Key | What it does |
 | --- | --- |
