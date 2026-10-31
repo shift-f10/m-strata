@@ -98,7 +98,7 @@ std::string first_shard(const std::string& any) {
     if (n < 1 || no < 1 || no > n) return any;
     std::string first;
     for (int i = 1; i <= n; ++i) {
-        char num[8];
+        char num[12];   // any int's digits (gcc -Wformat-truncation cannot see that i <= 99999 here)
         std::snprintf(num, sizeof num, "%05d", i);
         std::string p = any;
         p.replace(at - 5, 5, num);
