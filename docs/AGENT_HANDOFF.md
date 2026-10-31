@@ -280,6 +280,17 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z70 (Windows box; owner-directed; main's own install on the Linux VM)
+
+Before main is pushed (the owner: "Yes, once it passes"), main itself - not the plugins branch - was installed on the
+owner's Azure VM (Ubuntu 22.04.5, a Tesla T4, 4 CPUs) as a user would: install.sh with every engine and feature, the
+window app and the TUI.
+- **The launcher on GCC 13**: main's first run stopped in engine/src/multiengine/launcher.cpp, `-Werror=format-truncation`
+  on first_shard's `char num[8]` for "%05d" (gcc cannot see that a shard number is at most 99999). It is `char num[12]`,
+  the line the plugins branch has, which the Windows engine build here compiles without a warning.
+- **Proof**: the second run completed (952 MiB in its out folder). Its server, started once: the page 200, the API 200
+  with the key and 401 without, a web search through the VM's SearXNG found results; stopped after.
+
 ### Claude Code session, 2026-10-30 z64 (Windows box; owner-directed; the first Linux GPU build)
 
 (On main: replayed from the plugins branch, where it was made and proven; the runs below are that branch's -
