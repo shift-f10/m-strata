@@ -280,6 +280,25 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z84 (Windows box; owner-directed)
+
+Pinned and hot models, part 2 (spec part 2, "As built"): Keep loaded.
+- **What idle unload is with cards** (found building it): the server refuses `engine.idle_unload_s` and `engine.lazy_load`
+  with `models.cards` (frontend_config.cpp: the launcher starts and stops each engine); `glm.idle_unload_s` is a main row,
+  refused on any family but GLM-5.3 and raon1. So a card's only idle unload is the GLM engine's.
+- **The option**: `kHot` ("Keep loaded", boolean) in every table after the longest answer (main's tables are still in
+  model_options.cpp); `offer_hot` in the launcher (off unless a card file lists it); `write_option` - on, a GLM-engine card's
+  (glm53, raon1) `glm.idle_unload_s` 0. No Settings row (one tried first was refused at start with cards and came out).
+- **Tests**: the option tables (every family's list), `every_card_offers_keep_loaded`, the card config
+  (`a_card_kept_loaded_never_idle_unloads`: a GLM card's 60 s becomes 0, off keeps it, a qwen card kept loaded validates),
+  the launcher (`a_card_kept_loaded_never_unloads_when_idle`: a card started hot runs, loaded; every card offers it) and
+  each card's offered defaults (`hot=false`).
+- **Proof** (main, cherry-picked from plugins ebd47368, where the RED and GREEN ran; the option went into main's tables in
+  model_options.cpp, the plugin-only files left out): MSVC built whole, no warnings, 1435 of 1439 (the two release-only
+  cases and the two Maya parity scans, which need engines/maya-ref, not checked out in main's worktree - as before); Linux
+  gcc 13.3 and clang 18.1 built whole with -Werror, no warnings, 1486/1491 and 1484/1491 (the same four; egress and the
+  net01 pair pass alone).
+
 ### Claude Code session, 2026-10-31 z83 (Windows box; owner-directed)
 
 Pinned and hot models, part 1 (the owner: "pin a model to start at startup in the settings and an option to make loaded

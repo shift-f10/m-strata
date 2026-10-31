@@ -59,6 +59,16 @@ when it is the pinned one), `*` in the list, a Startup row. A pinned card starts
 - **Settings:** Unload an idle model after (seconds, 0: never) - `engine.idle_unload_s`, a managed row - for the cards
   that are not hot.
 
+**As built (2026-10-31, part 2).** Building it showed what idle unload is with model cards: the server refuses
+`engine.idle_unload_s` and `engine.lazy_load` there ("the launcher starts and stops each engine"), so no card's engine
+idle-unloads but the GLM engine's (GLM-5.3, raon1), through the main config's own `glm.idle_unload_s` - a main row, refused
+on any other family. So:
+- **Keep loaded (`hot`)** is in every family's option table after the longest answer, and a plugin family's server options
+  (a manifest may not declare it); the launcher offers it off on every card (`offer_hot`). On, a GLM-engine card's start
+  writes `glm.idle_unload_s` 0 (`write_option`); any other card has no idle unload to turn off, and the switch is the one
+  parts 3 and 4 read. It never writes `engine.idle_unload_s` (that would refuse the start) or an engine flag.
+- **No Settings row:** an idle-unload row could not apply with cards (the server refuses it), so Settings shows none.
+
 ## 3. Hot: always ready
 
 - **Warmed at its start:** once a hot card's engine is ready, the server runs one short generation through it (one token,

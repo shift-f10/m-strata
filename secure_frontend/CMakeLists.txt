@@ -1990,6 +1990,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         removing_a_card_removes_its_calibration a_card_short_of_ram_starts_in_the_low_ram_mode a_card_with_room_keeps_its_experts_in_ram a_card_that_fixes_its_experts_flag_keeps_it failures_raise_alerts a_failed_calibration_writes_a_report
         a_stop_waits_for_an_engine_still_ending
         a_card_is_pinned_and_its_removal_unpins_it a_pinned_card_starts_with_the_server_and_the_pin_is_kept
+        a_card_kept_loaded_never_unloads_when_idle
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
 
     # Model downloads (plan 2026-10-23-model-downloads Task 4): the download manager over a scripted child.
@@ -2025,7 +2026,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         page_values_resolve_within_bounds kv_resident_cross_rules options_apply_as_flags_and_keys
         mtp_off_drops_the_draft_options controlled_flags_listed description_json_shape
         remembered_options_round_trip_and_tolerate_junk context_and_kv_streaming_offer_fixed_values
-        past_trained_context_adds_yarn flint_options_follow_the_flint_engine glm_ram_headroom_is_a_card_option the_longest_answer_is_a_card_option glm_options_write_the_glm_rows
+        past_trained_context_adds_yarn flint_options_follow_the_flint_engine glm_ram_headroom_is_a_card_option the_longest_answer_is_a_card_option every_card_offers_keep_loaded glm_options_write_the_glm_rows
         deepseek_options_are_mayas web_search_is_a_checkbox_of_the_tool_profiles minimax_options_are_mayas the_vision_option_writes_the_encoder_rows gpus_choose_the_cards_a_model_runs_on low_ram_writes_the_engines_flag
         gemma4_mtp_off_drops_the_mtp_file)
 
@@ -2035,7 +2036,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_model_cards_tests
         card_parses_and_merges_into_a_valid_config card_refusals_name_the_rule bad_card_is_refused_others_load
         main_config_may_not_set_card_keys card_options_reach_the_engine_arguments glm_ram_headroom_reaches_the_engine_environment launcher_store_config_uses_the_downloads_root
-        a_cards_config_keeps_the_servers_engine_output_logging a_cards_longest_answer_is_its_generation_timeout
+        a_cards_config_keeps_the_servers_engine_output_logging a_cards_longest_answer_is_its_generation_timeout a_card_kept_loaded_never_idle_unloads
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # Gemma 4 plan 1 Task 8 (spec §2.5, §6.3)

@@ -2123,6 +2123,9 @@ One model runs at a time.
   why). Removing the pinned card unpins it. The page pins from a card's page in the Models tab (Pin / Unpin; the list
   says "starts with the server") and from Settings' Start at startup choice; the TUI with `p` on the Models view (the
   list marks the pinned card `*`).
+  Every card also offers **Keep loaded** (`hot`, owner 2026-10-31): with model cards no engine idle-unloads but the GLM
+  engine's (the main config's `glm.idle_unload_s`; `engine.idle_unload_s` is refused with cards), and Keep loaded turns
+  that off for the start; it is also the switch the warm-up and the restarts read.
 - **A start:** the card, the option values and the card's config are validated at once (a
   refusal names the option: 400 `invalid_option`); the model is then composed and its tokenizer
   loaded before the running model is touched, so a bad start never takes it down. Then new chat

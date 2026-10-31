@@ -190,16 +190,16 @@ void option_tables_per_profile() {
   // low_ram since 2026-10-31 (upstream's low-RAM mode)
   expect(names_of(EngineProfile::qwen) == Strings{"max_context", "kv", "kv_resident", "kv_grow", "mtp", "spec", "spec_min_p",
                                                   "expert_cache", "prefill", "low_ram", "thinking", "temperature", "top_p", "top_k",
-                                                  "min_p", "vision", "answer_minutes", "web_search", "gpus"},
+                                                  "min_p", "vision", "answer_minutes", "hot", "web_search", "gpus"},
          "the qwen options in display order: " + joined(names_of(EngineProfile::qwen)));
   // mtp since 2026-10-28 (the owner: "gemma4 has an mtp ... make sure we work that mtp in our gemma engine")
   expect(names_of(EngineProfile::gemma4) == Strings{"max_context", "chunk", "expert_vram", "mtp", "spec", "spec_min_p", "thinking",
-                                                    "temperature", "top_p", "top_k", "min_p", "answer_minutes", "web_search", "gpus"},
+                                                    "temperature", "top_p", "top_k", "min_p", "answer_minutes", "hot", "web_search", "gpus"},
          "the gemma4 options in display order: " + joined(names_of(EngineProfile::gemma4)));
   // D10 met (owner 2026-10-27): Maya's own GLM choices - its context menu, the engine's --kv, the sampling defaults
   // the RAM headroom since 2026-10-29 (owner: "make it an option in the card setting")
   expect(names_of(EngineProfile::glm53) == Strings{"max_context", "kv", "ram_headroom", "temperature", "top_p", "top_k", "min_p",
-                                                   "answer_minutes", "web_search", "gpus"},
+                                                   "answer_minutes", "hot", "web_search", "gpus"},
          "the glm53 options in display order: " + joined(names_of(EngineProfile::glm53)));
 
   for (const auto profile : {EngineProfile::qwen, EngineProfile::gemma4, EngineProfile::glm53, EngineProfile::raon1,
@@ -701,7 +701,7 @@ void gemma4_mtp_off_drops_the_mtp_file() {
 void flint_options_follow_the_flint_engine() {
   using secure_frontend::EngineArgumentsProfile;
   expect(names_of(EngineProfile::flint) ==
-             Strings{"max_context", "chunk", "expert_vram", "thinking", "temperature", "top_p", "top_k", "min_p", "answer_minutes", "web_search", "gpus"},
+             Strings{"max_context", "chunk", "expert_vram", "thinking", "temperature", "top_p", "top_k", "min_p", "answer_minutes", "hot", "web_search", "gpus"},
          "the flint options in display order: " + joined(names_of(EngineProfile::flint)));
   for (const auto& [name, flag] : {std::pair{"max_context", "--max-context"}, std::pair{"chunk", "--chunk"},
                                    std::pair{"expert_vram", "--expert-vram"}}) {
@@ -1096,12 +1096,38 @@ void the_longest_answer_is_a_card_option() {
          "a card's remembered longest answer is kept");
 }
 
+// Pinned and hot models (owner 2026-10-31, spec part 2): every engine's cards offer Keep loaded (hot), a switch. With model
+// cards no engine idle-unloads but the GLM engine's (its glm.idle_unload_s; engine.idle_unload_s is refused with cards):
+// on, a GLM-engine card's start writes glm.idle_unload_s 0, any other card's nothing - never engine.idle_unload_s, never
+// an engine flag; off writes nothing.
+void every_card_offers_keep_loaded() {
+  for (const auto profile : {EngineProfile::qwen, EngineProfile::gemma4, EngineProfile::glm53, EngineProfile::raon1,
+                             EngineProfile::deepseek, EngineProfile::minimax, EngineProfile::flint}) {
+    const auto* spec = secure_frontend::find_model_option(profile, "hot");
+    expect(spec != nullptr && spec->kind == ModelOptionKind::boolean && spec->label == "Keep loaded",
+           "every engine offers Keep loaded, a switch (profile " + std::to_string(static_cast<int>(profile)) + ")");
+    secure_frontend::FrontendConfigDraft on;
+    secure_frontend::apply_option_values(profile, ModelOptionValues{{"hot", true}}, on);
+    const bool glm_engine = profile == EngineProfile::glm53 || profile == EngineProfile::raon1;
+    const auto glm = on.entries.find("glm.idle_unload_s");
+    expect(!on.entries.contains("engine.idle_unload_s") && !on.entries.contains("engine.args") &&
+               (glm_engine ? glm != on.entries.end() && std::get<std::int64_t>(glm->second.value) == 0 : glm == on.entries.end()),
+           "on: a GLM-engine card's glm.idle_unload_s 0, another card's nothing; never engine.idle_unload_s or a flag (profile " +
+               std::to_string(static_cast<int>(profile)) + ")");
+    secure_frontend::FrontendConfigDraft off;
+    secure_frontend::apply_option_values(profile, ModelOptionValues{{"hot", false}}, off);
+    expect(!off.entries.contains("engine.idle_unload_s") && !off.entries.contains("glm.idle_unload_s"),
+           "off: the server's idle unload stands");
+  }
+  expect(secure_frontend::is_model_option_name("hot"), "a fixed option name");
+}
+
 // DeepSeek-V4.1 (2026-10-27, spec 2026-10-27-strata-prepare-design §7.2): Maya's own DeepSeek choices - its context menu
 // (maya.py v1.1.30 DS4_CONTEXTS: 32K to 1M), the thinking level (DS4_EFFORT; DeepSeek's effort line: low 50, medium and
 // high 75, none chat mode), the sampling rows. The context is maya-ds4's own --max-context in engine.args (the maya_ds4
 // allowlist), the thinking level reasoning.effort.
 void deepseek_options_are_mayas() {
-  expect(names_of(EngineProfile::deepseek) == Strings{"max_context", "thinking", "temperature", "top_p", "top_k", "min_p", "answer_minutes", "web_search", "gpus"},
+  expect(names_of(EngineProfile::deepseek) == Strings{"max_context", "thinking", "temperature", "top_p", "top_k", "min_p", "answer_minutes", "hot", "web_search", "gpus"},
          "the deepseek options in display order: " + joined(names_of(EngineProfile::deepseek)));
   const auto* context = secure_frontend::find_model_option(EngineProfile::deepseek, "max_context");
   expect(context != nullptr && context->kind == ModelOptionKind::integer && context->minimum == 1 && context->maximum == 1048576 &&
@@ -1242,7 +1268,7 @@ void the_vision_option_writes_the_encoder_rows() {
 }
 
 void minimax_options_are_mayas() {
-  expect(names_of(EngineProfile::minimax) == Strings{"max_context", "kv", "thinking", "temperature", "top_p", "answer_minutes", "web_search", "gpus"},
+  expect(names_of(EngineProfile::minimax) == Strings{"max_context", "kv", "thinking", "temperature", "top_p", "answer_minutes", "hot", "web_search", "gpus"},
          "the minimax options in display order: " + joined(names_of(EngineProfile::minimax)));
   const auto* context = secure_frontend::find_model_option(EngineProfile::minimax, "max_context");
   expect(context != nullptr && context->kind == ModelOptionKind::integer && context->minimum == 1 && context->maximum == 1048576 &&
@@ -1319,6 +1345,7 @@ int main(int argc, char** argv) {
       {"glm_options_write_the_glm_rows", glm_options_write_the_glm_rows},
       {"glm_ram_headroom_is_a_card_option", glm_ram_headroom_is_a_card_option},
       {"the_longest_answer_is_a_card_option", the_longest_answer_is_a_card_option},
+      {"every_card_offers_keep_loaded", every_card_offers_keep_loaded},
       {"deepseek_options_are_mayas", deepseek_options_are_mayas},
       {"minimax_options_are_mayas", minimax_options_are_mayas},
       {"the_vision_option_writes_the_encoder_rows", the_vision_option_writes_the_encoder_rows},

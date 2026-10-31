@@ -169,6 +169,23 @@ void offer_web_search(ModelCard& card, const ToolRunner* tools) {
   card.options.push_back(std::move(limit));
 }
 
+// Pinned and hot models (owner 2026-10-31, spec part 2): every card offers Keep loaded, off unless its card file lists
+// it, in the profile's order (after its longest answer).
+void offer_hot(ModelCard& card) {
+  const auto* spec = find_model_option(card.profile, "hot");
+  if (spec == nullptr) return;
+  if (std::any_of(card.options.begin(), card.options.end(), [spec](const ModelOptionLimits& limit) { return limit.spec == spec; })) return;
+  ModelOptionLimits limit;
+  limit.spec = spec;
+  limit.default_value = false;
+  const auto order = model_options_for(card.profile);
+  const auto place = [&order](const ModelOptionSpec* listed) { return static_cast<std::size_t>(listed - order.data()); };
+  const auto later = std::find_if(card.options.begin(), card.options.end(), [&](const ModelOptionLimits& listed) {
+    return listed.spec != nullptr && place(listed.spec) > place(spec);
+  });
+  card.options.insert(later, std::move(limit));
+}
+
 // Multi-GPU like upstream (owner 2026-10-28): every card offers its GPUs choice, auto unless its card file lists it
 // otherwise (the page shows it where this PC has more than one GPU). The option is the tables' last: appended after Web
 // search, in display order.
@@ -302,12 +319,13 @@ std::string tenths(const double value) {
 // The options a card offers beyond its file's: its engine's RAM headroom (owner 2026-10-29: a GLM-engine card's, at the
 // server's glm.ram_headroom_gb), its model's recommended sampling, its longest answer (owner 2026-10-29: every card's,
 // at the server's limits.engine.generation_timeout_s in minutes, a part of a minute counted whole), Web search with the
-// server's, then its GPUs, and a Qwen pack's low-RAM mode (owner 2026-10-31).
+// server's, then its GPUs, and a Qwen pack's low-RAM mode (owner 2026-10-31); Keep loaded (owner 2026-10-31).
 void offer_options(ModelCard& card, const FrontendConfigDraft& main, const ToolRunner* tools) {
   offer_at_row(card, main, "ram_headroom", "glm.ram_headroom_gb", [](const std::int64_t gigabytes) { return gigabytes; });
   offer_sampling(card);
   offer_at_row(card, main, "answer_minutes", "limits.engine.generation_timeout_s",
                [](const std::int64_t seconds) { return (seconds + 59) / 60; });
+  offer_hot(card);
   offer_web_search(card, tools);
   offer_gpus(card);
   offer_low_ram(card);

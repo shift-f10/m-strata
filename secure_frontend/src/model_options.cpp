@@ -133,6 +133,12 @@ constexpr ModelOptionSpec kAnswerMinutes = listed(
                    1, 1440),
     kAnswerMinutesValues);
 
+// Pinned and hot models (owner 2026-10-31, spec part 2): Keep loaded - a card kept hot never unloads when it idles (a
+// GLM-engine card's glm.idle_unload_s is 0 for its start; no other card idle-unloads). Every engine's, off unless its
+// card's file lists it on.
+constexpr ModelOptionSpec kHot =
+    boolean_option("hot", "Keep loaded", "Never unload this model when it idles, so it is always ready");
+
 // The upstream Strata engine (strata_0143). Flags, units and limits as its argument parser reads
 // them (upstream/src/program/generate.cpp): --max-context :2428 (positive, below 2^31 :3254-3258;
 // the frontend's cap 1,048,576 is glm.max_context's); --kv-resident :2464 (>= 0 :3162); --kv-grow
@@ -141,7 +147,7 @@ constexpr ModelOptionSpec kAnswerMinutes = listed(
 // draft must reach, core/mtp.cpp:1689); --expert-cache :2541-2544 (auto or a count of expert blobs
 // in VRAM, >= -1 :3304; at most the 48 x 512 experts there are, core/geometry.hpp:25/:53);
 // --prefill :2558-2565 (auto or a chunk of N prompt tokens; auto's largest is 32,768, :2564).
-constexpr std::array<ModelOptionSpec, 19> kQwenOptions{{
+constexpr std::array<ModelOptionSpec, 20> kQwenOptions{{
     listed(integer_option("max_context", "Context length",
                           "Tokens of context the engine allocates; past the trained 256K the engine stretches the model with "
                           "YaRN rope scaling (experimental, upstream's own rule)",
@@ -177,6 +183,7 @@ constexpr std::array<ModelOptionSpec, 19> kQwenOptions{{
                   "Read pictures with the model's picture encoder: on the GPU (faster, takes about 1 GB of VRAM), on the CPU, or off",
                   kVisionModes),
     kAnswerMinutes,
+    kHot,
     kWebSearch,
     kGpus,
 }};
@@ -186,7 +193,7 @@ constexpr std::array<ModelOptionSpec, 19> kQwenOptions{{
 // work that mtp in our gemma engine"): a card that has the model's MTP draft file lists it; off drops the card's
 // --mtp <file> for that start (write_option); its window and confidence are the engine's --spec and --spec-min-p (the
 // latter only while the switch is on).
-constexpr std::array<ModelOptionSpec, 14> kGemmaOptions{{
+constexpr std::array<ModelOptionSpec, 15> kGemmaOptions{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (up to the model's trained 256K)",
                           1, 262144),
            kGemmaContexts),
@@ -203,13 +210,14 @@ constexpr std::array<ModelOptionSpec, 14> kGemmaOptions{{
     kTopK,
     kMinP,
     kAnswerMinutes,
+    kHot,
     kWebSearch,
     kOneGpu,
 }};
 
 // multiengine_flint (strata_flint): the Gemma engine's options, bounded by kFlintFlags (engine_arguments.cpp); its
 // trained context is 256K too.
-constexpr std::array<ModelOptionSpec, 11> kFlintOptions{{
+constexpr std::array<ModelOptionSpec, 12> kFlintOptions{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (up to the model's trained 256K)",
                           1, 262144),
            kGemmaContexts),
@@ -222,6 +230,7 @@ constexpr std::array<ModelOptionSpec, 11> kFlintOptions{{
     kTopK,
     kMinP,
     kAnswerMinutes,
+    kHot,
     kWebSearch,
     kOneGpu,
 }};
@@ -242,7 +251,7 @@ constexpr ModelOptionSpec kRamHeadroom = listed(
                    "with a separate GPU), more keeps the desktop responsive",
                    6, 1024),
     kRamHeadroomValues);
-constexpr std::array<ModelOptionSpec, 10> kGlmOptions{{
+constexpr std::array<ModelOptionSpec, 11> kGlmOptions{{
     listed(integer_option("max_context", "Context length",
                           "Tokens of context the engine allocates (Maya's choices; past 32K the attention cache streams from RAM)",
                           1, 1048576),
@@ -255,6 +264,7 @@ constexpr std::array<ModelOptionSpec, 10> kGlmOptions{{
     kTopK,
     kMinP,
     kAnswerMinutes,
+    kHot,
     kWebSearch,
     kGpus,
 }};
@@ -263,7 +273,7 @@ constexpr std::array<ModelOptionSpec, 10> kGlmOptions{{
 // its files): the same typed rows as glm53 (glm.max_context, glm.kv) up to the 256K it was served at; the cache in the
 // GLM engine's vocabulary (fp16 keeps raon1's exact F32 cache); KRAFTON's sampling as the card's defaults.
 constexpr std::array<std::int64_t, 5> kRaon1Contexts{8192, 32768, 65536, 131072, 262144};
-constexpr std::array<ModelOptionSpec, 10> kRaon1Options{{
+constexpr std::array<ModelOptionSpec, 11> kRaon1Options{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (its full attention keeps them all)",
                           1, 1048576),
            kRaon1Contexts),
@@ -275,6 +285,7 @@ constexpr std::array<ModelOptionSpec, 10> kRaon1Options{{
     kTopK,
     kMinP,
     kAnswerMinutes,
+    kHot,
     kWebSearch,
     kGpus,
 }};
@@ -283,7 +294,7 @@ constexpr std::array<ModelOptionSpec, 10> kRaon1Options{{
 // context menu (maya.py v1.1.30 DS4_CONTEXTS; maya-ds4's own --max-context, in engine.args by the maya_ds4 allowlist),
 // the thinking level (DS4_EFFORT "high"; DeepSeek's effort line: low 50, medium and high 75, none chat mode), sampling.
 constexpr std::array<std::int64_t, 6> kDeepseekContexts{32768, 65536, 131072, 262144, 524288, 1048576};
-constexpr std::array<ModelOptionSpec, 9> kDeepseekOptions{{
+constexpr std::array<ModelOptionSpec, 10> kDeepseekOptions{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (Maya's choices)", 1, 1048576),
            kDeepseekContexts),
     choice_option("thinking", "Thinking", "The thinking level for requests that name none (DeepSeek's reasoning effort)",
@@ -293,6 +304,7 @@ constexpr std::array<ModelOptionSpec, 9> kDeepseekOptions{{
     kTopK,
     kMinP,
     kAnswerMinutes,
+    kHot,
     kWebSearch,  // DSML calls, as Maya renders and reads them (owner 2026-10-28)
     kGpus,
 }};
@@ -304,7 +316,7 @@ constexpr std::array<ModelOptionSpec, 9> kDeepseekOptions{{
 constexpr std::array<std::int64_t, 6> kMinimaxContexts{32768, 65536, 131072, 262144, 524288, 1048576};
 constexpr std::array<std::string_view, 4> kMinimaxKv{"bf16", "int8", "fp8", "fp4"};
 constexpr std::array<std::string_view, 5> kMinimaxThinking{"auto", "none", "low", "medium", "high"};
-constexpr std::array<ModelOptionSpec, 8> kMinimaxOptions{{
+constexpr std::array<ModelOptionSpec, 9> kMinimaxOptions{{
     listed(integer_option("max_context", "Context length",
                           "Tokens of context the engine allocates (Maya's choices; past 256K not yet run end to end)", 1, 1048576),
            kMinimaxContexts),
@@ -314,6 +326,7 @@ constexpr std::array<ModelOptionSpec, 8> kMinimaxOptions{{
     kTemperature,
     kTopP,
     kAnswerMinutes,
+    kHot,
     kWebSearch,  // its namespaced XML calls, as Maya renders and reads them (owner 2026-10-28)
     kGpus,
 }};
@@ -659,6 +672,15 @@ void write_option(const EngineProfile profile, const std::string_view name, cons
     flags.push_back(std::move(argument));
   };
   const auto integer_or_auto = [integer, text]() { return integer != nullptr ? std::to_string(*integer) : *text; };
+  if (name == "hot") {
+    // every engine (owner 2026-10-31, Keep loaded): with model cards no engine idle-unloads but the GLM engine's, through
+    // its own glm.idle_unload_s (engine.idle_unload_s is refused there: the launcher starts and stops each engine) - on, a
+    // GLM-engine card's is 0 for this start; any other card has none to turn off. Off, the card's own row stands.
+    if (on != nullptr && *on && (profile == EngineProfile::glm53 || profile == EngineProfile::raon1)) {
+      set_entry(draft, "glm.idle_unload_s", ConfigDraftValue{std::in_place_type<std::int64_t>, 0});
+    }
+    return;
+  }
   if (name == "answer_minutes") {
     // every engine: the card's generation timeout (chat_execution's deadline), never an engine flag
     if (integer != nullptr) {
