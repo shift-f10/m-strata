@@ -280,7 +280,7 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
-### Claude Code session, 2026-10-31 z89 (Windows box; owner-directed)
+### 2026-10-31 z90 (Windows box; owner-directed)
 
 Pinned and hot models, part 6 (spec part 6, "As built"): the Windows start, and Settings' Start at boot. The owner, on
 the finding that a Windows service on an administrator's account runs elevated (which the server refuses): "Yes, use the
@@ -318,7 +318,7 @@ task".
     ones); full-gcc 1608/1612 and full-clang 1609/1612 (the two release-only cases; net01_ipv6 and egress pass alone),
     window-gcc Release 1565/1567 with the GTK window built (net01_ipv6 and egress pass alone).
 
-### Claude Code session, 2026-10-31 z88 (Windows box; owner-directed)
+### 2026-10-31 z89 (Windows box; owner-directed)
 
 Pinned and hot models, part 5 (spec part 5, "As built"): install.sh starts the server at boot, as the owner chose.
 - **install.sh**: `--boot user|system|no`, its question where systemd runs (Enter, no terminal and `--yes`: no), the plan's
@@ -339,7 +339,7 @@ Pinned and hot models, part 5 (spec part 5, "As built"): install.sh starts the s
 - **Not yet**: the Windows start (install.ps1) and Settings' read-only boot state (both OSes) - see the open question in
   the spec's part 6 notes.
 
-### Claude Code session, 2026-10-31 z87 (Windows box; owner-directed)
+### 2026-10-31 z88 (Windows box; owner-directed)
 
 Pinned and hot models, part 6 (spec part 6, "As built"): one server; strata-window and strata-tui attach to the one
 already running for their data folder (the owner: "would still work without erroring that the server is running
@@ -381,6 +381,23 @@ already"). Part 5's server change, `--no-login-link`, comes with it.
   - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc 1602/1606 and full-clang 1601/1606 (the two
     release-only cases; net01_ipv6, net01_workers and egress pass alone), window-gcc Release 1559/1561 with the GTK
     window built (net01_workers and egress pass alone).
+
+### 2026-10-31 z87 (RTX 5090 PC; owner-directed) — no agent credited
+
+The owner: "ensure when pushing you do not reference any agents as contributors, make that a hard requirement", then
+"make sure claude does not make it a co-authored, remove it if you did".
+
+- **The rule:** `CLAUDE.md`, `AGENTS.md`, the resume document's rule 5 (and its opencode note) and
+  `briefs/subcontroller-common.md` now say that no commit, tag or pull request credits an agent or model. That means no
+  `Co-Authored-By:` trailer, no `Claude-Session:` line, no session links and no "Generated with" line. It replaces
+  2026-10-27's one-trailer rule. The trailer lines in older plans, briefs and reports are history, not instructions.
+  This commit is the first made without a trailer.
+- **Pushed history:** all 63 commits on `main` (up to `e23c4ab`) carry an agent trailer, so GitHub lists the agent as
+  a co-author. Removing them means rewriting all of `main` and force-pushing. The other PC's checkout would then have
+  to be reset to the new `main`. Not done: it waits on the owner's word.
+- **m-strata-rust:** the owner's new private repository for a Rust port, set up from this PC with M-Strata at
+  `e23c4ab` as its read-only reference submodule. Its first commit is rewritten without the trailer, as the owner
+  asked.
 
 ### Claude Code session, 2026-10-31 z86 (Windows box; owner-directed)
 

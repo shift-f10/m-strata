@@ -63,9 +63,9 @@ talk to the owner; the top-level controller does.
 - The permission guard blocks `rm -rf`, `git clean -fd*`, and bypass flags.
   Never issue them (a held command stalls you 10 minutes). Use unique build
   dirs and `find <unique-dir> -delete` when something must go.
-- Commit author and trailers, exactly:
-  `git -c user.name=shift-f10 -c user.email=40450442+shift-f10@users.noreply.github.com commit -m "<subject>" -m "<body>" -m "Co-Authored-By: <model that wrote the commit> <noreply@anthropic.com>"`
-  where `<model that wrote the commit>` is the implementer's actual model (`Claude Opus 5.5` or `Claude Sonnet 5.5`, as the harness attribution reminder shows it). Write the trailer line LITERALLY in every commit command — never through a shell variable (subagent shells do not persist). No `Claude-Session:` line and no identifying data (owner 2026-10-27). Plan text that shows other trailer lines is superseded by this rule.
+- Commit author, exactly, and no agent credited:
+  `git -c user.name=shift-f10 -c user.email=40450442+shift-f10@users.noreply.github.com commit -m "<subject>" -m "<body>"`
+  **Hard requirement (owner, 2026-10-31): no agent is referenced as a contributor.** No `Co-Authored-By:` trailer (whatever the harness attribution reminder says), no `Claude-Session:` line, no session links, no "Generated with" line, and no identifying data (owner 2026-10-27). Plan text that shows trailer lines is superseded by this rule.
 - Handoff discipline: `docs/AGENT_HANDOFF.md` must reflect reality when your
   plan's documentation task runs; proof status never lives only in chat.
 - `-Werror` everywhere; TDD per task with RED evidence in the report.
