@@ -592,3 +592,97 @@ def test_install_sh_installs_the_boot_unit_after_the_build():
     help_range = re.search(r"sed -n '2,(\d+)p' \"\$0\"", sh)
     assert help_range and "--boot user|system|no" in "\n".join(sh.splitlines()[1:int(help_range.group(1))])
     assert sh.splitlines()[int(help_range.group(1)) - 1].startswith("# image from Docker Hub"), "the help ends at its end"
+
+
+BOOT_QUESTION_PS = "Start the server with Windows?"
+
+
+def plan_task_xml(output: str) -> str:
+    """The task the plan prints, its lines prefixed "    | "."""
+    lines = [line[6:] for line in output.splitlines() if line.startswith("    | ")]
+    assert lines and lines[0].startswith("<?xml"), output
+    return "\n".join(lines) + "\n"
+
+
+def test_install_ps1_starts_the_server_with_windows_as_chosen(tmp_path):
+    """The owner (2026-10-31): a Windows start, both ways, chosen at install - then, the Windows service being refused
+    for an administrator's account (an elevated token, which the server refuses), "use the task". install.ps1 asks
+    (Enter: no; -Yes asks nothing and takes no) or takes -Boot logon|startup|no; the plan says what it makes and prints
+    the task, which Task Scheduler's own parser takes (Schedule.Service NewTask().XmlText: nothing is registered).
+    logon: at this user's log-on, strata-window in the tray (`--tray`), the interactive token, no password, no
+    administrator; it needs the window. startup: when the PC starts, the server itself on the install's data folder with
+    no login link, as this user with the least privileges (the filtered token), its password kept by Task Scheduler (the
+    key file needs it), restarted after a failure; an administrator's approval makes it. Another word is refused."""
+    powershell = shutil.which("powershell") if sys.platform == "win32" else None
+    if not powershell:
+        pytest.skip("install.ps1 runs on Windows (Windows PowerShell)")
+    out = tmp_path / "out"
+
+    def run(*options: str, answers: str = "") -> subprocess.CompletedProcess:
+        env = dict(os.environ, APPDATA=str(tmp_path / "appdata"))
+        return subprocess.run([powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ROOT / "install.ps1"),
+                               "-Plan", "-Out", str(out), *options],
+                              input=answers, capture_output=True, text=True, timeout=180, env=env, check=False)
+
+    def parses(xml: str) -> bool:
+        task = tmp_path / "task.xml"
+        task.write_text(xml, encoding="utf-8")
+        check = subprocess.run([powershell, "-NoProfile", "-Command",
+                                "$s = New-Object -ComObject Schedule.Service; $s.Connect(); $d = $s.NewTask(0); "
+                                f"$d.XmlText = [IO.File]::ReadAllText('{task}'); 'parsed'"],
+                               capture_output=True, text=True, timeout=60, check=False)
+        return check.returncode == 0 and "parsed" in check.stdout
+
+    # (piped answers: Read-Host does not echo its question, so it is seen by its step and by what each answer does; the
+    # one before it is the signing key's, this PC having none in the scratch APPDATA)
+    assert f"Read-Host '  {BOOT_QUESTION_PS} l: at your log-on" in text("install.ps1")
+    asked = ("-With", "window,tui", "-Without", "maya", "-Debugging")
+    for answers, said in (("\n\n", None), ("\nl\n", "at your log-on"), ("\nstartup\n", "when this PC starts")):
+        done = run(*asked, answers=answers)
+        assert done.returncode == 0 and "== Start with Windows" in done.stdout, done.stdout + done.stderr
+        if said is None:
+            assert "start with Windows:" not in done.stdout, "Enter: not with Windows"
+        else:
+            assert f"start with Windows: {said}" in done.stdout, (answers, done.stdout)
+    told = run("-With", "window,tui", "-Yes", answers="l\n")
+    assert told.returncode == 0 and "== Start with Windows" not in told.stdout and "start with Windows:" not in told.stdout
+    logon = run("-With", "window,tui", "-Yes", "-Boot", "logon")
+    assert logon.returncode == 0, logon.stdout + logon.stderr
+    assert "start with Windows: at your log-on, the task M-Strata opens" in logon.stdout
+    xml = plan_task_xml(logon.stdout)
+    for part in ("<LogonTrigger>", "<LogonType>InteractiveToken</LogonType>", "<RunLevel>LeastPrivilege</RunLevel>",
+                 f'<Command>"{out}\\strata-window.exe"</Command>', "<Arguments>--tray</Arguments>",
+                 "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>", "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"):
+        assert part in xml, part
+    assert "<BootTrigger>" not in xml and "Password" not in xml and "HighestAvailable" not in xml
+    assert parses(xml), xml
+    startup = run("-With", "tui", "-Yes", "-Boot", "startup")
+    assert startup.returncode == 0, startup.stdout + startup.stderr
+    assert "start with Windows: when this PC starts" in startup.stdout and "administrator" in startup.stdout
+    xml = plan_task_xml(startup.stdout)
+    for part in ("<BootTrigger>", "<LogonType>Password</LogonType>", "<RunLevel>LeastPrivilege</RunLevel>",
+                 f'<Command>"{out}\\strata-unified-server.exe"</Command>',
+                 f'<Arguments>--data-dir "{out}\\data" --no-login-link</Arguments>', "<RestartOnFailure>",
+                 f"<WorkingDirectory>{out}</WorkingDirectory>"):
+        assert part in xml, part
+    assert "<LogonTrigger>" not in xml and "HighestAvailable" not in xml
+    assert parses(xml), xml
+    refused = run("-With", "tui", "-Yes", "-Boot", "logon")
+    assert refused.returncode != 0 and "build the window too" in refused.stdout + refused.stderr
+    refused = run("-With", "tui", "-Yes", "-Boot", "sometimes")
+    assert refused.returncode != 0 and "-Boot takes logon, startup or no" in refused.stdout + refused.stderr
+
+
+def test_install_ps1_makes_the_task_after_the_build():
+    """In the script itself: the task is made after make built the folder and before Done, from a UTF-16 file (what
+    schtasks reads); logon by schtasks as this user, startup by schtasks run with an administrator's approval (Start-
+    Process -Verb RunAs), its password typed into schtasks' own prompt (/RP *) - this script never sees it."""
+    ps = text("install.ps1")
+    build = ps.index("& (Join-Path $repo 'make.bat')")
+    boot = ps.index("# --- 8. start with Windows")
+    assert build < boot < ps.index("Step 'Done'")
+    step = ps[boot:ps.index("Step 'Done'")]
+    assert "[Text.Encoding]::Unicode" in step
+    assert "'/Create', '/TN', 'M-Strata', '/XML'" in step and "'/RP', '*'" in step and "-Verb RunAs" in step
+    assert "Password" not in step.replace("'/RP', '*'", "").replace("password", ""), "no password handled here"
+    assert "[string]$Boot = ''" in ps

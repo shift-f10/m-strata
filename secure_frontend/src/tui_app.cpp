@@ -2181,6 +2181,12 @@ void App::draw_settings(Screen& screen, const Rect area) const {
     case KeyState::unknown: key_text = "not known yet (the server is starting)"; break;
   }
   row(screen, r, 0, "API key", key_text, key_style);
+  // start at boot (pinned and hot models, spec parts 5-6): what the server says this PC starts it with, read only
+  if (const auto* boot = member(document, "boot"); boot != nullptr && boot->if_object() != nullptr) {
+    const std::string says = text(member(boot, "says"));
+    const std::string change = text(member(boot, "change"));
+    if (!says.empty()) row(screen, r, 1, "Boot", says + (change.empty() ? std::string{} : "  (to change it: " + change + ")"), kDim);
+  }
   if (list == nullptr || list->if_array() == nullptr) {
     screen.field(r.x, r.y + 2, r.width, "Reading the settings ...", kDim);
     return;

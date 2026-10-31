@@ -1004,6 +1004,27 @@ void settings_are_edited_then_saved() {
   expect(key_row(false).find("could not be read") != std::string::npos, "unread: " + key_row(false));
 }
 
+// Start at boot (pinned and hot models, spec parts 5-6): Settings says what this PC starts the server with and the
+// command that changes it, as the server says it - a row of its own under the key, nothing when the server says nothing.
+void settings_say_what_starts_the_server_at_boot() {
+  const auto drawn_with = [](const std::string& answer) {
+    t::App app(t::Capabilities{}, std::nullopt);
+    (void)app.key(character("4"));
+    app.answer({"settings", "POST", "/v1/strata/config", "{}"}, 200, answer);
+    t::Screen drawn(160, 30);
+    app.draw(drawn, 0);
+    return row_text(drawn, 4);
+  };
+  std::string with_boot = kSettings;
+  with_boot.insert(with_boot.rfind('}'), R"(,"boot":{"system":"linux","starts":"user","says":"The server starts at boot.",)"
+                                         R"("change":"systemctl --user disable --now m-strata"})");
+  const std::string boot = drawn_with(with_boot);
+  expect(boot.find("Boot") != std::string::npos && boot.find("The server starts at boot.") != std::string::npos &&
+             boot.find("systemctl --user disable --now m-strata") != std::string::npos,
+         "the sentence and its command: " + boot);
+  expect(drawn_with(kSettings).find("Boot") == std::string::npos, "nothing said, no row");
+}
+
 void quitting_asks_first() {
   t::App app(t::Capabilities{}, std::nullopt);
   expect(!app.key(character("q")).quit, "q asks");
@@ -1671,6 +1692,7 @@ int main(int argc, char** argv) {
       {"a_message_is_shown_whole_before_the_keys", a_message_is_shown_whole_before_the_keys},
       {"downloads_say_what_is_on_this_pc", downloads_say_what_is_on_this_pc},
       {"quitting_asks_first", quitting_asks_first},
+      {"settings_say_what_starts_the_server_at_boot", settings_say_what_starts_the_server_at_boot},
       {"quitting_an_attached_server_leaves_it_running", quitting_an_attached_server_leaves_it_running},
   }, failures);
 }

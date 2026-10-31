@@ -368,6 +368,7 @@ To see first what it would do, without changing anything, run `.\install.bat -Pl
 | `-Debugging` | Answers the debugging question with yes: the Debugging plugin ships on, a server that logs verbosely, to find out why a model does not start or calibrate (`make --debugging`, below). The plan says what that logs and what to take care of before anything is installed. |
 | `-SigningPassphrase` | Answers the signing key question with yes: the plugin signing key the build makes for this PC (`%APPDATA%\M-Strata\plugin-signing-key.json`) is also sealed with a passphrase, which make asks for (twice), as every later build and `make.py --sign-plugin` will (`make --signing-passphrase`, below). It is asked only when this PC has no key yet (no by default). A key already sealed is passed on as sealed, so make asks for its passphrase; one that is not sealed is used as it is. The plan says which. |
 | `-SearXNGUrl http://host:port` | A SearXNG you already run, for web search: the Web search plugin uses it from the first start (`make --searxng-url`). Without it the script asks for one first (Enter: none). |
+| `-Boot logon\|startup\|no` | Start with Windows (asked; `-Yes` takes no), through the Task Scheduler task `M-Strata` (the plan prints it). `logon`: at your log-on, `strata-window --tray` - the window in the tray, using the server already running or starting its own (needs the window; no password or administrator). `startup`: when this PC starts, before anyone logs on, the server itself (`strata-unified-server --data-dir <out>\data --no-login-link`) as you, with your account's least privileges; Windows asks for an administrator's approval to make it, and `schtasks` for your Windows password, which Task Scheduler keeps (the server needs it to read its key; the script never sees it). Its output is not kept: sign in with `strata key show`, or open `strata-window` or `strata-tui`, which use it. A Windows service was not used: one running as an administrator's account is elevated, which the server refuses. `schtasks /Delete /TN M-Strata /F` (for `startup`, as an administrator) removes the task. |
 | `-SearXNG` | A local SearXNG for web search, in Docker Desktop (installed and running; the script does not install it): beside the repository in `docker\searxng`, on 127.0.0.1:8888 only, so nothing outside this PC reaches it; the Web search plugin uses it from the first start. Asked when web search is built, there is no SearXNG of yours, and Docker Desktop runs (Enter: yes). |
 
 Running it again is safe: it skips what is there and builds into a new folder.
@@ -631,6 +632,9 @@ clients that may add and delete models).
 - **Limits and timeouts:** the longest answer and model start (seconds), the largest prompt and answer (tokens), the
   tool calls per answer, and the connections per download.
 - **Folders:** where downloads go, and the folder Add a model opens first.
+- **Start at boot:** whether this PC starts the server by itself (the installers' `--boot` / `-Boot`, above), and the
+  command that changes it. The server only reads it: the unit files and lingering on Linux, the `M-Strata` task on
+  Windows.
 
 Each group's Save checks the whole file by the rules the server checks at start, so a setting that would stop the
 server from starting (for example listening on `0.0.0.0` without the opt-ins) is refused with the reason, and the file
@@ -784,6 +788,7 @@ options (`.\strata-window.exe`, `.\strata-window.exe --port 9090`, ...): it star
 opens the page signed in on the Monitor, and puts an icon in the tray. When the server already runs for its data folder
 (started at boot, from a shell, or by `strata-tui`), it uses that one instead: the page signs in with a fresh one-time
 link the server gives it, the tray offers no Restart, and **Exit (the server keeps running)** leaves the server running.
+`strata-window --tray` (the log-on task's start, `install.bat -Boot logon`) opens it in the tray only.
 Closing the window hides it; the server keeps running. The tray icon's menu (right-click; on Linux, its menu) opens the window, starts or stops a model, restarts the server
 (how saved settings take effect) and exits. The server's output goes to `data/logs/server.log` (two files of at most
 4 MiB; the one-time login link is never written there). Starting it a second time shows the running window.

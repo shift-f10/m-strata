@@ -18,6 +18,11 @@ install.ps1 - from a fresh Windows 10/11 PC to a built M-Strata in one step (run
                                                        is built and Docker Desktop is there)
   .\install.bat -SearXNGUrl http://host:port            a SearXNG you already run, for web search (asked before the local
                                                        one); the Web search plugin uses it from the first start
+  .\install.bat -Boot logon|startup|no                 start with Windows (asked; -Yes takes no): logon - at your log-on,
+                                                       strata-window in the tray (no password, no administrator);
+                                                       startup - when this PC starts, the server itself, as you, before
+                                                       anyone logs on (an administrator's approval and your Windows
+                                                       password, typed into schtasks' own prompt, once)
 
 What it does, each step only when needed:
   1. finds what the build needs: Git, Python 3.10+, Visual Studio 2022 Build Tools WITH the C++ workload, the CUDA
@@ -30,7 +35,9 @@ What it does, each step only when needed:
   5. fetches the pinned llama.cpp commit the engine builds ggml from (.toolchains\llama.cpp; an existing ..\llama.cpp at
      that commit is used as it is), and for -With ...window the WebView2 SDK (its SHA-256 checked);
   6. with -SearXNG (or its question's yes), sets up SearXNG in Docker Desktop beside the repository (docker\searxng);
-  7. runs make.bat into a new folder and says how to start it.
+  7. runs make.bat into a new folder and says how to start it;
+  8. with -Boot logon|startup (or its question's answer), makes the Task Scheduler task M-Strata that starts it with
+     Windows.
 Downloads: winget's packages (Microsoft's catalog, hash-checked by winget), Python packages from PyPI, the repositories
 from GitHub, the WebView2 SDK from nuget.org, and with -SearXNG SearXNG's image from Docker Hub. Nothing else is
 downloaded, and nothing is sent anywhere.
@@ -44,6 +51,7 @@ param(
   [switch]$SigningPassphrase,
   [switch]$SearXNG,
   [string]$SearXNGUrl = "",
+  [string]$Boot = '',
   [switch]$Plan,
   [switch]$Yes
 )
@@ -242,6 +250,82 @@ if ($SearXNG -and $features -notcontains 'search') {
 if ($SearXNG -and -not $dockerReady) {
   Fail '-SearXNG needs Docker Desktop installed and running (docker.com); nothing was installed or changed.'
 }
+
+# --- start with Windows (the owner, 2026-10-31: "even have a windows start option", both ways chosen here). A Windows
+# service was the first idea, but one logged on as an administrator's account runs elevated, which the server refuses;
+# so both are Task Scheduler tasks with the least privileges. logon: at this user's log-on, strata-window in the tray (it
+# uses the server already running or starts its own). startup: when the PC starts, the server itself on the install's
+# data folder, as this user whether or not anyone is logged on; Task Scheduler keeps the user's password (the key file
+# needs it), which schtasks asks for itself.
+if ($Boot -and @('logon', 'startup', 'no') -notcontains $Boot) { Fail "-Boot takes logon, startup or no, not $Boot" }
+if (-not $Boot) {
+  $Boot = 'no'
+  if (-not $Yes) {
+    Step 'Start with Windows'
+    while ($true) {
+      $answer = Read-Host '  Start the server with Windows? l: at your log-on, strata-window in the tray; s: when this PC starts, before anyone logs on (an administrator''s approval and your Windows password, once); Enter: no'
+      if (-not $answer) { break }
+      if ($answer -match '^(l|logon)$') { $Boot = 'logon'; break }
+      if ($answer -match '^(s|startup)$') { $Boot = 'startup'; break }
+      Say '  l, s, or Enter for no, please'
+    }
+  }
+}
+if ($Boot -eq 'logon' -and $features -notcontains 'window') {
+  Fail '-Boot logon opens strata-window in the tray at log-on: build the window too (-With ...,window), or choose -Boot startup'
+}
+
+# The task Task Scheduler makes (schtasks /XML), for -Boot logon or startup: the least privileges (an administrator's
+# account gets its filtered token), one at a time, no time limit, on batteries too.
+function Get-BootTask([string]$kind) {
+  $user = [Security.SecurityElement]::Escape([Security.Principal.WindowsIdentity]::GetCurrent().Name)
+  $folder = [Security.SecurityElement]::Escape([IO.Path]::GetFullPath($Out))
+  if ($kind -eq 'logon') {
+    $trigger = "    <LogonTrigger>`n      <Enabled>true</Enabled>`n      <UserId>$user</UserId>`n    </LogonTrigger>"
+    $logonType = 'InteractiveToken'
+    $command = "`"$folder\strata-window.exe`""
+    $arguments = '--tray'
+    $restart = ''
+  } else {
+    $trigger = "    <BootTrigger>`n      <Enabled>true</Enabled>`n    </BootTrigger>"
+    $logonType = 'Password'
+    $command = "`"$folder\strata-unified-server.exe`""
+    $arguments = "--data-dir `"$folder\data`" --no-login-link"
+    $restart = "    <RestartOnFailure>`n      <Interval>PT1M</Interval>`n      <Count>3</Count>`n    </RestartOnFailure>`n"
+  }
+  @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>M-Strata server (install.ps1 -Boot $kind)</Description>
+  </RegistrationInfo>
+  <Triggers>
+$trigger
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>$user</UserId>
+      <LogonType>$logonType</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+$restart    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>6</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>$command</Command>
+      <Arguments>$arguments</Arguments>
+      <WorkingDirectory>$folder</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+"@
+}
 $makeArgs = @()
 if ($features.Count -gt 0) { $makeArgs += @('--with', ($features -join ',')) }
 if ($leaveOut.Count -gt 0) { $makeArgs += @('--without', ($leaveOut -join ',')) }
@@ -348,6 +432,16 @@ if ($Debugging) {
   Say "  keep the server's log private, look through a log before you share it, and turn the plugin off in the"
   Say "  Plugins tab for everyday use. The engine's output alone can be turned off in Settings > Troubleshooting."
 }
+if ($Boot -eq 'logon') {
+  Say "  start with Windows: at your log-on, the task M-Strata opens $Out\strata-window.exe in the tray (it uses the"
+  Say '  server already running, or starts its own) - Task Scheduler, as you, with no password or administrator. The task:'
+} elseif ($Boot -eq 'startup') {
+  Say "  start with Windows: when this PC starts, the task M-Strata runs $Out\strata-unified-server.exe on $Out\data as"
+  Say '  you, with the least privileges, whether or not you are logged on. Windows asks for an administrator''s approval to'
+  Say '  make it, and schtasks for your Windows password, which Task Scheduler keeps (the server needs it to read its'
+  Say '  key). The task:'
+}
+if ($Boot -ne 'no') { (Get-BootTask $Boot).TrimEnd().Split("`n") | ForEach-Object { Say "    | $($_.TrimEnd())" } }
 if ($Plan) { Say ""; Say 'install: -Plan given - nothing was installed or changed.'; exit 0 }
 if (-not $Yes) {
   $answer = Read-Host 'Go ahead? [y/N]'
@@ -520,6 +614,30 @@ Step "Building into $Out (the first build compiles the CUDA engine: allow an hou
 & (Join-Path $repo 'make.bat') --out $Out --ggml-dir $ggml --cuda-root $cuda @makeArgs
 if ($LASTEXITCODE -ne 0) { Fail "make stopped (exit code $LASTEXITCODE); its message is above" }
 
+# --- 8. start with Windows -------------------------------------------------------------------------------------------
+# The task from a UTF-16 file in the install folder (what schtasks /XML reads; kept there, the record of what was made).
+# logon: made by this user. startup: a start-up trigger needs an administrator, so schtasks runs with Windows' approval
+# prompt, and asks for this user's password itself (/RP *), which Task Scheduler keeps - this script never sees it.
+$bootMade = $false
+if ($Boot -ne 'no') {
+  Step "Start with Windows ($Boot)"
+  $taskFile = Join-Path ([IO.Path]::GetFullPath($Out)) 'boot-task.xml'
+  [IO.File]::WriteAllText($taskFile, (Get-BootTask $Boot), [Text.Encoding]::Unicode)
+  $schtasks = Join-Path $env:SystemRoot 'System32\schtasks.exe'
+  if ($Boot -eq 'logon') {
+    & $schtasks '/Create', '/TN', 'M-Strata', '/XML', $taskFile, '/F'
+    $bootMade = $LASTEXITCODE -eq 0
+    $byHand = "schtasks /Create /TN M-Strata /XML `"$taskFile`" /F"
+  } else {
+    $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    Say '  Windows asks for an administrator''s approval; then type your Windows password in the window that opens.'
+    $run = Start-Process -FilePath $schtasks -ArgumentList @('/Create', '/TN', 'M-Strata', '/XML', "`"$taskFile`"", '/RU', "`"$user`"", '/RP', '*', '/F') -Verb RunAs -Wait -PassThru
+    $bootMade = $run -and $run.ExitCode -eq 0
+    $byHand = "schtasks /Create /TN M-Strata /XML `"$taskFile`" /RU `"$user`" /RP * /F (in an administrator's terminal)"
+  }
+  if (-not $bootMade) { Say "  The task was not made; the build is done. Make it with: $byHand" }
+}
+
 Step 'Done'
 Say "  M-Strata is in $Out. Start it with:"
 if ($features -contains 'window') { Say "    $Out\strata-window.exe        (a window with the page, and a tray icon)" }
@@ -527,5 +645,12 @@ if ($features -contains 'tui') { Say "    $Out\strata-tui.exe           (the sam
 Say "    $Out\strata-unified-server.exe  (prints a one-time login link: open it in a browser on this PC)"
 if ($SearXNG) { Say "  Web search: SearXNG on http://127.0.0.1:8888 (${searxngDir}: docker compose there stops and starts it)" }
 elseif ($SearXNGUrl) { Say "  Web search: your SearXNG at $SearXNGUrl" }
+if ($bootMade -and $Boot -eq 'logon') {
+  Say '  At your log-on, strata-window opens in the tray (the task M-Strata; schtasks /Delete /TN M-Strata /F removes it).'
+} elseif ($bootMade) {
+  Say "  The server starts with this PC (the task M-Strata; schtasks /Run /TN M-Strata starts it now, and strata-window and"
+  Say "  strata-tui use it). Sign in with $Out\strata.exe key show, or the apps. An administrator's schtasks /Delete /TN"
+  Say '  M-Strata /F removes the task.'
+}
 if (-not $driver) { Say '  No NVIDIA driver was found: install it before starting a model.' }
 if ($restartAfter) { Say '  An installer asked for a restart to finish: restart Windows before the first start.' }

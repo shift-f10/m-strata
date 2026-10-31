@@ -280,6 +280,44 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z89 (Windows box; owner-directed)
+
+Pinned and hot models, part 6 (spec part 6, "As built"): the Windows start, and Settings' Start at boot. The owner, on
+the finding that a Windows service on an administrator's account runs elevated (which the server refuses): "Yes, use the
+task".
+- **install.ps1**: `-Boot logon|startup|no`, its question, the plan's lines and the task it prints (`Get-BootTask`), and
+  step 8: `<out>\boot-task.xml` (UTF-16), then `schtasks /Create /TN M-Strata /XML ... /F` - `logon` as this user;
+  `startup` through Start-Process -Verb RunAs with `/RU <user> /RP *` (schtasks asks for the password; the script never
+  sees it). Refused: another word; `logon` without the window. Done says how to start and remove it.
+- **strata-window --tray** (window_shell `WindowStart`/`window_start`, first argument only): hidden in the tray (Win32,
+  GTK). The log-on task runs it (a console program under the interactive token would open a console window).
+- **boot_state** (new library, include/secure_frontend/boot_state.hpp): `boot_state_json(BootProbe)` - Linux units,
+  links and lingering; Windows `schtasks /Query /TN M-Strata /XML` (service_ops' run_argv) - `{"system", "starts",
+  "says", "change"}`; `this_pc_boot_probe()`. ConfigRouteSettings::boot: POST /v1/strata/config answers it as `boot`;
+  the server sets it. The page: Settings' Start at boot card (read only, as text). The TUI: Settings' Boot row.
+- **Docs**: README (install.bat's `-Boot`, the window's `--tray`, Settings' Start at boot), threat model (Start at
+  boot), the spec's part 6 (the owner's answer, the log-on finding, "As built").
+- **Tests**: installer 2 (`test_install_ps1_starts_the_server_with_windows_as_chosen`: the question by its answers,
+  `-Yes`, both tasks' XML parsed by Task Scheduler's own COM parser (Schedule.Service NewTask().XmlText - nothing
+  registered), the two refusals; `test_install_ps1_makes_the_task_after_the_build`), window_shell 1
+  (`the_window_takes_its_own_tray_option`), boot_state 2 (`linux_boot_is_read_from_the_units`,
+  `windows_boot_is_read_from_the_task`), config routes 1 (`the_boot_start_is_said_with_the_settings`), the router 1
+  (`the_page_shows_the_start_at_boot`), the TUI 1 (`settings_say_what_starts_the_server_at_boot`).
+- **Proof**: RED each first - the installer tests against the committed install.ps1 (no question, no step 8), the
+  others against stubs (`window_start` taking nothing, `boot_state_json` answering `{}`), the settings with no `boot`,
+  the router case against the committed page files, the TUI with no row. Then GREEN.
+  - Live (Windows, my own PIDs, scratch data folder, port 18093): `strata-window --tray` with nothing running - hidden
+    (IsWindowVisible false), its own server up, the page signed in; the tray's Open showed it; Exit stopped its server.
+    A scratch server's Settings answered `boot` "none" here (no M-Strata task on this PC). No task was registered on
+    this PC (a lasting change; the start-up one needs the owner's password): the XML is proven by Task Scheduler's parser.
+  - Live (WSL systemd user manager): install.sh's unit, as m-strata.service, enabled and started over the scratch out
+    folder; the sandboxed server's Settings answered "login" (enabled, lingering off there), then disabled and removed.
+  - Windows (MSVC, the shares tree, everything built, no warnings): the whole suite 1558 of 1560 (the two release-only
+    cases); the installer tests 22 passed, 4 skipped (the Linux plan tests); the window tree built (strata-window).
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): the installer tests 22 passed, 4 skipped (the PowerShell
+    ones); full-gcc 1608/1612 and full-clang 1609/1612 (the two release-only cases; net01_ipv6 and egress pass alone),
+    window-gcc Release 1565/1567 with the GTK window built (net01_ipv6 and egress pass alone).
+
 ### Claude Code session, 2026-10-31 z88 (Windows box; owner-directed)
 
 Pinned and hot models, part 5 (spec part 5, "As built"): install.sh starts the server at boot, as the owner chose.

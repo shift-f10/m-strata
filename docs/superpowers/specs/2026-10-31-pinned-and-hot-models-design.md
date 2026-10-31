@@ -179,14 +179,35 @@ server keeps it running when it quits.
 - **The login link**: a service's start (`--no-login-link`) prints no one-time login link (part 5), on Windows as on
   Linux; the apps sign in with the key from the data folder.
 
-**Found before building the Windows start (2026-10-31; the owner's answer awaited).** A Windows service logged on as an
+**Found before building the Windows start (2026-10-31; the owner: "Yes, use the task").** A Windows service logged on as an
 account runs with that account's full token - no UAC split for a service logon - so on an administrator account it is
 elevated, and the server refuses an elevated token (G4, privilege_check.cpp): "a Windows service as the owner" would not
 start on an admin account. A Task Scheduler task with a start-up trigger, run whether or not the owner is logged on,
 with the least privileges (RunLevel Limited: the filtered, non-elevated token) and the owner's password kept by Task
 Scheduler (typed into Windows' own prompt at install), starts at boot as the owner and keeps the key file readable
-(DPAPI needs the password; an S4U task, which stores none, could not read it). Asked of the owner: that task in place of
-the service.
+(DPAPI needs the password; an S4U task, which stores none, could not read it). The owner chose that task in place of
+the service. And the log-on task cannot simply run the server: started with the interactive token, a console program
+opens a console window at every log-on - so it opens strata-window in the tray instead, which uses the server already
+running or starts its own.
+
+**As built (2026-10-31, part 6: the Windows start and Settings).**
+- **install.ps1 -Boot logon|startup|no**, asked (Enter, piped answers' end and -Yes: no); refused for another word, and
+  `logon` without the window. The plan prints the task (`Get-BootTask`); both have RunLevel LeastPrivilege, IgnoreNew, no
+  time limit, run on batteries, Priority 6, the install folder as the working folder, the program path quoted. `logon`:
+  a LogonTrigger for this user, the InteractiveToken, `strata-window.exe --tray`. `startup`: a BootTrigger, LogonType
+  Password, `strata-unified-server.exe --data-dir "<out>\data" --no-login-link`, restarted after a failure (1 minute, 3
+  times). Step 8, after the build, writes it as UTF-16 to `<out>\boot-task.xml` (kept: the record of what was made) and
+  makes it: `logon` by schtasks as this user; `startup` by schtasks run with Windows' approval prompt (Start-Process -Verb
+  RunAs), with `/RU <this user> /RP *` - schtasks asks for the password itself. A task not made is said, with the
+  schtasks command that makes it by hand.
+- **strata-window --tray** (window_shell `window_start`: only as the first argument; the rest go to the server): it
+  opens hidden, in the tray (Win32 SW_HIDE; GTK shows the stack, not the window); the tray's Open shows it.
+- **Settings' Start at boot** (boot_state.hpp, read only): Linux - the user unit and its default.target.wants link,
+  `/var/lib/systemd/linger/<user>`, the system unit and its multi-user.target.wants link (starts: system, user, login,
+  none - and installed but not enabled); Windows - `schtasks /Query /TN M-Strata /XML` through service_ops' run_argv
+  (System32 only), a BootTrigger is startup, a LogonTrigger logon, else none. One sentence (`says`) and the command that
+  changes it (`change`); POST /v1/strata/config answers it as `boot`, the page's Start at boot card and the TUI's Boot row
+  show it. `strata service` is unchanged.
 
 **As built (2026-10-31, part 6: the apps attach).**
 - **The server**: `--no-login-link` sets `listener.login_link` false for that start. A keyed server with the page always

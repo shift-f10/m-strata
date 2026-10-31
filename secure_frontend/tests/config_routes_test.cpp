@@ -86,6 +86,20 @@ void the_settings_are_listed_with_their_rules() {
   expect(remote.status == 403 && has(remote, "\"code\":\"control_not_allowed\""), "another PC is refused: " + shown(remote));
 }
 
+// Start at boot (pinned and hot models, spec parts 5-6): the settings answer says what this PC starts the server with -
+// the server's boot_state answer as it is, read only - and leaves it out when the server gives none.
+void the_boot_start_is_said_with_the_settings() {
+  Fixture f;
+  expect(!has(f.post(secure_frontend::RouteId::strata_config, "{}"), "\"boot\""), "none given: no boot member");
+  secure_frontend::ConfigRouteSettings settings{.config_file = f.data.config_file};
+  settings.boot = [] { return std::string{R"({"system":"linux","starts":"none","says":"s","change":"c"})"}; };
+  secure_frontend::ConfigRoutes routes(std::move(settings));
+  const auto listed = routes.answer(secure_frontend::RouteId::strata_config, "{}",
+                                    secure_frontend::RequestContext{.client_gone = {}, .loopback_peer = true});
+  expect(listed.status == 200 && has(listed, R"(,"boot":{"system":"linux","starts":"none","says":"s","change":"c"}})"),
+         "the boot member, last: " + shown(listed));
+}
+
 // A save is checked as the server checks its config at start (the whole file, after the change): a value it would refuse
 // is refused by name and nothing is written; a good one is written, the rest of the file kept, and applies at the next
 // start. null puts a row back to its default.
@@ -189,5 +203,6 @@ int main(int argc, char** argv) {
       {"a_save_is_held_to_the_start_up_rules", a_save_is_held_to_the_start_up_rules},
       {"the_key_is_rotated_in_its_store", the_key_is_rotated_in_its_store},
       {"troubleshooting_is_offered_only_while_the_debugging_plugin_is_on", troubleshooting_is_offered_only_while_the_debugging_plugin_is_on},
+      {"the_boot_start_is_said_with_the_settings", the_boot_start_is_said_with_the_settings},
   }, failures);
 }

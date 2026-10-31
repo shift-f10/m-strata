@@ -15,6 +15,7 @@
 #include "secure_frontend/chat_route.hpp"
 #include "secure_frontend/chat_schema.hpp"
 #include "secure_frontend/config.hpp"
+#include "secure_frontend/boot_state.hpp"
 #include "secure_frontend/config_routes.hpp"
 #include "secure_frontend/config_writer.hpp"
 #include "secure_frontend/plugin_routes.hpp"
@@ -1278,6 +1279,8 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       settings.token_file = config.token.location();
     }
     settings.log = [](const std::string_view line) { std::cerr << line << '\n'; };
+    // start at boot (pinned and hot models, spec parts 5-6): what this PC starts the server with, read when asked
+    settings.boot = [] { return secure_frontend::boot_state_json(secure_frontend::this_pc_boot_probe()); };
     config_routes.emplace(std::move(settings));
     settings_route_handler.handle = [&routes = *config_routes](const secure_frontend::RouteId route, const std::string_view body,
                                                                const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {
