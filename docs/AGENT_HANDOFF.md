@@ -280,6 +280,14 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z66 (Windows box; owner-directed)
+
+The owner: "update the readme as well on the compatability, it is an Standard_NC4as_T4_v3". The README's compatibility
+section names the third machine - an Azure Standard_NC4as_T4_v3 (Ubuntu 22.04.5, AMD EPYC 7V12 with 4 vCPUs, a Tesla
+T4, 28 GB of RAM) - with a row for what passed there (install.sh with every engine family, the picture encoder, the
+window app and the TUI; the server, its page and API, web search through a local SearXNG; no model run yet), and its
+Linux line says the engines and the whole install were first built on Linux there.
+
 ### Claude Code session, 2026-10-30 z64 (Windows box; owner-directed; the first Linux GPU build)
 
 The owner's Azure VM (Ubuntu 22.04.5, a Tesla T4, 4 CPUs) is the first Linux machine the CUDA engine has been built on:
