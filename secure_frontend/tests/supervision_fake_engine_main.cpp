@@ -103,6 +103,7 @@ struct Options final {
   // fake emit `INFO ... expert_slots_primary=<primary> expert_slots=<total>` before READY.
   std::string ready_experts;
   int fail_first{0};
+  int crash_first{0};  // --crash-first=N with --counter-file: the first N spawns crash after READY (pinned and hot models)
   std::string counter_file;
   std::string record_file;
   bool spawn_grandchild{false};
@@ -200,6 +201,7 @@ Options parse_options(const std::vector<std::string>& arguments) {
     else if (value_of(argument, "--crash-delay-ms", value)) options.crash_delay_ms = std::stoi(value);
     else if (value_of(argument, "--fatal-line", value)) options.fatal_line = std::clamp(std::stoi(value), 0, 3);
     else if (value_of(argument, "--fail-first", value)) options.fail_first = std::stoi(value);
+    else if (value_of(argument, "--crash-first", value)) options.crash_first = std::stoi(value);
     else if (value_of(argument, "--counter-file", value)) options.counter_file = value;
     else if (value_of(argument, "--record-file", value)) options.record_file = value;
     else if (value_of(argument, "--grandchild-pidfile", value)) options.grandchild_pidfile = value;
@@ -725,7 +727,8 @@ int serve(const Options& options) {
     write_stderr("\nstrata serve: conversation cache: parked 7 tokens in 1.0 ms; parked=7 bytes=7\n");
   }
   if (!options.record_file.empty()) std::ofstream(options.record_file, std::ios::trunc).flush();
-  if (options.fail_first > 0 && !options.counter_file.empty()) {
+  int spawn_number = 0;  // this spawn's place among the ones the counter file has seen (0: the first)
+  if ((options.fail_first > 0 || options.crash_first > 0) && !options.counter_file.empty()) {
     int started = 0;
     {
       std::ifstream in(options.counter_file);
@@ -735,6 +738,7 @@ int serve(const Options& options) {
       std::ofstream out(options.counter_file, std::ios::trunc);
       out << (started + 1) << '\n';
     }
+    spawn_number = started;
     if (started < options.fail_first) return 1;
   }
   // A real engine may emit human diagnostics on stderr before READY; they must
@@ -808,6 +812,10 @@ int serve(const Options& options) {
   if (options.crash_after_ready) {
     if (options.crash_delay_ms > 0) sleep_ms(options.crash_delay_ms);
     crash(*options.crash_after_ready);
+  }
+  if (options.crash_first > 0 && spawn_number < options.crash_first) {
+    if (options.crash_delay_ms > 0) sleep_ms(options.crash_delay_ms);
+    crash("KILL");
   }
   if (options.stall_stdin) sleep_forever();
   if (options.slow_stdin_bytes > 0) {

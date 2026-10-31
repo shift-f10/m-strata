@@ -96,6 +96,15 @@ warm-up is one more request in the engine's one queue: a request that comes mean
   starts again: the server keeps its name in `<roots.state>/hot.json` (owner-only) while it runs, and forgets it when the
   owner stops it or starts another card.
 
+**As built (2026-10-31, part 4).** The launcher holds the card kept loaded the owner last started (`kept_loaded_`): a start
+whose values hold `hot` true keeps it, any other start forgets it, the owner's stop and the card's removal forget it, the
+server's own stop keeps it; each change is written to `LauncherSettings::hot_file` (`<roots.state>/hot.json`,
+`{"card": "<name>"}`, owner-only), which the next launcher reads back when it holds that card. The worker's idle loop sees
+it down - not running, its start failed, or its engine's circuit open - and starts it again (`{"hot": true}` over its
+remembered options, never calibrating) once `restart_after` has passed, each wait twice the last up to `restart_most` (1
+and 15 minutes); a run starts the waits over. The engine's stop still raises its alert once. At the server's start, a pin
+wins; with none, `start_kept_loaded()` starts the card kept loaded.
+
 ## 5. Linux: the server starts at boot (the owner, 2026-10-31)
 
 The owner: "one additional settings for the linux, have a systemd option so we can have it autostart on boot, to which

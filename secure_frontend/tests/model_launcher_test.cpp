@@ -757,7 +757,7 @@ struct CalibrationFixture final {
   // how the engine processes are made (unset: the fake engine's real process)
   explicit CalibrationFixture(const std::vector<std::string>& extra_fake_options = {}, const bool operator_cards = false,
                               std::function<secure_frontend::ProcessFactory(secure_frontend::EngineLaunchPlan)> factory = {},
-                              const std::chrono::milliseconds warm_every = {}) {
+                              const std::chrono::milliseconds warm_every = {}, const std::chrono::milliseconds restart_after = {}) {
     secure_frontend_test::make_private_directory(models);
     const auto vocabulary = test_support::spm_tokenizer();
     for (const char* name : {"tiny-gemma-Q8_0.gguf", "other-gemma-Q8_0.gguf"}) {
@@ -812,6 +812,7 @@ struct CalibrationFixture final {
     };
     settings.monitor = &monitor;
     if (warm_every.count() > 0) settings.warm_every = warm_every;
+    if (restart_after.count() > 0) settings.restart_after = restart_after;
     launcher = std::make_unique<secure_frontend::ModelLauncher>(std::move(settings));
     if (!operator_cards) {
       for (auto& card : cards) (void)launcher->add_card(std::move(card));
@@ -935,6 +936,100 @@ void a_card_kept_loaded_is_warmed_at_its_start_and_while_idle() {
   expect(waits_for(1U, std::chrono::seconds(10)), "it is warmed at its start, before any request: " + std::to_string(generations()));
   const auto first = generations();
   expect(waits_for(first + 1U, std::chrono::seconds(15)), "and again once it has idled: " + std::to_string(generations()));
+}
+
+// Pinned and hot models (owner 2026-10-31, spec part 4): a card kept loaded whose engine kept failing (its circuit open)
+// is started again after the cool-down (restart_after here 1 s), and runs; a card not kept loaded stays down. The fake
+// engine's first three spawns crash after READY (the counter file counts them), so the fourth - the restart's - lives.
+void a_card_kept_loaded_is_started_again_after_its_engine_failed() {
+  const auto lives = [](const bool hot) {
+    const auto dir = secure_frontend_test::make_scratch_directory();
+    const auto counter = dir / "spawns.txt";
+    CalibrationFixture f({"--crash-first=3", "--counter-file=" + secure_frontend::path_to_utf8(counter), "--crash-delay-ms=300"}, false, {}, {},
+                         std::chrono::milliseconds(1000));
+    const std::string name = "tiny-gemma-Q8_0";
+    const auto options = secure_frontend::parse_json(
+        hot ? R"({"hot":true})" : "{}", secure_frontend::JsonLimits{.max_bytes = 256U, .max_depth = 4U, .max_container_entries = 8U, .max_string_bytes = 64U});
+    expect(!f.launcher->start(name, &std::get<secure_frontend::JsonValue>(options), false, false).has_value(), "the card starts");
+    expect(f.launcher->wait_until_settled(std::chrono::seconds(120)), "its start ends");
+    const auto listed_state = [&f, &name] {
+      const std::string list = f.launcher->list_json();
+      const auto at = list.find("\"name\":\"" + name + "\",\"profile\"");
+      const auto state = at == std::string::npos ? std::string::npos : list.find("\"state\":\"", at);
+      return state == std::string::npos ? std::string{} : list.substr(state + 9U, list.find('"', state + 9U) - state - 9U);
+    };
+    const auto spawns = [&counter] {
+      std::ifstream in(counter);
+      int count = 0;
+      in >> count;
+      return count;
+    };
+    bool failed = false;
+    for (int i = 0; i < 300 && !failed; ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      failed = listed_state() == "failed";
+    }
+    expect(failed, std::string{hot ? "kept loaded" : "as it is"} + ": its engine kept failing: " + listed_state());
+    bool again = false;
+    for (int i = 0; i < 200 && !again; ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      again = spawns() >= 4 && listed_state() == "running";
+    }
+    return std::pair<bool, std::vector<std::string>>{again, *f.events};
+  };
+  const auto [kept, kept_events] = lives(true);
+  expect(kept, "a card kept loaded is started again after the cool-down, and runs");
+  expect(std::any_of(kept_events.begin(), kept_events.end(), [](const std::string& e) { return e.rfind("engine_stopped: ", 0) == 0; }),
+         "its stop was an alert first");
+  const auto [plain, plain_events] = lives(false);
+  expect(!plain, "a card as it is stays down");
+}
+
+// Pinned and hot models (spec part 4): the card kept loaded the owner started is kept in <roots.state>/hot.json (its name),
+// forgotten when the owner stops it; a server started again with that state starts it by itself - unless a card is
+// pinned, which wins.
+void a_card_kept_loaded_starts_again_with_the_server() {
+  const auto state = secure_frontend_test::make_scratch_directory() / "state";
+  secure_frontend_test::make_owner_private_directory(state);
+  const auto hot_file = state / "hot.json";
+  const auto boot = [&state](std::map<std::string, std::string> literals) {
+    auto options = two_cards({}, {}, std::move(literals));
+    options.state_dir = state;
+    return ServerProcess::start(options);
+  };
+  {
+    auto server = boot({{"models.control", "true"}});
+    expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots");
+    if (!server) return;
+    const auto hot = call(*server, "POST", "/v1/strata/models/start", R"({"name":"Beta","options":{"hot":true}})");
+    expect(hot && hot->status == 202 && wait_for_card(*server, "Beta", "running"), "Beta runs, kept loaded: " + shown(hot));
+    expect(secure_frontend_test::read_file(hot_file).find("\"Beta\"") != std::string::npos, "hot.json names it");
+    const auto stopped = call(*server, "POST", "/v1/strata/models/stop", "{}");
+    expect(stopped && stopped->status == 202 && wait_for_card(*server, "Beta", "stopped") && !std::filesystem::exists(hot_file),
+           "the owner's stop forgets it");
+    const auto again = call(*server, "POST", "/v1/strata/models/start", R"({"name":"Beta","options":{"hot":true}})");
+    expect(again && again->status == 202 && wait_for_card(*server, "Beta", "running") && std::filesystem::exists(hot_file),
+           "kept loaded again: kept again");
+    server->stop(ServerProcess::Stop::ctrl_break);
+    expect(server->wait_exit(std::chrono::seconds(20)) == std::optional<int>{0} && std::filesystem::exists(hot_file),
+           "the server's own stop keeps it");
+  }
+  {
+    auto server = boot({{"models.control", "true"}});
+    expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots again");
+    if (!server) return;
+    expect(wait_for_card(*server, "Beta", "running"), "Beta starts again with the server: " + server->stderr_text());
+    server->stop(ServerProcess::Stop::ctrl_break);
+    (void)server->wait_exit(std::chrono::seconds(20));
+  }
+  {
+    auto server = boot({{"models.control", "true"}, {"models.start", "\"Alpha\""}});
+    expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots with a pin");
+    if (!server) return;
+    expect(wait_for_card(*server, "Alpha", "running") && card_state(*server, "Beta") == "stopped", "the pinned card wins");
+    server->stop(ServerProcess::Stop::ctrl_break);
+    (void)server->wait_exit(std::chrono::seconds(20));
+  }
 }
 
 // The start route takes that answer as "calibrate": false, and nothing but a boolean there.
@@ -1873,6 +1968,8 @@ int main(int argc, char** argv) {
       {"a_first_start_calibrates_first", a_first_start_calibrates_first},
       {"a_start_without_calibrating_starts_at_once", a_start_without_calibrating_starts_at_once},
       {"a_card_kept_loaded_is_warmed_at_its_start_and_while_idle", a_card_kept_loaded_is_warmed_at_its_start_and_while_idle},
+      {"a_card_kept_loaded_is_started_again_after_its_engine_failed", a_card_kept_loaded_is_started_again_after_its_engine_failed},
+      {"a_card_kept_loaded_starts_again_with_the_server", a_card_kept_loaded_starts_again_with_the_server},
       {"the_start_route_takes_calibrate_false", the_start_route_takes_calibrate_false},
       {"the_monitor_names_a_calibration_while_it_runs", the_monitor_names_a_calibration_while_it_runs},
       {"a_minimax_card_measures_its_prompt_reading_first", a_minimax_card_measures_its_prompt_reading_first},

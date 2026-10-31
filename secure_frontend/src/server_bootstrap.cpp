@@ -1079,6 +1079,8 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
   // Pinned and hot models (owner 2026-10-31, spec part 1): the boot's pin, kept as models.start in the config file the
   // server started with (none: a pin is refused).
   launcher_settings.pinned = config.models.start;
+  // Part 4: the card kept loaded the owner last started, kept for the server's next start in the state folder
+  if (config.roots.state.has_value()) launcher_settings.hot_file = *config.roots.state / "hot.json";
   if (config_file.has_value()) {
     launcher_settings.save_pin = [file = *config_file](const std::optional<std::string>& name) {
       return !secure_frontend::update_config_file(file, [&name](secure_frontend::FrontendConfigDraft& draft) {
@@ -1374,6 +1376,11 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
     if (const auto refused = launcher.start(*config.models.start, nullptr, false)) {
       std::cerr << "[strata] models: models.start names no usable card (or it was refused); waiting for the page\n";
       (void)refused;
+    }
+  } else if (launcher.kept_loaded().has_value()) {
+    // pinned and hot models (owner 2026-10-31, part 4): no pin, so the card kept loaded when the server stopped starts again
+    if (launcher.start_kept_loaded().has_value()) {
+      std::cerr << "[strata] models: the card kept loaded could not start again; waiting for the page\n";
     }
   } else {
     std::cerr << "[strata] models: no model started (models.start is unset); waiting for the page\n";

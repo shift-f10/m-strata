@@ -2197,7 +2197,10 @@ One model runs at a time.
   engine's (the main config's `glm.idle_unload_s`; `engine.idle_unload_s` is refused with cards), and Keep loaded turns
   that off for the start; it is also the switch the warm-up and the restarts read. A card kept loaded is warmed as soon
   as it runs - one short generation through its engine, never a conversation - and again whenever it has idled ten
-  minutes, so the OS keeps its pages and its first answer does not wait for them.
+  minutes, so the OS keeps its pages and its first answer does not wait for them. If its engine keeps failing (its
+  supervisor gives up), the server starts it again after a minute, then two, four, up to fifteen, until it runs; and a
+  server that starts again starts it again (`<roots.state>/hot.json`) unless a card is pinned. Stopping it, or starting
+  another card, forgets it.
 - **A start:** the card, the option values and the card's config are validated at once (a
   refusal names the option: 400 `invalid_option`); the model is then composed and its tokenizer
   loaded before the running model is touched, so a bad start never takes it down. Then new chat

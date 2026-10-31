@@ -280,6 +280,27 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z86 (Windows box; owner-directed)
+
+Pinned and hot models, part 4 (spec part 4, "As built"): a card kept loaded is started again.
+- **The launcher**: `kept_loaded_` (set by a start kept loaded, cleared by any other start, the owner's stop and the card's
+  removal; the shutdown keeps it), written to `hot_file` and read back at construction; `start_kept_loaded()`; the idle
+  loop's restart (`restart_after` 1 min doubling to `restart_most` 15 min, reset by a run) with `{"hot": true}` over the
+  remembered options and no calibration. `LauncherSettings::restart_after`, `restart_most`, `hot_file`.
+- **The server**: `hot_file` is `<roots.state>/hot.json`; at boot a pin wins, else the card kept loaded starts again.
+- **The fake engine**: `--crash-first=N` (with `--counter-file`): its first N spawns crash after READY.
+- **Tests**: the launcher 2 (`a_card_kept_loaded_is_started_again_after_its_engine_failed`: three crashes open the
+  circuit, the restart after 1 s runs, the stop was an alert; a card as it is stays down;
+  `a_card_kept_loaded_starts_again_with_the_server`: hot.json named, the owner's stop forgets it, the server's stop keeps
+  it, a second server starts it, a pin wins over it).
+- **Proof**: RED with the settings declared and nothing reading them: 5 failures in the 2 cases (no restart after the
+  circuit opened; no hot.json, so nothing kept or started again). Then GREEN.
+  - Windows (MSVC, the shares tree, everything built, no warnings): the whole suite 1546 of 1548 (the two release-only
+    cases).
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc 1595/1600 and full-clang 1596/1600 (the two
+    release-only cases; net01_ipv6, net01_workers and egress pass alone), window-gcc Release 1553/1555 (net01_workers and
+    egress pass alone).
+
 ### Claude Code session, 2026-10-31 z85 (Windows box; owner-directed)
 
 Pinned and hot models, part 3 (spec part 3, "As built"): a card kept loaded is warmed.

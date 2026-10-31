@@ -114,6 +114,12 @@ struct LauncherSettings final {
   std::function<bool(const std::optional<std::string>& name)> save_pin{};
   // Part 3: a card kept loaded is warmed at its start and again whenever it has idled this long (no request, no warm-up).
   std::chrono::milliseconds warm_every{std::chrono::minutes(10)};
+  // Part 4: a card kept loaded whose engine stopped (its circuit open, or its start failed) is started again after this
+  // cool-down, doubling to restart_most; the card kept loaded the owner last started is kept in hot_file (nullopt: not
+  // kept) for the server's next start.
+  std::chrono::milliseconds restart_after{std::chrono::minutes(1)};
+  std::chrono::milliseconds restart_most{std::chrono::minutes(15)};
+  std::optional<std::filesystem::path> hot_file{};
 };
 
 class ModelLauncher final {
@@ -134,6 +140,10 @@ class ModelLauncher final {
   // changes. Removing the pinned card unpins it.
   [[nodiscard]] std::optional<Refusal> pin(const std::optional<std::string>& name);
   [[nodiscard]] std::optional<std::string> pinned() const;
+  // Part 4: the card kept loaded the owner last started (nullopt: none) - kept in hot_file, forgotten when the owner stops
+  // it, starts another card or removes it. start_kept_loaded() starts it as the server starts (when nothing is pinned).
+  [[nodiscard]] std::optional<std::string> kept_loaded() const;
+  [[nodiscard]] std::optional<Refusal> start_kept_loaded();
   // Validates and accepts a start of card `name` with `options` (the body's "options" object;
   // nullptr = the remembered values, else the card's defaults). nullopt: accepted (202). `may_calibrate` false (owner
   // 2026-10-29: the page's "Start without calibrating") starts it without the calibration a first start or a settings
@@ -279,6 +289,10 @@ class ModelLauncher final {
   mutable std::condition_variable changed_;
   std::mutex pin_mutex_;  // one pin kept at a time (settings_.pinned itself is mutex_'s)
   bool hot_running_{false};  // the running card was started kept loaded (part 3: it is warmed)
+  std::optional<std::string> kept_loaded_;               // part 4: the card kept loaded the owner last started
+  std::chrono::milliseconds restart_wait_{};             // part 4: its next restart's cool-down (restart_after, doubling)
+  std::optional<std::chrono::steady_clock::time_point> restart_at_;  // part 4: when it starts again
+  void write_kept_loaded(const std::optional<std::string>& name) const;  // hot_file: its name, or none
   std::chrono::steady_clock::time_point last_warm_{};  // the last warm-up's end
   std::vector<CardStatus> status_;
   std::vector<bool> page_card_;               // beside settings_.cards: the server wrote it
