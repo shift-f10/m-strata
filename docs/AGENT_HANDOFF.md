@@ -280,6 +280,29 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z68 (Windows box; owner-directed)
+
+Adding plugins from the page, step two (spec section 12): the zip reader, written here (`zip_reader.hpp`, in
+`secure_frontend_zip` with the inflater).
+- **read_zip**: the end record (its comment reaching exactly to the end; no split or ZIP64 archive); then three passes,
+  nothing extracted before all hold - the directory's records (at most 256; no encryption, no ZIP64 field or size, only
+  stored or deflated, a plain relative name - not empty, absolute, ".", "..", a drive, a backslash or a control
+  character - no Unix link, no name twice, a folder with no bytes, a stored entry's sizes equal, a deflated one claiming
+  at most 1000 times its compressed size, at most 1 GiB in all); no two entries' bytes overlapping, from the directory
+  alone (so two records pointing at one header is an overlap, not a name mismatch); each local header where the
+  directory says, agreeing with it, its bytes before the directory. Each refusal is a sentence for the page.
+- **extract_zip_entry**: an entry streamed into a sink, inflated or copied, at most its size, its size and CRC-32 checked
+  at the end. **Crc32**: zip's (IEEE 802.3), streaming.
+- **Fixtures**: `tools/secure/make_zip_fixtures.py` - two archives by Python's zipfile (deflated at the root, stored in
+  one folder) and 18 hostile ones byte by byte (traversal, absolute, drive, backslash, control, empty name, link,
+  encrypted, ZIP64, LZMA, wrong CRC, truncated, no end record, overlapping, local header disagreeing, 257 entries, a
+  deflated entry claiming 16,666 times its size, a name twice); `tools/secure/test_zip_fixtures.py` checks the files are
+  the generator's, the good ones extract through zipfile to the C++ test's sizes and SHA-256s, the hostile ones are what
+  they say.
+- **Proof**: RED against a stub (21 failures), then GREEN on MSVC; gcc and clang compile both files with -Werror; under
+  gcc's AddressSanitizer and UndefinedBehaviorSanitizer every case - every prefix and every one-byte change of an archive
+  included - with no finding. The fixtures' Python test: 3 passed.
+
 ### Claude Code session, 2026-10-30 z67 (Windows box; owner-directed)
 
 Adding plugins from the page, step one (spec section 12; the owner chose "Write our own inflater"): RFC 1951 DEFLATE

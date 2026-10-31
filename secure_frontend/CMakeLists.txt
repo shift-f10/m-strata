@@ -179,7 +179,7 @@ secure_frontend_add_library(secure_frontend_parity
 # Web search: the SearXNG URL search.url names, checked by the config in every build.
 secure_frontend_add_library(secure_frontend_search_url SOURCES src/search_url.cpp)
 # A plugin's .zip (plugin spec 2026-10-30 section 12): the inflater and the zip reader, written here.
-secure_frontend_add_library(secure_frontend_zip SOURCES src/inflate.cpp)
+secure_frontend_add_library(secure_frontend_zip SOURCES src/inflate.cpp src/zip_reader.cpp)
 # The engine families (plugin spec 2026-10-30 section 5): one descriptor per family, under the config layer.
 secure_frontend_add_library(secure_frontend_families SOURCES src/family_descriptor.cpp)
 add_library(secure_frontend_typed_config src/frontend_config.cpp src/config_file.cpp)
@@ -1132,6 +1132,11 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_inflate_tests
         zlibs_streams_decode_to_their_bytes malformed_streams_are_refused_by_name the_bounds_hold damaged_streams_end_cleanly
         ARGS ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/inflate)
+
+    secure_frontend_add_test_executable(secure_frontend_zip_reader_tests tests/zip_reader_test.cpp secure_frontend_zip secure_frontend_sha256)
+    secure_frontend_add_cases(secure_frontend_zip_reader_tests
+        zipfiles_archives_list_and_extract hostile_archives_are_refused_with_their_reason crc32_is_zips damaged_archives_end_cleanly
+        ARGS ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/zip)
 
     secure_frontend_add_test_executable(secure_frontend_family_descriptor_tests tests/family_descriptor_test.cpp secure_frontend_families)
     secure_frontend_add_cases(secure_frontend_family_descriptor_tests
