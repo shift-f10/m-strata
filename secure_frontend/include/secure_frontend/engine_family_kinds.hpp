@@ -84,4 +84,16 @@ inline constexpr std::array<std::string_view, 15> kExpertReadingKeys{
     "expert_slots", "expert_slots_primary", "expert_cache_mib", "expert_cache_primary_mib", "vram_free_mib",
     "vram_used", "ram_used", "vram_gb", "ram_gb", "ram_slots", "vram_slots", "ram_experts", "experts_vram",
     "pinned_gib", "arena_mib"};
+// Of them, the keys that count experts, and the ones that give a RAM tier's size (arena_mib in MiB, pinned_gib and ram_gb
+// in GiB): what an engine plugin's tiers may be read from.
+inline constexpr std::array<std::string_view, 8> kExpertCountKeys{
+    "expert_slots", "expert_slots_primary", "vram_used", "ram_used", "ram_slots", "vram_slots", "ram_experts", "experts_vram"};
+inline constexpr std::array<std::string_view, 3> kExpertRamSizeKeys{"arena_mib", "pinned_gib", "ram_gb"};
+
+// The keys a family's Monitor tiers are read from: an engine plugin's monitor block (its experts in VRAM counted; its RAM
+// tier counted or sized). Empty: a built-in family's, which the Monitor tells apart by the keys its engine prints.
+struct MonitorTiers final {
+  std::string_view experts_vram{};
+  std::string_view experts_ram{};
+};
 }  // namespace secure_frontend

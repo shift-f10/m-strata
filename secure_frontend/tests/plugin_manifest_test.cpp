@@ -475,8 +475,12 @@ void a_wrong_engine_block_is_refused_by_name() {
   refuse(R"("flag": "--cpu-threads", "values")", R"("flag": "--kv", "values")", "calibration");
   refuse(R"("{cores/2}")", R"("{gpus}")", "calibration");
   refuse(R"("{cores/2}")", R"("9999")", "calibration");
+  refuse(R"(["0", "0.25", "0.5", "0.75"])", R"(["0", "{cores}"])", "--pcie-frac's candidates must be numbers from 0 to 1");
   refuse(R"("keep_margin": 0.03)", R"("keep_margin": 0.5)", "keep_margin");
   refuse(R"("experts_ram": "pinned_gib")", R"("experts_ram": "gpu_temp")", "monitor");
+  refuse(R"("experts_vram": "vram_slots")", R"("experts_vram": "vram_gb")", "engine.monitor.experts_vram must be one of the engine keys that count experts");
+  refuse(R"("experts_ram": "pinned_gib")", R"("experts_ram": "expert_cache_mib")",
+         "engine.monitor.experts_ram must be one of the engine keys that count experts or give their RAM");
   refuse(R"("mtp": "file")", R"("mtp": "maybe")", "mtp");
   refuse(R"("abi": 1, )", R"("abi": 1, "extra": 1, )", "extra");
   const auto other_files = secure_frontend::parse_plugin_manifest(

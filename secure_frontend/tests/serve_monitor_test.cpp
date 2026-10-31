@@ -7,6 +7,7 @@
 #include "support/test_support.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -560,6 +561,40 @@ void engine_memory_reads_every_familys_ram_tier() {
   }
 }
 
+// An engine plugin's family names its tiers' keys (its manifest's monitor block): the Monitor reads those - a count of the
+// experts, or (a RAM tier given in MiB or GiB: arena_mib, pinned_gib, ram_gb) their bytes - and no other key, for as long
+// as that engine runs; the next engine's readings are told apart by their keys again.
+void a_plugin_familys_tiers_are_its_declared_keys() {
+  const std::map<std::string, std::string> readings{
+      {"vram_slots", "40"}, {"pinned_gib", "12.5"}, {"expert_slots", "500"}, {"expert_slots_primary", "7"}, {"ram_slots", "88"}, {"arena_mib", "1024"}};
+  const auto memory_of = [&readings](const secure_frontend::MonitorTiers tiers) {
+    Clocked c;
+    c.monitor.engine_changed(tiers);
+    c.monitor.on_engine_stats(readings);
+    const auto json = c.json("ready");
+    const auto* memory = at(at(&json, "engine"), "memory");
+    expect(memory != nullptr, "engine.memory while the engine is up");
+    return std::array<std::optional<double>, 3>{number(at(memory, "experts_vram")), number(at(memory, "experts_ram")),
+                                                 number(at(memory, "experts_ram_bytes"))};
+  };
+  const auto pinned = memory_of({.experts_vram = "vram_slots", .experts_ram = "pinned_gib"});
+  expect(close_to(pinned[0], 40.0) && !pinned[1].has_value() && close_to(pinned[2], 12.5 * kGiB),
+         "vram_slots counts its VRAM tier, pinned_gib gives its RAM tier's GiB (and no count)");
+  const auto counted = memory_of({.experts_vram = "expert_slots_primary", .experts_ram = "ram_slots"});
+  expect(close_to(counted[0], 7.0) && close_to(counted[1], 88.0) && !counted[2].has_value(), "two counts, no bytes");
+  const auto arena = memory_of({.experts_vram = "vram_slots", .experts_ram = "arena_mib"});
+  expect(close_to(arena[0], 40.0) && !arena[1].has_value() && close_to(arena[2], 1024.0 * kMiB), "arena_mib: MiB");
+  const auto none = memory_of({});
+  expect(close_to(none[0], 7.0) && close_to(none[1], 500.0) && close_to(none[2], 12.5 * kGiB),
+         "a built-in family's (no keys named): told apart by the keys it prints, as before");
+  Clocked c;
+  c.monitor.engine_changed({.experts_vram = "vram_slots", .experts_ram = "ram_slots"});
+  c.monitor.engine_changed();
+  c.monitor.on_engine_stats(readings);
+  const auto json = c.json("ready");
+  expect(close_to(number(at(at(at(&json, "engine"), "memory"), "experts_vram")), 7.0), "the next engine's are its own");
+}
+
 // "When the models are stop and nothing is loaded, the stats seem to stay": the engine's own readings (its context,
 // its expert tier, its memory) show only while an engine is up - not while one starts, has failed or is unloaded.
 void engine_readings_show_only_while_an_engine_is_up() {
@@ -835,6 +870,7 @@ int main(int argc, char** argv) {
       {"gpu_sampler_reads_a_fake_tool", gpu_sampler_reads_a_fake_tool},
       {"gpu_sampler_reads_the_real_tool_when_present", gpu_sampler_reads_the_real_tool_when_present},
       {"engine_memory_reads_every_familys_ram_tier", engine_memory_reads_every_familys_ram_tier},
+      {"a_plugin_familys_tiers_are_its_declared_keys", a_plugin_familys_tiers_are_its_declared_keys},
       {"engine_readings_show_only_while_an_engine_is_up", engine_readings_show_only_while_an_engine_is_up},
       {"an_unloaded_engine_reads_unloaded", an_unloaded_engine_reads_unloaded},
       {"the_engine_sample_reaches_the_monitor", the_engine_sample_reaches_the_monitor},

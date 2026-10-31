@@ -89,6 +89,7 @@ PluginFamily::PluginFamily(const PluginManifest& manifest, std::string library_s
   family.draft_layer = engine_.mtp;
   family.plugin = &engine_;
   family.library_sha256 = library_sha256_;
+  family.monitor_tiers = MonitorTiers{engine_.monitor_experts_vram, engine_.monitor_experts_ram};
 }
 
 std::string_view PluginFamily::option_flag(const std::string_view option) const noexcept {

@@ -37,6 +37,9 @@ struct ComposedLaunch final {
   // GUI-first start-up (spec 2026-10-27 §4.2): no tokenizer pack (a card the page built from a GGUF) - the model file
   // beneath roots.models whose header holds the tokenizer (tokenizer_from_gguf profiles only).
   std::optional<RelativePath> tokenizer_gguf{};
+  // The engine launcher's own arguments, before --serve (EngineCommand::launcher_arguments): an engine plugin's family,
+  // `--family <id> --family-sha256 <its library's SHA-256>`; empty for a built-in family.
+  std::vector<std::string> launcher_args{};
 };
 
 // The profiles whose configs may read the tokenizer from the model's GGUF instead of a pack (their engines run the GGUF

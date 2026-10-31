@@ -524,7 +524,7 @@ std::optional<ModelLauncher::Refusal> ModelLauncher::start(const std::string_vie
   // was never calibrated, or one whose options changed with "recalibrate when settings change" on, calibrates first.
   bool calibrate_first = false;
   if (calibration_supported(chosen)) {
-    const auto stored = read_calibration(chosen.name);
+    const auto stored = read_calibration(chosen);
     const auto& start_values = std::get<ModelOptionValues>(values);
     const auto calibration = stored ? compare_key(stored->key, calibration_key(chosen, start_values)) : CalibrationState::missing;
     bool page = false;
@@ -744,20 +744,22 @@ CalibrationKey ModelLauncher::calibration_key(const ModelCard& card, const Model
   key.gpu = settings_.gpu_fact ? settings_.gpu_fact() : std::string{};
   key.cpu = cpu_fact_;
   if (const auto memory = read_memory()) key.ram_bytes = memory->total_bytes;
-  key.engine = file_fact(path_from_utf8(text("engine.executable")));
+  // the engine it was measured with: the launcher, and an engine plugin's library (an updated plugin is another engine)
+  key.engine = engine_fact(path_from_utf8(text("engine.executable")), family_descriptor(card.profile));
   key.model = file_fact(path_from_utf8(text("roots.models")) / path_from_utf8(text("engine.model_id") + ".gguf"));
   key.options = options_fact(values);
   return key;
 }
 
-std::optional<CalibrationResult> ModelLauncher::read_calibration(const std::string_view card) const {
+std::optional<CalibrationResult> ModelLauncher::read_calibration(const ModelCard& card) const {
   if (!settings_.calibration_dir.has_value()) return std::nullopt;
-  std::ifstream in(*settings_.calibration_dir / path_from_utf8(calibration_file_name(card)), std::ios::binary);
+  std::ifstream in(*settings_.calibration_dir / path_from_utf8(calibration_file_name(card.name)), std::ios::binary);
   if (!in) return std::nullopt;
   std::ostringstream text;
   text << in.rdbuf();
-  auto result = parse_calibration(text.str());
-  if (!result || result->card != card) return std::nullopt;
+  // its settings are its family's sweep's (an engine plugin's: its own steps' flags)
+  auto result = parse_calibration(text.str(), family_descriptor(card.profile));
+  if (!result || result->card != card.name) return std::nullopt;
   return result;
 }
 
@@ -958,7 +960,7 @@ std::optional<ModelLauncher::Refusal> ModelLauncher::set_auto_recalibrate(const 
     std::lock_guard lock(mutex_);
     auto_recalibrate_[std::string{name}] = on;
   }
-  if (auto stored = read_calibration(name); stored && stored->auto_recalibrate != on) {
+  if (auto stored = read_calibration(*held); stored && stored->auto_recalibrate != on) {
     stored->auto_recalibrate = on;
     if (!write_calibration(*stored)) return Refusal{ApiError::internal_error};
   }
@@ -973,7 +975,7 @@ std::string ModelLauncher::calibration_json(const std::size_t index, const Model
     const auto found = auto_recalibrate_.find(name);
     return found != auto_recalibrate_.end() && found->second;
   };
-  const auto stored = read_calibration(card.name);
+  const auto stored = read_calibration(card);
   const auto state = stored ? compare_key(stored->key, calibration_key(card, values)) : CalibrationState::missing;
   // first_start: the card calibrates before its first start (the engines whose sweep is a few short starts)
   std::string out = "{\"state\":" + json_string(calibration_state_name(state)) +
@@ -1209,7 +1211,7 @@ bool ModelLauncher::run_calibration(const Job& job) {
     report = write_report(card, job.values, started, result, std::move(trials));
   }
   if (outcome.end == SweepOutcome::End::done) {
-    const auto before = read_calibration(card.name);
+    const auto before = read_calibration(card);
     std::optional<bool> switched;
     {
       std::lock_guard lock(mutex_);
@@ -1362,7 +1364,7 @@ void ModelLauncher::run_jobs() {
           std::lock_guard lock(mutex_);
           return settings_.cards[job.card];
         }();
-        if (const auto stored = read_calibration(card.name); stored && !stored->args.empty()) {
+        if (const auto stored = read_calibration(card); stored && !stored->args.empty()) {
           if (auto with = config_with(card, job.values, stored->args)) start.config = std::move(with);
         }
         {
@@ -1473,8 +1475,8 @@ void ModelLauncher::run_start(const Job& job) {
   const bool* searches = web_search == job.values.end() ? nullptr : std::get_if<bool>(&web_search->second);
   model.chat.tools = searches == nullptr || *searches ? settings_.tools : nullptr;
   model.chat.tool_rounds = settings_.tool_rounds;
-  // The Monitor's engine readings belong to the engine that ran before.
-  if (settings_.monitor != nullptr) settings_.monitor->engine_changed();
+  // The Monitor's engine readings belong to the engine that ran before; this one's tiers are read from its family's keys.
+  if (settings_.monitor != nullptr) settings_.monitor->engine_changed(family_descriptor(card.profile).monitor_tiers);
   ProcessFactory vision_factory;  // a card that reads images: its encoder (unset: the production one)
   if (model.vision.has_value() && settings_.vision_factory) vision_factory = settings_.vision_factory(*model.vision);
   auto runtime = std::make_shared<ModelRuntime>(std::move(model), settings_.factory(std::move(plan)), settings_.gate, settings_.monitor,

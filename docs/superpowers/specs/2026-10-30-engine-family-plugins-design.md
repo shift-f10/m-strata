@@ -255,8 +255,29 @@ an engine plugin's manifest block and its library's SHA-256:
   each once, as `--flag VALUE`, of its kind within its bounds (a choice among its choices), refused in its family's words
   ("engine.profile acme3: --kv must be f16 or q8"). The plugin arguments profile alone takes nothing.
 - **Not yet**: nothing calls `set_plugin_families` (the server will, from its approved engine plugins), so no plugin
-  family runs; a plugin card's start (the launch composition: --family, --family-sha256, the model, --gpu, --serve),
-  its calibration steps and its Monitor keys; cards from Add a model by architecture; a thinking option.
+  family runs; cards from Add a model by architecture; a thinking option.
+
+**As built (2026-10-31, phase 2's second step, second part): a plugin card's start.**
+- **Its command line**: `multiengine --family <id> --family-sha256 <its library's SHA-256> --serve <its card's flags>
+  --gpu <list> --native <gguf>`. The launcher reads the first four before anything else, so they are the launch's own
+  (`ComposedLaunch::launcher_args`, `EngineCommand::launcher_arguments`): the process puts them before the --serve it
+  inserts, holding them to the arguments' rule (no --serve, no NUL); a built-in family has none. The engine's arguments
+  are `build_engine_arguments(family, ...)`: its card's flags as its manifest declares them, then --gpu from the typed
+  list (engine.hip_ordinal winning over one card, as on the built-ins), then --native last - no qwen tails, nothing
+  stripped.
+- **Its files**: each file its gguf_file flags name (its draft file, on whatever flag) is held at each start to the
+  model folders' rule, as a built-in card's MTP file is, and refused by its flag, never its path.
+- **Its calibration** (`sweep_plan`): its manifest's steps in order, each candidate as written or this PC's count -
+  {cores} the physical cores, {threads} the logical ones, {cores/N} and {cores*N/M} whole cores (rounded down, at least
+  one) - within the flag's bounds, without repeats; its margin and first start as declared. Core counts are an integer
+  flag's only, and a fraction flag's candidates are shares with at most three decimal places (the manifest's reader
+  refuses others). A result kept for its card holds only its steps' flags, each within its bounds
+  (`parse_calibration(text, family)`), and names the engine it was measured with as the launcher and the plugin's
+  library (`engine_fact`): an updated plugin makes the result stale.
+- **Its Monitor** (`MonitorTiers`, on the descriptor): the Monitor reads its VRAM tier from the key its manifest names
+  (one that counts experts) and its RAM tier from its key (a count, or arena_mib in MiB, pinned_gib or ram_gb in GiB as
+  bytes), and no other key, for as long as its engine runs (`ServeMonitor::engine_changed(tiers)`). The manifest's
+  reader refuses a VRAM key that counts nothing and a RAM key that is neither.
 
 ### 6. Trust (decision 2)
 
@@ -576,7 +597,8 @@ Either way, the tests are:
      engine each family talks to, its config rows, launching and calibration (`family_descriptor.hpp`), then its card
      options (the tables moved beside the descriptors), how they are written, and its cards' draft layer.
    - Then manifest-driven descriptors for plugins: cards, options, arguments, calibration, Monitor, capabilities. Begun
-     (section 5, as built): the descriptor, the families the server runs, its options and its engine's arguments.
+     (section 5, as built): the descriptor, the families the server runs, its options and its engine's arguments; a
+     plugin card's start, its calibration and its Monitor.
 3. **Prompt format.** The declarative template renderer, if decision 1 is (a), with its refusal tests.
 4. **Downloads.** Plugin entries in Download models, `prepare: plugin`, and the MTP and picture files.
 5. **Trust and the Plugins tab.** Discovery of every kind, approval and pinning, first-party trust through the build

@@ -118,10 +118,22 @@ constexpr std::size_t kRateSamples = 32U;
 //   STAT the same _used keys and ram_gb (GiB). DeepSeek (ds4_model.cu:13433, ds4_main.cpp:1078): INFO expert_slots
 //   (VRAM) and ram_experts, STAT the _used keys and ram_gb in decimal GB (tr.ram * cpu_blob / 1e9).
 // - Qwen 3.6 MoE (q36_engine.cu:3679) prints none.
-EngineMemoryView engine_memory_view(const std::map<std::string, std::string>& readings) {
+// An engine plugin's family names its own keys (its manifest's monitor block, MonitorTiers), read alone.
+EngineMemoryView engine_memory_view(const std::map<std::string, std::string>& readings, const MonitorTiers tiers) {
   constexpr double kGiB = 1073741824.0;
   constexpr double kMiB = 1048576.0;
   EngineMemoryView view;
+  if (!tiers.experts_vram.empty() || !tiers.experts_ram.empty()) {
+    // an engine plugin's family: each tier from the key its manifest names - a count, or its RAM tier's MiB or GiB
+    if (!tiers.experts_vram.empty()) view.experts_vram = reading_units(readings, tiers.experts_vram);
+    const bool counted = std::find(kExpertCountKeys.begin(), kExpertCountKeys.end(), tiers.experts_ram) != kExpertCountKeys.end();
+    if (counted) {
+      view.experts_ram = reading_units(readings, tiers.experts_ram);
+    } else if (!tiers.experts_ram.empty()) {
+      view.experts_ram_bytes = reading_units(readings, tiers.experts_ram, tiers.experts_ram == "arena_mib" ? kMiB : kGiB);
+    }
+    return view;
+  }
   if (readings.count("pinned_gib") != 0U) {
     view.experts_ram = reading_units(readings, "expert_slots");
     view.experts_vram = reading_units(readings, "expert_slots_primary");
@@ -210,7 +222,7 @@ void ServeMonitor::store_readings_locked(const std::map<std::string, std::string
   }
 }
 
-void ServeMonitor::engine_changed() {
+void ServeMonitor::engine_changed(const MonitorTiers tiers) {
   std::lock_guard lock(mutex_);
   experts_.clear();
   cache_info_.clear();
@@ -218,6 +230,8 @@ void ServeMonitor::engine_changed() {
   engine_generation_.reset();
   engine_resident_.reset();
   conversation_cache_.reset();
+  tier_vram_ = std::string{tiers.experts_vram};
+  tier_ram_ = std::string{tiers.experts_ram};
 }
 
 void ServeMonitor::end_locked(const std::string_view finish) {
@@ -375,7 +389,7 @@ std::string ServeMonitor::render_json(const MonitorView& view) const {
   if (loaded) {
     // The RAM and VRAM cards' figures in one shape for every family (engine_memory_view), and the engine
     // process's own resident memory.
-    const EngineMemoryView memory = engine_memory_view(experts_);
+    const EngineMemoryView memory = engine_memory_view(experts_, MonitorTiers{tier_vram_, tier_ram_});
     append_key(&out, "memory");
     out.push_back('{');
     append_key(&out, "experts_ram", true);

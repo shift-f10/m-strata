@@ -280,6 +280,42 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z79 (Windows box; owner-directed)
+
+Phase 2's second step, its second part (the owner: "Yes, go on"): a plugin card's start, its calibration and its Monitor
+(spec section 5, "As built ... second part"). No plugin family runs yet: the server does not call `set_plugin_families`.
+- **Its command line**: `multiengine --family <id> --family-sha256 <hex> --serve <its card's flags> --gpu <list> --native
+  <gguf>` (the launcher reads --family first). `ComposedLaunch::launcher_args` carries the first four into the plan's
+  `EngineCommand::launcher_arguments`, which `EngineStdioProcess` (both platforms' command lines; posix_child_launch's
+  prepare) and the test-only `EngineProcess` put before --serve, checked as the arguments are. `build_engine_arguments(
+  family, ...)`: its declared flags, then --gpu, then --native (`append_gpu_and_native`, shared with the built-ins'
+  default path).
+- **Its files**: launch_composition holds each of its gguf_file flags' files to the model folders' rule (the MTP file
+  check, generalised), refused by flag.
+- **Its calibration**: `sweep_plan` runs its manifest's steps (core counts resolved and clamped to the flag's bounds);
+  `parse_calibration(text, family)` (the launcher's `read_calibration(card)`) keeps only its steps' flags in bounds;
+  `engine_fact` (the result's key) adds its library's SHA-256. The manifest's reader: core counts on integer flags only,
+  a fraction's candidates at most three decimal places.
+- **Its Monitor**: `MonitorTiers` (engine_family_kinds.hpp, with `kExpertCountKeys` and `kExpertRamSizeKeys`) on the
+  descriptor; `ServeMonitor::engine_changed(tiers)` (the launcher's start passes the card's family's) and
+  `engine_memory_view(readings, tiers)` read its named keys alone. The manifest's reader refuses a VRAM key that counts
+  nothing, a RAM key that neither counts nor sizes.
+- **The SDK**: family_abi.h says what a card's start hands strata_family_main().
+- **Docs**: the z77 heading below, dropped by z78's edit, is back.
+- **Tests**: plugin family 3 more (its start through the launcher: the launcher's arguments, its flags, --gpu, --native,
+  hip_ordinal, a built-in's none; its files held by flag - missing, as given, widened; its calibration - steps on 8/16,
+  clamped at 256, one core, {threads}, its margin and first start, a stored result's flags, the engine fact) and the
+  descriptor's tiers; the fake engine 1 (the launcher's arguments before --serve, without --serve, a bad one refused);
+  the Monitor 1 (a plugin family's tiers: pinned_gib, two counts, arena_mib, none, the next engine's); the manifest's
+  refusals 3 (a core count on a fraction flag, a VRAM key that counts nothing, a RAM key that neither counts nor sizes).
+- **Proof**: RED against stubs (the descriptor's tiers unset, the process and the launch composition without the
+  launcher's arguments, the plugin arguments refused, the Monitor and the result reader ignoring the family, the engine
+  fact the launcher's alone, the manifest's reader as before): 23 failures in the 7 cases; then GREEN.
+  - Windows (MSVC, the shares tree, everything built, no warnings): the whole suite 1527 of 1529 (the two release-only
+    cases).
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc 1578/1581 and full-clang 1578/1581 (the two
+    release-only cases; egress passes alone), window-gcc Release 1535/1536 (egress passes alone).
+
 ### Claude Code session, 2026-10-31 z78 (Windows box; owner-directed)
 
 The engine-family phases go on (the owner: "continue working on other things while I test the vm"): phase 2's second
@@ -310,6 +346,8 @@ z76 and z77 cherry-picked there, `cab1b71f` and `ba57904d`, not pushed.)
   - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc 1571/1576 and full-clang 1573/1576 (the two
     release-only cases; dos02, the search card, egress pass alone), window-gcc Release 1529/1531 (egress and net01 pass
     alone).
+
+### Claude Code session, 2026-10-31 z77 (Windows box; owner-directed)
 
 The owner's Azure VM, after z76: the Qwen3.8-Flash-Next IQ2_XS card's calibration failed ("the engine ended before it
 was ready"), then "Yes, build it" (upstream's low-RAM mode).

@@ -198,6 +198,8 @@ std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& 
   if (lib_dirs.empty()) lib_dirs.push_back(config.engine.executable.path().parent_path());
   EngineLaunchPlan plan{.command = {.executable = config.engine.executable.path(), .arguments = std::move(*engine_arguments),
                                     .environment = {}}};
+  // an engine plugin's family: the launcher's own --family <id> --family-sha256 <hex>, before --serve
+  plan.command.launcher_arguments = std::move(launch.launcher_args);
   // Spec §3.9: the engine's whole environment, rendered per generation; nothing
   // is inherited from this server's environment.
   auto environment = engine_environment_for(state_dir, config.roots.cache, std::move(lib_dirs));

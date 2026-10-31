@@ -8,6 +8,7 @@
 // In memory only and bounded (kMonitorKeptRequests requests, kMonitorHistorySamples samples
 // per series); gone when the server stops.
 
+#include "secure_frontend/engine_family_kinds.hpp"
 #include "secure_frontend/engine_protocol_client.hpp"
 #include "secure_frontend/generation_run.hpp"
 #include "secure_frontend/host_readings.hpp"
@@ -61,7 +62,9 @@ struct EngineMemoryView final {
   std::optional<std::uint64_t> experts_ram_bytes{};
   std::optional<std::uint64_t> experts_vram{};
 };
-[[nodiscard]] EngineMemoryView engine_memory_view(const std::map<std::string, std::string>& readings);
+// `tiers` named (an engine plugin's family): each tier from its own key alone - a count of experts, or a RAM tier's MiB or
+// GiB as its bytes.
+[[nodiscard]] EngineMemoryView engine_memory_view(const std::map<std::string, std::string>& readings, MonitorTiers tiers = {});
 
 // The finish a generation ended with, as the Monitor names it (upstream's badges):
 // stop | length | cancel | disconnect | error.
@@ -87,7 +90,8 @@ class ServeMonitor final : public GenerationMeter {
 
   // Model launcher (plan 2026-10-23): another engine is starting; the readings of the one
   // before it (expert tier, READY context) no longer apply. The history and host readings stay.
-  void engine_changed();
+  // `tiers`: the keys its family's tiers are read from (an engine plugin's; empty: a built-in family's).
+  void engine_changed(MonitorTiers tiers = {});
 
   // The sampler, once a second.
   void add_host_sample(const HostSample& sample);
@@ -146,6 +150,9 @@ class ServeMonitor final : public GenerationMeter {
   std::map<std::string, std::string> experts_;
   // The engine's conversation cache budget and slots (its INFO), validated like experts_.
   std::map<std::string, std::string> cache_info_;
+  // The running engine's tier keys (engine_changed's), kept as text: an engine plugin's, else empty.
+  std::string tier_vram_;
+  std::string tier_ram_;
   // The newest engine sample: its generation (a new one replaces the readings), its process memory, its cache.
   std::optional<std::uint64_t> engine_generation_{};
   std::optional<std::uint64_t> engine_resident_{};

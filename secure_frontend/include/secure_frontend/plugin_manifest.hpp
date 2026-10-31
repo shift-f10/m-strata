@@ -130,8 +130,9 @@ struct PluginEngineOption final {
   std::vector<std::int64_t> values{};    // integer kinds: the only values offered, ascending
   std::optional<std::string> default_value{};  // as a card holds it: "true", "65536", "0.5", "auto", "q8"
 };
-// One calibration step: the candidates for a declared integer or fraction flag - numbers, or {cores}, {threads},
-// {cores/N} and {cores*N/M} (this PC's physical cores and threads).
+// One calibration step: the candidates for a declared integer or fraction flag - numbers (a fraction's at most three
+// decimal places), or for an integer flag {cores}, {threads}, {cores/N} and {cores*N/M} (this PC's physical cores and
+// threads).
 struct PluginCalibrationStep final {
   std::string flag;
   std::vector<std::string> values;
@@ -151,8 +152,8 @@ struct PluginEngine final {
   bool calibrates_before_first_start{false};
   double keep_margin{0.03};
   std::vector<PluginCalibrationStep> calibration{};
-  std::string monitor_experts_vram{};  // the engine's STAT/INFO key for its VRAM tier (empty: none)
-  std::string monitor_experts_ram{};
+  std::string monitor_experts_vram{};  // the engine's STAT/INFO key counting its experts in VRAM (empty: none)
+  std::string monitor_experts_ram{};   // counting them in RAM, or giving that tier's MiB or GiB (kExpertRamSizeKeys)
   bool vision{false};
   bool web_search{false};
   DraftLayerKind mtp{DraftLayerKind::none};

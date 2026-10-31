@@ -95,6 +95,7 @@ struct FamilyDescriptor final {
   // --family-sha256)
   const PluginEngine* plugin{nullptr};
   std::string_view library_sha256{};
+  MonitorTiers monitor_tiers{};  // the keys its Monitor tiers are read from (empty: the built-ins', told apart by their keys)
 };
 
 // The built-in families, in EngineProfile's order.

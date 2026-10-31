@@ -92,6 +92,14 @@ struct Glm53LaunchArgs final {
                                                            const std::vector<unsigned>& gpus = {},
                                                            bool mtp_on = true,
                                                            const Glm53LaunchArgs& glm = {});
+// An engine plugin's family (plugin spec section 5): its card's flags as its manifest declares them
+// (validate_engine_user_arguments(family, ...)), then --gpu from the typed list, then --native <the model> last - nothing
+// stripped or added. The launcher's own --family <id> --family-sha256 <hex> are the launch's (ComposedLaunch::launcher_args),
+// not these. A built-in family's: build_engine_arguments(family.arguments_profile, ...).
+[[nodiscard]] EngineArgumentsResult build_engine_arguments(const FamilyDescriptor& family, const ModelManifest& selected,
+                                                           const CanonicalRoot& models_root,
+                                                           const std::vector<std::string>& user_arguments,
+                                                           const std::vector<unsigned>& gpus = {});
 
 // SP5 M1 Task 6 (parity row mtp; strata_control/draft_layer.py): MTP_FLAGS verbatim —
 // {"--mtp": value, "--spec-min-p": value, "--batch-mtp": no value} — and the pin's

@@ -465,9 +465,17 @@ int small_number(const std::string_view digits) {
   return value >= 1 && value <= 16 ? value : 0;
 }
 
-// A calibration candidate for `argument` (an integer or fraction flag): {cores}, {threads}, {cores/N}, {cores*N/M}, or a
-// number within its bounds.
+// A calibration candidate for `argument`: for an integer flag {cores}, {threads}, {cores/N}, {cores*N/M} (counts of this
+// PC's cores) or a number within its bounds; for a fraction flag a share from 0 to 1 with at most three decimal places, as
+// the sweep writes one (0, 1, 0.25, 1.0).
 bool candidate(const std::string_view text, const PluginArgument& argument) {
+  if (argument.value == PluginArgumentValue::fraction) {
+    if (text == "0" || text == "1") return true;
+    if (text.size() < 3U || text.size() > 5U || text[1] != '.' || (text[0] != '0' && text[0] != '1')) return false;
+    const auto decimals = text.substr(2U);
+    if (!std::all_of(decimals.begin(), decimals.end(), [](const char c) { return c >= '0' && c <= '9'; })) return false;
+    return text[0] == '0' || std::all_of(decimals.begin(), decimals.end(), [](const char c) { return c == '0'; });
+  }
   if (text == "{cores}" || text == "{threads}") return true;
   if (text.starts_with("{cores") && text.ends_with("}")) {
     const auto rest = text.substr(6U, text.size() - 7U);
@@ -476,14 +484,8 @@ bool candidate(const std::string_view text, const PluginArgument& argument) {
     const auto slash = rest.find('/');
     return slash != std::string_view::npos && small_number(rest.substr(1U, slash - 1U)) != 0 && small_number(rest.substr(slash + 1U)) != 0;
   }
-  if (text.empty() || text.size() > 16U ||
-      !std::all_of(text.begin(), text.end(), [](const char c) { return (c >= '0' && c <= '9') || c == '.'; })) {
+  if (text.empty() || text.size() > 16U || !std::all_of(text.begin(), text.end(), [](const char c) { return c >= '0' && c <= '9'; })) {
     return false;
-  }
-  if (argument.value == PluginArgumentValue::fraction) {
-    double value = 0.0;
-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
-    return error == std::errc{} && end == text.data() + text.size() && value >= 0.0 && value <= 1.0;
   }
   std::int64_t value = 0;
   const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
@@ -816,7 +818,9 @@ std::variant<PluginEngine, std::string> parse_engine(const JsonValue& block, con
       step.flag = *flag;
       const auto* values = member(item, "values")->if_array();
       const std::string bad = "engine.calibration: " + *flag +
-                              "'s candidates must be numbers within its bounds, {cores}, {threads}, {cores/N} or {cores*N/M} (1 to 8 of them)";
+                              (argument->value == PluginArgumentValue::fraction
+                                   ? "'s candidates must be numbers from 0 to 1, at most three decimal places (1 to 8 of them)"
+                                   : "'s candidates must be numbers within its bounds, {cores}, {threads}, {cores/N} or {cores*N/M} (1 to 8 of them)");
       if (values == nullptr || values->empty() || values->size() > kMaxCandidates) return bad;
       for (const auto& each : *values) {
         const std::string* text = each.if_string();
@@ -833,9 +837,14 @@ std::variant<PluginEngine, std::string> parse_engine(const JsonValue& block, con
                                      std::pair<std::string_view, std::string*>{"experts_ram", &engine.monitor_experts_ram}}) {
       const JsonValue* value = member(*monitor, key);
       if (value == nullptr) continue;
+      // its experts in VRAM counted; its RAM tier counted or sized (the Monitor's view: engine_memory_view)
       const std::string* text = value->if_string();
-      if (text == nullptr || std::find(kExpertReadingKeys.begin(), kExpertReadingKeys.end(), *text) == kExpertReadingKeys.end()) {
-        return "engine.monitor." + std::string{key} + " must be one of the engine keys the Monitor reads";
+      const auto among = [text](const auto& keys) { return std::find(keys.begin(), keys.end(), *text) != keys.end(); };
+      if (key == "experts_vram" && (text == nullptr || !among(kExpertCountKeys))) {
+        return std::string{"engine.monitor.experts_vram must be one of the engine keys that count experts"};
+      }
+      if (text == nullptr || (!among(kExpertCountKeys) && !among(kExpertRamSizeKeys))) {
+        return std::string{"engine.monitor.experts_ram must be one of the engine keys that count experts or give their RAM"};
       }
       *field = *text;
     }

@@ -1272,7 +1272,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_test_paths(secure_frontend_fake_engine_tests)
     # Crash exit codes are Windows runtime semantics: MSYS2 only.
     secure_frontend_add_cases(secure_frontend_fake_engine_tests fake_engine_modes_selftest fake_engine_dump_is_parseable
-        fake_engine_stream_modes_selftest fake_engine_reads_options_beside_itself
+        fake_engine_stream_modes_selftest fake_engine_reads_options_beside_itself the_launchers_arguments_come_before_serve
         TIMEOUT 120 LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # F3: start/stop the real server with the fake engine; process-tree helpers.
@@ -1562,7 +1562,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         monitor_records_generations monitor_reports_live_states a_stopped_engine_reads_stopped_and_requests_name_their_model
         engine_readings_reach_the_engine_block
         monitor_keeps_a_bounded_history engine_change_drops_the_old_engines_readings
-        engine_memory_reads_every_familys_ram_tier engine_readings_show_only_while_an_engine_is_up an_unloaded_engine_reads_unloaded
+        engine_memory_reads_every_familys_ram_tier a_plugin_familys_tiers_are_its_declared_keys
+        engine_readings_show_only_while_an_engine_is_up an_unloaded_engine_reads_unloaded
         the_engine_sample_reaches_the_monitor diskstats_add_up_the_whole_disks disk_readings_reach_the_json
         conversation_cache_lines_parse_exactly conversation_cache_reaches_the_json)
     secure_frontend_add_cases(secure_frontend_serve_monitor_tests host_readings_are_plausible gpu_sampler_reads_a_fake_tool
@@ -2408,10 +2409,11 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # an engine plugin's family (plugin spec section 5, phase 2's second step)
     secure_frontend_add_test_executable(secure_frontend_plugin_family_tests tests/plugin_family_test.cpp secure_frontend_plugins
-        secure_frontend_model_cards)
+        secure_frontend_model_cards secure_frontend_launch secure_frontend_strata_cli secure_frontend_calibration)
     secure_frontend_add_cases(secure_frontend_plugin_family_tests
         an_engine_plugin_makes_its_family its_cards_offer_its_options_then_the_servers a_manifest_may_not_take_a_server_options_name
         the_server_finds_the_families_it_runs its_options_write_their_flags its_engine_takes_only_its_flags a_card_names_a_plugin_family
+        its_card_starts_through_the_launcher its_files_are_held_to_the_model_folders_rule its_calibration_is_its_manifests
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_test_executable(secure_frontend_plugin_registry_tests tests/plugin_registry_test.cpp secure_frontend_plugins)
     target_compile_definitions(secure_frontend_plugin_registry_tests PRIVATE

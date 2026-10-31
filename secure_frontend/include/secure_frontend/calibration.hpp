@@ -7,6 +7,7 @@
 // measured under. Pure logic here (the sweep over a measure function, the plan per engine, the result file and its
 // key); the launcher runs the measurements (model_launcher.hpp).
 
+#include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/frontend_config.hpp"
 #include "secure_frontend/model_options.hpp"
 
@@ -48,7 +49,10 @@ struct SweepMachine final {
 //    below 70% of its best;
 //  - deepseek and minimax, Maya's tools/calibrate_ds4_tp.py and tools/mm3/calibrate.py: --cpu-threads, fewer than the
 //    engine's own (the physical cores; 2 and 4 fewer first on a CPU without SMT siblings, then 3/4 and 1/2), the step
-//    ending at the first that gains nothing.
+//    ending at the first that gains nothing;
+//  - an engine plugin's family: its manifest's steps in order, each candidate as written or this PC's count ({cores}
+//    the physical cores, {threads} the logical ones, {cores/N} and {cores*N/M} whole cores, at least one) within the
+//    flag's bounds, without repeats.
 [[nodiscard]] std::vector<SweepStep> sweep_plan(EngineProfile profile, const SweepMachine& machine);
 // The margin a candidate must win by: 5% for deepseek and minimax (Maya's MIN_GAIN for separate engine starts), 3% else.
 [[nodiscard]] double sweep_keep_margin(EngineProfile profile) noexcept;
@@ -111,6 +115,9 @@ struct CalibrationResult final {
 [[nodiscard]] std::string render_calibration(const CalibrationResult& result);
 // Bounded strict JSON; nullopt for anything else, or args that are not the sweep's flags with valid values.
 [[nodiscard]] std::optional<CalibrationResult> parse_calibration(std::string_view text);
+// The same for a card of `family`: an engine plugin's result holds only its own steps' flags, each value of its kind
+// within its bounds; a built-in family's, the built-in sweeps' flags.
+[[nodiscard]] std::optional<CalibrationResult> parse_calibration(std::string_view text, const FamilyDescriptor& family);
 
 // MiniMax's prefill calibration (Maya's tools/calibrate_mm3_prefill.py over the engine's own --calibrate-prefill: the
 // chunk a prompt is read in and the dense GEMMs' backend, kept by the engine in the pack's prefill-tune.txt), as this
@@ -134,6 +141,9 @@ struct PrefillRecord final {
 
 // "<size>:<modification time>" of a file; empty when it cannot be read.
 [[nodiscard]] std::string file_fact(const std::filesystem::path& file);
+// The engine a card's result was measured with: the engine executable's file_fact, and for an engine plugin's family its
+// library's SHA-256 after a ';' (an updated plugin is another engine).
+[[nodiscard]] std::string engine_fact(const std::filesystem::path& executable, const FamilyDescriptor& family);
 // The CPU's name and its logical threads ("<name>, <n> threads").
 [[nodiscard]] std::string cpu_fact();
 // The option values that change the decode speed, "name=value" by name joined with ';' (thinking, the sampling

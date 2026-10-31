@@ -1,19 +1,24 @@
 // An engine plugin's family (plugin spec 2026-10-30 section 5, phase 2's second step): its manifest's engine block made
 // into a descriptor beside the built-in ones - pinned value by value - found by its name once the server runs it, its
 // cards' options written as its flags, its engine taking its declared flags and nothing else, and a card naming it.
+#include "secure_frontend/calibration.hpp"
+#include "secure_frontend/canonical_path.hpp"
 #include "secure_frontend/config_file.hpp"
 #include "secure_frontend/engine_arguments.hpp"
 #include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/frontend_config.hpp"
+#include "secure_frontend/launch_composition.hpp"
 #include "secure_frontend/model_cards.hpp"
 #include "secure_frontend/model_options.hpp"
 #include "secure_frontend/plugin_family.hpp"
 #include "secure_frontend/plugin_manifest.hpp"
+#include "support/cli_harness.hpp"
 #include "support/config_json.hpp"
 #include "support/test_support.hpp"
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -21,6 +26,10 @@
 #include <string_view>
 #include <variant>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#endif
 
 namespace {
 int failures = 0;
@@ -144,6 +153,9 @@ void an_engine_plugin_makes_its_family() {
   expect(d.sampling.temperature == 1.0 && d.sampling.top_p == 0.95 && d.sampling.top_k == 64 && d.sampling.min_p == 0.05, "its sampling");
   expect(d.plugin == &family.engine() && d.plugin->arguments.size() == 8U && d.library_sha256 == kSha,
          "its block (the flags its engine takes) and its library's SHA-256");
+  expect(d.monitor_tiers.experts_vram == "vram_slots" && d.monitor_tiers.experts_ram == "pinned_gib", "its Monitor's tier keys");
+  const auto& qwen = secure_frontend::family_descriptor(EngineProfile::qwen).monitor_tiers;
+  expect(qwen.experts_vram.empty() && qwen.experts_ram.empty(), "a built-in family names none: the Monitor tells them apart");
 
   const PluginFamily beta{manifest_of("beta", "Beta", kBetaEngine), kSha, static_cast<EngineProfile>(secure_frontend::kFirstPluginProfile + 1)};
   const auto& b = beta.descriptor();
@@ -153,6 +165,7 @@ void an_engine_plugin_makes_its_family() {
   expect(b.reads_images && !b.checks_mtp_side_file && b.draft_layer == DraftLayerKind::none && !b.calibrates_before_first_start &&
              b.sweep_keep_margin == 0.03 && b.sampling.temperature == 1.0 && b.sampling.top_p == 0.95 && !b.sampling.top_k && !b.sampling.min_p,
          "the least plugin: pictures, no draft layer, the default calibration and sampling");
+  expect(b.monitor_tiers.experts_vram.empty() && b.monitor_tiers.experts_ram.empty(), "the least plugin: no Monitor keys");
 }
 
 // Its own options in its order (but its GPUs), then the server's - temperature, top_p, top_k and min_p (its sampling names
@@ -403,6 +416,182 @@ void a_card_names_a_plugin_family() {
   expect(std::holds_alternative<secure_frontend::ConfigErrors>(gone), "without the plugin, its card is refused");
 }
 
+// --- Its start -----------------------------------------------------------------------------------
+
+// Acme-3's block with its draft file on another flag than --mtp.
+PluginManifest gamma() {
+  std::string engine = kAcmeEngine;
+  const std::string from = R"({"flag": "--mtp", "value": "gguf_file"})";
+  engine.replace(engine.find(from), from.size(), R"({"flag": "--drafter", "value": "gguf_file"})");
+  return manifest_of("gamma", "Gamma", engine);
+}
+
+using Composed = std::variant<secure_frontend::ComposedLaunch, secure_frontend::LaunchFailure>;
+
+std::string failure_of(const Composed& composed) {
+  std::string out;
+  if (const auto* failure = std::get_if<secure_frontend::LaunchFailure>(&composed)) {
+    for (const auto& message : failure->messages) out += message + "; ";
+  }
+  return out;
+}
+
+// A card's start as the launcher composes it: <models>/<family>/a.gguf, a config naming the family and `engine_members`.
+struct Start final {
+  explicit Start(const std::string& id) : family(id) {
+    secure_frontend_test::make_private_directory(h.models_path / id);
+    secure_frontend_test::write_file(h.models_path / id / "a.gguf", "GGUF");
+  }
+  Composed launch(const std::string& engine_members) {
+    h.write_config("");
+    std::string text = secure_frontend_test::read_file(h.config);
+    const std::string from = "\"model_id\": \"m\"";
+    text.replace(text.find(from), from.size(), "\"model_id\": \"a\", \"profile\": \"" + family + "\"" + engine_members);
+    secure_frontend_test::write_file(h.config, text);
+    return secure_frontend::compose_engine_launch(h.validated_config().get(), true);
+  }
+  std::string native() const {
+    return secure_frontend::path_to_utf8((h.validated_config().get().roots.models.path() / family / "a.gguf").make_preferred());
+  }
+  secure_frontend_test::cli::CliHarness h;
+  std::string family;
+};
+
+// The launcher reads --family <id> --family-sha256 <hex> first: they are the start's own launcher arguments, which the
+// process puts before --serve. Its engine's are its card's declared flags, then --gpu, then --native last: no qwen tails,
+// no MTP strip, nothing of another family's.
+void its_card_starts_through_the_launcher() {
+  secure_frontend::set_plugin_families({PluginFamilySource{acme3(), kSha}});
+  const auto* named = secure_frontend::family_named("acme3");
+  expect(named != nullptr, "acme3 is a family once the server runs it");
+  if (named == nullptr) return;
+  Start start{"acme3"};
+  const auto composed = start.launch(R"(, "args": ["--max-context", "65536", "--kv", "q8", "--no-graph"], "gpu": "0,1")");
+  const auto* launch = std::get_if<secure_frontend::ComposedLaunch>(&composed);
+  expect(launch != nullptr, "its start composes: " + failure_of(composed));
+  if (launch != nullptr) {
+    expect(launch->launcher_args == Strings{"--family", "acme3", "--family-sha256", kSha},
+           "the launcher's: its family and its library's SHA-256: " + joined(launch->launcher_args));
+    expect(launch->engine_args == Strings{"--max-context", "65536", "--kv", "q8", "--no-graph", "--gpu", "0,1", "--native", start.native()},
+           "its flags, then --gpu, then --native: " + joined(launch->engine_args));
+    expect(launch->profile == named->profile && !launch->managed && launch->model_id == "a" && launch->mtp_removed.empty(),
+           "its profile; an expert start of the inventory's model; nothing stripped");
+  }
+  const auto bare = start.launch("");
+  const auto* bare_launch = std::get_if<secure_frontend::ComposedLaunch>(&bare);
+  expect(bare_launch != nullptr && bare_launch->engine_args == Strings{"--native", start.native()} &&
+             bare_launch->launcher_args == Strings{"--family", "acme3", "--family-sha256", kSha},
+         "no args and no GPU: --native alone, and the launcher's: " + failure_of(bare));
+  const auto one = start.launch(R"(, "gpu": "0", "hip_ordinal": 1)");
+  const auto* one_launch = std::get_if<secure_frontend::ComposedLaunch>(&one);
+  expect(one_launch != nullptr && one_launch->engine_args == Strings{"--gpu", "1", "--native", start.native()},
+         "engine.hip_ordinal wins over one card, as on the built-ins: " + failure_of(one));
+  Start built_in{"gemma4"};
+  const auto gemma = built_in.launch("");
+  const auto* gemma_launch = std::get_if<secure_frontend::ComposedLaunch>(&gemma);
+  expect(gemma_launch != nullptr && gemma_launch->launcher_args.empty(), "a built-in family's start: none for the launcher");
+  secure_frontend::set_plugin_families({});
+}
+
+// Each file its engine's flags name (a gguf_file argument - its draft file, on whatever flag) is held at each start to the
+// model folders' rule, as a built-in card's MTP file is: a regular file, not a link, in a folder no other user of this PC
+// may change. One that is not is refused by its flag, never its path.
+void its_files_are_held_to_the_model_folders_rule() {
+  secure_frontend::set_plugin_families({PluginFamilySource{gamma(), kSha}});
+  expect(secure_frontend::family_named("gamma") != nullptr, "gamma is a family once the server runs it");
+  Start start{"gamma"};
+  const auto folder = start.h.models_path / "gamma" / "draft";
+  secure_frontend_test::make_private_directory(folder);
+  const auto file = folder / "draft-a.gguf";
+  const auto with_file = [&start, &file] {
+    return start.launch(R"(, "args": ["--drafter", )" + secure_frontend_test::json_literal(secure_frontend::path_to_utf8(file)) + "]");
+  };
+  const auto refused_by_flag = [](const Composed& composed) {
+    const auto* failure = std::get_if<secure_frontend::LaunchFailure>(&composed);
+    return failure != nullptr && !failure->messages.empty() && failure->messages.front().find("--drafter") != std::string::npos &&
+           failure->messages.front().find("draft-a") == std::string::npos;
+  };
+  const auto missing = with_file();
+  expect(refused_by_flag(missing), "a file that is not there is refused by its flag: " + failure_of(missing));
+  secure_frontend_test::write_file(file, "GGUF");
+  const auto composed = with_file();
+  const auto* launch = std::get_if<secure_frontend::ComposedLaunch>(&composed);
+  expect(launch != nullptr && launch->engine_args == Strings{"--drafter", secure_frontend::path_to_utf8(file), "--native", start.native()},
+         "a file in a folder only this user changes: as given, before --native: " + failure_of(composed));
+#if defined(_WIN32)
+  expect(secure_frontend_test::grant_everyone_write(folder), "the test widens the draft file's folder");
+#else
+  ::chmod(folder.c_str(), 0777);
+#endif
+  const auto widened = with_file();
+  expect(refused_by_flag(widened), "a file in a folder other users may change is refused by its flag: " + failure_of(widened));
+  secure_frontend::set_plugin_families({});
+}
+
+std::string described(const std::vector<secure_frontend::SweepStep>& plan) {
+  std::string out;
+  for (const auto& step : plan) out += (out.empty() ? "" : "; ") + step.flag + " " + joined(step.values);
+  return out;
+}
+
+// Its sweep is its manifest's steps, each candidate this PC's own count - {cores} its physical cores, {threads} its logical
+// ones, {cores/N} and {cores*N/M} whole cores (rounded down, at least one) - within the flag's bounds and without repeats;
+// its margin and first start as declared. A result kept for its card holds only its steps' flags, each within its bounds,
+// and names the engine it was measured with: the launcher and the plugin's library.
+void its_calibration_is_its_manifests() {
+  std::string threads_engine = kAcmeEngine;
+  const std::string half = R"("{cores/2}")";
+  threads_engine.replace(threads_engine.find(half), half.size(), R"("{threads}")");
+  secure_frontend::set_plugin_families({PluginFamilySource{acme3(), kSha}, PluginFamilySource{manifest_of("delta", "Delta", threads_engine), kSha},
+                                        PluginFamilySource{manifest_of("beta", "Beta", kBetaEngine), kSha}});
+  const auto* acme = secure_frontend::family_named("acme3");
+  const auto* delta = secure_frontend::family_named("delta");
+  const auto* beta = secure_frontend::family_named("beta");
+  expect(acme != nullptr && delta != nullptr && beta != nullptr, "the three are families once the server runs them");
+  if (acme == nullptr || delta == nullptr || beta == nullptr) return;
+  using secure_frontend::SweepMachine;
+  const auto plan = secure_frontend::sweep_plan(acme->profile, SweepMachine{16U, 8U});
+  expect(plan.size() == 2U && plan[0].flag == "--cpu-threads" && plan[0].values == Strings{"8", "5", "4"} && plan[0].joint.empty() &&
+             plan[0].max_tokens == 128U && plan[0].stop_below == 0.0 && plan[1].flag == "--pcie-frac" &&
+             plan[1].values == Strings{"0", "0.25", "0.5", "0.75"},
+         "its steps on 8 cores and 16 threads: " + described(plan));
+  const auto big = secure_frontend::sweep_plan(acme->profile, SweepMachine{512U, 300U});
+  expect(!big.empty() && big[0].values == Strings{"256", "200", "150"}, "within --cpu-threads' bounds (1-256): " + described(big));
+  const auto one = secure_frontend::sweep_plan(acme->profile, SweepMachine{1U, 1U});
+  expect(!one.empty() && one[0].values == Strings{"1"}, "one core: one candidate, at least one: " + described(one));
+  const auto threads = secure_frontend::sweep_plan(delta->profile, SweepMachine{16U, 8U});
+  expect(!threads.empty() && threads[0].values == Strings{"8", "5", "16"}, "{threads}: the logical CPUs: " + described(threads));
+  expect(secure_frontend::sweep_keep_margin(acme->profile) == 0.03 && secure_frontend::calibrates_before_first_start(acme->profile),
+         "its margin and its first start");
+  expect(secure_frontend::sweep_plan(beta->profile, SweepMachine{16U, 8U}).empty() && !secure_frontend::calibrates_before_first_start(beta->profile),
+         "no calibration block: no sweep");
+
+  const auto stored = [](const std::string& args) {
+    return R"({"schema_version": 1, "card": "Acme-3-30B", "args": [)" + args +
+           R"(], "baseline_tok_s": 10.0, "best_tok_s": 12.0, "date": "2026-10-31T00:00:00Z", "auto_recalibrate": true,
+              "key": {"gpu": "", "cpu": "x", "ram_bytes": 1, "engine": "e", "model": "m", "options": ""}})";
+  };
+  const auto read = [&stored](const std::string& args, const FamilyDescriptor& family) {
+    return secure_frontend::parse_calibration(stored(args), family).has_value();
+  };
+  expect(read(R"("--cpu-threads", "5", "--pcie-frac", "0.25")", *acme), "its own steps' flags within their bounds");
+  expect(!read(R"("--cpu-threads", "300")", *acme), "a count past its flag's bound");
+  expect(!read(R"("--pcie-frac", "1.5")", *acme), "a share past 1");
+  expect(!read(R"("--max-context", "65536")", *acme), "a flag it declares but does not sweep");
+  expect(!read(R"("--pool-workers", "4")", *acme), "a built-in sweep's flag is none of its");
+  expect(read(R"("--pool-workers", "4")", secure_frontend::family_descriptor(EngineProfile::qwen)),
+         "a built-in family's: the built-in sweeps' flags, as before");
+
+  const auto directory = secure_frontend_test::make_scratch_directory();
+  const auto launcher = directory / "multiengine";
+  secure_frontend_test::write_file(launcher, "MZ");
+  expect(secure_frontend::engine_fact(launcher, *acme) == secure_frontend::file_fact(launcher) + ";" + kSha,
+         "its result's engine: the launcher and its library's SHA-256");
+  expect(secure_frontend::engine_fact(launcher, secure_frontend::family_descriptor(EngineProfile::qwen)) == secure_frontend::file_fact(launcher),
+         "a built-in family's: the launcher alone, as before");
+  secure_frontend::set_plugin_families({});
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -414,5 +603,8 @@ int main(int argc, char** argv) {
       {"its_options_write_their_flags", its_options_write_their_flags},
       {"its_engine_takes_only_its_flags", its_engine_takes_only_its_flags},
       {"a_card_names_a_plugin_family", a_card_names_a_plugin_family},
+      {"its_card_starts_through_the_launcher", its_card_starts_through_the_launcher},
+      {"its_files_are_held_to_the_model_folders_rule", its_files_are_held_to_the_model_folders_rule},
+      {"its_calibration_is_its_manifests", its_calibration_is_its_manifests},
   }, failures);
 }

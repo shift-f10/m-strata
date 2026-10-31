@@ -439,6 +439,36 @@ namespace {
 constexpr std::array<std::pair<std::string_view, bool>, 3> kMtpFlags{
     std::pair{"--mtp", true}, std::pair{"--spec-min-p", true}, std::pair{"--batch-mtp", false}};
 
+// The model by --native, as the strata, Gemma 4, flint and plugin engines take it: --gpu from the typed list, then
+// --native <the inventory model> last.
+std::optional<EngineArgumentsError> append_gpu_and_native(std::vector<std::string>& arguments, const ModelManifest& selected,
+                                                         const CanonicalRoot& models_root, const std::vector<unsigned>& gpus) {
+  const auto parsed = parse_relative_path(selected.relative_artifact_path);
+  const auto* relative = std::get_if<RelativePath>(&parsed);
+  if (relative == nullptr) {
+    return EngineArgumentsError{EngineArgumentsErrorCode::invalid_value, "selected model has an invalid artifact path"};
+  }
+  // The engine's own --gpu sets CUDA_DEVICE_ORDER/CUDA_VISIBLE_DEVICES (or
+  // HIP) inside the engine (upstream generate.cpp:2357-2375 at v0.2.2), so
+  // the strata family's environment carries no GPU variable.
+  if (!gpus.empty()) {
+    std::string list;
+    for (const unsigned device : gpus) {
+      if (!list.empty()) list += ',';
+      list += std::to_string(device);
+    }
+    arguments.emplace_back("--gpu");
+    arguments.push_back(std::move(list));
+  }
+  // The engine receives the canonical root the inventory used, never the raw
+  // configured string (defect e).
+  arguments.emplace_back("--native");
+  // UTF-8, never path::string(): on Windows that narrows through the ANSI code
+  // page, and the engine launcher decodes every argument as UTF-8.
+  arguments.push_back(path_to_utf8(models_root.join(*relative)));
+  return std::nullopt;
+}
+
 // draft_layer.strip() verbatim: drop each flag, and consume the following token as its
 // value only when it is not another flag.
 void strip_mtp_flags(std::vector<std::string>& arguments, std::vector<std::string>* removed) {
@@ -558,7 +588,6 @@ EngineArgumentsResult build_engine_arguments(const EngineArgumentsProfile profil
     composed.emplace_back("off");
     return composed;
   }
-  const auto parsed = parse_relative_path(selected.relative_artifact_path);
   // SP5 M1 Task 6 (parity row mtp, runconfig.py:36 + draft_layer.is_off): an explicit
   // false strips the draft layer's own options at every start, before anything else is
   // composed. The GLM profile returns above: its runner does not speak these flags. The
@@ -566,28 +595,17 @@ EngineArgumentsResult build_engine_arguments(const EngineArgumentsProfile profil
   // (Gemma 4 plan 1 Task 3): its one MTP flag, --mtp <file> (owner 2026-10-28), is the card's,
   // and the card's MTP switch takes it out of a start (model_options.cpp write_option).
   if (!mtp_on && profile == EngineArgumentsProfile::strata_0143) strip_mtp_flags(arguments, nullptr);
-  const auto* relative = std::get_if<RelativePath>(&parsed);
-  if (relative == nullptr) {
-    return EngineArgumentsError{EngineArgumentsErrorCode::invalid_value, "selected model has an invalid artifact path"};
-  }
-  // The engine's own --gpu sets CUDA_DEVICE_ORDER/CUDA_VISIBLE_DEVICES (or
-  // HIP) inside the engine (upstream generate.cpp:2357-2375 at v0.2.2), so
-  // the strata family's environment carries no GPU variable.
-  if (!gpus.empty()) {
-    std::string list;
-    for (const unsigned device : gpus) {
-      if (!list.empty()) list += ',';
-      list += std::to_string(device);
-    }
-    arguments.emplace_back("--gpu");
-    arguments.push_back(std::move(list));
-  }
-  // The engine receives the canonical root the inventory used, never the raw
-  // configured string (defect e).
-  arguments.emplace_back("--native");
-  // UTF-8, never path::string(): on Windows that narrows through the ANSI code
-  // page, and the engine launcher decodes every argument as UTF-8.
-  arguments.push_back(path_to_utf8(models_root.join(*relative)));
+  if (auto refused = append_gpu_and_native(arguments, selected, models_root, gpus)) return *refused;
+  return arguments;
+}
+
+EngineArgumentsResult build_engine_arguments(const FamilyDescriptor& family, const ModelManifest& selected,
+                                             const CanonicalRoot& models_root, const std::vector<std::string>& user_arguments,
+                                             const std::vector<unsigned>& gpus) {
+  if (family.plugin == nullptr) return build_engine_arguments(family.arguments_profile, selected, models_root, user_arguments, gpus);
+  if (auto rejected = validate_engine_user_arguments(family, user_arguments)) return *rejected;
+  std::vector<std::string> arguments = user_arguments;
+  if (auto refused = append_gpu_and_native(arguments, selected, models_root, gpus)) return *refused;
   return arguments;
 }
 

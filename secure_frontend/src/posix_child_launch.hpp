@@ -132,8 +132,10 @@ inline void prepare(PreparedExec& out, const EngineCommand& command, const bool 
   out.working_directory = command.working_directory.string();
   out.no_new_privileges = command.no_new_privileges;
   out.private_files = command.private_files;
-  out.argument_storage.reserve(command.arguments.size() + 2);
+  out.argument_storage.reserve(command.launcher_arguments.size() + command.arguments.size() + 2);
   out.argument_storage.push_back(out.executable);
+  // the launcher's own arguments first (an engine plugin's --family <id> --family-sha256 <hex>), then --serve
+  out.argument_storage.insert(out.argument_storage.end(), command.launcher_arguments.begin(), command.launcher_arguments.end());
   if (insert_serve) out.argument_storage.emplace_back("--serve");
   out.argument_storage.insert(out.argument_storage.end(), command.arguments.begin(), command.arguments.end());
   out.argv.reserve(out.argument_storage.size() + 1);

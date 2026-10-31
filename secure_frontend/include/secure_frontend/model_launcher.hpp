@@ -245,7 +245,7 @@ class ModelLauncher final {
   // A start keeps its own values (auto is what is remembered).
   [[nodiscard]] ModelOptionValues launch_values(const ModelCard& card, ModelOptionValues values, bool say) const;
   [[nodiscard]] CalibrationKey calibration_key(const ModelCard& card, const ModelOptionValues& values) const;
-  [[nodiscard]] std::optional<CalibrationResult> read_calibration(std::string_view card) const;
+  [[nodiscard]] std::optional<CalibrationResult> read_calibration(const ModelCard& card) const;
   [[nodiscard]] bool calibration_supported(const ModelCard& card) const;
   // Under mutex_: GET /v1/strata/models' "calibration" of card `index` at `values` (null when it has none).
   [[nodiscard]] std::string calibration_json(std::size_t index, const ModelCard& card, const ModelOptionValues& values) const;

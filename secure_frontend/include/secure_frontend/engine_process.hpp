@@ -58,6 +58,10 @@ struct EngineCommand final {
   // printable_stderr_line made it. Called on the drain's thread. Empty: no stderr text leaves the drain. `{}`:
   // designated initializers that omit it keep compiling (-Werror).
   std::function<void(std::string_view)> stderr_lines{};
+  // The engine launcher's own arguments, ahead of the --serve start() inserts: an engine plugin's `--family <id>
+  // --family-sha256 <hex>`, which the launcher reads first (engine/sdk/include/strata/family_abi.h). Held to the arguments'
+  // rule. `{}`: designated initializers that omit it keep compiling (-Werror).
+  std::vector<std::string> launcher_arguments{};
 };
 
 enum class ProcessErrorCode {

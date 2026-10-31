@@ -2,6 +2,7 @@
 
 #include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/json.hpp"
+#include "secure_frontend/plugin_manifest.hpp"
 
 #include <algorithm>
 #include <array>
@@ -130,6 +131,68 @@ bool valid_pair(const std::string_view flag, const std::string_view value) {
   return false;
 }
 
+// A whole number lo..hi in decimal, without a sign or leading zeros: an engine plugin's integer flag, whose bounds may
+// pass count_in's.
+bool integer_in(const std::string_view text, const std::int64_t lo, const std::int64_t hi) {
+  if (text.empty() || text.size() > 18U || (text.size() > 1U && text.front() == '0') ||
+      !std::all_of(text.begin(), text.end(), [](const char c) { return c >= '0' && c <= '9'; })) {
+    return false;
+  }
+  std::int64_t n = 0;
+  const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), n);
+  return error == std::errc{} && end == text.data() + text.size() && n >= lo && n <= hi;
+}
+
+// An engine plugin's result pair: one of its own steps' flags, its value of the flag's kind within its bounds.
+bool plugin_pair(const PluginEngine& plugin, const std::string_view flag, const std::string_view value) {
+  const bool swept = std::any_of(plugin.calibration.begin(), plugin.calibration.end(),
+                                 [flag](const PluginCalibrationStep& step) { return step.flag == flag; });
+  const auto argument = std::find_if(plugin.arguments.begin(), plugin.arguments.end(),
+                                     [flag](const PluginArgument& each) { return each.flag == flag; });
+  if (!swept || argument == plugin.arguments.end()) return false;
+  if (argument->value == PluginArgumentValue::fraction) return fraction(value);
+  return argument->value == PluginArgumentValue::integer && integer_in(value, argument->minimum, argument->maximum);
+}
+
+// A count of this PC's cores a candidate names - {cores} its physical cores, {threads} its logical ones, {cores/N} and
+// {cores*N/M} whole cores (rounded down, at least one); nullopt for a number as written.
+std::optional<std::int64_t> core_count(const std::string_view text, const std::int64_t physical, const std::int64_t logical) {
+  if (text == "{cores}") return physical;
+  if (text == "{threads}") return logical;
+  if (!text.starts_with("{cores") || !text.ends_with("}")) return std::nullopt;
+  const auto number = [](const std::string_view digits) {
+    std::int64_t n = 1;
+    std::from_chars(digits.data(), digits.data() + digits.size(), n);
+    return std::max<std::int64_t>(1, n);
+  };
+  const auto rest = text.substr(6U, text.size() - 7U);  // "/N" or "*N/M", as the manifest's reader took it
+  const auto slash = rest.find('/');
+  if (slash == std::string_view::npos) return std::nullopt;
+  const std::int64_t times = rest.starts_with("*") ? number(rest.substr(1U, slash - 1U)) : 1;
+  return std::max<std::int64_t>(1, physical * times / number(rest.substr(slash + 1U)));
+}
+
+// An engine plugin's sweep: its manifest's steps in order, each candidate as written or this PC's count (an integer
+// flag's, within the flag's bounds), without repeats.
+std::vector<SweepStep> plugin_plan(const PluginEngine& plugin, const int physical, const int logical) {
+  std::vector<SweepStep> plan;
+  for (const auto& step : plugin.calibration) {
+    const auto argument = std::find_if(plugin.arguments.begin(), plugin.arguments.end(),
+                                       [&step](const PluginArgument& each) { return each.flag == step.flag; });
+    if (argument == plugin.arguments.end()) continue;  // (the manifest's reader refuses such a step)
+    SweepStep out{step.flag, {}};
+    for (const auto& text : step.values) {
+      std::string value = text;
+      if (const auto count = core_count(text, physical, logical)) {
+        value = std::to_string(std::clamp(*count, argument->minimum, argument->maximum));
+      }
+      if (std::find(out.values.begin(), out.values.end(), value) == out.values.end()) out.values.push_back(std::move(value));
+    }
+    if (!out.values.empty()) plan.push_back(std::move(out));
+  }
+  return plan;
+}
+
 // The card config rows a sweep sets (the GLM engine's environment rows), and their kind.
 enum class RowKind { none, decimal, integer };
 RowKind row_kind(const std::string_view row) {
@@ -165,6 +228,7 @@ std::vector<SweepStep> sweep_plan(const EngineProfile profile, const SweepMachin
     const std::string text = std::to_string(std::max(1U, n));
     if (std::find(threads.begin(), threads.end(), text) == threads.end()) threads.push_back(text);
   }
+  if (const auto* plugin = family_descriptor(profile).plugin) return plugin_plan(*plugin, physical, logical);
   switch (profile) {
     case EngineProfile::flint:
       return {{"--cpu-lane", {"off", "on"}}, {"--pcie-frac", {"0", "0.25", "0.5", "0.75"}}, {"--cpu-threads", threads}};
@@ -421,7 +485,11 @@ std::string render_calibration(const CalibrationResult& r) {
          ", \"model\": " + json_text(r.key.model) + ", \"options\": " + json_text(r.key.options) + "}\n}\n";
 }
 
-std::optional<CalibrationResult> parse_calibration(const std::string_view text) {
+namespace {
+
+// A result file whose settings are each `valid` (a flag or row and its value).
+std::optional<CalibrationResult> parse_result(const std::string_view text,
+                                              const std::function<bool(std::string_view, std::string_view)>& valid) {
   const auto parsed = parse_json(text, kResultLimits);
   const auto* root = std::get_if<JsonValue>(&parsed);
   if (root == nullptr || root->if_object() == nullptr) return std::nullopt;
@@ -451,7 +519,7 @@ std::optional<CalibrationResult> parse_calibration(const std::string_view text) 
   }
   if (result.args.size() % 2U != 0U) return std::nullopt;
   for (std::size_t i = 0; i < result.args.size(); i += 2U) {
-    if (!valid_pair(result.args[i], result.args[i + 1U])) return std::nullopt;
+    if (!valid(result.args[i], result.args[i + 1U])) return std::nullopt;
   }
   const auto* gpu = text_of(member(*key, "gpu"));
   const auto* cpu = text_of(member(*key, "cpu"));
@@ -465,6 +533,22 @@ std::optional<CalibrationResult> parse_calibration(const std::string_view text) 
   }
   result.key = CalibrationKey{*gpu, *cpu, static_cast<std::uint64_t>(*ram->if_integer()), *engine, *model, *options};
   return result;
+}
+
+}  // namespace
+
+std::optional<CalibrationResult> parse_calibration(const std::string_view text) { return parse_result(text, valid_pair); }
+
+std::optional<CalibrationResult> parse_calibration(const std::string_view text, const FamilyDescriptor& family) {
+  if (family.plugin == nullptr) return parse_calibration(text);
+  const PluginEngine& plugin = *family.plugin;
+  return parse_result(text, [&plugin](const std::string_view flag, const std::string_view value) { return plugin_pair(plugin, flag, value); });
+}
+
+std::string engine_fact(const std::filesystem::path& executable, const FamilyDescriptor& family) {
+  std::string fact = file_fact(executable);
+  if (family.plugin != nullptr) fact += ";" + std::string{family.library_sha256};
+  return fact;
 }
 
 namespace {

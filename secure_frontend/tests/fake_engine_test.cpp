@@ -209,6 +209,46 @@ void fake_engine_dump_is_parseable() {
   (void)second.terminate(std::chrono::milliseconds(250));
 }
 
+// An engine plugin's start (plugin spec section 5): the launcher reads --family <id> --family-sha256 <hex> first, so the
+// launcher's own arguments come before the --serve the process puts in, and the engine's after it; each is held to the
+// arguments' rule (no --serve, no NUL).
+void the_launchers_arguments_come_before_serve() {
+  const auto fake = test_support::fake_engine_path();
+  const std::vector<std::string> family{"--family", "acme3", "--family-sha256", std::string(64, 'a')};
+  secure_frontend::EngineStdioProcess transport;
+  expect(!transport.start({.executable = fake, .arguments = {"--native", "m.gguf"}, .environment = {}, .launcher_arguments = family})
+              .has_value(),
+         "fake engine must start");
+  expect(transport.read_line(5s).line == "READY 4096 stop", "READY");
+  const auto dump = test_support::request_dump(transport, 5s);
+  expect(dump.has_value() && dump->argv == std::vector<std::string>{test_support::utf8_path(fake), "--family", "acme3", "--family-sha256",
+                                                                    std::string(64, 'a'), "--serve", "--native", "m.gguf"},
+         "the launcher's arguments, --serve, then the engine's");
+  (void)transport.terminate(std::chrono::milliseconds(250));
+
+  const auto dir = test_support::make_temp_dir("launcher");
+  const auto file = dir / "dump.txt";
+  secure_frontend::EngineStdioProcess quiet;
+  expect(!quiet.start({.executable = fake, .arguments = {"--dump-file=" + test_support::utf8_path(file)}, .environment = {},
+                       .insert_serve = false, .launcher_arguments = family})
+              .has_value(),
+         "fake engine must start without --serve");
+  expect(quiet.read_line(5s).line == "READY 4096 stop", "READY without --serve");
+  const auto from_file = test_support::read_dump_file(file, 5s);
+  expect(from_file.has_value() && from_file->argv == std::vector<std::string>{test_support::utf8_path(fake), "--family", "acme3",
+                                                                              "--family-sha256", std::string(64, 'a'),
+                                                                              "--dump-file=" + test_support::utf8_path(file)},
+         "no --serve: the launcher's arguments, then the engine's");
+  (void)quiet.terminate(std::chrono::milliseconds(250));
+
+  for (const std::vector<std::string>& bad : {std::vector<std::string>{"--serve"}, std::vector<std::string>{std::string("a\0b", 3)}}) {
+    secure_frontend::EngineStdioProcess refused;
+    const auto error = refused.start({.executable = fake, .arguments = {}, .environment = {}, .launcher_arguments = bad});
+    expect(error.has_value() && error->code == secure_frontend::ProcessErrorCode::invalid_command,
+           "a launcher argument is checked as the arguments are");
+  }
+}
+
 // SP3 Task 14 (spec §9.2, M1 modes): streaming fake — cycled token ids,
 // counts, intervals, finishes, STOP with a delay, prefill delay; the SP2
 // short form stays unchanged when no new flag is given.
@@ -348,6 +388,7 @@ int main(int argc, char* argv[]) {
   return secure_frontend_test::run_cases(argc, argv,
                                          {{"fake_engine_modes_selftest", fake_engine_modes_selftest},
                                           {"fake_engine_dump_is_parseable", fake_engine_dump_is_parseable},
+                                          {"the_launchers_arguments_come_before_serve", the_launchers_arguments_come_before_serve},
                                           {"fake_engine_stream_modes_selftest", fake_engine_stream_modes_selftest},
                                           {"fake_engine_reads_options_beside_itself", fake_engine_reads_options_beside_itself}},
                                          failures);

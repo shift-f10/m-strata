@@ -5,11 +5,13 @@
 #include "secure_frontend/model_index_store.hpp"
 #include "secure_frontend/model_inventory.hpp"
 #include "secure_frontend/canonical_path.hpp"
+#include "secure_frontend/plugin_manifest.hpp"
 
 #include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -77,22 +79,37 @@ std::variant<ComposedLaunch, LaunchFailure> expert_launch(const FrontendConfig& 
     std::error_code ec;
     if (std::filesystem::is_regular_file(shipped, ec)) glm.expert_profile = path_to_utf8(std::filesystem::path{shipped}.make_preferred());
   }
-  auto args = build_engine_arguments(arguments_profile, *selected, config.roots.models, config.engine.args, gpus,
-                                     config.engine.mtp, glm);
+  // an engine plugin's family: its declared flags, --gpu and --native, the launcher told which family by its own arguments
+  auto args = family.plugin != nullptr
+                  ? build_engine_arguments(family, *selected, config.roots.models, config.engine.args, gpus)
+                  : build_engine_arguments(arguments_profile, *selected, config.roots.models, config.engine.args, gpus,
+                                           config.engine.mtp, glm);
   if (const auto* failure = std::get_if<EngineArgumentsError>(&args)) {
     return config_failure({"Engine arguments rejected: " + failure->message});
   }
   auto argv = std::get<std::vector<std::string>>(std::move(args));
-  // Gemma 4's MTP draft file (owner 2026-10-28; the card's --mtp <file>, an absolute .gguf by the allowlist): held at
-  // each launch to the rule a card's picture encoder is - a regular file, not a link, in a folder no other user of this
-  // PC may change unless roots.allow_untrusted_media - and refused by name, never by its path.
-  if (family.checks_mtp_side_file) {
+  // Gemma 4's MTP draft file (owner 2026-10-28; the card's --mtp <file>, an absolute .gguf by the allowlist), and each
+  // file an engine plugin's gguf_file flags name (its draft file, on whatever flag): held at each launch to the rule a
+  // card's picture encoder is - a regular file, not a link, in a folder no other user of this PC may change unless
+  // roots.allow_untrusted_media - and refused by its flag, never by its path.
+  std::vector<std::string_view> side_file_flags;
+  if (family.plugin != nullptr) {
+    for (const auto& argument : family.plugin->arguments) {
+      if (argument.value == PluginArgumentValue::gguf_file) side_file_flags.emplace_back(argument.flag);
+    }
+  } else if (family.checks_mtp_side_file) {
+    side_file_flags.emplace_back("--mtp");
+  }
+  for (const auto flag : side_file_flags) {
     const auto& user = config.engine.args;
-    if (const auto at = std::find(user.begin(), user.end(), "--mtp"); at != user.end() && at + 1 != user.end() &&
-                                                                       !trusted_side_file(path_from_utf8(*(at + 1)), config)) {
+    const auto at = std::find(user.begin(), user.end(), flag);
+    if (at == user.end() || at + 1 == user.end() || trusted_side_file(path_from_utf8(*(at + 1)), config)) continue;
+    if (family.plugin == nullptr) {
       return config_failure({"engine.args --mtp: the MTP draft file is missing, a link, or in a folder other users of this PC can "
                              "change (turn the card's MTP option off to start without it)"});
     }
+    return config_failure({"engine.args " + std::string{flag} +
+                           ": the file is missing, a link, or in a folder other users of this PC can change"});
   }
   // Gemma 4 plan 1 Task 3: the qwen engine's composed tails are qwen's only. The Gemma
   // engine's argv is its allowlisted engine.args, --gpu and --native (build_engine_arguments);
@@ -141,6 +158,10 @@ std::variant<ComposedLaunch, LaunchFailure> expert_launch(const FrontendConfig& 
   }
   ComposedLaunch launch{profile, std::move(argv), config.roots.tokenizer_pack, id, std::move(served), false,
                         std::move(mtp_removed), std::move(vision_mmproj), std::move(vision_model)};
+  // the launcher loads an engine plugin's library only after checking it is the one approved (family_plugin.hpp)
+  if (family.plugin != nullptr) {
+    launch.launcher_args = {"--family", std::string{family.id}, "--family-sha256", std::string{family.library_sha256}};
+  }
   if (!launch.tokenizer_root) {
     // launch_config_issues let this through only for a tokenizer_from_gguf profile: the selected model's file
     auto file = parse_relative_path(selected->relative_artifact_path);

@@ -16,6 +16,11 @@
  * runs after (stdout unbuffered, CUDA kernels loaded with the context, --gpu as the visible GPUs) and calls
  * strata_family_main() with argv[0] and the family's own arguments only (never --family or --family-sha256).
  * strata_family_main() speaks the wire protocol on stdin and stdout; its return value is the process's exit code.
+ * The server starts a card of the family as
+ *
+ *     multiengine --family <id> --family-sha256 <hex> --serve <the card's declared flags> [--gpu <list>] --native <gguf>
+ *
+ * so strata_family_main() is handed --serve, the flags the plugin's manifest declares, --gpu and --native.
  *
  * Compatibility: a later minor version only appends fields to StrataFamilyInfo and only adds optional exports; a new
  * major version is a new STRATA_FAMILY_ABI_VERSION, which this launcher refuses.

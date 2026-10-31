@@ -49,9 +49,11 @@ std::optional<ProcessError> validate_command(const EngineCommand& command) {
   if (path_contains_nul(command.executable)) {
     return ProcessError{ProcessErrorCode::invalid_command, "engine executable path must not contain NUL bytes"};
   }
-  for (const auto& argument : command.arguments) {
-    if (contains_nul(argument)) {
-      return ProcessError{ProcessErrorCode::invalid_command, "engine arguments must not contain NUL bytes"};
+  for (const auto* list : {&command.launcher_arguments, &command.arguments}) {
+    for (const auto& argument : *list) {
+      if (contains_nul(argument)) {
+        return ProcessError{ProcessErrorCode::invalid_command, "engine arguments must not contain NUL bytes"};
+      }
     }
   }
   for (const auto& [name, value] : command.environment) {
@@ -154,13 +156,15 @@ std::optional<ProcessError> EngineProcess::start(const EngineCommand& command) {
 
 #if defined(_WIN32)
   std::wstring command_line = quote_windows_argument(command.executable.wstring());
-  for (const auto& argument : command.arguments) {
-    const auto wide = utf8_to_wide(argument);
-    if (!wide.has_value()) {
-      return ProcessError{ProcessErrorCode::invalid_command, "engine argument is not valid UTF-8"};
+  for (const auto* list : {&command.launcher_arguments, &command.arguments}) {  // the launcher's own first, as prepare()
+    for (const auto& argument : *list) {
+      const auto wide = utf8_to_wide(argument);
+      if (!wide.has_value()) {
+        return ProcessError{ProcessErrorCode::invalid_command, "engine argument is not valid UTF-8"};
+      }
+      command_line += L' ';
+      command_line += quote_windows_argument(*wide);
     }
-    command_line += L' ';
-    command_line += quote_windows_argument(*wide);
   }
   std::wstring environment;
   for (const auto& [name, value] : command.environment) {

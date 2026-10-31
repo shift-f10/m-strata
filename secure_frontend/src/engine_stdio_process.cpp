@@ -61,9 +61,11 @@ std::optional<ProcessError> validate(const EngineCommand& command) {
   if (command.executable.empty() || path_contains_nul(command.executable)) {
     return ProcessError{ProcessErrorCode::invalid_command, "engine executable is invalid"};
   }
-  for (const auto& arg : command.arguments) {
-    if (arg == "--serve" || contains_nul(arg)) {
-      return ProcessError{ProcessErrorCode::invalid_command, "engine arguments contain an invalid entry"};
+  for (const auto* list : {&command.launcher_arguments, &command.arguments}) {
+    for (const auto& arg : *list) {
+      if (arg == "--serve" || contains_nul(arg)) {
+        return ProcessError{ProcessErrorCode::invalid_command, "engine arguments contain an invalid entry"};
+      }
     }
   }
   for (const auto& [name, value] : command.environment) {
@@ -471,6 +473,8 @@ std::optional<ProcessError> EngineStdioProcess::start(const EngineCommand& comma
 #if defined(_WIN32)
   const std::wstring executable = command.executable.wstring();
   std::wstring line = quote(executable);
+  // the launcher's own arguments first: it reads an engine plugin's --family <id> --family-sha256 <hex> before anything
+  for (const auto& arg : command.launcher_arguments) { auto wide = to_wide(arg); if (!wide) return ProcessError{ProcessErrorCode::invalid_command, "engine argument is not valid UTF-8"}; line += L' ' + quote(*wide); }
   // SP5 M1 Task 11 (Ruling T11-ff): the literal --serve insertion is the ENGINE protocol;
   // the pin's vision child takes none (serve/server.py:2556-2568), so insert_serve gates it.
   if (command.insert_serve) line += L" --serve";
