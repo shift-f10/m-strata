@@ -31,6 +31,11 @@ struct EngineCommand final {
   // on by default (owner decision 2026-10-13); --allow-new-privileges turns it off.
   // `{false}`: existing designated initializers that omit it keep compiling (-Werror).
   bool no_new_privileges{false};
+  // POSIX: umask 077 before execve, so whatever the child creates is owner-only whatever the server's own umask
+  // (owner 2026-10-31: on a umask-0002 VM strata-prepare built the Qwen3.8 draft layer group-writable, and the server
+  // would not run a draft layer others can change). The model store's tools (the downloader, the prepare steps) set it.
+  // Windows: nothing - a child's files take their folder's inherited owner-only DACL. `{false}`: as above.
+  bool private_files{false};
   // SP5 M1 Task 11 (Ruling T11-x): the Windows TerminateJobObject code a supervisor
   // kill leaves on this child — kSupervisorKillExitCode for an engine, kVisionKillExitCode
   // for the vision role (distinct exit-code space). `{}`-default pattern as above.

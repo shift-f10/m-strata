@@ -1135,6 +1135,7 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
           command.environment = environment;
           command.working_directory = directory;
           command.no_new_privileges = true;
+          command.private_files = true;   // the pack in the private state folder is owner-only too
           command.insert_serve = false;
           return secure_frontend::run_prepare_command(secure_frontend::production_download_seams().spawn, command, {});
         };

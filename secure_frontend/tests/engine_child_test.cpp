@@ -607,6 +607,26 @@ void proc06_child_has_no_new_privs() {
            allow ? "--allow-new-privileges leaves NoNewPrivs off" : "the server sets NoNewPrivs by default");
   }
 }
+
+// Owner 2026-10-31 (a Qwen3.8 draft layer built on a umask-0002 VM was group-writable, so the server ran the model
+// without it): a command with private_files runs under umask 077, one without keeps the server's own (here the VM's).
+void a_private_files_child_creates_owner_only_files() {
+  const mode_t saved = ::umask(S_IWOTH);
+  for (const bool requested : {true, false}) {
+    secure_frontend::EngineStdioProcess child;
+    expect(!child.start({.executable = test_support::fake_engine_path(), .arguments = {}, .environment = {}, .private_files = requested})
+                .has_value(),
+           "start");
+    expect(child.read_line(5s).line == "READY 4096 stop", "READY");
+    const auto dump = test_support::request_dump(child, 5s);
+    const std::string expected = requested ? "0077" : "0002";
+    expect(dump && dump->ids.count("umask") == 1 && dump->ids.at("umask") == expected,
+           "the child's umask is " + expected + (requested ? " when asked" : " otherwise") + ": " +
+               (dump && dump->ids.count("umask") == 1 ? dump->ids.at("umask") : std::string{"(none)"}));
+    (void)child.terminate(250ms);
+  }
+  (void)::umask(saved);
+}
 #endif
 
 #if !defined(_WIN32)
@@ -914,6 +934,7 @@ int main(int argc, char* argv[]) {
                                              {"proc03_other_uid_cannot_open_engine_fd", proc03_other_uid_cannot_open_engine_fd},
                                              {"proc03_same_uid_reopen_is_accepted_risk", proc03_same_uid_reopen_is_accepted_risk},
                                              {"proc06_child_has_no_new_privs", proc06_child_has_no_new_privs},
+                                             {"a_private_files_child_creates_owner_only_files", a_private_files_child_creates_owner_only_files},
                                              {"sp4_seam_keep_fds_lift_and_hook_order", sp4_seam_keep_fds_lift_and_hook_order},
                                              {"sp4_seam_hook_failure_is_distinct_from_execve_failure", sp4_seam_hook_failure_is_distinct_from_execve_failure},
 #endif

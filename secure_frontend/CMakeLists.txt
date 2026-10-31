@@ -1411,7 +1411,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     set(SECURE_FRONTEND_CHILD_CASES proc04_exit_status_is_classified proc06_child_ids_and_cwd)
     set(SECURE_FRONTEND_CHILD_LINUX_CASES proc05_group_killed_after_leader_reaped proc02_child_signal_state_is_default proc02_canary_descriptors_absent
         proc03_other_uid_cannot_open_engine_fd proc03_same_uid_reopen_is_accepted_risk proc06_child_has_no_new_privs
-        sp4_seam_keep_fds_lift_and_hook_order sp4_seam_hook_failure_is_distinct_from_execve_failure)
+        a_private_files_child_creates_owner_only_files sp4_seam_keep_fds_lift_and_hook_order sp4_seam_hook_failure_is_distinct_from_execve_failure)
     set(SECURE_FRONTEND_CHILD_WINDOWS_CASES proc02_canary_handles_absent proc02_stdin_pipe_dacl_is_owner_only proc03_windows_pipe_second_open_fails proc01_windows_argv_round_trip
         sp4_seam_launch_in_job_handle_and_crt_block sp4_seam_launch_in_job_rejects_non_inheritable_handle)
     if(WIN32)

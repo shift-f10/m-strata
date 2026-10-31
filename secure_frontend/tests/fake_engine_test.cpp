@@ -193,7 +193,7 @@ void fake_engine_dump_is_parseable() {
 #else
     expect(dump->fds == std::vector<int>{0, 1, 2}, "FDS lists exactly stdio");
     expect(dump->sig_blocked.size() == 16U && dump->sig_ignored.size() == 16U, "SIG carries SigBlk/SigIgn masks");
-    for (const char* key : {"uid", "gid", "euid", "egid", "nnp", "capeff"}) expect(dump->ids.count(key) == 1, std::string("IDS has ") + key);
+    for (const char* key : {"uid", "gid", "euid", "egid", "nnp", "capeff", "umask"}) expect(dump->ids.count(key) == 1, std::string("IDS has ") + key);
 #endif
   }
   (void)transport.terminate(std::chrono::milliseconds(250));

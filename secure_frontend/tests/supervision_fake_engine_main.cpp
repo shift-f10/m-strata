@@ -467,7 +467,8 @@ std::vector<std::string> dump_lines() {
   lines.push_back("IDS " + token_report());
 #else
   lines.push_back("IDS uid=" + std::to_string(getuid()) + " gid=" + std::to_string(getgid()) + " euid=" + std::to_string(geteuid()) +
-                  " egid=" + std::to_string(getegid()) + " nnp=" + status_field("NoNewPrivs") + " capeff=" + status_field("CapEff"));
+                  " egid=" + std::to_string(getegid()) + " nnp=" + status_field("NoNewPrivs") + " capeff=" + status_field("CapEff") +
+                  " umask=" + status_field("Umask"));
 #endif
   lines.emplace_back("END");
   return lines;

@@ -645,6 +645,13 @@ gguf") and decisions D1-D8; pause and resume added the same day.
     checks each one again against the SHA-256 compiled into it, and writes only the store's
     `mtp/rt`: each file under a temporary name, renamed when whole, the vocabulary
     (`engine/data/draft_vocab.bin`, shipped with the engine) last.
+  - **Owner-only (2026-10-31, owner's VM: "it did not download the mtp files").** A card drafts
+    only with a layer no one else can change (`open_root`: not group- or other-writable). On a
+    POSIX server with umask 0002, `strata-prepare` built `mtp/rt` 0775, so the card ran without
+    it. Every child the downloads start (the pulls, the packs, the layer's build) and the card
+    routes' pack step now run with `EngineCommand::private_files`: umask 077 before `execve`,
+    so what they create is owner-only whatever the server's umask. On Windows a child's files
+    take the store's inherited owner-only DACL, as before.
   - **Revision and inventory.** The pinned revision and each tensor's place come from the
     generated catalog (`tools/secure/mtp_inventory.json`, checked against `mtp_fetch.py`'s
     tables by the generator).
