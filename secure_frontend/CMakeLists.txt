@@ -1990,7 +1990,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         removing_a_card_removes_its_calibration a_card_short_of_ram_starts_in_the_low_ram_mode a_card_with_room_keeps_its_experts_in_ram a_card_that_fixes_its_experts_flag_keeps_it failures_raise_alerts a_failed_calibration_writes_a_report
         a_stop_waits_for_an_engine_still_ending
         a_card_is_pinned_and_its_removal_unpins_it a_pinned_card_starts_with_the_server_and_the_pin_is_kept
-        a_card_kept_loaded_never_unloads_when_idle
+        a_card_kept_loaded_never_unloads_when_idle a_card_kept_loaded_is_warmed_at_its_start_and_while_idle
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
 
     # Model downloads (plan 2026-10-23-model-downloads Task 4): the download manager over a scripted child.

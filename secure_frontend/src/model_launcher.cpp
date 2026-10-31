@@ -1371,9 +1371,26 @@ void ModelLauncher::run_jobs() {
     Job job;
     {
       std::unique_lock lock(mutex_);
-      // idle: every 5 s, the running model's engine is checked - a circuit opened by repeated failures alerts once
-      while (!changed_.wait_for(lock, std::chrono::seconds(5), [this] { return pending_.has_value() || shutting_down_; })) {
-        if (running_ == nullptr || !running_card_.has_value() || stop_reported_) continue;
+      // idle: every 5 s (or the warm-up's period, when shorter), the running model's engine is checked - a circuit opened
+      // by repeated failures alerts once - and a card kept loaded that has idled for warm_every is warmed (part 3)
+      const auto every = std::min<std::chrono::milliseconds>(std::chrono::seconds(5), settings_.warm_every);
+      while (!changed_.wait_for(lock, every, [this] { return pending_.has_value() || shutting_down_; })) {
+        if (running_ == nullptr || !running_card_.has_value()) continue;
+        if (hot_running_ && !switching_ && !busy_ && !stop_reported_ &&
+            running_->supervisor().snapshot().state == SupervisorState::ready) {
+          const auto now = std::chrono::steady_clock::now();
+          const auto since = std::max(running_->supervisor().last_activity(), last_warm_);
+          if (now - since >= settings_.warm_every) {
+            const auto runtime = running_;
+            const ModelCard card = settings_.cards[*running_card_];
+            lock.unlock();
+            warm(runtime, card);
+            lock.lock();
+            last_warm_ = std::chrono::steady_clock::now();
+            continue;
+          }
+        }
+        if (stop_reported_) continue;
         if (running_->supervisor().snapshot().state != SupervisorState::circuit_open) continue;
         stop_reported_ = true;
         const std::string name = settings_.cards[*running_card_].name;
@@ -1588,16 +1605,35 @@ void ModelLauncher::run_start(const Job& job) {
     return;
   }
   if (runtime->vision() != nullptr) log("[strata] models: " + card.name + ": the picture encoder is running");
+  const auto hot = job.values.find("hot");
+  const bool kept_loaded = hot != job.values.end() && std::holds_alternative<bool>(hot->second) && std::get<bool>(hot->second);
   {
     std::lock_guard lock(mutex_);
     status_[job.card] = CardStatus{CardState::running, {}};
     stop_reported_ = false;
+    hot_running_ = kept_loaded;
   }
   // The Monitor shows "N experts loaded" on the VRAM and RAM cards; push the engine's startup
   // readings now so a just-started model shows them before any chat (owner 2026-10-23).
   if (settings_.monitor != nullptr) settings_.monitor->on_engine_stats(runtime->supervisor().ready_readings());
   log("[strata] models: " + card.name + " is running");
   remember(job.card, job.values);
+  if (kept_loaded) {
+    // part 3: a card kept loaded is warmed at once, so its first answer does not pay for cold pages and first-use setup
+    warm(runtime, card);
+    std::lock_guard lock(mutex_);
+    last_warm_ = std::chrono::steady_clock::now();
+  }
+}
+
+void ModelLauncher::warm(const std::shared_ptr<ModelRuntime>& runtime, const ModelCard& card) {
+  const RequestContext context{.client_gone = {}, .shutting_down = runtime->stop_flag(), .loopback_peer = true};
+  const auto result = runtime->chat().handle(calibration_body(card.profile, runtime->model_id(), "Hi", 1U), context);
+  const auto* response = std::get_if<HttpResponse>(&result);
+  if (response == nullptr || response->status != 200) {
+    log("[strata] models: " + card.name + ": the warm-up did not answer (" +
+        (response != nullptr ? std::string{response->log_code} : std::string{"stream"}) + ")");
+  }
 }
 
 void ModelLauncher::remember(const std::size_t card, const ModelOptionValues& values) {

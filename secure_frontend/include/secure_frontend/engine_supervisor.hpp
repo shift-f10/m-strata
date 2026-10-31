@@ -233,6 +233,9 @@ class EngineSupervisor final {
   // note_request_finished re-arms it when the engine is ready.
   void note_request_started();
   void note_request_finished();
+  // Pinned and hot models (owner 2026-10-31, spec part 3): when a request last began or ended - kept whatever the idle
+  // unload (the launcher warms a card kept loaded that has idled long enough). Before any, the epoch.
+  [[nodiscard]] std::chrono::steady_clock::time_point last_activity() const noexcept;
   // The armed idle window's remaining time (nullopt: unloaded or idle off). Test seam
   // and wake diagnostics; the GenerationGate does not depend on it.
   [[nodiscard]] std::optional<std::chrono::milliseconds> idle_unload_deadline() const;
@@ -325,6 +328,7 @@ class EngineSupervisor final {
   bool wake_pending_{false};
   std::optional<SupervisorClock::time_point> idle_deadline_;
   std::atomic<std::uint32_t> in_flight_{0};
+  std::atomic<std::chrono::steady_clock::rep> last_activity_{0};  // last_activity()'s ticks since the steady epoch
   std::thread thread_;
 };
 

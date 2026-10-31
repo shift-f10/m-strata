@@ -2125,7 +2125,9 @@ One model runs at a time.
   list marks the pinned card `*`).
   Every card also offers **Keep loaded** (`hot`, owner 2026-10-31): with model cards no engine idle-unloads but the GLM
   engine's (the main config's `glm.idle_unload_s`; `engine.idle_unload_s` is refused with cards), and Keep loaded turns
-  that off for the start; it is also the switch the warm-up and the restarts read.
+  that off for the start; it is also the switch the warm-up and the restarts read. A card kept loaded is warmed as soon
+  as it runs - one short generation through its engine, never a conversation - and again whenever it has idled ten
+  minutes, so the OS keeps its pages and its first answer does not wait for them.
 - **A start:** the card, the option values and the card's config are validated at once (a
   refusal names the option: 400 `invalid_option`); the model is then composed and its tokenizer
   loaded before the running model is touched, so a bad start never takes it down. Then new chat

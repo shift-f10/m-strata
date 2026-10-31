@@ -112,6 +112,8 @@ struct LauncherSettings final {
   // did. Unset, a pin is refused.
   std::optional<std::string> pinned{};
   std::function<bool(const std::optional<std::string>& name)> save_pin{};
+  // Part 3: a card kept loaded is warmed at its start and again whenever it has idled this long (no request, no warm-up).
+  std::chrono::milliseconds warm_every{std::chrono::minutes(10)};
 };
 
 class ModelLauncher final {
@@ -228,6 +230,9 @@ class ModelLauncher final {
   };
   void run_jobs();
   void run_start(const Job& job);
+  // Part 3: one short generation through the running model (one token, thinking off where its family takes it, never a
+  // conversation), so a card kept loaded is ready when a request comes. Called without the lock.
+  void warm(const std::shared_ptr<ModelRuntime>& runtime, const ModelCard& card);
   // §5: the sweep, each candidate one engine start of the card with those flags; true when a result was kept.
   [[nodiscard]] bool run_calibration(const Job& job);
   // `trial` (when given) is filled with how the start went: its speed, or why it failed, the server's lines for its
@@ -273,6 +278,8 @@ class ModelLauncher final {
   mutable std::mutex mutex_;
   mutable std::condition_variable changed_;
   std::mutex pin_mutex_;  // one pin kept at a time (settings_.pinned itself is mutex_'s)
+  bool hot_running_{false};  // the running card was started kept loaded (part 3: it is warmed)
+  std::chrono::steady_clock::time_point last_warm_{};  // the last warm-up's end
   std::vector<CardStatus> status_;
   std::vector<bool> page_card_;               // beside settings_.cards: the server wrote it
   std::shared_ptr<ModelRuntime> running_;     // the started (or starting) model's runtime

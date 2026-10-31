@@ -280,6 +280,23 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z85 (Windows box; owner-directed)
+
+Pinned and hot models, part 3 (spec part 3, "As built"): a card kept loaded is warmed.
+- **The supervisor**: `last_activity()` - when a request last began or ended, stamped by `note_request_started/finished`
+  whatever the idle unload (they returned at once with it off before).
+- **The launcher**: `hot_running_` (the running card's start held `hot` true), `warm()` (the calibration's body: one token,
+  thinking off where taken, through the chat route), a warm-up right after a kept-loaded card runs, and in the worker's idle
+  loop (every 5 s or `warm_every` when shorter) whenever the model is ready and has idled `warm_every`
+  (`LauncherSettings::warm_every`, 10 minutes) since its last request or warm-up.
+- **Tests**: the launcher 1 (`a_card_kept_loaded_is_warmed_at_its_start_and_while_idle`: over the fake engine with
+  warm_every 1.5 s, a card not kept loaded gets no generation in 4 s; one kept loaded gets one at its start and another
+  once it has idled).
+- **Proof** (main, cherry-picked from plugins a9e331d4, where the RED and GREEN ran): MSVC built whole, no warnings, 1436
+  of 1440 (the two release-only cases and the two Maya parity scans, which need engines/maya-ref, not checked out in main's
+  worktree - as before); Linux gcc 13.3 and clang 18.1 built whole with -Werror, no warnings, 1486/1492 and 1487/1492 (the
+  same four; egress and net01_ipv6 pass alone).
+
 ### Claude Code session, 2026-10-31 z84 (Windows box; owner-directed)
 
 Pinned and hot models, part 2 (spec part 2, "As built"): Keep loaded.

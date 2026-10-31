@@ -170,6 +170,7 @@ void EngineSupervisor::set_on_stopped(std::function<void()> on_stopped) { on_sto
 // SP5 M1 Task 6 (idle_unload_s): the serving path brackets every request. Both are
 // no-ops with the pin's "never" default (idle_unload 0).
 void EngineSupervisor::note_request_started() {
+  last_activity_.store(std::chrono::steady_clock::now().time_since_epoch().count());
   if (config_.idle_unload.count() == 0) return;
   ++in_flight_;
   std::lock_guard lock(mutex_);
@@ -177,6 +178,7 @@ void EngineSupervisor::note_request_started() {
 }
 
 void EngineSupervisor::note_request_finished() {
+  last_activity_.store(std::chrono::steady_clock::now().time_since_epoch().count());
   if (config_.idle_unload.count() == 0) return;
   if (in_flight_.load() > 0U) --in_flight_;
   bool armed = false;
@@ -191,6 +193,10 @@ void EngineSupervisor::note_request_finished() {
   // The supervisor thread may be waiting on the engine without a bound (it last looked while a generation ran): wake
   // it so its wait keeps the window just armed (idle_unload_fires_after_a_request_that_began_at_ready).
   if (armed) wake_.notify();
+}
+
+std::chrono::steady_clock::time_point EngineSupervisor::last_activity() const noexcept {
+  return std::chrono::steady_clock::time_point{std::chrono::steady_clock::duration{last_activity_.load()}};
 }
 
 std::optional<std::chrono::milliseconds> EngineSupervisor::idle_unload_deadline() const {
