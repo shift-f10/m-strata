@@ -45,8 +45,9 @@ void web01_host_matrix() {
   expect(host(v6, {"[::1]"}) == PolicyVerdict::forbidden && host(v6, {"::1"}) == PolicyVerdict::malformed, "v6 without port");
   const auto wildcard = policy_for("0.0.0.0", {"box.lan:8080"});
   expect(host(wildcard, {"0.0.0.0:8080"}) == PolicyVerdict::forbidden, "a wildcard bind has no bound authority");
-  expect(host(wildcard, {"localhost:8080"}) == PolicyVerdict::forbidden, "no localhost alias without a loopback bind");
-  expect(host(wildcard, {"box.lan:8080"}) == PolicyVerdict::allowed, "a wildcard bind trusts only the aliases");
+  expect(host(wildcard, {"localhost:8080"}) == PolicyVerdict::allowed, "a wildcard bind takes its own loopback names (2026-10-31)");
+  expect(host(wildcard, {"box.lan:8080"}) == PolicyVerdict::allowed, "a wildcard bind trusts its aliases");
+  expect(host(wildcard, {"other.lan:8080"}) == PolicyVerdict::forbidden, "and no other name");
 }
 
 void web02_host_name_case_is_folded() {
@@ -114,6 +115,32 @@ void web06_preflight_rules_unit() {
   expect(!secure_frontend::evaluate_preflight(p, plain).has_value(), "OPTIONS without ACRM is not a preflight");
 }
 
+// The owner, 2026-10-31, on a VM ("I am getting request origin not allowed"): a server bound to every address, reached by
+// its own TUI or window at 127.0.0.1:<port> (window_shell's listening_origin), refused them - it trusted only the aliases -
+// and an alias written without its port matched no browser's Host. A wildcard bind also takes its own loopback names, and
+// an alias without a port also takes the listener's port; any other name is still refused (DNS rebinding still fails).
+void a_wildcard_bind_takes_its_loopback_names_and_bare_aliases() {
+  const auto wildcard = policy_for("0.0.0.0", {"vm.example.test", "192.0.2.10"});
+  for (const std::string_view ok : {"127.0.0.1:8080", "localhost:8080", "vm.example.test:8080", "vm.example.test", "192.0.2.10:8080",
+                                    "192.0.2.10"}) {
+    expect(host(wildcard, {ok}) == PolicyVerdict::allowed, "allowed: " + std::string{ok});
+  }
+  for (const std::string_view bad : {"evil.example:8080", "127.0.0.1:8081", "vm.example.test:9090", "0.0.0.0:8080", "[::1]:8080"}) {
+    expect(host(wildcard, {bad}) == PolicyVerdict::forbidden, "refused: " + std::string{bad});
+  }
+  const auto origin = [&wildcard](const std::string_view value) { return secure_frontend::check_origin(wildcard, {value}).verdict; };
+  expect(origin("http://127.0.0.1:8080") == PolicyVerdict::allowed && origin("http://vm.example.test:8080") == PolicyVerdict::allowed &&
+             origin("http://192.0.2.10:8080") == PolicyVerdict::allowed && origin("http://evil.example:8080") == PolicyVerdict::forbidden,
+         "the same origins, and no other");
+  const auto v6 = policy_for("::", {"[2001:db8::10]"});
+  expect(host(v6, {"[::1]:8080"}) == PolicyVerdict::allowed && host(v6, {"localhost:8080"}) == PolicyVerdict::allowed &&
+             host(v6, {"[2001:db8::10]:8080"}) == PolicyVerdict::allowed && host(v6, {"127.0.0.1:8080"}) == PolicyVerdict::forbidden,
+         "an IPv6 wildcard: [::1], localhost, and the bare alias on the port");
+  const auto bound = policy_for("192.0.2.10", {"vm.example.test"});
+  expect(host(bound, {"vm.example.test:8080"}) == PolicyVerdict::allowed && host(bound, {"localhost:8080"}) == PolicyVerdict::forbidden,
+         "a bare alias takes the port on any bind; loopback names only on a loopback or wildcard bind");
+}
+
 void cors_and_alias_grammar() {
   for (const char* good : {"http://app.example:3000", "https://app.example", "http://127.0.0.1:5173", "http://[::1]:5173"}) {
     expect(secure_frontend::is_valid_cors_origin(good), std::string{"valid origin "} + good);
@@ -137,5 +164,6 @@ int main(int argc, char** argv) {
       {"web03_origin_matrix", web03_origin_matrix},
       {"web06_preflight_rules_unit", web06_preflight_rules_unit},
       {"cors_and_alias_grammar", cors_and_alias_grammar},
+      {"a_wildcard_bind_takes_its_loopback_names_and_bare_aliases", a_wildcard_bind_takes_its_loopback_names_and_bare_aliases},
   }, failures);
 }
