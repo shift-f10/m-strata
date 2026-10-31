@@ -280,6 +280,27 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### 2026-10-31 z92 (Windows box; owner-directed)
+
+The owner's external client's gaps (z82's list; the owner: "Yes, start them"), L1: a start says its phase and time, a
+failure its code. The client: "During starting, expose progress/phase/elapsed in GET /v1/strata/models ... On failed,
+make error a stable machine-readable code, not just prose." (A pollable 202 start and 503 `model_switching` with
+Retry-After held already.)
+- **The launcher:** `start_asked_` (the accepted start's request; a start the worker begins itself - a card kept
+  loaded, a start after a calibration - is timed from its own beginning), `start_phase_` (`queued`, `loading`,
+  `stopping_previous`, `engine`, `picture_encoder`), `last_start_s_` (each card's last start that ran, request to READY,
+  in memory). `start_json` and `failure_code` (each fixed failure sentence, the launcher's and model_runtime's compose
+  failures, to a stable code; `start_failed` otherwise). Each list entry ends with `"error_code"` and `"start"` (after
+  `"pinned"`, so the fields the page reads keep their places).
+- **Docs:** secure_frontend/README.md (A start in the list: the fields, the phases, the codes).
+- **Test:** the launcher 1 (`a_start_says_its_phase_and_time_and_a_failure_its_code`: over the fake engine with a 1.5 s
+  READY delay - stopped: start null; starting: phase engine, an elapsed time, nothing expected; running: null; started
+  again: expected at least 1.5 s and a progress below 1; a card whose engine exits before READY: its sentence and
+  `engine_not_ready`; a card that never failed: `error_code` null).
+- **Proof:** RED with the two fields stubbed to null (3 failures: no phase, no expected time, no code; the first run also
+  showed the test's own entry reader cut at an option's `{"name"`, fixed to find the next card by `"profile"`). GREEN:
+  the launcher suite 47/47 on Windows (MSVC, the shares tree). The full Windows and Linux runs are z94's.
+
 ### 2026-10-31 z91 (Windows box; owner-directed)
 
 This PC caught up with z87's rewrite, and the owner said to push both lines ("push both when ready").

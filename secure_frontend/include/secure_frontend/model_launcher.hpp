@@ -275,6 +275,8 @@ class ModelLauncher final {
   [[nodiscard]] bool calibration_supported(const ModelCard& card) const;
   // Under mutex_: GET /v1/strata/models' "calibration" of card `index` at `values` (null when it has none).
   [[nodiscard]] std::string calibration_json(std::size_t index, const ModelCard& card, const ModelOptionValues& values) const;
+  // gap L1: a starting card's start (its phase, elapsed, expected and estimated progress), else null (mutex_ held)
+  [[nodiscard]] std::string start_json(std::size_t index, std::string_view name, CardState state) const;
   void retire_running(std::unique_lock<std::mutex>& lock);
   void remember(std::size_t card, const ModelOptionValues& values);
   // Under mutex_: add_card appends to settings_.cards (reserved to kMaxLauncherCards, so a held
@@ -300,6 +302,12 @@ class ModelLauncher final {
   std::shared_ptr<ModelRuntime> measuring_;   // a calibration step's runtime (the shutdown hurries its stop)
   std::optional<std::size_t> running_card_;   // which card it is
   std::optional<std::size_t> starting_card_;  // the card an accepted start is bringing up
+  // The owner's external client (2026-10-31, gap L1): the accepted start's request time and what it is doing now
+  // ("queued", "loading", "stopping_previous", "engine", "picture_encoder"), and each card's last start that ran, in
+  // seconds from its request to its model's READY - the time the next one is expected to take.
+  std::chrono::steady_clock::time_point start_asked_{};
+  std::string_view start_phase_{};
+  std::map<std::string, double, std::less<>> last_start_s_;
   bool busy_{false};                          // a start or stop is accepted and not finished
   bool switching_{false};                     // chat is refused: the old model is being retired or the new one loads
   bool shutting_down_{false};
