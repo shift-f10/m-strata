@@ -187,9 +187,10 @@ bool engine_accepts(const secure_frontend::EngineArgumentsProfile profile, const
 }
 
 void option_tables_per_profile() {
+  // low_ram since 2026-10-31 (upstream's low-RAM mode)
   expect(names_of(EngineProfile::qwen) == Strings{"max_context", "kv", "kv_resident", "kv_grow", "mtp", "spec", "spec_min_p",
-                                                  "expert_cache", "prefill", "thinking", "temperature", "top_p", "top_k", "min_p",
-                                                  "vision", "answer_minutes", "web_search", "gpus"},
+                                                  "expert_cache", "prefill", "low_ram", "thinking", "temperature", "top_p", "top_k",
+                                                  "min_p", "vision", "answer_minutes", "web_search", "gpus"},
          "the qwen options in display order: " + joined(names_of(EngineProfile::qwen)));
   // mtp since 2026-10-28 (the owner: "gemma4 has an mtp ... make sure we work that mtp in our gemma engine")
   expect(names_of(EngineProfile::gemma4) == Strings{"max_context", "chunk", "expert_vram", "mtp", "spec", "spec_min_p", "thinking",
@@ -1189,6 +1190,36 @@ void gpus_choose_the_cards_a_model_runs_on() {
          "the page reads the kind, the most GPUs and the value: " + described);
 }
 
+// Upstream's low-RAM mode (owner 2026-10-31): a Qwen card's low_ram is upstream setup's --low-ram (auto, on, resident,
+// mmap, off). The launcher turns auto and on into resident, mmap or off at each start (low_ram.hpp); resident and mmap
+// write the engine's flag, the others none. A card that lists it may not fix either flag.
+void low_ram_writes_the_engines_flag() {
+  const auto* spec = secure_frontend::find_model_option(EngineProfile::qwen, "low_ram");
+  expect(spec != nullptr && spec->kind == ModelOptionKind::choice &&
+             std::vector<std::string_view>(spec->choices.begin(), spec->choices.end()) ==
+                 std::vector<std::string_view>{"auto", "on", "resident", "mmap", "off"},
+         "qwen low_ram: auto, on, resident, mmap, off (upstream setup's --low-ram)");
+  expect(secure_frontend::find_model_option(EngineProfile::gemma4, "low_ram") == nullptr &&
+             secure_frontend::find_model_option(EngineProfile::glm53, "low_ram") == nullptr,
+         "only the Qwen engine's cards have it");
+  expect(secure_frontend::option_flags(EngineProfile::qwen, "low_ram") == std::vector<std::string_view>{"--mmap-experts", "--resident-experts"},
+         "the flags it owns");
+  const auto written = [](const std::string& value) {
+    auto draft = draft_with_args({"--pack", "C:\\packs\\iq2_xs"});
+    secure_frontend::apply_option_values(EngineProfile::qwen, ModelOptionValues{{"low_ram", value}}, draft);
+    return args_of(draft);
+  };
+  expect(written("mmap") == Strings{"--pack", "C:\\packs\\iq2_xs", "--mmap-experts"}, "mmap: --mmap-experts: " + joined(written("mmap")));
+  expect(written("resident") == Strings{"--pack", "C:\\packs\\iq2_xs", "--resident-experts"}, "resident: --resident-experts");
+  for (const char* none : {"auto", "on", "off"}) {
+    expect(written(none) == Strings{"--pack", "C:\\packs\\iq2_xs"}, std::string{none} + " writes no flag (the launcher resolves auto and on)");
+  }
+  expect(!secure_frontend::validate_engine_user_arguments(secure_frontend::EngineArgumentsProfile::strata_0143,
+                                                          {"--mmap-experts", "--resident-experts"})
+              .has_value(),
+         "the strata engine's argument rules take both");
+}
+
 void the_vision_option_writes_the_encoder_rows() {
   const auto* spec = secure_frontend::find_model_option(EngineProfile::qwen, "vision");
   expect(spec != nullptr && spec->kind == ModelOptionKind::choice && spec->choices.size() == 3U && spec->choices[0] == "off" &&
@@ -1292,6 +1323,7 @@ int main(int argc, char** argv) {
       {"minimax_options_are_mayas", minimax_options_are_mayas},
       {"the_vision_option_writes_the_encoder_rows", the_vision_option_writes_the_encoder_rows},
       {"gpus_choose_the_cards_a_model_runs_on", gpus_choose_the_cards_a_model_runs_on},
+      {"low_ram_writes_the_engines_flag", low_ram_writes_the_engines_flag},
       {"gemma4_mtp_off_drops_the_mtp_file", gemma4_mtp_off_drops_the_mtp_file},
   }, failures);
 }

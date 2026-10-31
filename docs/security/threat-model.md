@@ -157,7 +157,12 @@ Trust boundaries:
   line); no vendor library is loaded into the server. (2026-10-28) The About's
   list of GPUs runs the same tool once, on the first About request, the same
   way (`--query-gpu=index,name,memory.total`, ten seconds at most), parsed as
-  strictly (three fields, an index 0-63, a printable name, at most 16 GPUs). A
+  strictly (three fields, an index 0-63, a printable name, at most 16 GPUs). (2026-10-31)
+  Upstream's low-RAM mode reads that list once more, the same way, on the first
+  start of a card whose `low_ram` is auto or on, with the RAM's total; it also
+  reads the first line (at most 4 KiB) of the card's pack's `native_experts.txt`,
+  or `experts.bin`'s size, for the experts' total. They choose only whether the
+  start adds `--mmap-experts` or `--resident-experts`; no reading reaches a client. A
   card's GPUs choice is typed: `"auto"` or GPU numbers 0-63, never free text,
   written only to `engine.gpu` or `glm.gpu`. Residual: that tool is the
   driver vendor's code, trusted like the driver the engine already uses.

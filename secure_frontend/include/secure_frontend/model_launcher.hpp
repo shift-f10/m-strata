@@ -22,6 +22,7 @@
 #include "secure_frontend/engine_supervisor.hpp"
 #include "secure_frontend/frontend_config.hpp"
 #include "secure_frontend/generation_gate.hpp"
+#include "secure_frontend/host_readings.hpp"
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/model_cards.hpp"
 #include "secure_frontend/model_options.hpp"
@@ -61,6 +62,13 @@ enum class CardChange { done, not_found, not_page_card, busy, running, shutting_
 // What remove_card does with the card that runs: refuse (a delete: its engine holds the files), or stop it first.
 enum class RunningCard { refuse, stop_first };
 
+// This PC's RAM and GPUs, for upstream's low-RAM mode at each start (low_ram.hpp): the RAM's total, each GPU's memory as
+// nvidia-smi numbers them. A missing reading counts as none.
+struct HostMemory final {
+  std::optional<std::uint64_t> ram_bytes{};
+  std::vector<GpuListing> gpus{};
+};
+
 struct LauncherSettings final {
   FrontendConfigDraft main;                         // the main config (main_config_card_issues is empty)
   std::vector<ModelCard> cards;                     // the loaded cards (load_model_cards)
@@ -89,6 +97,9 @@ struct LauncherSettings final {
   // on the calibration's thread (unset: the CPU, RAM and OS this process reads, with no GPU details).
   std::optional<std::filesystem::path> report_dir{};
   std::function<ReportMachine()> report_machine{};
+  // Upstream's low-RAM mode (owner 2026-10-31): this PC's RAM and GPUs, read at each start of a card whose low_ram is
+  // auto or on (unset: the RAM this process reads, no GPU).
+  std::function<HostMemory()> host_memory{};
   // GUI-first start-up (spec 2026-10-27 §5a): an alert (calibration_finished, calibration_failed, engine_stopped) with
   // its subject and text - the card's name and a fixed reason, never a path. Called outside the launcher's lock.
   std::function<void(std::string_view event, const std::string& subject, const std::string& body)> on_event{};
@@ -225,9 +236,14 @@ class ModelLauncher final {
   [[nodiscard]] bool needs_prefill_calibration(const ModelCard& card, const ModelOptionValues& values) const;
   [[nodiscard]] std::optional<PrefillRecord> read_prefill(std::string_view card) const;
   // The card's validated config at `values` with `args` added to its engine flags (a flag the card sets itself
-  // is left as the card has it).
+  // is left as the card has it). `say`: log the low-RAM mode it runs in (launch_values).
   [[nodiscard]] std::shared_ptr<const FrontendConfig> config_with(const ModelCard& card, const ModelOptionValues& values,
-                                                                  const std::vector<std::string>& args) const;
+                                                                  const std::vector<std::string>& args, bool say = false) const;
+  // Upstream's low-RAM mode (owner 2026-10-31): `values` with the card's low_ram auto or on (or resident, which needs
+  // the card's expert profile) turned into what this PC needs - resident, mmap or off (low_ram.hpp, by host_memory's
+  // RAM and GPUs, the pack's experts, the context, the KV cache, the draft layer and the picture encoder); `say` logs it.
+  // A start keeps its own values (auto is what is remembered).
+  [[nodiscard]] ModelOptionValues launch_values(const ModelCard& card, ModelOptionValues values, bool say) const;
   [[nodiscard]] CalibrationKey calibration_key(const ModelCard& card, const ModelOptionValues& values) const;
   [[nodiscard]] std::optional<CalibrationResult> read_calibration(std::string_view card) const;
   [[nodiscard]] bool calibration_supported(const ModelCard& card) const;

@@ -280,6 +280,39 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z77 (Windows box; owner-directed)
+
+The owner's Azure VM, after z76: the Qwen3.8-Flash-Next IQ2_XS card's calibration failed ("the engine ended before it
+was ready"), then "Yes, build it" (upstream's low-RAM mode).
+- **Why it failed**: the engine's `ArenaExpertSource` maps all of the experts into RAM (35.4 GB here); the anonymous
+  mapping failed on 27.4 GiB with no swap (`pinned.cu`: the note ends "using 4 KB pages" only when that mmap fails).
+  Upstream's setup never starts such a PC that way: `low_ram_needed` (RAM < arena + LOW_RAM_HEADROOM_GB 10) puts it in
+  the low-RAM mode, `--mmap-experts` (the experts read from the pack: its experts.bin, or a native pack's GGUF shards in
+  place, generate.cpp's CS-T) or `--resident-experts` (what the GPUs do not hold copied into RAM once) by
+  `low_ram_resident` (RAM >= the rest + 10), the GPU's share by `low_ram_gpu_gb` (VRAM - 5 - 1 for MTP - the KV past 32K;
+  700 MiB more for a picture encoder on it; each GPU's own on a split).
+- **Now**: `low_ram.hpp` (`choose_low_ram`: that rule in upstream's units, GiB of RAM against GB of experts;
+  `pack_expert_bytes`: native_experts.txt's header total, else experts.bin's size). A Qwen card's `low_ram` option
+  (auto, on, resident, mmap, off: upstream's --low-ram) is offered on every card that runs a pack and fixes none of
+  `--mmap-experts`, `--resident-experts`, `--resident-budget-gib` (old cards too, as `gpus`). At each start and
+  calibration the launcher turns auto and on into resident, mmap or off (`launch_values`) from `LauncherSettings::
+  host_memory` (production: the RAM's total, nvidia-smi's GPU list once) and the card's own context, KV, draft layer,
+  picture encoder, GPUs and expert profile (`--resident-experts` needs one: generate.cpp), logs why, and writes the
+  flag; what is remembered stays auto. The threat model and the README say so.
+- **Tests**: `secure_frontend_low_ram_tests` (6: the VM's numbers - mapped, the T4 holding 10 of 35.45 GB; 32 GiB with
+  24 GiB resident, 64 GiB neither; the draft layer, picture encoder and long-context KV; two GPUs; the choices; the
+  pack's header, CRLF, experts.bin, a broken total); `low_ram_writes_the_engines_flag` (options); the launcher's
+  `a_card_short_of_ram_starts_in_the_low_ram_mode`, `a_card_with_room_keeps_its_experts_in_ram`,
+  `a_card_that_fixes_its_experts_flag_keeps_it` (a Qwen3.8 pack card, its engine command recorded); the Qwen option
+  table pins 19 options.
+- **Proof**: RED (9: "the VM: the low-RAM mode, mapped: off ...", "mmap: --mmap-experts: [--pack ...]", "the card
+  offers the low-RAM mode, auto"), then GREEN.
+  - Windows (MSVC, the shares tree, everything built): the whole suite 1509 of the 1511 others (the two release-only cases); the new test first failed to compile there (near and small are Windows header macros: renamed), then the low-RAM, options, family and launcher suites 74/74.
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror): those suites 74/74 on gcc and clang; whole suites full-gcc and full-clang 1565/1569 (the two release-only cases; net01 and egress pass alone), window-gcc Release 1523/1524 (egress passes alone).
+- **Not run**: the real engine with `--mmap-experts` on the VM (its server must be restarted on the new build; the owner's
+  own start). Upstream's own numbers say the VM is short even so (31.4 GB of RAM and VRAM against 35.5): most experts
+  come from the disk while it answers, and the log says so.
+
 ### Claude Code session, 2026-10-31 z76 (Windows box; owner-directed)
 
 The owner's Azure VM, after a Qwen3.8-Flash-Next IQ2_XS download: "it did not download the mtp files"; "look at the
