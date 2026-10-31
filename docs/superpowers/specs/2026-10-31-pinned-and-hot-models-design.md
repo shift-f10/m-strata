@@ -80,6 +80,13 @@ on any other family. So:
 - What this does not do: lock an engine's memory from outside its process (no OS lets the server do that portably); the
   experts' RAM is already locked by the engines that pin it.
 
+**As built (2026-10-31, part 3).** A start whose values hold `hot` true marks the running card kept loaded and warms it as
+soon as it runs (`ModelLauncher::warm`: the calibration's own request body - one token, `reasoning_effort` none where the
+family takes it - through the model's chat route, on the launcher's worker). The worker's idle loop (every 5 s, or the
+period when shorter) warms it again when it is ready and neither the last request (`EngineSupervisor::last_activity()`,
+kept whatever the idle unload) nor the last warm-up is `warm_every` old (`LauncherSettings::warm_every`, 10 minutes). The
+warm-up is one more request in the engine's one queue: a request that comes meanwhile waits for its one token at most.
+
 ## 4. Hot: started again
 
 - **An engine that dies** is restarted by its supervisor, as now. When its circuit opens, a hot card is started again

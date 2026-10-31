@@ -756,7 +756,8 @@ struct CalibrationFixture final {
   // operator_cards: the two cards are the operator's (listed), which never calibrate before a first start; factory:
   // how the engine processes are made (unset: the fake engine's real process)
   explicit CalibrationFixture(const std::vector<std::string>& extra_fake_options = {}, const bool operator_cards = false,
-                              std::function<secure_frontend::ProcessFactory(secure_frontend::EngineLaunchPlan)> factory = {}) {
+                              std::function<secure_frontend::ProcessFactory(secure_frontend::EngineLaunchPlan)> factory = {},
+                              const std::chrono::milliseconds warm_every = {}) {
     secure_frontend_test::make_private_directory(models);
     const auto vocabulary = test_support::spm_tokenizer();
     for (const char* name : {"tiny-gemma-Q8_0.gguf", "other-gemma-Q8_0.gguf"}) {
@@ -810,6 +811,7 @@ struct CalibrationFixture final {
       list->push_back(std::string{event} + ": " + subject);
     };
     settings.monitor = &monitor;
+    if (warm_every.count() > 0) settings.warm_every = warm_every;
     launcher = std::make_unique<secure_frontend::ModelLauncher>(std::move(settings));
     if (!operator_cards) {
       for (auto& card : cards) (void)launcher->add_card(std::move(card));
@@ -898,6 +900,41 @@ void a_start_without_calibrating_starts_at_once() {
   expect(f.launcher->state_of(name) == secure_frontend::CardState::running, "the card runs");
   expect(!std::filesystem::exists(f.result_file(name)), "nothing was calibrated");
   expect(!has_pair(dumped_argv(f.dump), "--cpu-threads", f.winner), "it runs on the card's own settings: " + joined(dumped_argv(f.dump)));
+}
+
+// Pinned and hot models (owner 2026-10-31, spec part 3): a card kept loaded is warmed at its start - one short generation
+// reaches its engine before any request - and again whenever it has idled for warm_every; a card not kept loaded gets no
+// generation until a request.
+void a_card_kept_loaded_is_warmed_at_its_start_and_while_idle() {
+  const auto record = secure_frontend_test::make_scratch_directory() / "record.txt";
+  CalibrationFixture f({"--record-file=" + secure_frontend::path_to_utf8(record)}, false, {}, std::chrono::milliseconds(1500));
+  const auto generations = [&record] {
+    std::error_code ec;
+    if (!std::filesystem::exists(record, ec)) return std::size_t{0};
+    std::istringstream in(secure_frontend_test::read_file(record));
+    std::size_t count = 0;
+    for (std::string line; std::getline(in, line);) count += line.rfind("GEN ", 0) == 0 ? 1U : 0U;
+    return count;
+  };
+  const auto waits_for = [&generations](const std::size_t at_least, const std::chrono::seconds bound) {
+    const auto until = std::chrono::steady_clock::now() + bound;
+    while (generations() < at_least && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    return generations() >= at_least;
+  };
+  expect(!f.launcher->start("other-gemma-Q8_0", nullptr, false, false).has_value(), "a card as it is starts");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(120)) && f.launcher->state_of("other-gemma-Q8_0") == secure_frontend::CardState::running,
+         "it runs");
+  std::this_thread::sleep_for(std::chrono::seconds(4));
+  expect(generations() == 0U, "no generation reaches a card not kept loaded until a request: " + std::to_string(generations()));
+  const auto options = secure_frontend::parse_json(
+      R"({"hot":true})", secure_frontend::JsonLimits{.max_bytes = 256U, .max_depth = 4U, .max_container_entries = 8U, .max_string_bytes = 64U});
+  expect(!f.launcher->start("tiny-gemma-Q8_0", &std::get<secure_frontend::JsonValue>(options), false, false).has_value(),
+         "a card kept loaded starts");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(120)) && f.launcher->state_of("tiny-gemma-Q8_0") == secure_frontend::CardState::running,
+         "it runs");
+  expect(waits_for(1U, std::chrono::seconds(10)), "it is warmed at its start, before any request: " + std::to_string(generations()));
+  const auto first = generations();
+  expect(waits_for(first + 1U, std::chrono::seconds(15)), "and again once it has idled: " + std::to_string(generations()));
 }
 
 // The start route takes that answer as "calibrate": false, and nothing but a boolean there.
@@ -1835,6 +1872,7 @@ int main(int argc, char** argv) {
       {"calibration_finds_the_win_and_starts_with_it", calibration_finds_the_win_and_starts_with_it},
       {"a_first_start_calibrates_first", a_first_start_calibrates_first},
       {"a_start_without_calibrating_starts_at_once", a_start_without_calibrating_starts_at_once},
+      {"a_card_kept_loaded_is_warmed_at_its_start_and_while_idle", a_card_kept_loaded_is_warmed_at_its_start_and_while_idle},
       {"the_start_route_takes_calibrate_false", the_start_route_takes_calibrate_false},
       {"the_monitor_names_a_calibration_while_it_runs", the_monitor_names_a_calibration_while_it_runs},
       {"a_minimax_card_measures_its_prompt_reading_first", a_minimax_card_measures_its_prompt_reading_first},

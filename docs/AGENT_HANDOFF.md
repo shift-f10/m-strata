@@ -280,6 +280,26 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z85 (Windows box; owner-directed)
+
+Pinned and hot models, part 3 (spec part 3, "As built"): a card kept loaded is warmed.
+- **The supervisor**: `last_activity()` - when a request last began or ended, stamped by `note_request_started/finished`
+  whatever the idle unload (they returned at once with it off before).
+- **The launcher**: `hot_running_` (the running card's start held `hot` true), `warm()` (the calibration's body: one token,
+  thinking off where taken, through the chat route), a warm-up right after a kept-loaded card runs, and in the worker's idle
+  loop (every 5 s or `warm_every` when shorter) whenever the model is ready and has idled `warm_every`
+  (`LauncherSettings::warm_every`, 10 minutes) since its last request or warm-up.
+- **Tests**: the launcher 1 (`a_card_kept_loaded_is_warmed_at_its_start_and_while_idle`: over the fake engine with
+  warm_every 1.5 s, a card not kept loaded gets no generation in 4 s; one kept loaded gets one at its start and another
+  once it has idled).
+- **Proof**: RED with `warm_every` declared and nothing reading it: 2 failures (no generation at the start, none after
+  idling). Then GREEN.
+  - Windows (MSVC, the shares tree, everything built, no warnings): the whole suite 1544 of 1546 (the two release-only
+    cases).
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc 1594/1598 and full-clang 1595/1598 (the two
+    release-only cases; egress and net01_workers_add_no_listener pass alone), window-gcc Release 1551/1553 (net01_ipv6 and
+    egress pass alone).
+
 ### Claude Code session, 2026-10-31 z84 (Windows box; owner-directed)
 
 Pinned and hot models, part 2 (spec part 2, "As built"): Keep loaded.

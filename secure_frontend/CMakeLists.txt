@@ -2047,7 +2047,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_stop_waits_for_an_engine_still_ending
         an_engine_plugins_card_starts_through_the_launcher a_card_of_an_engine_plugin_that_is_not_on_is_refused
         a_card_is_pinned_and_its_removal_unpins_it a_pinned_card_starts_with_the_server_and_the_pin_is_kept
-        a_card_kept_loaded_never_unloads_when_idle
+        a_card_kept_loaded_never_unloads_when_idle a_card_kept_loaded_is_warmed_at_its_start_and_while_idle
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
 
     # Model downloads (plan 2026-10-23-model-downloads Task 4): the download manager over a scripted child.
