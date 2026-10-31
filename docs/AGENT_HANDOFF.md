@@ -280,6 +280,41 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z71 (Windows box; owner-directed)
+
+Adding plugins from the page, step four (spec section 12): adding and removing as library functions
+(`plugin_install.hpp`, `secure_frontend_plugin_install`), on the models store's primitives (beneath an opened root,
+never following a link, never replacing). (main, z70 there: its own install on the Azure VM passed and it was pushed,
+72211ad1.)
+- **Adding**, from a folder (an absolute path, not a link, read as an external root, each file a single-link regular
+  file) or from a .zip in memory (its entries at the root or in one top folder: exactly plugin.json, plugin.sig and the
+  files listed, folders aside). In order, each refusal a sentence said before anything is written:
+  - the manifest checked as discovery checks one, its kind one this server runs;
+  - plugin.sig trusted for its id and this platform (read_trusted_statement); a key not trusted is named, with "trust
+    its publisher's key first";
+  - the manifest's SHA-256 and its file list the signed ones;
+  - no plugin of that id installed, or moved aside and not deleted;
+  - each file hashed where it is or inflated, at most 1 GiB in all.
+  Only then is it staged in `<plugins>/.staging/<id>`: each file at most its checked size and hashed again as written
+  (0700 on Linux), then plugin.sig, then plugin.json; then it is renamed to `<plugins>/<id>`. Any failure empties staging.
+- **Removing**:
+  - move_plugin_aside: a built-in plugin (make's) is refused - "turn it off instead"; others go to
+    `<plugins>/.removed/<id>-<YYYYMMDD>T<HHMMSS>Z` (-2, -3... within one second);
+  - removed_plugins lists them with name, version and when; restore_plugin is refused while one of that id is
+    installed; purge_plugin deletes one for good;
+  - forget_plugin_choices forgets its approval and on/off (the publisher keys stay).
+- **kUntrustedKeyProblem** (`plugin_signature.hpp`): the untrusted-key refusal, shared, so the add names the key without
+  copying the words.
+- **Spec section 12** as built: staging and moved-aside plugins are in the plugins folder (each move a rename on one
+  volume, not a copy from the state root as first written); the manifest's bound is discovery's 256 KiB.
+- **Proof**:
+  - RED against a stub (7 cases, 62 failures), then GREEN on MSVC.
+  - In WSL, the gcc, clang and gcc Release trees build it with -Werror and pass the install, signature and registry
+    suites (18 of 18 each).
+  - A gcc tree with ASan and UBSan passes the same 18 with no finding.
+- **Next**: the routes (add, remove, removed, restore, purge; a running plugin's program stopped first; its config rows
+  and secrets forgotten), the page, the threat model.
+
 ### Claude Code session, 2026-10-30 z69 (Windows box; owner-directed)
 
 Adding plugins from the page, step three (spec section 12): a plugin's trust is read before its files are looked at.

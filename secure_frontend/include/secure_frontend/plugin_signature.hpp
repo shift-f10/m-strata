@@ -24,6 +24,8 @@ namespace secure_frontend {
 
 inline constexpr std::string_view kPluginSignatureFile = "plugin.sig";
 inline constexpr std::size_t kMaxPluginSignatureBytes = 16U * 1024U;
+// The refusal of a signature that verifies under a key this server does not trust (the page's add names the key).
+inline constexpr std::string_view kUntrustedKeyProblem = "it is signed with a key this server does not trust";
 
 struct TrustedKey final {
   std::string key;      // the public key, 64 lowercase hex

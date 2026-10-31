@@ -107,7 +107,7 @@ std::variant<TrustedStatement, std::string> read_trusted_statement(const std::st
     return std::string{"its signature does not verify under the key it names"};
   }
   const auto trusted = std::find_if(keys.begin(), keys.end(), [&statement](const TrustedKey& key) { return key.key == statement.key; });
-  if (trusted == keys.end()) return std::string{"it is signed with a key this server does not trust"};
+  if (trusted == keys.end()) return std::string{kUntrustedKeyProblem};
   if (statement.id != id) return "its signature is for another plugin (" + statement.id + ")";
   if (statement.platform != plugin_signature_platform()) return "its signature is for another platform (" + statement.platform + ")";
   return TrustedStatement{.key = std::move(statement.key),

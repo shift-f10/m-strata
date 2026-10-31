@@ -452,12 +452,14 @@ are only turned off.
 
 **Adding** (`POST /v1/strata/plugins/add`):
 - **From a folder** (`{"folder": "<absolute path on this PC>"}`): its `plugin.json` and `plugin.sig` are read (the
-  manifest at most 64 KiB, the signature 16 KiB), the manifest checked as discovery checks one, the signature verified
+  manifest at most 256 KiB as discovery reads one, the signature 16 KiB), the manifest checked as discovery checks one, the signature verified
   under the trusted keys for this platform and this id; then each file the manifest lists for this platform is hashed
   where it is and compared with the statement. Only then are exactly those files (and the manifest and signature)
-  copied into a staging folder in the state root, hashed again as written, and the staging folder renamed into
-  `<install>/plugins/<id>`. A folder that is a link, a file that is not a regular file, a name outside the folder, an
-  id already installed (or moved aside under that id and not deleted) is refused.
+  copied into `<install>/plugins/.staging/<id>`, hashed again as written, and that folder renamed to
+  `<install>/plugins/<id>` (built: staging and moving aside stay in the plugins folder, so each is a rename on one
+  volume, never a copy across drives; a name starting with '.' is never a plugin id, so discovery never takes one). A
+  folder that is a link, a file that is not a regular file, a name outside the folder, an id already installed (or
+  moved aside under that id and not deleted) is refused.
 - **From a .zip** (the request body, `Content-Type: application/zip`, within `limits.http.max_request_bytes`): the zip is
   read from memory - its end record, its central directory (at most 256 entries; no ZIP64, no encryption, no links, no
   name that is absolute, has `..`, a drive, a backslash or a control character; entries stored or deflated only), each
@@ -476,7 +478,7 @@ are only turned off.
 
 **Removing** (`POST /v1/strata/plugins/remove {"id"}`): a built-in plugin is refused ("turn it off instead"); a plugin
 whose program runs is stopped first (the tool or notifier host); an engine plugin a running model uses is refused
-until the model stops. Its folder moves to `<state>/plugins-removed/<id>-<UTC time>/`, and its approval, its config rows
+until the model stops. Its folder moves to `<install>/plugins/.removed/<id>-<UTC time>/`, and its approval, its config rows
 (`plugins.<id>.*`) and its secrets (`plugin-<id>-*`) are forgotten. `POST /v1/strata/plugins/removed` lists what was moved
 aside (id, name, version, when); `POST /v1/strata/plugins/restore {"entry"}` moves one back (refused while a plugin of
 that id is installed; it then waits for approval unless still trusted by its signature); `POST

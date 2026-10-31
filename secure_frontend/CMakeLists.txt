@@ -838,6 +838,11 @@ secure_frontend_add_library(secure_frontend_plugin_routes SOURCES src/plugin_rou
 # and the owner's choices; the server, strata-window and strata-tui read them.
 secure_frontend_add_library(secure_frontend_install_plugins SOURCES src/install_plugins.cpp
     LINKS secure_frontend_plugins secure_frontend_about_info secure_frontend_typed_config secure_frontend_plugin_secrets)
+# Adding and removing plugins from the page (plugin_install.hpp; plugin spec section 12): in the install's plugins folder,
+# the trust checked before anything is written, through the models store's primitives.
+secure_frontend_add_library(secure_frontend_plugin_install SOURCES src/plugin_install.cpp
+    LINKS secure_frontend_plugins secure_frontend_zip secure_frontend_acquire secure_frontend_paths secure_frontend_sha256
+          secure_frontend_json)
 # A tool's or notifier's secret settings (plugin_secrets.hpp): plugin-<id>-<name> in roots.secret, DPAPI or 0600.
 secure_frontend_add_library(secure_frontend_plugin_secrets SOURCES src/plugin_secrets.cpp
     LINKS secure_frontend_token_store secure_frontend_paths)
@@ -2408,6 +2413,15 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         SECURE_FRONTEND_PLUGIN_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/plugins")
     secure_frontend_add_cases(secure_frontend_plugin_signature_tests
         the_statement_is_the_signers a_signature_under_a_trusted_key_is_taken a_trusted_statement_is_read_before_the_files every_other_signature_says_why
+        LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
+    # Adding and removing plugins from the page (plugin spec section 12).
+    secure_frontend_add_test_executable(secure_frontend_plugin_install_tests tests/plugin_install_test.cpp secure_frontend_plugin_install)
+    target_compile_definitions(secure_frontend_plugin_install_tests PRIVATE
+        SECURE_FRONTEND_PLUGIN_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/plugins")
+    secure_frontend_add_cases(secure_frontend_plugin_install_tests
+        a_signed_folder_is_added a_folder_is_refused_before_anything_is_written a_signed_zip_is_added
+        a_zip_is_refused_before_anything_is_written a_removed_plugin_can_be_put_back_or_deleted removing_is_refused_with_its_reason
+        forgetting_a_plugin_forgets_its_choices
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_test_executable(secure_frontend_smtp_password_tests tests/smtp_password_test.cpp secure_frontend_smtp_password)
     secure_frontend_add_cases(secure_frontend_smtp_password_tests
