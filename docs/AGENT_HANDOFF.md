@@ -280,6 +280,46 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### 2026-10-31 z94 (Windows box; owner-directed)
+
+The owner's external client's gaps, L4: an inference-only key. The client: "One bearer currently authorizes
+/v1/chat/completions, /v1/strata/models/stop, and /v1/strata/key/rotate. Provide an inference-only scope vs a
+control/admin scope ... so a serving credential can't stop models or rotate keys."
+- **The key:** `InferenceKey` (token_verifier.hpp: hold, matches, held; swapped under a mutex so a change applies to the
+  next request), in the key store as `inference-token` (`kInferenceTokenFile`), read at the server's start where its own
+  key is in the store (`key_store`), never with `--token-env` or keyless.
+- **The router:** `ApiRouterConfig::inference_validator`, tried when the server's key does not match; its routes are
+  chat, models, model, health, metrics, About and the models list; any other is 403 `key_scope_refused` (a new error
+  row) before a body or handler - the fresh sign-in link too, which would exchange it for the server's key.
+- **The route:** `POST /v1/strata/key/inference` (`kConfigRoutes`, `RouteId::strata_key_inference`, logged
+  `strata_key_inference`), this PC only, the server's own key: `{"action": "create"}` makes a new one (the store's
+  `generate_token`, as rotation) and answers it once with `"scope": "inference"`; `{"action": "remove"}` deletes it. The
+  settings answer's `"key"` gains `"inference"`.
+- **The page:** the API key card's inference section (make, show once, copy, replace, remove; shown where the key store
+  is).
+- **Docs:** both READMEs (the API key), the threat model (The inference key).
+- **z92's test** asks a start or stop again while the launcher answers 409 `switch_in_progress` (`post_when_free`), as a
+  client does, and waits for the `engine` phase up to 10 s (see the proof).
+- **Tests:** the router 2 (`an_inference_key_reaches_only_the_chat_side`; `the_page_makes_and_removes_the_inference_key`),
+  config routes 1 (`an_inference_key_is_made_and_removed_here`: made, shown, held and matched; replaced; refused from
+  another PC and for a body that is not an action; removed at once with its file; refused without a key store), the error
+  table's new row; the settings' key object now names `"inference"` in the two tests that match it whole.
+- **Proof:** RED - the router case with the two refusals stubbed out (the inference key reached start, stop, downloads
+  and settings), the settings case before its route (404), the page case against the committed page. GREEN.
+  - Live (Windows, a scratch data folder with its own key store, port 18094, no key ever printed): an inference key
+    made with the server's key; with it `/v1/models`, the models list and `/health` 200; a start, both config reads, a
+    rotation and a fresh sign-in link 403; a restarted server read it back (200); removed, it was 401 at once while the
+    server's key still worked; neither key in the server's output.
+  - Windows (MSVC, the shares tree, everything built, no warnings): 1563 of 1566 - the two release-only cases, and
+    z92's `a_start_says_its_phase_and_time_and_a_failure_its_code`, whose start of Beta came while the launcher was
+    still finishing Alpha's (409 `switch_in_progress`, the one-at-a-time answer). The test now asks again as a client
+    does (`post_when_free`, up to 15 s) and polls the phase for up to 10 s; it then passed 5 of 5 while the Linux trees
+    built beside it, and the launcher suite at -j8 again (its one failure there `switch_waits_for_the_generation_then_swaps`,
+    a known flake, 5 of 5 alone).
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc 1614/1618 and full-clang 1613/1618 (the two
+    release-only cases; net01_ipv6, net01_workers and egress pass alone), window-gcc Release 1571/1573 (net01_workers and
+    egress pass alone).
+
 ### 2026-10-31 z93 (Windows box; owner-directed)
 
 The owner's external client's gaps, O3: the settings are read with a GET, with the running model's values. The client:

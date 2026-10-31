@@ -410,7 +410,15 @@ the API key, the server's own settings, and the sections below. **API key:** the
 holds it; no route returns a key), Show and Copy; "Rotate the key", typed ROTATE first and from this PC only
 (`POST /v1/strata/key/rotate`, `{"confirm":"ROTATE"}`), makes a new key in the key file as `strata key rotate` does and
 answers it once; the running server keeps the old key until it restarts. A `--token-env` start has no key file, so
-rotation is refused there. **Server and network**, **Limits and timeouts**, **Folders** and **Troubleshooting** list 15
+rotation is refused there. **An inference key** (an external OpenAI-compatible client's ask, 2026-10-31): a second key,
+for a chat client, that reaches only the chat side - `/v1/chat/completions`, `/v1/models`, `/health`, `/metrics`,
+About and `GET /v1/strata/models` (to watch a start) - and is 403 `key_scope_refused` everywhere else: control, downloads,
+cards, settings (the GET too), the keys, the plugins and a fresh sign-in link (which would hand out the server's key).
+`POST /v1/strata/key/inference` (`{"action": "create"}` -> `{"key": "...", "scope": "inference"}`, shown once; `{"action":
+"remove"}` -> `{"removed": true}`), from this PC only and with the server's own key, makes it in the key store
+(`inference-token`, beside the key, as owner-only as it) or removes it; either applies at once, and a server that starts
+again reads it back. The settings answer's `"key"` says `"inference": true` while one is held; the page's API key card
+makes, shows once, replaces and removes it. A `--token-env` start has none. **Server and network**, **Limits and timeouts**, **Folders** and **Troubleshooting** list 15
 config rows (`listener.host`, `.port`, `.allow_remote`, `.allow_wildcard_bind`, `.host_aliases`, `models.control_remote`,
 `.control_remote_networks`, `limits.engine.generation_timeout_s`, `.ready_timeout_s`, `limits.chat.max_prompt_tokens`,
 `.max_completion_tokens`, `pull.connections`, `models.downloads_root`, `.default_root`, `logging.engine_output`) from

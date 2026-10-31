@@ -29,7 +29,7 @@ enum class RouteId {
   strata_calibrate, strata_calibrate_cancel, strata_calibrate_auto, strata_calibrate_report,
   strata_downloads, strata_download_start, strata_download_pause, strata_download_cancel, strata_download_link,
   strata_login_link, strata_login_link_new,
-  strata_config, strata_config_settings, strata_key_rotate,
+  strata_config, strata_config_settings, strata_key_rotate, strata_key_inference,
   strata_plugins, strata_plugins_approve, strata_plugins_switch, strata_plugins_settings, strata_plugins_try, strata_plugins_test,
   strata_plugins_keys, strata_plugins_add, strata_plugins_upload, strata_plugins_remove, strata_plugins_removed,
   strata_plugins_restore, strata_plugins_purge,
@@ -104,11 +104,13 @@ inline constexpr std::array<RouteEntry, 10> kModelCardRoutes{{
 
 // The page's Settings tab (spec 2026-10-28-server-window-design, Part 1): the server's settings - read, save - and the API
 // key rotated in its store. Served with models.control (every build); keyed; POST, small JSON bodies.
-inline constexpr std::array<RouteEntry, 4> kConfigRoutes{{
+inline constexpr std::array<RouteEntry, 5> kConfigRoutes{{
     {"POST", "/v1/strata/config", false, RouteId::strata_config},
     {"GET", "/v1/strata/config", false, RouteId::strata_config},  // the owner's external client (2026-10-31, gap O3)
     {"POST", "/v1/strata/config/settings", false, RouteId::strata_config_settings},
     {"POST", "/v1/strata/key/rotate", false, RouteId::strata_key_rotate},
+    // the owner's external client (2026-10-31, gap L4): the inference-only key, made or removed ({"action"})
+    {"POST", "/v1/strata/key/inference", false, RouteId::strata_key_inference},
 }};
 // The page's Plugins tab (owner 2026-10-30; plugin_routes.hpp): the install's plugins, an approval, on/off, a plugin's
 // settings, a tool's "Try" and a notifier's "Send a test" (they replaced web search's and email's own settings routes),

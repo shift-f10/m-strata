@@ -14,21 +14,28 @@
 //   POST /v1/strata/config/settings  {"values": {"<key>": <value or null>, ...}} -> {"saved": true, "restart_needed": true}
 //                                       (only the keys listed above; the whole file is checked after the change by the
 //                                       rules the server starts with, and a value it would refuse is refused by name)
+//   POST /v1/strata/key/inference    {"action": "create"} -> {"key": "<a new inference-only key>", "scope": "inference"}, or
+//                                    {"action": "remove"} -> {"removed": true} (gap L4, this PC only: applies at once)
 //   POST /v1/strata/key/rotate       {"confirm": "ROTATE"} -> {"key": "<the new key>", "restart_needed": true}
 //                                       (a new key in the data folder's store, as `strata key rotate`; the running
 //                                       server keeps the old one until it restarts)
 
 #include "secure_frontend/api_router.hpp"
 #include "secure_frontend/request_router.hpp"
+#include "secure_frontend/token_verifier.hpp"
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
 
 namespace secure_frontend {
+
+// The inference-only key's file in the key store (gap L4), beside the server's own (token).
+inline constexpr std::string_view kInferenceTokenFile = "inference-token";
 
 struct ConfigRouteSettings final {
   std::optional<std::filesystem::path> config_file{};  // the file the settings live in (unset: read-only)
@@ -49,6 +56,10 @@ struct ConfigRouteSettings final {
   // The owner's external client (2026-10-31, gap O3): the running model and the option values its start used
   // ({"name", "options"}, or null), read when the settings are; listed as "running", before "boot". Empty: not listed.
   std::function<std::string()> running{};
+  // The owner's external client (2026-10-31, gap L4): the inference-only key the router accepts, which POST
+  // /v1/strata/key/inference makes or removes in secret_dir (inference-token) and holds here at once. Unset, or no
+  // secret_dir: not made here.
+  std::shared_ptr<InferenceKey> inference{};
 };
 
 class ConfigRoutes final {
@@ -60,6 +71,7 @@ class ConfigRoutes final {
   [[nodiscard]] HttpResponse settings_json() const;
   [[nodiscard]] HttpResponse save(std::string_view body);
   [[nodiscard]] HttpResponse rotate(std::string_view body);
+  [[nodiscard]] HttpResponse inference(std::string_view body);
 
   ConfigRouteSettings settings_;
   std::mutex file_;  // one config or key write at a time

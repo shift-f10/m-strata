@@ -81,6 +81,8 @@ constexpr ExpectedRow kExpected[] = {
     {ApiError::settings_refused, 422, "invalid_request_error", "settings_refused", "These settings can't be used."},
     // Plugins (owner 2026-10-30): the Plugins tab's refusals, with their reason.
     {ApiError::plugin_refused, 422, "invalid_request_error", "plugin_refused", "This plugin can't be used that way."},
+    // The owner's external client (2026-10-31, gap L4): the inference-only key on a route it may not use.
+    {ApiError::key_scope_refused, 403, "permission_error", "key_scope_refused", "This key may only run chats and read the models; use the server's own key for this."},
 };
 
 // GUI-first start-up (spec 2026-10-27 §4): a card or folder refusal carries the module's own fixed reason (never a

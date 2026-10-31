@@ -391,6 +391,20 @@
             <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="key-new-copy">Copy</button></div>
         </div>
         <p class="msg-error" id="key-error" role="alert" hidden></p>
+        <div class="key-inference" id="key-inference">
+          <p class="muted small">An inference key, for a chat client: it may only chat and read the models (to see one start),
+            never start or stop one, change a setting or a key. It works at once; removing it stops it at once.</p>
+          <p class="muted small" id="key-inference-state"></p>
+          <div class="model-actions">
+            <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="key-inference-create">Make an inference key</button>
+            <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="key-inference-remove">Remove it</button>
+          </div>
+          <div class="key-new" id="key-inference-new" hidden>
+            <p class="msg-warn">The inference key, shown once: copy it now.</p>
+            <div class="model-folder__row"><code id="key-inference-value"></code>
+              <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="key-inference-copy">Copy</button></div>
+          </div>
+        </div>
       </div>
       <div class="st-card alerts-settings" id="server-settings" hidden>
         <div class="models-head"><span class="card-title">Server and network</span></div>

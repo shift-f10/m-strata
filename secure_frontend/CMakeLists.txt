@@ -1587,7 +1587,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         web_ui_monitor_shows_stopped_and_the_model web_ui_monitor_is_even_and_shows_memory_disk_and_cache
         web_ui_about_lists_the_engines_and_this_pc
         web_ui_search_box_limit_note_and_engine_table web_ui_chat_can_turn_search_off
-        login_link_route_answers_without_the_key_only_when_on a_fresh_login_link_is_for_a_key_holder
+        login_link_route_answers_without_the_key_only_when_on a_fresh_login_link_is_for_a_key_holder an_inference_key_reaches_only_the_chat_side
         served_models_follow_the_running_card
         web_ui_listed_integers_are_dropdowns
         health_samples_status_before_state_once_each health_includes_engine_state_when_provided
@@ -1599,7 +1599,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         web_ui_leaves_every_api_route_authenticated web_ui_still_checks_host_and_origin
         web_ui_assets_are_bundled_and_inert keyless_router_answers_without_a_key
         metrics_route_needs_the_key_and_the_switch about_route_needs_the_key_and_answers_its_provider
-        web_ui_has_the_monitor_and_four_thinking_levels the_chat_settings_follow_the_running_card the_page_sends_reasoning_effort_only_where_it_is_taken the_page_pins_a_card_to_start_at_startup the_page_shows_the_start_at_boot
+        web_ui_has_the_monitor_and_four_thinking_levels the_chat_settings_follow_the_running_card the_page_sends_reasoning_effort_only_where_it_is_taken the_page_pins_a_card_to_start_at_startup the_page_shows_the_start_at_boot the_page_makes_and_removes_the_inference_key
         web_ui_has_the_models_tab_hidden_until_the_server_offers_it web_ui_models_tab_starts_stops_and_polls
         web_ui_chat_follows_the_running_model web_ui_models_tab_has_a_downloads_section
         web_ui_downloads_profile_picker_and_multipart
@@ -2369,7 +2369,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_config_routes_tests
         the_settings_are_listed_with_their_rules a_save_is_held_to_the_start_up_rules the_key_is_rotated_in_its_store
         troubleshooting_is_offered_only_while_the_debugging_plugin_is_on the_boot_start_is_said_with_the_settings
-        the_running_models_values_are_said_with_the_settings
+        the_running_models_values_are_said_with_the_settings an_inference_key_is_made_and_removed_here
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # strata-window's portable half (spec 2026-10-28-server-window-design, Part 2), the server child driven with a fake

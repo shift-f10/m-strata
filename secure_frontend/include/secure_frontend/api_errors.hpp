@@ -29,6 +29,8 @@ enum class ApiError {
   settings_refused,
   // Plugins (owner 2026-10-30): the Plugins tab.
   plugin_refused,
+  // The owner's external client (2026-10-31, gap L4): the inference-only key on a route it may not use.
+  key_scope_refused,
 };
 
 struct ApiErrorRow final {
