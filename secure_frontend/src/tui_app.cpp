@@ -482,6 +482,8 @@ void App::set_key(std::optional<std::string> key, const bool keyless) {
   key_ = std::move(key);
 }
 
+void App::server_attached() { attached_ = true; }
+
 void App::log_line(std::string line) {
   log_.push_back(std::move(line));
   while (log_.size() > kLogLines) log_.pop_front();
@@ -1600,7 +1602,9 @@ void App::draw_prompt(Screen& screen) const {
     return;
   }
   if (prompt_ == Prompt::quit || prompt_ == Prompt::start || prompt_ == Prompt::remove) {
-    const std::string question = prompt_ == Prompt::quit ? std::string{"Quit, and stop the server and its model?"} : question_;
+    const std::string question = prompt_ != Prompt::quit ? question_
+                                 : attached_         ? std::string{"Quit? The server keeps running."}
+                                                     : std::string{"Quit, and stop the server and its model?"};
     screen.field(inner.x + 1, inner.y + 1, inner.width - 2, question + "  y / n", Style{kText, kPanel});
     return;
   }

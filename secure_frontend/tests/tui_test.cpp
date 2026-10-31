@@ -1026,6 +1026,26 @@ void quitting_asks_first() {
   expect(app.view() == t::View::monitor && app.key(character("y")).quit, "after F1, q quits again");
 }
 
+// One server, the apps manage it (owner 2026-10-31, spec 2026-10-31-pinned-and-hot-models-design.md section 6): attached
+// to a server that was already running, the TUI's quit leaves it running and says so; one it started, it stops.
+void quitting_an_attached_server_leaves_it_running() {
+  const auto quit_question = [](const bool attached) {
+    t::App app(t::Capabilities{}, std::nullopt);
+    app.server_state("http://127.0.0.1:8080", true);
+    if (attached) app.server_attached();
+    (void)app.key(character("q"));
+    t::Screen drawn(120, 30);
+    app.draw(drawn, 0);
+    return all_text(drawn);
+  };
+  const std::string started = quit_question(false);
+  expect(started.find("Quit, and stop the server and its model?") != std::string::npos, "one it started is stopped: " + started);
+  const std::string attached = quit_question(true);
+  expect(attached.find("Quit? The server keeps running.") != std::string::npos &&
+             attached.find("stop the server") == std::string::npos,
+         "an attached one keeps running: " + attached);
+}
+
 const std::string kPlugins =
     R"({"folder":"/opt/m-strata/plugins","editable":true,"plugins":[)"
     R"({"id":"debugging","kind":"diagnostics","name":"Debugging","version":"1.0.0","publisher":"M-Strata","license":"AGPL-3.0-only",)"
@@ -1651,5 +1671,6 @@ int main(int argc, char** argv) {
       {"a_message_is_shown_whole_before_the_keys", a_message_is_shown_whole_before_the_keys},
       {"downloads_say_what_is_on_this_pc", downloads_say_what_is_on_this_pc},
       {"quitting_asks_first", quitting_asks_first},
+      {"quitting_an_attached_server_leaves_it_running", quitting_an_attached_server_leaves_it_running},
   }, failures);
 }

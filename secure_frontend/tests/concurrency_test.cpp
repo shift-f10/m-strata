@@ -341,6 +341,7 @@ void request_log_format_and_token_bucket() {
   const std::pair<R, std::string_view> named[] = {
       {R::strata_calibrate, "strata_calibrate"},       {R::strata_calibrate_cancel, "strata_calibrate_cancel"},
       {R::strata_calibrate_auto, "strata_calibrate_auto"}, {R::strata_calibrate_report, "strata_calibrate_report"}, {R::strata_login_link, "strata_login_link"},
+      {R::strata_login_link_new, "strata_login_link_new"}, {R::strata_pin, "strata_pin"},
       {R::strata_config, "strata_config"},
       {R::strata_config_settings, "strata_config_settings"}, {R::strata_key_rotate, "strata_key_rotate"},
       {R::strata_folders, "strata_folders"},           {R::strata_folder_private, "strata_folder_private"},

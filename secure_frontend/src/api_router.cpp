@@ -129,6 +129,19 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
     if (!authorized) return early(make_error_response(ApiError::invalid_api_key));
   }
 
+  // One server, the apps manage it (owner 2026-10-31): a key holder's fresh one-time login link (an app attached to a
+  // server already running opens the page with it), only while its handler is set. JSON, small.
+  if (config_.new_login_link && head.target == kNewLoginLinkPath) {
+    if (head.method != "POST") return early(make_error_response(ApiError::method_not_allowed, {.allow = "POST"}));
+    const auto types = head.values("content-type");
+    if (types.size() != 1U || !is_json_content_type(types.front())) return early(make_error_response(ApiError::unsupported_media_type));
+    if (head.content_length.value_or(0U) > kLoginLinkBodyLimit) return early(make_error_response(ApiError::request_too_large));
+    decision.route = RouteId::strata_login_link_new;
+    decision.expect_continue = head.expect_continue;
+    decision.body_limit = head.content_length.value_or(0U);
+    return decision;
+  }
+
   // Step 6: kRouteTable, byte-exact; a prefix route needs a non-empty rest. The model
   // launcher's control routes join it only while their handlers are set (models.control).
   const RouteEntry* matched = nullptr;
@@ -311,6 +324,12 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
       case RouteId::strata_login_link: {
         RouteResult result = config_.login_link ? config_.login_link(body, context)
                                                 : RouteResult{make_error_response(ApiError::not_found)};
+        if (auto* complete = std::get_if<HttpResponse>(&result)) add_cors(complete, decision.allow_origin);
+        return result;
+      }
+      case RouteId::strata_login_link_new: {
+        RouteResult result = config_.new_login_link ? config_.new_login_link(body, context)
+                                                    : RouteResult{make_error_response(ApiError::not_found)};
         if (auto* complete = std::get_if<HttpResponse>(&result)) add_cors(complete, decision.allow_origin);
         return result;
       }

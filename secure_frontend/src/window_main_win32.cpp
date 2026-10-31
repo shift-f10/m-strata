@@ -45,6 +45,8 @@ constexpr UINT kServerStopped = WM_APP + 4;  // the stopper thread is done (Rest
 constexpr UINT kShowYourself = WM_APP + 5;   // a second strata-window asks this one to show itself
 constexpr UINT kNotice = WM_APP + 6;         // lParam: a std::wstring* for a tray notification
 constexpr UINT kShowLog = WM_APP + 7;        // the page's Ctrl+Shift+L: the Log
+constexpr UINT kAttachedLink = WM_APP + 8;   // lParam: a std::string* (the fresh sign-in link; empty: none)
+constexpr auto kAttachTimeout = std::chrono::seconds(3);  // the server already running answers at once
 constexpr UINT_PTR kSignInTimer = 1;         // the listening line came: the page's own address unless a link follows
 constexpr UINT_PTR kLogTimer = 2;            // new lines for the Log's text (a burst of lines is drawn once)
 constexpr UINT kMenuOpen = 1;
@@ -199,6 +201,10 @@ struct App final {
   std::string origin;              // the page's origin, once the server listens
   std::optional<std::string> pending;  // where the view goes once it exists
   std::optional<w::ServerKey> key;
+  // One server, the apps manage it (owner 2026-10-31): where this data folder's server listens, read once before the
+  // start, and whether it was already running there (the window uses it as it is and leaves it running when it exits)
+  std::optional<w::ServerAddress> address;
+  bool attached{false};
   std::vector<std::string> menu_models;
   std::wstring status{L"Starting the M-Strata server..."};
   bool own_page{false};  // the next navigation is this window's own page (NavigateToString)
@@ -588,6 +594,21 @@ void create_view() {
   }
 }
 
+// The server already running for this data folder (attached): the page from its address, signed in with a fresh
+// one-time link it gives the key holder; it is not the window's, so Exit leaves it running and Restart is not offered.
+void attach_server() {
+  app.origin = app.address->origin;
+  app.key = app.address->key;
+  record("[strata-window] the server was already running on " + app.origin + "; it keeps running when this window exits");
+  show_status(L"Opening the page...");
+  create_view();
+  HWND window = app.window;
+  std::thread([window, address = *app.address] {
+    auto link = w::fresh_sign_in(address, std::chrono::seconds(10)).value_or(std::string{});
+    PostMessageW(window, kAttachedLink, 0, reinterpret_cast<LPARAM>(new std::string(std::move(link))));
+  }).detach();
+}
+
 void start_server() {
   app.origin.clear();
   app.key.reset();
@@ -618,6 +639,7 @@ void on_server_line(std::string line) {
   if (const auto origin = w::listening_origin(line)) {
     app.origin = *origin;
     app.key = w::server_key(app.setup);
+    if (!app.key && app.address) app.key = app.address->key;  // (a --token-env key is read once: the look for a running server read it)
     show_status(L"Opening the page...");
     create_view();
     SetTimer(app.window, kSignInTimer, 1500, nullptr);  // the sign-in line follows at once when the server prints one
@@ -658,13 +680,14 @@ void show_tray_menu() {
   (void)AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   app.menu_models.clear();
   std::optional<w::TrayModels> models;
-  if (!app.origin.empty() && app.server.running() && app.key && (app.key->keyless || app.key->key)) {
+  const bool up = app.attached || app.server.running();
+  if (!app.origin.empty() && up && app.key && (app.key->keyless || app.key->key)) {
     const auto answer = w::loopback_request(app.origin, "GET", "/v1/strata/models", app.key->key ? &*app.key->key : nullptr, "",
                                             std::chrono::milliseconds(1500));
     if (answer && answer->status == 200) models = w::tray_models(answer->body);
   }
   if (!models) {
-    (void)AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, app.server.running() ? L"Models: open the page" : L"The server is not running");
+    (void)AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, up ? L"Models: open the page" : L"The server is not running");
   } else if (models->models.empty()) {
     (void)AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"No models yet: add one on the Models tab");
   } else {
@@ -683,8 +706,8 @@ void show_tray_menu() {
   }
   (void)AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   const UINT available = app.stopping ? static_cast<UINT>(MF_STRING | MF_GRAYED) : static_cast<UINT>(MF_STRING);
-  (void)AppendMenuW(menu, available, kMenuRestart, L"Restart the server");
-  (void)AppendMenuW(menu, available, kMenuExit, L"Exit");
+  if (!app.attached) (void)AppendMenuW(menu, available, kMenuRestart, L"Restart the server");
+  (void)AppendMenuW(menu, available, kMenuExit, app.attached ? L"Exit (the server keeps running)" : L"Exit");
   POINT at{};
   GetCursorPos(&at);
   SetForegroundWindow(app.window);  // so the menu closes when the user clicks elsewhere
@@ -692,8 +715,11 @@ void show_tray_menu() {
   DestroyMenu(menu);
   if (chosen == kMenuOpen) show_window();
   else if (chosen == kMenuLog) show_log();
-  else if (chosen == kMenuRestart) stop_server_then(true);
-  else if (chosen == kMenuExit) {
+  else if (chosen == kMenuRestart && !app.attached) stop_server_then(true);
+  else if (chosen == kMenuExit && app.attached) {
+    record("[strata-window] exiting; the server keeps running");
+    DestroyWindow(app.window);
+  } else if (chosen == kMenuExit) {
     app.exiting = true;
     ShowWindow(app.window, SW_HIDE);
     if (app.log_window != nullptr) ShowWindow(app.log_window, SW_HIDE);
@@ -794,6 +820,13 @@ LRESULT CALLBACK window_procedure(HWND window, UINT message, WPARAM wparam, LPAR
         start_server();
       }
       return 0;
+    case kAttachedLink: {
+      std::unique_ptr<std::string> link{reinterpret_cast<std::string*>(lparam)};
+      // the fresh link, or none: the page's own sign-in
+      navigate(w::page_address(link->empty() ? std::nullopt : std::optional<std::string>{*link}, app.origin, app.first_page));
+      app.first_page = false;
+      return 0;
+    }
     case kShowYourself: show_window(); return 0;
     case kShowLog: show_log(); return 0;
     case WM_SYSCOMMAND:
@@ -870,9 +903,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     CloseHandle(single);
     return 0;
   }
+  // One server, the apps manage it (owner 2026-10-31, spec 2026-10-31-pinned-and-hot-models-design.md section 6): the
+  // server already running for this data folder (a boot service's, a shell's, the TUI's) is used as it is; only when
+  // none answers there does the window start one (a port held by something else is the server's own error, as before)
+  app.address = w::server_address(app.setup);
+  app.attached = app.address.has_value() && w::running_server(*app.address, kAttachTimeout) == w::Running::ours;
   // The Debugging plugin (owner 2026-10-29, 2026-10-30): while it is on, the window says what it logs and starts the
   // server only on Yes (No, the default, ends it before anything starts)
-  if (w::asks_before_starting(app.setup, secure_frontend::executable_directory())) {
+  if (!app.attached && w::asks_before_starting(app.setup, secure_frontend::executable_directory())) {
     const std::wstring notice = wide(std::string{w::kDebuggingNotice} + "\n\nStart the server?");
     if (MessageBoxW(nullptr, notice.c_str(), L"M-Strata - debugging is on", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
       if (single != nullptr) CloseHandle(single);
@@ -908,7 +946,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
   add_tray_icon();
   ShowWindow(app.window, show);
   UpdateWindow(app.window);
-  start_server();
+  if (app.attached) attach_server();
+  else start_server();
   MSG message{};
   while (GetMessageW(&message, nullptr, 0, 0) > 0) {
     if (message.message == WM_KEYDOWN) {

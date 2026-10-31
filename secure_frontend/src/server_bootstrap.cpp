@@ -920,7 +920,9 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
   }
   const bool keyless = config.listener.loopback_without_key;
   secure_frontend::BearerTokenValidator validator;
-  // GUI-first start-up (spec 2026-10-27 §3, D1): the one-time login link, and the copy of the key it hands out once.
+  // GUI-first start-up (spec 2026-10-27 §3, D1): the one-time login link, and the copy of the key it hands out once. A
+  // keyed server with the page has them (one server, the apps manage it, owner 2026-10-31: an app attached to a server
+  // already running asks it for a fresh link); listener.login_link prints one at the start.
   std::optional<secure_frontend::LoginLinks> login_links;
   std::shared_ptr<secure_frontend::SecretBytes> login_key;
   if (!keyless) {
@@ -930,10 +932,10 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       std::cerr << "Unable to read API token: " << std::get<secure_frontend::TokenReadError>(token_result).message << '\n';
       return EXIT_FAILURE;
     }
-    if (config.listener.login_link) {
+    if (config.listener.web_ui) {
       login_key = std::make_shared<secure_frontend::SecretBytes>();
       if (!login_key->assign(token->view())) {
-        std::cerr << "listener.login_link: the key could not be held for the login link\n";
+        std::cerr << "listener.web_ui: the key could not be held for the login link\n";
         return EXIT_FAILURE;
       }
       login_links.emplace();
@@ -941,7 +943,21 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
     validator = secure_frontend::make_bearer_validator(std::make_shared<const secure_frontend::TokenVerifier>(std::move(*token)));
   }
   secure_frontend::ChatHandler login_link_handler;
+  secure_frontend::ChatHandler new_login_link_handler;
   if (login_links.has_value()) {
+    // A key holder on this PC gets a fresh one-time code (it replaces the one before it); the key never leaves here.
+    new_login_link_handler = [&links = *login_links](const std::string_view,
+                                                     const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {
+      if (!context.loopback_peer) return secure_frontend::make_error_response(secure_frontend::ApiError::control_not_allowed);
+      const auto code = links.issue(secure_frontend::LoginLinks::Clock::now());
+      if (!code.has_value()) return secure_frontend::make_error_response(secure_frontend::ApiError::internal_error);
+      std::string answer = "{\"code\":";
+      secure_frontend::append_json_string(&answer, *code);
+      answer += "}\n";
+      auto response = json_answer(200, std::move(answer));
+      response.headers.emplace_back("Cache-Control", "no-store");
+      return response;
+    };
     // A loopback client with the current one-time code gets the key, once; anything else learns nothing.
     login_link_handler = [&links = *login_links, login_key](const std::string_view body,
                                                             const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {
@@ -1337,7 +1353,8 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       .cards = std::move(card_route_handler),
       .settings = std::move(settings_route_handler),
       .plugins = std::move(plugin_route_handler),
-      .login_link = std::move(login_link_handler)});
+      .login_link = std::move(login_link_handler),
+      .new_login_link = std::move(new_login_link_handler)});
   const secure_frontend::ConnectionLimits connection_bounds = secure_frontend::connection_limits(config);
   std::string bind_error;
   auto server = secure_frontend::HttpSocketServer::bind(listener, static_cast<int>(config.listener.backlog), &bind_error);
@@ -1389,8 +1406,9 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
             << (keyless ? " (no API key: loopback only; Ctrl-C to stop)\n" : " (authenticated; Ctrl-C to stop)\n");
   raise_event("server_started", "the server started",
               "The Strata server is listening on " + authority + " with " + std::to_string(card_count) + " model cards.");
-  if (login_links.has_value()) {
-    // On the console only (never a log): the link works from this PC, once, within ten minutes.
+  if (login_links.has_value() && config.listener.login_link) {
+    // On the console only (never a log): the link works from this PC, once, within ten minutes. A boot service's start
+    // (--no-login-link) prints none: its output is the journal or a service's log.
     if (const auto code = login_links->issue(secure_frontend::LoginLinks::Clock::now())) {
       const std::string link_authority = config.listener.host.scope() == secure_frontend::AddressScope::loopback
                                              ? authority

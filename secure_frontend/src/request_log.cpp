@@ -30,6 +30,7 @@ std::string_view route_name(const RouteId route) {
     case RouteId::strata_calibrate_auto: return "strata_calibrate_auto";
     case RouteId::strata_calibrate_report: return "strata_calibrate_report";
     case RouteId::strata_login_link: return "strata_login_link";
+    case RouteId::strata_login_link_new: return "strata_login_link_new";
     case RouteId::strata_config: return "strata_config";
     case RouteId::strata_config_settings: return "strata_config_settings";
     case RouteId::strata_key_rotate: return "strata_key_rotate";

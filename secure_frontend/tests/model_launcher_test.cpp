@@ -20,6 +20,7 @@
 #include "support/fake_engine_dump.hpp"
 #include "support/fake_supervised_process.hpp"
 #include "support/gguf_builder.hpp"
+#include "support/raw_http.hpp"
 #include "support/server_harness.hpp"
 #include "support/test_paths.hpp"
 #include "support/test_support.hpp"
@@ -572,6 +573,60 @@ void a_card_is_pinned_and_its_removal_unpins_it() {
 // The pin through the server (spec part 1): a card pinned in the config (models.start) starts with the server and is
 // listed pinned; POST /v1/strata/models/pin moves the pin in the config file, null takes it out, an unknown card is not
 // found and a body that is not one is refused.
+// One server, the apps manage it (owner 2026-10-31, spec section 6), over a real socket: started for a boot service
+// (--no-login-link), the server prints no one-time login link; a key holder on this PC asks it for a fresh one, which the
+// page's claim exchanges for the key once. Without the key there is none. Started without the flag, it prints its link.
+void a_key_holder_gets_a_fresh_login_link() {
+  const auto start = [](std::vector<std::string> args) {
+    auto options = two_cards({}, {}, {{"models.control", "true"}, {"listener.web_ui", "true"}, {"listener.login_link", "true"}});
+    options.extra_args = std::move(args);
+    auto server = ServerProcess::start(options);
+    expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots");
+    return server;
+  };
+  const auto stdout_of = [](const ServerProcess& s) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::ifstream in(s.root() / "stdout.log", std::ios::binary);
+    return std::string{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+  };
+  {
+    auto printed = start({});
+    if (!printed) return;
+    const std::string out = stdout_of(*printed);
+    expect(out.find("Sign in: open http://127.0.0.1:") != std::string::npos, "without the flag the link is printed: " + out);
+  }
+  auto server = start({"--no-login-link"});
+  if (!server) return;
+  const std::string out = stdout_of(*server);
+  expect(out.find("Secure server listening") != std::string::npos && out.find("Sign in") == std::string::npos &&
+             out.find("#login=") == std::string::npos,
+         "--no-login-link: no link on its output: " + out);
+  const std::string authority = "127.0.0.1:" + std::to_string(server->port());
+  const auto unkeyed = raw_http::exchange("127.0.0.1", server->port(),
+                                          raw_http::request("POST", "/v1/strata/login-link/new", authority,
+                                                            {"Content-Type: application/json", "Connection: close"}, "{}"));
+  expect(unkeyed && unkeyed->status == 401, "a fresh link needs the key");
+  const auto fresh = call(*server, "POST", "/v1/strata/login-link/new", "{}");
+  expect(fresh && fresh->status == 200, "a key holder gets a fresh link: " + shown(fresh));
+  std::string code;
+  if (fresh) {
+    constexpr std::string_view kField = "{\"code\":\"";
+    if (fresh->body.starts_with(kField)) code = fresh->body.substr(kField.size(), fresh->body.find('"', kField.size()) - kField.size());
+  }
+  expect(code.size() == 43U && fresh->body.find(test_support::kHarnessToken) == std::string::npos, "its code, never the key: " + shown(fresh));
+  const auto claim = [&] {
+    return raw_http::exchange("127.0.0.1", server->port(),
+                              raw_http::request("POST", "/v1/strata/login-link", authority,
+                                                {"Content-Type: application/json", "Connection: close"}, "{\"code\":\"" + code + "\"}"));
+  };
+  const auto claimed = claim();
+  expect(claimed && claimed->status == 200 && claimed->body.find(test_support::kHarnessToken) != std::string::npos &&
+             claimed->header("Cache-Control") == std::optional<std::string>{"no-store"},
+         "the page's claim gets the key");
+  const auto again = claim();
+  expect(again && again->status == 403, "once");
+}
+
 void a_pinned_card_starts_with_the_server_and_the_pin_is_kept() {
   auto server = ServerProcess::start(two_cards({}, {}, {{"models.control", "true"}, {"models.start", "\"Beta\""}}));
   expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots");
@@ -1954,6 +2009,7 @@ int main(int argc, char** argv) {
       {"cards_can_be_added_while_serving", cards_can_be_added_while_serving},
       {"a_card_is_pinned_and_its_removal_unpins_it", a_card_is_pinned_and_its_removal_unpins_it},
       {"a_pinned_card_starts_with_the_server_and_the_pin_is_kept", a_pinned_card_starts_with_the_server_and_the_pin_is_kept},
+      {"a_key_holder_gets_a_fresh_login_link", a_key_holder_gets_a_fresh_login_link},
       {"a_card_kept_loaded_never_unloads_when_idle", a_card_kept_loaded_never_unloads_when_idle},
       {"page_cards_can_be_replaced_and_removed", page_cards_can_be_replaced_and_removed},
       {"cards_say_whether_their_profile_takes_reasoning_effort", cards_say_whether_their_profile_takes_reasoning_effort},

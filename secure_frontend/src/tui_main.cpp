@@ -53,6 +53,7 @@ constexpr auto kPollEvery = std::chrono::seconds(1);
 constexpr auto kPollTimeout = std::chrono::seconds(5);     // a poll: the next one comes a second later anyway
 constexpr auto kActionTimeout = std::chrono::seconds(15);  // a key's request (a start answers once it is under way)
 constexpr auto kStopGrace = std::chrono::seconds(60);
+constexpr auto kAttachTimeout = std::chrono::seconds(3);  // the server already running answers its /health at once
 // The console closing, a logoff or a shutdown: Windows ends this process about 5 s after the event, so the server's
 // orderly stop gets 4 s before it is ended.
 constexpr auto kClosingGrace = std::chrono::seconds(4);
@@ -183,8 +184,10 @@ int main(int argc, char** argv) {
   for (const int quit_signal : {SIGTERM, SIGHUP, SIGINT, SIGQUIT}) std::signal(quit_signal, on_signal);
 #endif
   if (!arguments.empty() && (arguments[0] == "--help" || arguments[0] == "-h")) {
-    std::cout << "strata-tui: the M-Strata server in this terminal. It starts strata-unified-server (beside it) with these\n"
-                 "arguments, shows its Monitor, Models, Downloads, Settings, Log and About, and stops it when you quit (q).\n";
+    std::cout << "strata-tui: the M-Strata server in this terminal. It uses the server already running for its data folder\n"
+                 "(a boot service's, or one started before) and leaves it running when you quit (q); with none running, it\n"
+                 "starts strata-unified-server (beside it) with these arguments and stops it when you quit. It shows the\n"
+                 "server's Monitor, Models, Downloads, Settings, Log and About.\n";
     return 0;
   }
   auto made = w::server_setup(arguments, secure_frontend::executable_directory());
@@ -193,6 +196,11 @@ int main(int argc, char** argv) {
     return 2;
   }
   const auto setup = std::get<w::ServerSetup>(std::move(made));
+  // One server, the apps manage it (owner 2026-10-31, spec 2026-10-31-pinned-and-hot-models-design.md section 6): the
+  // server already running for this data folder is used as it is, and keeps running when the TUI quits; only when none
+  // answers there does the TUI start one (a port held by something else is the server's own error, as before)
+  const auto address = w::server_address(setup);
+  const bool attached = address.has_value() && w::running_server(*address, kAttachTimeout) == w::Running::ours;
   t::Terminal terminal;
   if (const auto problem = terminal.open()) {
     std::cerr << "strata-tui: " << *problem << '\n';
@@ -201,7 +209,7 @@ int main(int argc, char** argv) {
   const t::Capabilities capabilities = terminal.capabilities();
   // The Debugging plugin (owner 2026-10-29, 2026-10-30): while it is on, the TUI says what it logs and starts the
   // server only on y; any other key (or a quit signal, or a closed terminal) ends it before anything starts
-  if (w::asks_before_starting(setup, secure_frontend::executable_directory())) {
+  if (!attached && w::asks_before_starting(setup, secure_frontend::executable_directory())) {
     t::KeyDecoder decoder;
     std::optional<t::TerminalSize> drawn;
     t::GateAnswer answer = t::GateAnswer::waiting;
@@ -241,30 +249,43 @@ int main(int argc, char** argv) {
   std::optional<w::RotatingLog> log;  // opened at the first line once the logs folder is there (a first start makes it)
 
   w::ServerChild server;
-  const auto failed = server.start(
-      setup.server, setup.arguments, setup.environment,
-      [&shared, &setup](std::string line) {
-        try {
-          if (!w::loggable(line)) return;  // the one-time sign-in link: never shown, never logged
-          std::lock_guard lock(shared.mutex);
-          if (const auto origin = w::listening_origin(line)) {
-            shared.origin = *origin;
-            shared.reachable = loopback_origin(*origin);
-            const auto key = w::server_key(setup);
-            shared.key = key ? key->key : std::nullopt;
-            shared.keyless = key.has_value() && key->keyless;
+  std::optional<std::string> failed;
+  if (attached) {
+    std::lock_guard lock(shared.mutex);
+    shared.origin = address->origin;
+    shared.reachable = loopback_origin(address->origin);
+    shared.key = address->key.key;
+    shared.keyless = address->key.keyless;
+    app.server_attached();
+    app.log_line("strata-tui: the server was already running on " + address->origin + "; it keeps running when you quit");
+  } else {
+    failed = server.start(
+        setup.server, setup.arguments, setup.environment,
+        [&shared, &setup, &address](std::string line) {
+          try {
+            if (!w::loggable(line)) return;  // the one-time sign-in link: never shown, never logged
+            std::lock_guard lock(shared.mutex);
+            if (const auto origin = w::listening_origin(line)) {
+              shared.origin = *origin;
+              shared.reachable = loopback_origin(*origin);
+              auto key = w::server_key(setup);
+              // (a --token-env key is read once: the look for a running server read it)
+              if (!key && address) key = address->key;
+              shared.key = key ? key->key : std::nullopt;
+              shared.keyless = key.has_value() && key->keyless;
+            }
+            shared.lines.push_back(std::move(line));
+            shared.wake.notify_all();
+          } catch (...) {
+            // (a line lost: this is the server child's reader thread, which must go on)
           }
-          shared.lines.push_back(std::move(line));
+        },
+        [&shared](const int code) {
+          std::lock_guard lock(shared.mutex);
+          shared.exit_code = code;
           shared.wake.notify_all();
-        } catch (...) {
-          // (a line lost: this is the server child's reader thread, which must go on)
-        }
-      },
-      [&shared](const int code) {
-        std::lock_guard lock(shared.mutex);
-        shared.exit_code = code;
-        shared.wake.notify_all();
-      });
+        });
+  }
   app.server_state(failed ? *failed : std::string{"starting"}, false);
 
   // The server's lines to its log file and the Log view; whether there were any.
@@ -451,6 +472,7 @@ int main(int argc, char** argv) {
   if (g_stopped != nullptr) (void)SetEvent(g_stopped);
 #endif
   worker.join();
-  std::cout << (orderly ? "strata-tui: the server stopped.\n" : "strata-tui: the server did not stop in time and was ended.\n");
+  if (attached) std::cout << "strata-tui: the server keeps running (it was running before strata-tui).\n";
+  else std::cout << (orderly ? "strata-tui: the server stopped.\n" : "strata-tui: the server did not stop in time and was ended.\n");
   return failure ? 1 : 0;
 }

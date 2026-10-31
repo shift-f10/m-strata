@@ -36,6 +36,7 @@ constexpr std::uintmax_t kLogBytes = 4U * 1024U * 1024U;
 constexpr std::size_t kLogViewLines = 2000;  // the Log's lines in memory (as many as strata-tui's Log keeps)
 constexpr std::size_t kLogViewBytes = 1024U * 1024U;
 constexpr std::size_t kRecentLines = 40;
+constexpr auto kAttachTimeout = std::chrono::seconds(3);  // the server already running answers at once
 
 struct App final {
   GtkApplication* application{nullptr};
@@ -61,6 +62,10 @@ struct App final {
   std::string origin;
   std::optional<std::string> key;  // the server's key, in memory only
   bool keyless{false};
+  // One server, the apps manage it (owner 2026-10-31): where this data folder's server listens, read once before the
+  // start, and whether it was already running there (the window uses it as it is and leaves it running when it exits)
+  std::optional<w::ServerAddress> address;
+  bool attached{false};
   bool own_page{false};
   bool stopping{false};
   bool exiting{false};
@@ -323,7 +328,8 @@ void on_server_line(std::string line) {
   record(line);
   if (const auto origin = w::listening_origin(line)) {
     app.origin = *origin;
-    const auto key = w::server_key(app.setup);
+    auto key = w::server_key(app.setup);
+    if (!key && app.address) key = app.address->key;  // (a --token-env key is read once: the look for a running server read it)
     app.key = key ? key->key : std::nullopt;
     app.keyless = key && key->keyless;
     show_status("Opening the page...");
@@ -337,6 +343,23 @@ void on_server_line(std::string line) {
       return G_SOURCE_REMOVE;
     }, nullptr);
   }
+}
+
+// The server already running for this data folder (attached): the page from its address, signed in with a fresh
+// one-time link it gives the key holder; it is not the window's, so Exit leaves it running and Restart is not offered.
+void attach_server() {
+  app.origin = app.address->origin;
+  app.key = app.address->key.key;
+  app.keyless = app.address->key.keyless;
+  record("[strata-window] the server was already running on " + app.origin + "; it keeps running when this window exits");
+  show_status("Opening the page...");
+  std::thread([address = *app.address] {
+    auto link = w::fresh_sign_in(address, std::chrono::seconds(10));
+    on_main_thread([link = std::move(link)] {
+      navigate(w::page_address(link, app.origin, app.first_page));  // none: the page's own sign-in
+      app.first_page = false;
+    });
+  }).detach();
 }
 
 void start_server() {
@@ -418,7 +441,7 @@ void rebuild_menu() {
     models = app.models;
   }
   if (!models) {
-    add_item(app.server.running() ? "Models: open the page" : "The server is not running", false, nullptr, nullptr);
+    add_item(app.attached || app.server.running() ? "Models: open the page" : "The server is not running", false, nullptr, nullptr);
   } else if (models->models.empty()) {
     add_item("No models yet: add one on the Models tab", false, nullptr, nullptr);
   } else {
@@ -443,8 +466,13 @@ void rebuild_menu() {
     }
   }
   add_separator();
-  add_item("Restart the server", !app.stopping, [](GtkMenuItem*, gpointer) { stop_server_then(true); }, nullptr);
-  add_item("Exit", !app.stopping, [](GtkMenuItem*, gpointer) {
+  if (!app.attached) add_item("Restart the server", !app.stopping, [](GtkMenuItem*, gpointer) { stop_server_then(true); }, nullptr);
+  add_item(app.attached ? "Exit (the server keeps running)" : "Exit", !app.stopping, [](GtkMenuItem*, gpointer) {
+    if (app.attached) {
+      record("[strata-window] exiting; the server keeps running");
+      g_application_quit(G_APPLICATION(app.application));
+      return;
+    }
     app.exiting = true;
     gtk_widget_hide(app.window);
     if (app.log_window != nullptr) gtk_widget_hide(app.log_window);
@@ -459,7 +487,9 @@ void rebuild_menu() {
 
 // Every 3 s, the model list on a thread of its own; the menu is rebuilt when it changed.
 gboolean refresh_models(gpointer) {
-  if (app.refreshing || app.origin.empty() || !app.server.running() || (!app.key && !app.keyless)) return G_SOURCE_CONTINUE;
+  if (app.refreshing || app.origin.empty() || !(app.attached || app.server.running()) || (!app.key && !app.keyless)) {
+    return G_SOURCE_CONTINUE;
+  }
   app.refreshing = true;
   const std::string origin = app.origin;
   const std::optional<std::string> key = app.key;
@@ -521,9 +551,14 @@ void activate(GtkApplication* application, gpointer) {
     show_window();
     return;
   }
+  // One server, the apps manage it (owner 2026-10-31, spec 2026-10-31-pinned-and-hot-models-design.md section 6): the
+  // server already running for this data folder (a boot service's, a shell's, the TUI's) is used as it is; only when
+  // none answers there does the window start one (a port held by something else is the server's own error, as before)
+  app.address = w::server_address(app.setup);
+  app.attached = app.address.has_value() && w::running_server(*app.address, kAttachTimeout) == w::Running::ours;
   // The Debugging plugin (owner 2026-10-29, 2026-10-30): while it is on, the window says what it logs and starts the
   // server only on Yes (No, the default, returns before the application is held, so it ends before anything starts)
-  if (w::asks_before_starting(app.setup, secure_frontend::executable_directory())) {
+  if (!app.attached && w::asks_before_starting(app.setup, secure_frontend::executable_directory())) {
     const std::string notice = std::string{w::kDebuggingNotice} + "\n\nStart the server?";
     GtkWidget* ask = gtk_message_dialog_new(nullptr, GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_YES_NO, "%s", notice.c_str());
     gtk_window_set_title(GTK_WINDOW(ask), "M-Strata - debugging is on");
@@ -594,7 +629,8 @@ void activate(GtkApplication* application, gpointer) {
   app.menu_timer = g_timeout_add_seconds(3, refresh_models, nullptr);
   gtk_widget_show_all(app.window);
   gtk_stack_set_visible_child_name(GTK_STACK(app.stack), "status");
-  start_server();
+  if (app.attached) attach_server();
+  else start_server();
 }
 
 }  // namespace
@@ -624,6 +660,10 @@ int main(int argc, char** argv) {
   // SIGTERM / SIGINT (a session's end, a service manager): the server stops in order, then the window
   const auto on_signal = [](gpointer) -> gboolean {
     if (app.window == nullptr) {  // no window and no server here (before the first activation)
+      g_application_quit(G_APPLICATION(app.application));
+      return G_SOURCE_CONTINUE;
+    }
+    if (app.attached) {  // not this window's server: it keeps running
       g_application_quit(G_APPLICATION(app.application));
       return G_SOURCE_CONTINUE;
     }

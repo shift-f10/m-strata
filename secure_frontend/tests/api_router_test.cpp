@@ -1703,6 +1703,35 @@ secure_frontend::HttpResponse request(secure_frontend::ApiRouter& router, const 
   return complete(router.handle(head, body, decision, context));
 }
 
+// One server, the apps manage it (owner 2026-10-31, spec section 6): POST /v1/strata/login-link/new mints a fresh one-time
+// login link for a key holder - an app attached to a server already running opens the page with it. Keyed like every
+// route (unlike the claim), POST only, a small JSON body; with its handler unset it is no route.
+void a_fresh_login_link_is_for_a_key_holder() {
+  secure_frontend::SecretBytes secret;
+  (void)secret.assign(kRouterToken);
+  std::vector<std::string> calls;
+  secure_frontend::ApiRouter router({
+      .policy = secure_frontend::make_http_policy(*secure_frontend::parse_listener_address("127.0.0.1"), 8080, {}, {}),
+      .validator = secure_frontend::make_bearer_validator(std::make_shared<const secure_frontend::TokenVerifier>(std::move(secret))),
+      .model_id = "fake-model", .owned_by = "local", .chat_body_limit = 49152,
+      .health = [] { return secure_frontend::HealthView{true, "ready", ""}; },
+      .chat = {},
+      .new_login_link = [&calls](const std::string_view body, const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {
+        calls.push_back(std::string{body} + (context.loopback_peer ? "" : " remote"));
+        return secure_frontend::HttpResponse{.status = 200, .headers = {}, .body = "{\"code\":\"x\"}", .log_code = "ok"};
+      }});
+  expect(request(router, "POST", "/v1/strata/login-link/new", "{}", false).status == 401 && calls.empty(), "it needs the key");
+  expect(request(router, "POST", "/v1/strata/login-link/new", "{}").status == 200 && calls == std::vector<std::string>{"{}"},
+         "a key holder reaches its handler");
+  expect(request(router, "POST", "/v1/strata/login-link/new", "{}", true, false).status == 200 && calls.back().ends_with(" remote"),
+         "the handler learns the client's class");
+  expect(request(router, "GET", "/v1/strata/login-link/new").status == 405, "POST only");
+  expect(request(router, "POST", "/v1/strata/login-link/new", "{}", true, true, "text/plain").status == 415, "its body is JSON");
+  expect(request(router, "POST", "/v1/strata/login-link/new", std::string(5000, ' ')).status == 413, "its body is small");
+  auto off = router_with({});
+  expect(request(off, "POST", "/v1/strata/login-link/new", "{}").status == 404, "unset: no route");
+}
+
 // GUI-first start-up (spec 2026-10-27 §3, D1): POST /v1/strata/login-link is the one API route that answers without
 // the key, and only while its handler is set (listener.login_link); its body is small JSON; it learns the client's class
 // (the handler refuses a remote one). Every other route still needs the key.
@@ -2091,6 +2120,7 @@ int main(int argc, char** argv) {
       {"model_control_routes_need_the_switch_and_the_key", model_control_routes_need_the_switch_and_the_key},
       {"the_pin_route_reaches_its_handler", the_pin_route_reaches_its_handler},
       {"login_link_route_answers_without_the_key_only_when_on", login_link_route_answers_without_the_key_only_when_on},
+      {"a_fresh_login_link_is_for_a_key_holder", a_fresh_login_link_is_for_a_key_holder},
       {"model_download_routes_need_the_switch_and_the_key", model_download_routes_need_the_switch_and_the_key},
       {"model_card_routes_need_the_switch_and_the_key", model_card_routes_need_the_switch_and_the_key},
       {"calibration_routes_need_their_handlers_and_the_key", calibration_routes_need_their_handlers_and_the_key},

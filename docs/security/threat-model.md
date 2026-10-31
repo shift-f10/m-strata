@@ -738,6 +738,12 @@ asks quoted there.
   `#`, so a browser never sends it in a request line, Referer or log), valid 10 minutes, used
   once, spent after 10 wrong tries, compared in constant time; a wrong code answers
   `login_link_refused` (403). It hands out the key once, to whoever holds the console's link.
+  A keyed server with the page always serves it; `listener.login_link` only prints the start's
+  link, and `--no-login-link` (a boot service's start, whose output is a journal or a log) turns
+  that print off. **A fresh link** (2026-10-31): `POST /v1/strata/login-link/new` is keyed like
+  every other route and loopback only (`control_not_allowed` otherwise); it answers a new code
+  (`no-store`), which replaces the one before it - so a key holder on this PC (strata-window
+  attached to a server already running) can open the page signed in. It never answers the key.
 - **Cards the page writes.** A card is built only from a GGUF file's header (flint and Gemma 4,
   the families that run from one GGUF): the page names a file in a folder, never an engine, a
   flag or a free-form argument. The card is written owner-only to `<roots.state>/cards`, then

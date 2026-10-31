@@ -2,6 +2,7 @@
 // "instead of a console application, we should make it into a window application ... minimized into the tray that
 // has the start and stop models menu"): what the window reads from the server's console and keeps of it, where its
 // web view may go, the tray's model list and requests, the server it starts and its key, and the server child.
+#include "secure_frontend/config_writer.hpp"
 #include "secure_frontend/first_start.hpp"
 #include "secure_frontend/frontend_config.hpp"
 #include "secure_frontend/secret_source.hpp"
@@ -13,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <deque>
@@ -21,6 +23,8 @@
 #include <iostream>
 #include <mutex>
 #include <optional>
+#include <string_view>
+#include <utility>
 #include <string>
 #include <thread>
 #include <variant>
@@ -28,8 +32,14 @@
 
 #if defined(_WIN32)
 #include "secure_frontend/win32_prelude.hpp"
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -355,6 +365,179 @@ void the_servers_key_is_read_as_key_show_reads_it() {
          "a --token-env start's variable");
 }
 
+// A running server's stand-in on loopback: every connection gets `reply` as it is (none: it reads the request and says
+// nothing); it keeps each request's head.
+class Responder final {
+ public:
+  explicit Responder(std::optional<std::string> reply) : reply_(std::move(reply)) {
+#if defined(_WIN32)
+    WSADATA data{};
+    (void)WSAStartup(MAKEWORD(2, 2), &data);
+#endif
+    listener_ = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    (void)::bind(listener_, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+    (void)::listen(listener_, 4);
+    socklen_t length = sizeof(address);
+    (void)::getsockname(listener_, reinterpret_cast<sockaddr*>(&address), &length);
+    port_ = ntohs(address.sin_port);
+    thread_ = std::thread([this] {
+      for (;;) {
+        const auto client = ::accept(listener_, nullptr, nullptr);
+        if (client == kNoSocket) return;
+        std::string head;
+        char buffer[4096];
+        while (head.find("\r\n\r\n") == std::string::npos) {
+          const auto got = ::recv(client, buffer, sizeof(buffer), 0);
+          if (got <= 0) break;
+          head.append(buffer, static_cast<std::size_t>(got));
+        }
+        {
+          const std::scoped_lock lock(mutex_);
+          heads_.push_back(head);
+        }
+        if (reply_) (void)::send(client, reply_->data(), static_cast<int>(reply_->size()), 0);
+        else std::this_thread::sleep_for(std::chrono::milliseconds(600));
+        close_socket(client);
+      }
+    });
+  }
+  ~Responder() {
+#if !defined(_WIN32)
+    ::shutdown(listener_, SHUT_RDWR);
+#endif
+    close_socket(listener_);
+    thread_.join();
+#if defined(_WIN32)
+    (void)WSACleanup();
+#endif
+  }
+  Responder(const Responder&) = delete;
+  Responder& operator=(const Responder&) = delete;
+  [[nodiscard]] std::uint16_t port() const { return port_; }
+  [[nodiscard]] std::vector<std::string> heads() const {
+    const std::scoped_lock lock(mutex_);
+    return heads_;
+  }
+
+ private:
+#if defined(_WIN32)
+  using Socket = SOCKET;
+  using socklen_t = int;
+  static constexpr Socket kNoSocket = INVALID_SOCKET;
+  static void close_socket(const Socket socket) { (void)closesocket(socket); }
+#else
+  using Socket = int;
+  static constexpr Socket kNoSocket = -1;
+  static void close_socket(const Socket socket) { (void)::close(socket); }
+#endif
+  std::optional<std::string> reply_;
+  Socket listener_{};
+  std::uint16_t port_{0};
+  std::thread thread_;
+  mutable std::mutex mutex_;
+  std::vector<std::string> heads_;
+};
+
+std::string answer_text(const int status, const std::string_view body) {
+  return "HTTP/1.1 " + std::to_string(status) + " X\r\nContent-Type: application/json\r\nContent-Length: " +
+         std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + std::string{body};
+}
+
+// One server, the apps manage it (owner 2026-10-31, spec 2026-10-31-pinned-and-hot-models-design.md section 6): the
+// window and the TUI find the server already running for their data folder - its config's address (a wildcard bind as
+// this PC's), asked for /health with the data folder's key - and tell it from a free port and from something else.
+void a_server_already_running_is_found() {
+  const auto install = started_install();
+  const auto setup_for = [&install](const std::uint16_t port, std::vector<std::string> more = {}) {
+    std::vector<std::string> arguments{"--port", std::to_string(port)};
+    arguments.insert(arguments.end(), more.begin(), more.end());
+    return std::get<w::ServerSetup>(w::server_setup(arguments, install));
+  };
+  const auto key = w::server_key(setup_for(8080));
+  expect(key && key->key, "the data folder's key");
+  if (!key || !key->key) return;
+  std::uint16_t free_port = 0;
+  {
+    const Responder gone(std::string{});
+    free_port = gone.port();
+  }
+  const auto free = w::server_address(setup_for(free_port));
+  expect(free && free->origin == "http://127.0.0.1:" + std::to_string(free_port) && free->key.key == key->key,
+         "its config's address and key: " + (free ? free->origin : std::string{"(none)"}));
+  if (free) expect(w::running_server(*free, std::chrono::seconds(2)) == w::Running::none, "a free port: none runs");
+  {
+    const Responder ready(answer_text(200, "{\"status\":\"ok\",\"engine\":\"ready\"}\n"));
+    const auto address = w::server_address(setup_for(ready.port()));
+    expect(address && w::running_server(*address, std::chrono::seconds(2)) == w::Running::ours, "a ready server is ours");
+    const auto heads = ready.heads();
+    expect(heads.size() == 1U && heads[0].starts_with("GET /health HTTP/1.1\r\n") &&
+               heads[0].find("Authorization: Bearer " + *key->key + "\r\n") != std::string::npos,
+           "asked for its health with the key");
+  }
+  {
+    const Responder starting(answer_text(503, "{\"status\":\"unavailable\",\"engine\":\"stopped\"}\n"));
+    const auto address = w::server_address(setup_for(starting.port()));
+    expect(address && w::running_server(*address, std::chrono::seconds(2)) == w::Running::ours, "one with no model ready is ours");
+  }
+  for (const auto& [status, body] : std::vector<std::pair<int, std::string>>{
+           {401, "{\"error\":{\"code\":\"invalid_api_key\"}}"}, {200, "{\"hello\":1}"}, {404, "{}"}}) {
+    const Responder something(answer_text(status, body));
+    const auto address = w::server_address(setup_for(something.port()));
+    expect(address && w::running_server(*address, std::chrono::seconds(2)) == w::Running::other,
+           "another key or program is something else: " + std::to_string(status) + " " + body);
+  }
+  {
+    const Responder silent(std::nullopt);
+    const auto address = w::server_address(setup_for(silent.port()));
+    expect(address && w::running_server(*address, std::chrono::milliseconds(300)) == w::Running::other,
+           "a held port that never answers is something else");
+  }
+  // (a wildcard bind needs a Host alias in its config)
+  expect(!secure_frontend::update_config_file(secure_frontend::data_folder_layout(install / "data").config_file,
+                                              [](secure_frontend::FrontendConfigDraft& draft) {
+                                                draft.entries["listener.host_aliases"] = secure_frontend::ConfigDraftEntry{
+                                                    std::vector<std::string>{"example.test"}, secure_frontend::ConfigSource::file};
+                                              }).has_value(),
+         "a Host alias written");
+  const auto wildcard = w::server_address(setup_for(9000, {"--host", "0.0.0.0", "--allow-remote", "--allow-wildcard-bind"}));
+  expect(wildcard && wildcard->origin == "http://127.0.0.1:9000", "a wildcard bind is this PC's address: " +
+                                                                       (wildcard ? wildcard->origin : std::string{"(none)"}));
+}
+
+// The window attached to a running server opens the page signed in: a fresh one-time link from the server, asked with
+// the key; a keyless server, or one that gives none, opens the page's own sign-in.
+void an_attached_window_signs_in_with_a_fresh_link() {
+  const auto install = started_install();
+  const auto address_for = [&install](const std::uint16_t port) {
+    return w::server_address(std::get<w::ServerSetup>(w::server_setup({"--port", std::to_string(port)}, install)));
+  };
+  constexpr std::string_view kFreshCode = "abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE";
+  {
+    const Responder server(answer_text(200, "{\"code\":\"" + std::string{kFreshCode} + "\"}\n"));
+    const auto address = address_for(server.port());
+    const auto link = address ? w::fresh_sign_in(*address, std::chrono::seconds(2)) : std::nullopt;
+    const std::string origin = "http://127.0.0.1:" + std::to_string(server.port());
+    expect(link == std::optional<std::string>{origin + "/#login=" + std::string{kFreshCode}}, "the server's fresh link: " + link.value_or("(none)"));
+    expect(link && w::sign_in_url("Sign in: open " + *link + " in a browser") == link, "a link as the server prints one");
+    const auto heads = server.heads();
+    expect(heads.size() == 1U && heads[0].starts_with("POST /v1/strata/login-link/new HTTP/1.1\r\n") && address && address->key.key &&
+               heads[0].find("Authorization: Bearer " + *address->key.key + "\r\n") != std::string::npos,
+           "asked for with the key");
+  }
+  for (const auto& [status, body] : std::vector<std::pair<int, std::string>>{
+           {404, "{}"}, {200, "{\"code\":\"not a code\"}"}, {200, "{\"code\":\"short\"}"}, {200, "{}"}}) {
+    const Responder server(answer_text(status, body));
+    const auto address = address_for(server.port());
+    expect(address && !w::fresh_sign_in(*address, std::chrono::seconds(2)), "no link: " + std::to_string(status) + " " + body);
+  }
+  const Responder keyless(answer_text(200, "{\"code\":\"" + std::string{kFreshCode} + "\"}\n"));
+  const w::ServerAddress open{.origin = "http://127.0.0.1:" + std::to_string(keyless.port()), .key = {.key = std::nullopt, .keyless = true}};
+  expect(!w::fresh_sign_in(open, std::chrono::seconds(2)) && keyless.heads().empty(), "a keyless server: no link, nothing asked");
+}
+
 // The server child as the window runs it, with the fake server (fake_server_child_main.cpp).
 struct Watched final {
   std::mutex mutex;
@@ -553,6 +736,8 @@ int main(int argc, char** argv) {
       {"the_log_view_saves_what_it_shows", the_log_view_saves_what_it_shows},
       {"the_window_starts_the_server_beside_it", the_window_starts_the_server_beside_it},
       {"the_servers_key_is_read_as_key_show_reads_it", the_servers_key_is_read_as_key_show_reads_it},
+      {"a_server_already_running_is_found", a_server_already_running_is_found},
+      {"an_attached_window_signs_in_with_a_fresh_link", an_attached_window_signs_in_with_a_fresh_link},
       {"the_server_child_stops_in_order", the_server_child_stops_in_order},
       {"a_server_that_ignores_the_stop_is_killed", a_server_that_ignores_the_stop_is_killed},
       {"a_server_that_exits_is_reported", a_server_that_exits_is_reported},

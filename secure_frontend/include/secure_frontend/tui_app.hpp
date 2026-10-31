@@ -46,6 +46,9 @@ class App final {
   // Known once the server has started: its key, or none - a keyless server on this PC (`keyless`), or a key that could
   // not be read.
   void set_key(std::optional<std::string> key, bool keyless);
+  // One server, the apps manage it (owner 2026-10-31): the server was running before this program (a boot service's, a
+  // shell's, another app's), so quitting leaves it running.
+  void server_attached();
   // A request's answer (status 0: no answer). A poll's failure is said on the status line until that poll answers again.
   void answer(const Request& request, int status, std::string_view body);
   void log_line(std::string line);
@@ -114,6 +117,7 @@ class App final {
   std::optional<std::string> key_;
   enum class KeyState { unknown, held, keyless, unreadable };
   KeyState key_state_{KeyState::unknown};
+  bool attached_{false};  // server_attached()
   View view_{View::monitor};
   std::string server_{"starting"};
   bool up_{false};

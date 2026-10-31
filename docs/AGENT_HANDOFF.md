@@ -280,6 +280,49 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z87 (Windows box; owner-directed)
+
+Pinned and hot models, part 6 (spec part 6, "As built"): one server; strata-window and strata-tui attach to the one
+already running for their data folder (the owner: "would still work without erroring that the server is running
+already"). Part 5's server change, `--no-login-link`, comes with it.
+- **The server**: `--no-login-link` (server_cli: `listener.login_link` false for that start; twice is refused). A keyed
+  server with the page always holds its login links and serves the claim; `listener.login_link` prints the start's link
+  only. `POST /v1/strata/login-link/new` (keyed, POST, JSON at most 512 bytes, loopback only): a fresh one-time code,
+  `no-store`, replacing the one before it. Logged as `strata_login_link_new`.
+- **window_shell**: `ServerAddress`/`server_address(setup)` (the config's listener as this PC's address, and the key;
+  `server_key` is its key half), `Running`/`running_server` (GET /health with the key: ours, other, none),
+  `fresh_sign_in` (the new route's code as the link the server prints).
+- **strata-tui**: attached, no Debugging gate and no child; its Log says so; `App::server_attached()` makes the quit
+  question "Quit? The server keeps running."; it prints that it keeps running. A `--token-env` key is read once (the look
+  reads it), so the listening line falls back to it.
+- **strata-window** (Win32 and GTK): attached, `attach_server()` opens the page signed in with `fresh_sign_in`'s link,
+  the tray lists the server's models, has no Restart and has **Exit (the server keeps running)**, which quits without a
+  stop (SIGTERM/SIGINT too, on Linux). Notes in the Log and `server.log`.
+- **Docs**: README (the window, the terminal, `--no-login-link`), threat model (the login link bullet: the fresh link),
+  the spec's part 5 note (the flag instead of a terminal check) and part 6 "As built".
+- **Tests**: server_cli 1 (`cli_no_login_link_turns_the_link_off`), the router 1 (`a_fresh_login_link_is_for_a_key_holder`:
+  401 without the key, the handler with it and the client's class, 405, 415, 413, 404 unset), the launcher 1
+  (`a_key_holder_gets_a_fresh_login_link`: over a real socket, the link printed without the flag, none with it, 401
+  without the key, a 43-character code with it that the claim exchanges for the key once), window_shell 2
+  (`a_server_already_running_is_found`: a stand-in on loopback - none on a free port, ours on a 200 or 503 health with the
+  key in its header, other on a 401, another body, a 404 or silence, a wildcard bind as 127.0.0.1;
+  `an_attached_window_signs_in_with_a_fresh_link`), the TUI 1 (`quitting_an_attached_server_leaves_it_running`), and
+  the request log's names (+ `strata_login_link_new`, `strata_pin`).
+- **Proof**: RED each first - the router case (no route: "a key holder reaches its handler"), the launcher case (404s),
+  window_shell (a stub answering none; then `fresh_sign_in` a stub answering none), the TUI (an empty
+  `server_attached`); the CLI case before the flag. Then GREEN.
+  - Live (Windows, MSVC; a scratch data folder on port 18093, the dev key, my own PIDs only): a server started with
+    `--no-login-link` printed its listening line and no link; strata-tui attached (its Monitor read the server, the Log
+    line, "Quit? The server keeps running.", the server alive after y); with none running it started its own and stopped
+    it on quit (port free). strata-window attached: the page signed in (the key in the tab's storage, the Monitor), the
+    tray listed "No models yet", no Restart, "Exit (the server keeps running)"; Exit left the server answering /health
+    200. With none running it started its own (Restart and Exit in the tray) and Exit stopped it.
+  - Windows (MSVC, the shares tree, everything built, no warnings): the whole suite 1552 of 1554 (the two release-only
+    cases).
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc 1602/1606 and full-clang 1601/1606 (the two
+    release-only cases; net01_ipv6, net01_workers and egress pass alone), window-gcc Release 1559/1561 with the GTK
+    window built (net01_workers and egress pass alone).
+
 ### Claude Code session, 2026-10-31 z86 (Windows box; owner-directed)
 
 Pinned and hot models, part 4 (spec part 4, "As built"): a card kept loaded is started again.
