@@ -169,11 +169,24 @@ bool is_valid_cors_origin(const std::string_view value) noexcept {
 HttpPolicy make_http_policy(const IpAddress& bind, const std::uint16_t port, const std::vector<std::string>& host_aliases,
                             const std::vector<std::string>& cors_origins) {
   HttpPolicy policy;
-  if (bind.scope() != AddressScope::wildcard) policy.allowed_hosts.push_back(bound_authority(bind, port));
-  if (bind.scope() == AddressScope::loopback) policy.allowed_hosts.push_back("localhost:" + std::to_string(port));
+  const std::string port_text = std::to_string(port);
+  const auto allow = [&policy](std::string host) {
+    if (!contains(policy.allowed_hosts, host)) policy.allowed_hosts.push_back(std::move(host));
+  };
+  if (bind.scope() != AddressScope::wildcard) allow(bound_authority(bind, port));
+  if (bind.scope() == AddressScope::loopback) allow("localhost:" + port_text);
+  // A wildcard bind listens on loopback too, where its own TUI and window reach it (window_shell's listening_origin);
+  // the owner, 2026-10-31: they were refused. Any other name still has to be an alias (DNS rebinding still fails).
+  if (bind.scope() == AddressScope::wildcard) {
+    allow(bind.family() == IpFamily::v4 ? "127.0.0.1:" + port_text : "[::1]:" + port_text);
+    allow("localhost:" + port_text);
+  }
   for (const auto& alias : host_aliases) {
     std::string lowered = ascii_to_lower(alias);
-    if (!contains(policy.allowed_hosts, lowered)) policy.allowed_hosts.push_back(std::move(lowered));
+    // an alias without its port also names this listener's (as a browser sends it), and itself (a proxy's port 80)
+    const bool has_port = lowered.starts_with("[") ? lowered.find("]:") != std::string::npos : lowered.find(':') != std::string::npos;
+    if (!has_port) allow(lowered + ":" + port_text);
+    allow(std::move(lowered));
   }
   for (const auto& host : policy.allowed_hosts) policy.same_origins.push_back("http://" + host);
   policy.cors_origins = cors_origins;

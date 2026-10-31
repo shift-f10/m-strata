@@ -280,6 +280,29 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z75 (Windows box; owner-directed)
+
+(On main: replayed from the plugins branch, e6322e45. Its runs on main are main's own, below.)
+
+The server on the owner's Azure VM, opened to the network ("I am getting request origin not allowed"; "it is mainly
+going to be protected via nsg").
+- **What it was**: with `listener.host` 0.0.0.0 the Host check trusted only `listener.host_aliases`. The server's own
+  TUI and window reach a wildcard-bound server at `127.0.0.1:<port>` (window_shell's listening_origin), so they were
+  refused (the VM's log: a 403 a second, its polls); and the alias the owner wrote, the VM's address without a port,
+  matched no Host a browser sends (`<address>:8080`).
+- **Now** (http_policy.cpp, make_http_policy): a wildcard bind also takes its loopback names (`127.0.0.1:<port>` or
+  `[::1]:<port>`, and `localhost:<port>`), and an alias without a port also names the listener's port. Any other name
+  is still refused, so DNS rebinding still fails; a wildcard bind still needs the key. The threat model says so.
+- **The VM, at once**: its config's aliases got the port forms (`127.0.0.1:8080`, `localhost:8080`, the address with
+  `:8080`; the old file in /tmp), checked on the real server: those 200, a foreign Host 403.
+- **Tests**: `a_wildcard_bind_takes_its_loopback_names_and_bare_aliases` (documentation addresses: the loopback names
+  and bare aliases on 0.0.0.0 and ::, a foreign name, another port and 0.0.0.0 itself refused, the same origins); web01's
+  line that pinned the old rule ("no localhost alias without a loopback bind") now says the new one.
+- **Proof**: RED (8 failures: the owner's situation), then GREEN.
+  - MSVC: the whole tree built, no warnings; 1505 of 1507 (the two release-only cases).
+  - Linux gcc 13.3, clang 18.1 and gcc Release: built whole, no warnings; the whole suites pass but the release-only pair and timing cases that pass alone. On the VM: the server bound to 0.0.0.0 answered its loopback names and its addresses with ports (200) and refused a foreign Host (403), and over the public address from the owner's PC the page 200, the API without its key 401.
+- **On main**: MSVC, the policy cases (6 of 6) and the server built. On the Azure VM (GCC 13.4, -Werror) the server rebuilt in main's tree and swapped into its install (the old one in /tmp), the policy tests 6 of 6; the plugins install's server rebuilt and swapped the same way, and over the public address the page 200, the API without its key 401, a foreign Host 403.
+
 ### Claude Code session, 2026-10-31 z73 (Windows box; owner-directed)
 
 (On main: replayed from the plugins branch, 544243fb; main has no plugin tests, so the publisher-keys case's change
