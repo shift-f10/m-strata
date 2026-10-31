@@ -353,7 +353,10 @@ void request_log_format_and_token_bucket() {
       {R::strata_plugins_switch, "strata_plugins_switch"},   {R::strata_plugins_settings, "strata_plugins_settings"},
       {R::strata_plugins_try, "strata_plugins_try"},
       {R::strata_plugins_test, "strata_plugins_test"},
-      {R::strata_plugins_keys, "strata_plugins_keys"}};
+      {R::strata_plugins_keys, "strata_plugins_keys"},
+      {R::strata_plugins_add, "strata_plugins_add"},         {R::strata_plugins_upload, "strata_plugins_upload"},
+      {R::strata_plugins_remove, "strata_plugins_remove"},   {R::strata_plugins_removed, "strata_plugins_removed"},
+      {R::strata_plugins_restore, "strata_plugins_restore"}, {R::strata_plugins_purge, "strata_plugins_purge"}};
   for (const auto& [route, name] : named) {
     const secure_frontend::RequestLogRecord line{route, 200, "", std::chrono::milliseconds(1), 0U, secure_frontend::AddressScope::loopback};
     expect(secure_frontend::format_request_line(1, line) == "req 1 " + std::string{name} + " 200 - 1 0 loopback",

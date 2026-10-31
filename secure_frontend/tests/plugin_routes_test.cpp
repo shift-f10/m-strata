@@ -1,12 +1,17 @@
 // The Plugins tab's server half (the owner, 2026-10-30: "we also need to have a plugin management tab to manage these"):
 // the list with each plugin's state, approval (its SHA-256s pinned, kept in <roots.state>/plugins.json) and on/off, each
 // applying at the next start; refusals with their reason; this PC only by default.
+#include "secure_frontend/config_file.hpp"
 #include "secure_frontend/plugin_routes.hpp"
 #include "secure_frontend/plugin_secrets.hpp"
+#include "support/stored_zip.hpp"
 #include "support/test_support.hpp"
 
+#include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -61,6 +66,7 @@ struct Fixture final {
   std::vector<std::string> logged;
   std::vector<std::string> tried;   // each Try's id, tool and arguments, as the hub got them
   std::vector<std::string> tested;  // each notifier test's id, as the notifier host got it
+  std::vector<std::string> stopped; // each plugin whose program the hosts were told to stop
   explicit Fixture(std::set<std::string> running = {}, std::vector<secure_frontend::FirstPartyPlugin> first_party = {},
                    const bool with_tools = false, const bool with_notifiers = false, std::string install_key = {}) {
     secure_frontend_test::make_private_directory(plugins);
@@ -87,6 +93,8 @@ struct Fixture final {
                                                   .running = std::move(running), .config_file = config, .secret_dir = secret};
     settings.install_key = std::move(install_key);
     settings.log = [this](const std::string_view line) { logged.emplace_back(line); };
+    settings.stop_plugin = [this](const std::string_view id) { stopped.emplace_back(id); };
+    settings.now = [] { return std::chrono::system_clock::time_point{std::chrono::sys_days{std::chrono::year{2026} / 10 / 30} + std::chrono::hours{12}}; };
     if (with_tools) {
       // the tool hub's side: search runs and lists web_search; a call answers what it was given
       settings.tools = [] {
@@ -328,6 +336,123 @@ void notifiers_are_tested() {
   expect(nothing.status == 422 && has(nothing, "runs no notifier plugins"), "no notifier host: " + shown(nothing));
 }
 
+// The signed plugin of the signature test (signed with RFC 8032's TEST 1 key), as a folder or a zip.
+const std::string kRfcPublic = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+#if defined(_WIN32)
+const std::string kSignedProgram = "signed-tool.exe";
+#else
+const std::string kSignedProgram = "signed-tool";
+#endif
+std::string signed_file(const std::string& name) {
+  std::ifstream in(std::string{SECURE_FRONTEND_PLUGIN_FIXTURES} + "/signedtool/" + name, std::ios::binary);
+  return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+std::string signed_signature() { return signed_file(std::string{"plugin.sig."} + std::string{secure_frontend::plugin_signature_platform()}); }
+std::string json_quoted(const std::string& text) {
+  std::string out = "\"";
+  for (const char c : text) {
+    if (c == '\\' || c == '"') out += '\\';
+    out += c;
+  }
+  return out + "\"";
+}
+
+// Adding (plugin spec section 12): from a folder on this PC, or an uploaded .zip, only once a key this server trusts
+// signed it; the answer names it, its publisher and the key; it is listed at once, trusted by its signature, and runs
+// from the next start; one of its id is never added twice.
+void a_signed_plugin_is_added_from_a_folder_or_a_zip() {
+  Fixture f;
+  const auto source = f.root / "downloaded";
+  std::filesystem::create_directories(source);
+  secure_frontend_test::write_file(source / "plugin.json", signed_file("plugin.json"));
+  secure_frontend_test::write_file(source / "plugin.sig", signed_signature());
+  secure_frontend_test::write_file(source / kSignedProgram, signed_file("program"), 0700);
+  const std::string folder = R"({"folder":)" + json_quoted(source.string()) + "}";
+  const auto untrusted = f.post(RouteId::strata_plugins_add, folder);
+  expect(untrusted.status == 422 && has(untrusted, "does not trust") && has(untrusted, kRfcPublic), "a key not trusted yet: " + shown(untrusted));
+  expect(f.post(RouteId::strata_plugins_keys, R"({"add":")" + kRfcPublic + R"(","name":"Example Labs"})").status == 200, "its key trusted");
+  const auto added = f.post(RouteId::strata_plugins_add, folder);
+  expect(added.status == 200 && has(added, R"("id":"signedtool")") && has(added, R"("name":"Signed tool")") &&
+             has(added, R"("publisher":"Example Labs")") && has(added, R"("signer":"Example Labs")") && has(added, kRfcPublic) &&
+             has(added, R"("restart_needed":true)"),
+         "added: " + shown(added));
+  const auto listed = f.post(RouteId::strata_plugins, "{}");
+  expect(has(listed, R"("id":"signedtool")") && has(listed, R"("state":"on")"), "listed at once, trusted by its signature: " + listed.body);
+  const auto twice = f.post(RouteId::strata_plugins_add, folder);
+  expect(twice.status == 422 && has(twice, "installed already"), "not twice: " + shown(twice));
+  expect(std::any_of(f.logged.begin(), f.logged.end(), [](const std::string& line) { return line.find("signedtool was added") != std::string::npos; }),
+         "the log says so");
+  // removed and deleted, then uploaded as a zip in one folder
+  expect(f.post(RouteId::strata_plugins_remove, R"({"id":"signedtool"})").status == 200, "removed");
+  expect(f.post(RouteId::strata_plugins_purge, R"({"entry":"signedtool-20261030T120000Z"})").status == 200, "deleted for good");
+  const auto zip = secure_frontend_test::make_stored_zip({{"signedtool/plugin.json", signed_file("plugin.json")},
+                                                          {"signedtool/plugin.sig", signed_signature()},
+                                                          {"signedtool/" + kSignedProgram, signed_file("program")}});
+  const auto uploaded = f.post(RouteId::strata_plugins_upload, zip);
+  expect(uploaded.status == 200 && has(uploaded, R"("id":"signedtool")") && has(uploaded, R"("signer":"Example Labs")"), "uploaded: " + shown(uploaded));
+  expect(secure_frontend_test::read_file(f.plugins / "signedtool" / kSignedProgram) == signed_file("program"), "its program is in place");
+  expect(f.post(RouteId::strata_plugins_add, folder, false).status == 403 && f.post(RouteId::strata_plugins_upload, zip, false).status == 403,
+         "another PC is refused");
+}
+
+// Removing (plugin spec section 12): its program stopped first, its folder moved aside, its approval, settings and
+// secrets forgotten; what was moved aside is listed, put back - to wait for approval again - or deleted for good.
+void a_removed_plugin_is_moved_aside_and_forgotten() {
+  Fixture f({"mailer"});
+  expect(f.post(RouteId::strata_plugins_approve, R"({"id":"mailer"})").status == 200, "approved");
+  expect(f.post(RouteId::strata_plugins_settings, R"({"id":"mailer","values":{"host":"smtp.example.org","password":"s3cret pw"}})").status == 200,
+         "its settings saved");
+  const auto removed = f.post(RouteId::strata_plugins_remove, R"({"id":"mailer"})");
+  expect(removed.status == 200 && has(removed, R"("id":"mailer")") && has(removed, R"("entry":"mailer-20261030T120000Z")") &&
+             has(removed, R"("restart_needed":true)"),
+         "removed: " + shown(removed));
+  expect(f.stopped == std::vector<std::string>{"mailer"}, "its program was stopped first");
+  expect(!std::filesystem::exists(f.plugins / "mailer") && std::filesystem::exists(f.plugins / ".removed" / "mailer-20261030T120000Z" / "plugin.json"),
+         "its folder moved aside");
+  const auto chosen = secure_frontend::read_plugin_choices(f.state);
+  expect(chosen && !chosen->approved.contains("mailer") && !chosen->enabled.contains("mailer"), "its approval and on/off forgotten");
+  expect(secure_frontend_test::read_file(f.config).find("smtp.example.org") == std::string::npos, "its settings forgotten");
+  expect(!secure_frontend::plugin_secret_set(f.secret, "mailer", "password"), "its secret forgotten");
+  auto listed = f.post(RouteId::strata_plugins, "{}");
+  expect(!has(listed, R"("id":"mailer")"), "no longer listed");
+  auto aside = f.post(RouteId::strata_plugins_removed, "{}");
+  expect(aside.status == 200 && has(aside, R"({"entry":"mailer-20261030T120000Z","id":"mailer","name":"Mailer","version":"1.0.0","when":"2026-10-30T12:00:00Z"})"),
+         "listed as moved aside: " + shown(aside));
+  const auto back = f.post(RouteId::strata_plugins_restore, R"({"entry":"mailer-20261030T120000Z"})");
+  expect(back.status == 200 && has(back, R"("id":"mailer")") && has(back, R"("state":"waiting")") && has(back, R"("restart_needed":true)"),
+         "put back, to wait for approval: " + shown(back));
+  listed = f.post(RouteId::strata_plugins, "{}");
+  expect(has(listed, R"("id":"mailer")"), "listed again");
+  expect(f.post(RouteId::strata_plugins_remove, R"({"id":"mailer"})").status == 200, "removed again");
+  const auto purged = f.post(RouteId::strata_plugins_purge, R"({"entry":"mailer-20261030T120000Z"})");
+  expect(purged.status == 200 && has(purged, R"("deleted":true)"), "deleted for good: " + shown(purged));
+  aside = f.post(RouteId::strata_plugins_removed, "{}");
+  expect(has(aside, R"("removed":[])") && !std::filesystem::exists(f.plugins / ".removed" / "mailer-20261030T120000Z"), "nothing moved aside: " + aside.body);
+  for (const auto route : {RouteId::strata_plugins_remove, RouteId::strata_plugins_removed, RouteId::strata_plugins_restore, RouteId::strata_plugins_purge}) {
+    expect(f.post(route, "{}", false).status == 403, "another PC is refused");
+  }
+}
+
+void adding_and_removing_refusals_say_why() {
+  Fixture f({"search"}, {{.id = "search", .pin = {}, .on = true}});
+  const auto refused = [&f](const RouteId route, const std::string& body, const std::string& why) {
+    const auto answer = f.post(route, body);
+    expect(answer.status == 422 && has(answer, "\"code\":\"plugin_refused\"") && has(answer, why), body + " refused for " + why + ": " + shown(answer));
+  };
+  refused(RouteId::strata_plugins_remove, R"({"id":"search"})", "built in");
+  expect(f.stopped.empty() && std::filesystem::exists(f.plugins / "search" / "plugin.json"), "a built-in plugin is neither stopped nor moved");
+  refused(RouteId::strata_plugins_remove, R"({"id":"ghost"})", "no plugin");
+  refused(RouteId::strata_plugins_add, R"({"folder":"relative/folder"})", "absolute path");
+  refused(RouteId::strata_plugins_upload, "not a zip", "the archive");
+  refused(RouteId::strata_plugins_restore, R"({"entry":"../mailer-20261030T120000Z"})", "not one that was moved aside");
+  refused(RouteId::strata_plugins_purge, R"({"entry":"mailer"})", "not one that was moved aside");
+  expect(f.post(RouteId::strata_plugins_remove, "{}").status == 400 && f.post(RouteId::strata_plugins_add, R"({"folder":1})").status == 400 &&
+             f.post(RouteId::strata_plugins_add, R"({"folder":"x","more":1})").status == 400 &&
+             f.post(RouteId::strata_plugins_restore, "{}").status == 400 && f.post(RouteId::strata_plugins_purge, R"({"entry":5})").status == 400,
+         "a body that is not one");
+  expect(f.stopped.empty(), "nothing was stopped");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -339,5 +464,8 @@ int main(int argc, char** argv) {
       {"tools_are_listed_and_tried", tools_are_listed_and_tried},
       {"notifiers_are_tested", notifiers_are_tested},
       {"publisher_keys_are_listed_added_and_removed", publisher_keys_are_listed_added_and_removed},
+      {"a_signed_plugin_is_added_from_a_folder_or_a_zip", a_signed_plugin_is_added_from_a_folder_or_a_zip},
+      {"a_removed_plugin_is_moved_aside_and_forgotten", a_removed_plugin_is_moved_aside_and_forgotten},
+      {"adding_and_removing_refusals_say_why", adding_and_removing_refusals_say_why},
   }, failures);
 }

@@ -96,6 +96,8 @@ struct ApiRouterConfig final {
 // application/json, optionally followed by `; charset=utf-8`; ASCII
 // case-insensitive, optional whitespace around each part (spec §4.2). Never allocates.
 [[nodiscard]] bool is_json_content_type(std::string_view value) noexcept;
+// A plugin's .zip (plugin spec section 12): application/zip, no parameters.
+[[nodiscard]] bool is_zip_content_type(std::string_view value) noexcept;
 
 // The header-first router (spec §4.1 steps 3-7): Host, Origin, preflight,
 // bearer token, kRouteTable, then the chat route's Content-Type and body

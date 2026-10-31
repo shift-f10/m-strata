@@ -450,7 +450,8 @@ inflated by code written here from RFC 1951, with its own tests (no vendored dec
 aside, from where it can be put back or deleted for good; the built-in plugins (make's: Debugging, Web search, Email)
 are only turned off.
 
-**Adding** (`POST /v1/strata/plugins/add`):
+**Adding** (`POST /v1/strata/plugins/add` from a folder, `POST /v1/strata/plugins/upload` from a .zip - built as two
+routes, so each takes one body type):
 - **From a folder** (`{"folder": "<absolute path on this PC>"}`): its `plugin.json` and `plugin.sig` are read (the
   manifest at most 256 KiB as discovery reads one, the signature 16 KiB), the manifest checked as discovery checks one, the signature verified
   under the trusted keys for this platform and this id; then each file the manifest lists for this platform is hashed
@@ -460,7 +461,7 @@ are only turned off.
   volume, never a copy across drives; a name starting with '.' is never a plugin id, so discovery never takes one). A
   folder that is a link, a file that is not a regular file, a name outside the folder, an id already installed (or
   moved aside under that id and not deleted) is refused.
-- **From a .zip** (the request body, `Content-Type: application/zip`, within `limits.http.max_request_bytes`): the zip is
+- **From a .zip** (`/upload`: the request body, `Content-Type: application/zip`, within `limits.http.max_request_bytes`): the zip is
   read from memory - its end record, its central directory (at most 256 entries; no ZIP64, no encryption, no links, no
   name that is absolute, has `..`, a drive, a backslash or a control character; entries stored or deflated only), each
   entry's local header agreeing with the directory. The entries may sit in one top folder or at the root. `plugin.json`

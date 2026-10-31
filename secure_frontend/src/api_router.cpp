@@ -63,6 +63,8 @@ bool is_json_content_type(const std::string_view value) noexcept {
   return ascii_iequal(trim_ows(rest.substr(1U)), "charset=utf-8");
 }
 
+bool is_zip_content_type(const std::string_view value) noexcept { return ascii_iequal(trim_ows(value), "application/zip"); }
+
 ApiRouter::ApiRouter(ApiRouterConfig config) : config_(std::move(config)) {}
 
 RouteDecision ApiRouter::authorize(const RequestHead& head) {
@@ -205,8 +207,9 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
                                      [&decision](const RouteEntry& entry) { return entry.id == decision.route; }) ||
                          std::any_of(kConfigRoutes.begin(), kConfigRoutes.end(),
                                      [&decision](const RouteEntry& entry) { return entry.id == decision.route; }) ||
-                         std::any_of(kPluginRoutes.begin(), kPluginRoutes.end(),
-                                     [&decision](const RouteEntry& entry) { return entry.id == decision.route; });
+                         (decision.route != RouteId::strata_plugins_upload &&
+                          std::any_of(kPluginRoutes.begin(), kPluginRoutes.end(),
+                                      [&decision](const RouteEntry& entry) { return entry.id == decision.route; }));
   const bool calibration_post = decision.route == RouteId::strata_calibrate || decision.route == RouteId::strata_calibrate_cancel ||
                                 decision.route == RouteId::strata_calibrate_auto || decision.route == RouteId::strata_calibrate_report;
   if (decision.route == RouteId::strata_start || decision.route == RouteId::strata_stop || download_post || card_post ||
@@ -216,6 +219,12 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
       return early(make_error_response(ApiError::unsupported_media_type));
     }
     if (head.content_length.value_or(0U) > kModelControlBodyLimit) return early(make_error_response(ApiError::request_too_large));
+  }
+  // A plugin's .zip (plugin spec section 12): its own type, not empty, bounded by limits.http.max_request_bytes alone.
+  if (decision.route == RouteId::strata_plugins_upload) {
+    const auto types = head.values("content-type");
+    if (types.size() != 1U || !is_zip_content_type(types.front())) return early(make_error_response(ApiError::unsupported_media_type));
+    if (head.content_length.value_or(0U) == 0U) return early(make_error_response(ApiError::invalid_request));
   }
   decision.expect_continue = head.expect_continue;
   decision.body_limit = head.content_length.value_or(0U);
@@ -405,7 +414,13 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
       case RouteId::strata_plugins_settings:
       case RouteId::strata_plugins_try:
       case RouteId::strata_plugins_test:
-      case RouteId::strata_plugins_keys: {
+      case RouteId::strata_plugins_keys:
+      case RouteId::strata_plugins_add:
+      case RouteId::strata_plugins_upload:
+      case RouteId::strata_plugins_remove:
+      case RouteId::strata_plugins_removed:
+      case RouteId::strata_plugins_restore:
+      case RouteId::strata_plugins_purge: {
         RouteResult result = config_.plugins.handle(decision.route, body, context);
         if (auto* complete = std::get_if<HttpResponse>(&result)) {
           response = std::move(*complete);

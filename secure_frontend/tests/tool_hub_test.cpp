@@ -201,6 +201,22 @@ void a_plugin_runs_in_its_folder_and_its_stderr_is_logged() {
   }
 }
 
+// Removed from the page (plugin spec section 12): its program is stopped, its tools are no longer offered, called or
+// tried, and it is not started again (its pause is none); the other plugin goes on.
+void a_removed_plugin_is_stopped_for_good() {
+  ToolHub hub({.plugins = {fake("alpha", {"lookup"}), fake("beta", {"weather"})}, .restart_pause = std::chrono::seconds(0)});
+  expect(names_of(hub.offers()) == std::vector<std::string>{"lookup", "weather"}, "both plugins' tools are offered");
+  expect(hub.stop("alpha"), "alpha is stopped");
+  expect(!hub.stop("nothing"), "no such plugin: nothing is stopped");
+  expect(names_of(hub.offers()) == std::vector<std::string>{"weather"}, "alpha's tool is no longer offered");
+  expect(!hub.listed().contains("alpha") && hub.listed().contains("beta"), "listed: beta alone");
+  expect(!hub.run(call("lookup", "x"), kNever).ok, "alpha's tool is not called");
+  const auto tried = hub.try_call("alpha", "lookup", R"({"query": "x"})");
+  expect(!tried.ok && tried.text.find("not running") != std::string::npos, "nor tried: " + tried.text);
+  expect(names_of(hub.offers()) == std::vector<std::string>{"weather"}, "and it is not started again");
+  expect(hub.run(call("weather", "oslo"), kNever).ok, "beta goes on");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -212,5 +228,6 @@ int main(int argc, char** argv) {
       {"at_most_sixteen_tools", at_most_sixteen_tools},
       {"a_stuck_call_ends_and_try_calls_one", a_stuck_call_ends_and_try_calls_one},
       {"a_plugin_runs_in_its_folder_and_its_stderr_is_logged", a_plugin_runs_in_its_folder_and_its_stderr_is_logged},
+      {"a_removed_plugin_is_stopped_for_good", a_removed_plugin_is_stopped_for_good},
   }, failures);
 }

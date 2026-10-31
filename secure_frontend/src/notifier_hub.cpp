@@ -86,6 +86,7 @@ struct NotifierHub::Running final {
   bool busy{false};      // an item is being written, or its answer read
   bool stopping{false};
   std::thread worker;
+  std::mutex join_mutex;  // stop() and shutdown() each join the worker once
 };
 
 namespace {
@@ -295,6 +296,20 @@ bool NotifierHub::wait_idle(const std::chrono::milliseconds timeout) {
   return true;
 }
 
+bool NotifierHub::stop(const std::string_view id) {
+  const auto found = std::find_if(plugins_.begin(), plugins_.end(), [id](const auto& plugin) { return plugin->plugin.id == id; });
+  if (found == plugins_.end()) return false;
+  Running& plugin = **found;
+  {
+    const std::lock_guard lock(plugin.mutex);
+    plugin.stopping = true;
+  }
+  plugin.changed.notify_all();
+  const std::lock_guard joining(plugin.join_mutex);  // its worker ends its program and answers a test that waits
+  if (plugin.worker.joinable()) plugin.worker.join();
+  return true;
+}
+
 void NotifierHub::shutdown() {
   for (auto& plugin : plugins_) {
     {
@@ -304,6 +319,7 @@ void NotifierHub::shutdown() {
     plugin->changed.notify_all();
   }
   for (auto& plugin : plugins_) {
+    const std::lock_guard joining(plugin->join_mutex);
     if (plugin->worker.joinable()) plugin->worker.join();
   }
 }

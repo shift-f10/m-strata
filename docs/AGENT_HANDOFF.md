@@ -280,6 +280,57 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z72 (Windows box; owner-directed)
+
+Adding and removing plugins from the page, the last steps (spec section 12; the owner: "enable the ability to add and
+remove plugins via the webui"). Done: the page can add a plugin a trusted key signed, from a folder or a .zip, and
+remove, put back or delete one.
+- **PRIV-04 kept**: linking the routes to plugin_install pulled `secure_frontend_acquire` (the models store's file
+  primitives, z71) into the server, which `privacy.priv04_secure_server_does_not_link_acquisition` forbids - the full
+  suites caught it on Windows and Linux. plugin_install now uses only the paths library (`open_root`, `open_beneath`,
+  `create_directory_within`, `list_directory`) and `write_private_file`. Each listed file is read once more in the
+  second pass, hashed, and those very bytes written owner-only (0700 on Linux); a staged folder is renamed into place
+  in the owner-only plugins folder. The server links no acquire library again.
+- **The hosts**: `ToolHub::stop(id)` and `NotifierHub::stop(id)` stop one plugin's program for good while the server
+  runs (the tool hub after a call of it that runs; the notifier's worker joined once, with shutdown).
+- **The routes** (`plugin_routes.hpp`, served with the other Plugins routes, `model_files_allowed`'s clients):
+  - `/v1/strata/plugins/add` `{"folder"}` and `/upload` (the .zip itself: `application/zip`, not empty, bounded by
+    `limits.http.max_request_bytes` alone; every other Plugins route stays JSON within 4 KiB). Only `{"folder"}` is
+    taken (a text without control characters, at most 4000 bytes). Answers: who it is, who signed it, the key.
+  - `/remove` `{"id"}`: a built-in plugin is refused before anything is stopped. Otherwise its program is stopped
+    (`stop_plugin`, the server wires both hosts), its folder moved aside, and its approval and on/off, its
+    `plugins.<id>.*` rows and its secrets forgotten (`forgotten` false if one could not be). The list says it is not
+    running from then on.
+  - `/removed`, `/restore` `{"entry"}` (its state after: waiting, unless a trusted key signed it), `/purge`
+    `{"entry"}`.
+  - Each request is logged by its name (request_log), and a refusal longer than the error body's 256 bytes is cut at a
+    character.
+- **The page** (Plugins tab):
+  - an "Add a plugin" card: a folder on the server's PC or a .zip, sent as `application/zip` whatever type the browser
+    gives the file. Its refusal and its result show in the card itself; a refusal naming a 64-hex key wraps.
+  - Remove on each plugin that is not built in (asked first);
+  - a "Moved aside" card with Put back, and Delete permanently (asked first).
+- **Tests**: `support/stored_zip.hpp` (a stored-zip writer shared by the install and route tests); the routes' add (a key
+  not trusted yet, then trusted, from a folder and from a zip, never twice, another PC refused), removal (stopped
+  first, moved aside, forgotten, listed, put back to wait, deleted) and refusals; the router's upload (zip only, keyed,
+  POST, not empty, larger than a JSON body may be); both hosts' stop.
+- **Threat model**: the page's add is exactly the trusted keys' power (nothing unsigned, nothing another key signed);
+  the zip reader's bounds and tests; removal's residual (a control-network key holder can move a plugin aside).
+  README's Plugins tab and spec section 12 (the two add routes) as built.
+- **Proof**:
+  - RED first for each part: the hosts (6 and 3 failures), the routes (9, 12 and 7), the router (20), the log (6).
+  - The page, driven in a real browser against a scratch install on port 18093 (the development key; stopped after):
+    - a refusal naming the key, until the key was trusted in Publisher keys;
+    - added from a folder; removed; put back (On, by its signature); removed; deleted for good;
+    - added again from a deflated .zip Python wrote, sent as application/zip although the file said
+      application/x-zip-compressed;
+    - the server's log has each step in order, and the program on disk is the signed one, byte for byte.
+  - After the PRIV-04 change, the same scratch install on the rebuilt server, driven with curl: remove (forgotten),
+    delete, trust the key, upload the .zip (its program the signed one), the .zip sent as JSON refused (415), remove
+    and put back (on); the PRIV-04 case passes.
+  - The whole MSVC suite: 1501 of 1503 pass (the two release-only cases, as always); PRIV-04 passes again.
+  - In WSL the gcc, clang and gcc Release trees build whole with -Werror. Their whole suites before the PRIV-04 fix failed only it and the release-only cases (1554, 1554, 1509 cases); after it, the plugin, hub, router and privacy suites pass (but the release-only hook-marker case in the two hook trees; 127 of 127 in Release), and the ASan/UBSan tree's 18 plugin cases with no finding.
+
 ### Claude Code session, 2026-10-30 z71 (Windows box; owner-directed)
 
 Adding plugins from the page, step four (spec section 12): adding and removing as library functions

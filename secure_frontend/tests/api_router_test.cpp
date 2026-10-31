@@ -1855,7 +1855,12 @@ void plugin_routes_need_their_handler_and_the_key() {
       {"/v1/strata/plugins/settings", secure_frontend::RouteId::strata_plugins_settings},
       {"/v1/strata/plugins/try", secure_frontend::RouteId::strata_plugins_try},
       {"/v1/strata/plugins/test", secure_frontend::RouteId::strata_plugins_test},
-      {"/v1/strata/plugins/keys", secure_frontend::RouteId::strata_plugins_keys}};
+      {"/v1/strata/plugins/keys", secure_frontend::RouteId::strata_plugins_keys},
+      {"/v1/strata/plugins/add", secure_frontend::RouteId::strata_plugins_add},
+      {"/v1/strata/plugins/remove", secure_frontend::RouteId::strata_plugins_remove},
+      {"/v1/strata/plugins/removed", secure_frontend::RouteId::strata_plugins_removed},
+      {"/v1/strata/plugins/restore", secure_frontend::RouteId::strata_plugins_restore},
+      {"/v1/strata/plugins/purge", secure_frontend::RouteId::strata_plugins_purge}};
   const auto make = [](std::vector<std::string>* calls, const bool on) {
     secure_frontend::SecretBytes secret;
     (void)secret.assign(kRouterToken);
@@ -1886,9 +1891,21 @@ void plugin_routes_need_their_handler_and_the_key() {
     expect(request(router, "GET", target).status == 405, target + " is POST only");
     expect(request(router, "POST", target, "{}", true, true, "text/plain").status == 415, target + " takes JSON");
   }
+  // a plugin's .zip (plugin spec section 12): keyed, POST, application/zip, larger than a JSON body may be; nothing else
+  const std::string upload = "/v1/strata/plugins/upload";
+  const std::string zip = "PK\x03\x04" + std::string(10000, 'z');
+  expect(request(router, "POST", upload, zip, true, true, "application/zip").status == 200 && !calls.empty() &&
+             calls.back() == std::to_string(static_cast<int>(secure_frontend::RouteId::strata_plugins_upload)) + " " + zip,
+         "an upload reaches the handler with its bytes");
+  expect(request(router, "POST", upload, zip, false, true, "application/zip").status == 401, "an upload needs the key");
+  expect(request(router, "GET", upload).status == 405, "an upload is POST only");
+  expect(request(router, "POST", upload, "{}").status == 415, "an upload takes a .zip, not JSON");
+  expect(request(router, "POST", upload, "", true, true, "application/zip").status == 400, "an upload is not empty");
+  expect(request(router, "POST", "/v1/strata/plugins/add", std::string(5000, ' ') + "{}").status == 413, "a JSON body stays small");
   std::vector<std::string> none;
   auto off = make(&none, false);
   for (const auto& [target, route] : routes) expect(request(off, "POST", target, "{}").status == 404, target + " is no route when off");
+  expect(request(off, "POST", upload, zip, true, true, "application/zip").status == 404, "the upload is no route when off");
   expect(none.empty(), "off: nothing is called");
 }
 

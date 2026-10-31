@@ -71,6 +71,9 @@ class ToolHub final : public ToolRunner {
   [[nodiscard]] std::map<std::string, std::vector<McpTool>> listed() const;
   // One call of `tool` on plugin `id` with `arguments_json` (an object), for the Plugins tab's "Try".
   [[nodiscard]] ToolResult try_call(std::string_view id, std::string_view tool, std::string_view arguments_json);
+  // Plugin `id` removed from the page (plugin spec section 12): its program stopped (after a call of it that runs), its
+  // tools no longer offered, called or tried, and it is not started again while this server runs. false: no such plugin.
+  bool stop(std::string_view id);
 
  private:
   struct Running;

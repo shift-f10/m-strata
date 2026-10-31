@@ -39,6 +39,12 @@ std::string_view route_name(const RouteId route) {
     case RouteId::strata_plugins_try: return "strata_plugins_try";
     case RouteId::strata_plugins_test: return "strata_plugins_test";
     case RouteId::strata_plugins_keys: return "strata_plugins_keys";
+    case RouteId::strata_plugins_add: return "strata_plugins_add";
+    case RouteId::strata_plugins_upload: return "strata_plugins_upload";
+    case RouteId::strata_plugins_remove: return "strata_plugins_remove";
+    case RouteId::strata_plugins_removed: return "strata_plugins_removed";
+    case RouteId::strata_plugins_restore: return "strata_plugins_restore";
+    case RouteId::strata_plugins_purge: return "strata_plugins_purge";
     case RouteId::strata_folders: return "strata_folders";
     case RouteId::strata_folder_private: return "strata_folder_private";
     case RouteId::strata_folder_new: return "strata_folder_new";

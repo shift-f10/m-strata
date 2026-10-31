@@ -833,15 +833,17 @@ target_include_directories(secure_frontend_plugins PRIVATE ${CMAKE_CURRENT_SOURC
 # The Plugins tab's server half (plugin_routes.hpp): the list, an approval, on/off, in <roots.state>/plugins.json.
 secure_frontend_add_library(secure_frontend_plugin_routes SOURCES src/plugin_routes.cpp
     LINKS secure_frontend_plugins secure_frontend_token_store secure_frontend_api_core secure_frontend_paths
-          secure_frontend_config_writer secure_frontend_typed_config secure_frontend_plugin_secrets secure_frontend_mcp_client)
+          secure_frontend_config_writer secure_frontend_typed_config secure_frontend_plugin_secrets secure_frontend_mcp_client
+          secure_frontend_plugin_install)
 # An install's plugins as its server finds them when it starts (install_plugins.hpp): make's record beside the engine
 # and the owner's choices; the server, strata-window and strata-tui read them.
 secure_frontend_add_library(secure_frontend_install_plugins SOURCES src/install_plugins.cpp
     LINKS secure_frontend_plugins secure_frontend_about_info secure_frontend_typed_config secure_frontend_plugin_secrets)
 # Adding and removing plugins from the page (plugin_install.hpp; plugin spec section 12): in the install's plugins folder,
-# the trust checked before anything is written, through the models store's primitives.
+# the trust checked before anything is written; the paths library and the private-file writer only (the server links
+# no acquisition code: privacy.priv04_secure_server_does_not_link_acquisition).
 secure_frontend_add_library(secure_frontend_plugin_install SOURCES src/plugin_install.cpp
-    LINKS secure_frontend_plugins secure_frontend_zip secure_frontend_acquire secure_frontend_paths secure_frontend_sha256
+    LINKS secure_frontend_plugins secure_frontend_zip secure_frontend_paths secure_frontend_token_store secure_frontend_sha256
           secure_frontend_json)
 # A tool's or notifier's secret settings (plugin_secrets.hpp): plugin-<id>-<name> in roots.secret, DPAPI or 0600.
 secure_frontend_add_library(secure_frontend_plugin_secrets SOURCES src/plugin_secrets.cpp
@@ -2237,7 +2239,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     add_dependencies(secure_frontend_notifier_hub_tests secure_frontend_fake_notifier)
     secure_frontend_add_cases(secure_frontend_notifier_hub_tests
         events_reach_each_notifier_that_wants_them the_test_is_answered_or_said_why_not event_answers_are_logged
-        a_program_that_ends_is_started_again stopping_does_not_wait_for_a_test
+        a_program_that_ends_is_started_again stopping_does_not_wait_for_a_test a_removed_plugin_is_stopped_for_good
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # notifier plugins through the real server: the fake notifier as a first-party plugin, and the old alert rows moved
     secure_frontend_add_test_executable(secure_frontend_notifier_server_tests tests/notifier_server_test.cpp
@@ -2262,7 +2264,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     add_dependencies(secure_frontend_tool_hub_tests secure_frontend_fake_mcp_tool)
     secure_frontend_add_cases(secure_frontend_tool_hub_tests
         several_plugins_tools_are_offered_and_routed a_plugin_gets_its_own_arguments_and_environment
-        a_plugin_that_does_not_start_is_left_out notes_and_dates at_most_sixteen_tools a_stuck_call_ends_and_try_calls_one a_plugin_runs_in_its_folder_and_its_stderr_is_logged
+        a_plugin_that_does_not_start_is_left_out notes_and_dates at_most_sixteen_tools a_stuck_call_ends_and_try_calls_one a_plugin_runs_in_its_folder_and_its_stderr_is_logged a_removed_plugin_is_stopped_for_good
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # GUI-first start-up (spec 2026-10-27 §5): calibration's sweep, plan, result file and key.
@@ -2432,10 +2434,13 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # The Plugins tab's routes (owner 2026-10-30): the list, an approval, on/off.
     secure_frontend_add_test_executable(secure_frontend_plugin_routes_tests tests/plugin_routes_test.cpp
-        secure_frontend_plugin_routes secure_frontend_http_request_handler)
+        secure_frontend_plugin_routes secure_frontend_http_request_handler secure_frontend_zip)
+    target_compile_definitions(secure_frontend_plugin_routes_tests PRIVATE
+        SECURE_FRONTEND_PLUGIN_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/plugins")
     secure_frontend_add_cases(secure_frontend_plugin_routes_tests
         the_plugins_are_listed approval_and_switching_are_kept refusals_say_why settings_are_listed_and_saved
         tools_are_listed_and_tried notifiers_are_tested publisher_keys_are_listed_added_and_removed
+        a_signed_plugin_is_added_from_a_folder_or_a_zip a_removed_plugin_is_moved_aside_and_forgotten adding_and_removing_refusals_say_why
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # A calibration's report for a bug report (owner 2026-10-30).

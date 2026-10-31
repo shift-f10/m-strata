@@ -50,6 +50,8 @@ struct AddedPlugin final {
                                                                          const std::vector<TrustedKey>& keys);
 
 inline constexpr std::string_view kStagingFolder = ".staging";
+// The refusal to remove a built-in plugin (the routes say it before they stop anything).
+inline constexpr std::string_view kBuiltInPluginProblem = "it is built in (one of make's): turn it off instead";
 inline constexpr std::string_view kRemovedFolder = ".removed";
 
 // A plugin moved aside: its folder <plugins>/.removed/<entry>, <entry> = <id>-<YYYYMMDD>T<HHMMSS>Z (then -2, -3...

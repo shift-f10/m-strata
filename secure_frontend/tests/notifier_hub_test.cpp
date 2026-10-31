@@ -186,6 +186,27 @@ void stopping_does_not_wait_for_a_test() {
   expect(!result.ok && has(result.reply, "stopping"), "the test says why: " + result.reply);
 }
 
+// Removed from the page (plugin spec section 12): that plugin's program is stopped and not started again (its pause is
+// none) - no event or test reaches it - while the other goes on.
+void a_removed_plugin_is_stopped_for_good() {
+  const auto folder = secure_frontend_test::make_scratch_directory();
+  NotifierHub hub({.plugins = {fake("gone", folder / "gone.txt"), fake("kept", folder / "kept.txt")}, .server_name = "testbox",
+                   .restart_pause = std::chrono::seconds(0)});
+  hub.raise("server_started", "the server started", "It listens on 127.0.0.1:8080.");
+  expect(hub.wait_idle(std::chrono::seconds(10)), "the queues empty");
+  (void)wait_for_lines(folder / "gone.txt", 1U);
+  expect(hub.stop("gone"), "gone is stopped");
+  expect(!hub.stop("nothing"), "no such plugin: nothing is stopped");
+  hub.raise("download_finished", "flint-Q8_0 is downloaded", "Its card is in Models.");
+  expect(hub.wait_idle(std::chrono::seconds(10)), "the queues empty again");
+  (void)wait_for_lines(folder / "kept.txt", 2U);
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  expect(lines_of(folder / "gone.txt").size() == 1U, "the removed one is told nothing more");
+  expect(lines_of(folder / "kept.txt").size() == 2U, "the other is told of both");
+  const auto tested = hub.test("gone");
+  expect(!tested.ok && has(tested.reply, "not running"), "its test says it is not running: " + tested.reply);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -195,5 +216,6 @@ int main(int argc, char** argv) {
       {"event_answers_are_logged", event_answers_are_logged},
       {"a_program_that_ends_is_started_again", a_program_that_ends_is_started_again},
       {"stopping_does_not_wait_for_a_test", stopping_does_not_wait_for_a_test},
+      {"a_removed_plugin_is_stopped_for_good", a_removed_plugin_is_stopped_for_good},
   }, failures);
 }

@@ -62,6 +62,9 @@ class NotifierHub final {
   [[nodiscard]] NotifierTest test(std::string_view id);
   // Every queue empty and nothing being written (tests), within `timeout`.
   [[nodiscard]] bool wait_idle(std::chrono::milliseconds timeout);
+  // Plugin `id` removed from the page (plugin spec section 12): its program stopped and not started again while this
+  // server runs - no event or test reaches it. false: no such plugin.
+  bool stop(std::string_view id);
   void shutdown();
 
  private:

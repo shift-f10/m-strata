@@ -67,6 +67,7 @@ struct ToolHub::Running final {
   std::unique_ptr<EngineStdioProcess> process;
   std::unique_ptr<McpClient> client;
   std::optional<std::chrono::steady_clock::time_point> failed_at;
+  bool removed{false};  // removed from the page: never started again
   mutable std::mutex listed_mutex;
   std::vector<McpTool> listed;  // while it runs
 
@@ -120,6 +121,7 @@ void ToolHub::say_once(const std::string& line) {
 }
 
 bool ToolHub::ensure_started(Running& plugin) {
+  if (plugin.removed) return false;
   if (plugin.process != nullptr && plugin.client != nullptr && plugin.process->running()) return true;
   plugin.stop();
   const auto now = std::chrono::steady_clock::now();
@@ -270,6 +272,16 @@ std::map<std::string, std::vector<McpTool>> ToolHub::listed() const {
     if (!plugin->listed.empty()) out[plugin->plugin.id] = plugin->listed;
   }
   return out;
+}
+
+bool ToolHub::stop(const std::string_view id) {
+  const auto found = std::find_if(plugins_.begin(), plugins_.end(), [id](const auto& plugin) { return plugin->plugin.id == id; });
+  if (found == plugins_.end()) return false;
+  Running& plugin = **found;
+  const std::lock_guard lock(plugin.mutex);  // a call of it that runs ends first
+  plugin.removed = true;
+  plugin.stop();
+  return true;
 }
 
 ToolResult ToolHub::try_call(const std::string_view id, const std::string_view tool, const std::string_view arguments_json) {

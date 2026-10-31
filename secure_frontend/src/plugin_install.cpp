@@ -1,14 +1,15 @@
-// Adding and removing plugins from the page (plugin_install.hpp; plugin spec 2026-10-30 section 12). The plugins folder
-// is opened as an owner-only root and every write, rename and removal in it goes through the models store's primitives
-// (models_store.hpp: beneath the root, never following a link, never replacing); a folder added from is opened as an
-// external root and read the same way, each file a single-link regular file.
+// Adding and removing plugins from the page (plugin_install.hpp; plugin spec 2026-10-30 section 12). Only the paths
+// library and the private-file writer the server already links (the server links no acquisition code: PRIV-04). The
+// plugins folder is opened as an owner-only root, so no other user of this PC can change what is in it while it is
+// staged, renamed or removed; each file is written owner-only (write_private_file). A folder added from is opened as an
+// external root and read beneath it without following a link, each file a single-link regular file.
 #include "secure_frontend/plugin_install.hpp"
 
 #include "secure_frontend/canonical_path.hpp"
 #include "secure_frontend/json.hpp"
-#include "secure_frontend/models_store.hpp"
 #include "secure_frontend/plugin_manifest.hpp"
 #include "secure_frontend/sha256.hpp"
+#include "secure_frontend/token_store.hpp"
 #include "secure_frontend/zip_reader.hpp"
 
 #include <algorithm>
@@ -16,17 +17,14 @@
 #include <functional>
 #include <map>
 #include <set>
+#include <system_error>
 #include <utility>
-
-#if !defined(_WIN32)
-#include <sys/stat.h>
-#endif
 
 namespace secure_frontend {
 namespace {
 
 constexpr std::string_view kManifestFile = "plugin.json";
-constexpr std::size_t kCopyChunk = std::size_t{1} << 20U;
+constexpr std::size_t kReadChunk = std::size_t{1} << 20U;
 constexpr int kMaxSameSecond = 99;
 
 const std::string kUnsigned =
@@ -34,9 +32,8 @@ const std::string kUnsigned =
     "plugins folder by hand, then approved)";
 const std::string kNotMovedAside = "that is not one that was moved aside";
 
-using Sink = std::function<bool(std::span<const std::uint8_t>)>;
-// Streams one of the plugin's files into the sink; nullopt: all of it, else why not.
-using FileSource = std::function<std::optional<std::string>(const std::string& name, const Sink& sink)>;
+// One of the plugin's files, its bytes as they are now (at most the size it had when it was checked), or why not.
+using FileSource = std::function<std::variant<std::string, std::string>(const std::string& name, std::uint64_t size)>;
 
 std::string sha256_hex(const std::string_view bytes) {
   Sha256 hash;
@@ -44,8 +41,57 @@ std::string sha256_hex(const std::string_view bytes) {
   return to_hex(hash.finish());
 }
 
-std::string not_written(const AcquireError& error) {
-  return "it could not be written into the plugins folder (" + error.detail + ")";
+// A relative path this code builds from names it checked, or one a manifest names: nullopt when it is not a P1 path.
+std::optional<RelativePath> relative(const std::string_view text) {
+  auto parsed = parse_relative_path(text);
+  if (auto* path = std::get_if<RelativePath>(&parsed)) return std::move(*path);
+  return std::nullopt;
+}
+std::optional<RelativePath> relative(const std::string_view folder, const std::string_view name) {
+  return relative(std::string{folder} + "/" + std::string{name});
+}
+
+bool exists(const CanonicalRoot& root, const RelativePath& path) {
+  std::error_code ec;
+  return std::filesystem::symlink_status(root.join(path), ec).type() != std::filesystem::file_type::not_found;
+}
+
+OpenOptions single_link_file() { return OpenOptions{.kind = OpenKind::regular_file, .trust = FileTrust::any, .reject_hard_links = true}; }
+
+// A single-link regular file below `root`, whole, at most `max` bytes; nullopt: not such a file.
+std::optional<std::string> read_whole(const CanonicalRoot& root, const RelativePath& path, const std::size_t max) {
+  auto opened = open_beneath(root, path, single_link_file());
+  if (!std::holds_alternative<OpenedFile>(opened)) return std::nullopt;
+  auto read = std::get<OpenedFile>(opened).read_all(max);
+  if (auto* text = std::get_if<std::string>(&read)) return std::move(*text);
+  return std::nullopt;
+}
+
+// Its size and SHA-256, read in chunks (at most `max` bytes), or why not.
+struct Hashed final {
+  std::uint64_t size{0};
+  std::string sha256;
+};
+std::variant<Hashed, std::string> hash_file(const CanonicalRoot& root, const RelativePath& path, const std::uint64_t max) {
+  const std::string missing = "a file its plugin.json lists is missing or is not a plain file: " + path.generic();
+  auto opened = open_beneath(root, path, single_link_file());
+  if (!std::holds_alternative<OpenedFile>(opened)) return missing;
+  const auto& file = std::get<OpenedFile>(opened);
+  if (file.size() > max) return std::string{"its files come to more than 1 GiB"};
+  Sha256 hash;
+  std::string buffer(kReadChunk, '\0');
+  Hashed hashed;
+  for (;;) {
+    const auto read = file.read_some(buffer.data(), buffer.size());
+    if (!std::holds_alternative<std::size_t>(read)) return "a file could not be read: " + path.generic();
+    const auto n = std::get<std::size_t>(read);
+    if (n == 0U) break;
+    hashed.size += n;
+    if (hashed.size > max) return std::string{"its files come to more than 1 GiB"};
+    hash.update(std::string_view{buffer.data(), n});
+  }
+  hashed.sha256 = to_hex(hash.finish());
+  return hashed;
 }
 
 std::variant<CanonicalRoot, std::string> open_plugins(const std::filesystem::path& plugins_dir) {
@@ -97,7 +143,7 @@ std::variant<Candidate, std::string> check_candidate(const std::string_view mani
   for (const auto& [name, sum] : candidate.statement.files) signed_files.insert(name);
   if (listed != signed_files) return std::string{"its signature does not list the files its plugin.json does"};
   for (const auto& name : listed) {
-    if (!std::holds_alternative<RelativePath>(parse_relative_path(name))) return "a file's name is not one this server writes: " + name;
+    if (!relative(name)) return "a file's name is not one this server writes: " + name;
   }
   return candidate;
 }
@@ -141,7 +187,7 @@ std::string stamp(const std::chrono::system_clock::time_point now) {
   return text;
 }
 
-// A folder directly in `below` (the plugins folder's root when nullopt), not a link.
+// A folder directly in `below` (the plugins folder itself when nullopt), not a link.
 bool is_folder(const CanonicalRoot& root, const std::optional<RelativePath>& below, const std::string_view name) {
   const auto listed = list_directory(root, below);
   if (!std::holds_alternative<std::vector<DirectoryEntry>>(listed)) return false;
@@ -151,11 +197,12 @@ bool is_folder(const CanonicalRoot& root, const std::optional<RelativePath>& bel
 }
 
 // Its plugin.json's name and version, read from `folder` (empty when that cannot be read).
-RemovedPlugin describe(const CanonicalRoot& root, const RelativePath& folder, std::string entry, const EntryName& named) {
+RemovedPlugin describe(const CanonicalRoot& root, const std::string& folder, std::string entry, const EntryName& named) {
   RemovedPlugin plugin{.entry = std::move(entry), .id = named.id, .name = {}, .version = {}, .when = named.when};
-  const auto text = read_small_file(root, join_rel(folder, kManifestFile), kMaxPluginManifestBytes);
-  if (const auto* manifest_text = std::get_if<std::string>(&text)) {
-    const auto parsed = parse_plugin_manifest(*manifest_text, named.id);
+  const auto path = relative(folder, kManifestFile);
+  const auto text = path ? read_whole(root, *path, kMaxPluginManifestBytes) : std::nullopt;
+  if (text) {
+    const auto parsed = parse_plugin_manifest(*text, named.id);
     if (const auto* manifest = std::get_if<PluginManifest>(&parsed)) {
       plugin.name = manifest->name;
       plugin.version = manifest->version;
@@ -166,20 +213,20 @@ RemovedPlugin describe(const CanonicalRoot& root, const RelativePath& folder, st
 
 std::vector<RemovedPlugin> removed_in(const CanonicalRoot& root) {
   std::vector<RemovedPlugin> removed;
-  const auto folder = must_rel(kRemovedFolder);
+  const auto folder = relative(kRemovedFolder);
   const auto listed = list_directory(root, folder);
   if (!std::holds_alternative<std::vector<DirectoryEntry>>(listed)) return removed;
   for (const auto& entry : std::get<std::vector<DirectoryEntry>>(listed)) {
     const auto named = parse_entry(entry.name);
     if (entry.type != EntryType::directory || !named) continue;
-    removed.push_back(describe(root, join_rel(folder, entry.name), entry.name, *named));
+    removed.push_back(describe(root, std::string{kRemovedFolder} + "/" + entry.name, entry.name, *named));
   }
   return removed;
 }
 
 // One of that id is there already: installed, or moved aside and not deleted.
 std::optional<std::string> id_taken(const CanonicalRoot& root, const std::string& id) {
-  if (exists_within(root, must_rel(id))) return "a plugin with the id " + id + " is installed already: remove it first";
+  if (exists(root, *relative(id))) return "a plugin with the id " + id + " is installed already: remove it first";
   const auto removed = removed_in(root);
   if (std::any_of(removed.begin(), removed.end(), [&id](const RemovedPlugin& plugin) { return plugin.id == id; })) {
     return "a plugin with the id " + id + " was moved aside: put it back or delete it for good first";
@@ -187,72 +234,61 @@ std::optional<std::string> id_taken(const CanonicalRoot& root, const std::string
   return std::nullopt;
 }
 
-#if !defined(_WIN32)
-std::optional<AcquireError> make_owner_executable(const CanonicalRoot& root, const RelativePath& path) {
-  auto opened = open_beneath(root, path, OpenOptions{OpenKind::regular_file, FileTrust::any, true});
-  if (std::holds_alternative<PathError>(opened) || ::fchmod(std::get<OpenedFile>(opened).native(), 0700) != 0) {
-    return AcquireError{AcquireReason::publish_failed, path.generic() + ": mode 0700"};
-  }
+// A folder made owner-only below `root`, each missing part of it too.
+std::optional<std::string> make_folder(const CanonicalRoot& root, const std::string& folder) {
+  const auto path = relative(folder);
+  if (!path) return "a folder's name is not one this server writes: " + folder;
+  if (const auto failure = create_directory_within(root, *path)) return "it could not be written into the plugins folder (" + failure->message + ")";
   return std::nullopt;
 }
-#endif
 
-// The plugin written into <plugins>/.staging/<id> - each listed file from `source`, at most the size it had when it was
-// checked and its SHA-256 as written compared with the statement again; then plugin.sig and plugin.json - and renamed to
-// <plugins>/<id>. Staging is emptied on any failure. nullopt: added.
+// The plugin written into <plugins>/.staging/<id> - each listed file's bytes from `source` (as they are now, at most the
+// size they had when they were checked), the bytes written the bytes hashed and compared with the statement; then
+// plugin.sig and plugin.json - and renamed to <plugins>/<id>. Staging is emptied on any failure. nullopt: added.
 std::optional<std::string> install_staged(const CanonicalRoot& root, const Candidate& candidate, const std::string_view manifest_text,
                                           const std::string_view envelope, const std::map<std::string, std::uint64_t>& sizes,
                                           const FileSource& source) {
-  const StoreEnvironment env;
-  const auto staging = join_rel(must_rel(kStagingFolder), candidate.manifest.id);
-  if (auto failure = ensure_directory(root, must_rel(kStagingFolder))) return not_written(*failure);
-  if (auto failure = remove_tree_within(root, staging)) return not_written(*failure);  // an earlier add's leftovers
-  if (auto failure = ensure_directory(root, staging)) return not_written(*failure);
+  const std::string& id = candidate.manifest.id;
+  const std::string staging = std::string{kStagingFolder} + "/" + id;
+  std::error_code ec;
+  std::filesystem::remove_all(root.join(*relative(staging)), ec);  // an earlier add's leftovers (owner-only: the owner's)
+  if (auto problem = make_folder(root, staging)) return problem;
   const auto fail = [&root, &staging](std::string why) -> std::optional<std::string> {
-    (void)remove_tree_within(root, staging);
+    std::error_code ignored;
+    std::filesystem::remove_all(root.join(*relative(staging)), ignored);
     return why;
   };
-  for (const auto& name : candidate.manifest.files) {
-    const auto target = try_join_rel(staging, name);
-    if (!target) return fail("a file's name is not one this server writes: " + name);
-    for (std::size_t depth = 3U; depth < target->components().size() + 1U; ++depth) {  // its folders, below staging/<id>
-      std::string folder;
-      for (std::size_t i = 0; i + 1U < depth; ++i) folder += (i == 0U ? "" : "/") + target->components()[i];
-      if (auto failure = ensure_directory(root, must_rel(folder))) return fail(not_written(*failure));
+  const auto write = [&root](const RelativePath& path, const std::string_view bytes) -> std::optional<std::string> {
+    if (const auto failure = write_private_file(root, path, bytes, TokenStoreMode::create_new)) {
+      return "it could not be written into the plugins folder (" + failure->message + ")";
     }
-    auto part = open_part_file(root, *target, PartOpen::create_new, env);
-    if (auto* failure = std::get_if<AcquireError>(&part)) return fail(not_written(*failure));
-    auto& file = std::get<PartFile>(part);
-    Sha256 hash;
-    std::uint64_t written = 0;
-    std::optional<std::string> problem;
-    const auto copied = source(name, [&](const std::span<const std::uint8_t> chunk) {
-      written += chunk.size();
-      if (written > sizes.at(name)) {
-        problem = "a file changed while it was copied: " + name;
-        return false;
-      }
-      hash.update(chunk);
-      if (auto failure = file.append(std::string_view{reinterpret_cast<const char*>(chunk.data()), chunk.size()})) {
-        problem = not_written(*failure);
-        return false;
-      }
-      return true;
-    });
-    if (problem) return fail(*problem);
-    if (copied) return fail(*copied);
-    if (auto failure = file.sync()) return fail(not_written(*failure));
-    file.close();
-    if (to_hex(hash.finish()) != candidate.statement.files.at(name)) return fail("a file is not the one that was signed: " + name);
+    return std::nullopt;
+  };
+  for (const auto& name : candidate.manifest.files) {
+    const auto target = relative(staging, name);
+    if (!target) return fail("a file's name is not one this server writes: " + name);
+    const auto slash = name.rfind('/');
+    if (slash != std::string::npos) {  // its folders, below staging/<id>
+      if (auto problem = make_folder(root, staging + "/" + name.substr(0, slash))) return fail(*problem);
+    }
+    auto bytes = source(name, sizes.at(name));
+    if (auto* problem = std::get_if<1>(&bytes)) return fail(*problem);
+    const auto& content = std::get<0>(bytes);
+    if (sha256_hex(content) != candidate.statement.files.at(name)) return fail("a file is not the one that was signed: " + name);
+    if (auto problem = write(*target, content)) return fail(*problem);
 #if !defined(_WIN32)
-    if (auto failure = make_owner_executable(root, *target)) return fail(not_written(*failure));
+    // the owner's to run (a tool's or notifier's program, an engine's library); no one else's at all
+    std::filesystem::permissions(root.join(*target), std::filesystem::perms::owner_all, std::filesystem::perm_options::replace, ec);
+    if (ec) return fail("it could not be written into the plugins folder (a file's mode)");
 #endif
   }
-  if (auto failure = write_new_file(root, join_rel(staging, kPluginSignatureFile), envelope)) return fail(not_written(*failure));
-  if (auto failure = write_new_file(root, join_rel(staging, kManifestFile), manifest_text)) return fail(not_written(*failure));
-  if (auto failure = sync_directory(root, staging)) return fail(not_written(*failure));
-  if (auto failure = rename_within(root, staging, must_rel(candidate.manifest.id), env)) return fail(not_written(*failure));
-  (void)sync_directory(root, std::nullopt);
+  if (auto problem = write(*relative(staging, kPluginSignatureFile), envelope)) return fail(*problem);
+  if (auto problem = write(*relative(staging, kManifestFile), manifest_text)) return fail(*problem);
+  // into place: renamed in the plugins folder (one volume); the id was checked free under the routes' lock
+  const auto target = *relative(id);
+  if (exists(root, target)) return fail("a plugin with the id " + id + " is installed already: remove it first");
+  std::filesystem::rename(root.join(*relative(staging)), root.join(target), ec);
+  if (ec) return fail("it could not be moved into the plugins folder");
   return std::nullopt;
 }
 
@@ -276,17 +312,14 @@ std::variant<AddedPlugin, std::string> add_plugin_from_folder(const std::filesys
   if (auto* error = std::get_if<PathError>(&opened)) return "the folder cannot be opened: " + error->message;
   const auto& source = std::get<CanonicalRoot>(opened);
 
-  auto manifest_text = read_small_file(source, must_rel(kManifestFile), kMaxPluginManifestBytes);
-  if (!std::holds_alternative<std::string>(manifest_text)) {
-    return std::string{"it has no plugin.json (or not a plain file of at most 256 KiB)"};
-  }
+  const auto manifest_text = read_whole(source, *relative(kManifestFile), kMaxPluginManifestBytes);
+  if (!manifest_text) return std::string{"it has no plugin.json (or not a plain file of at most 256 KiB)"};
   std::optional<std::string> envelope;
-  if (exists_within(source, must_rel(kPluginSignatureFile))) {
-    auto read = read_small_file(source, must_rel(kPluginSignatureFile), kMaxPluginSignatureBytes);
-    if (!std::holds_alternative<std::string>(read)) return std::string{"its plugin.sig cannot be read (or is larger than 16 KiB)"};
-    envelope = std::get<std::string>(std::move(read));
+  if (exists(source, *relative(kPluginSignatureFile))) {
+    envelope = read_whole(source, *relative(kPluginSignatureFile), kMaxPluginSignatureBytes);
+    if (!envelope) return std::string{"its plugin.sig cannot be read (or is larger than 16 KiB)"};
   }
-  auto checked = check_candidate(std::get<std::string>(manifest_text), envelope, keys);
+  auto checked = check_candidate(*manifest_text, envelope, keys);
   if (auto* problem = std::get_if<std::string>(&checked)) return *problem;
   const auto& candidate = std::get<Candidate>(checked);
   auto plugins = open_plugins(plugins_dir);
@@ -298,29 +331,18 @@ std::variant<AddedPlugin, std::string> add_plugin_from_folder(const std::filesys
   std::map<std::string, std::uint64_t> sizes;
   std::uint64_t budget = kMaxZipBytes;
   for (const auto& name : candidate.manifest.files) {
-    Sha256 hash;
-    const auto hashed = hash_into(source, must_rel(name), hash, budget);
-    if (const auto* failure = std::get_if<AcquireError>(&hashed)) {
-      if (failure->reason == AcquireReason::size_exceeded) return std::string{"its files come to more than 1 GiB"};
-      return "a file its plugin.json lists is missing or is not a plain file: " + name;
-    }
-    if (to_hex(hash.finish()) != candidate.statement.files.at(name)) return "a file is not the one that was signed: " + name;
-    sizes[name] = std::get<std::uint64_t>(hashed);
+    const auto hashed = hash_file(source, *relative(name), budget);
+    if (const auto* problem = std::get_if<std::string>(&hashed)) return *problem;
+    if (std::get<Hashed>(hashed).sha256 != candidate.statement.files.at(name)) return "a file is not the one that was signed: " + name;
+    sizes[name] = std::get<Hashed>(hashed).size;
     budget -= sizes[name];
   }
-  const FileSource copy = [&source](const std::string& name, const Sink& sink) -> std::optional<std::string> {
-    auto file = open_beneath(source, must_rel(name), OpenOptions{OpenKind::regular_file, FileTrust::any, true});
-    if (std::holds_alternative<PathError>(file)) return "a file its plugin.json lists is missing or is not a plain file: " + name;
-    std::string buffer(kCopyChunk, '\0');
-    while (true) {
-      const auto read = std::get<OpenedFile>(file).read_some(buffer.data(), buffer.size());
-      if (std::holds_alternative<PathError>(read)) return "a file could not be read: " + name;
-      const auto n = std::get<std::size_t>(read);
-      if (n == 0U) return std::nullopt;
-      if (!sink({reinterpret_cast<const std::uint8_t*>(buffer.data()), n})) return "a file could not be copied: " + name;
-    }
+  const FileSource copy = [&source](const std::string& name, const std::uint64_t size) -> std::variant<std::string, std::string> {
+    auto bytes = read_whole(source, *relative(name), static_cast<std::size_t>(size));
+    if (!bytes) return std::variant<std::string, std::string>{std::in_place_index<1>, "a file changed while it was copied: " + name};
+    return std::variant<std::string, std::string>{std::in_place_index<0>, std::move(*bytes)};
   };
-  if (auto problem = install_staged(root, candidate, std::get<std::string>(manifest_text), envelope.value_or(""), sizes, copy)) return *problem;
+  if (auto problem = install_staged(root, candidate, *manifest_text, envelope.value_or(""), sizes, copy)) return *problem;
   return added(candidate);
 }
 
@@ -345,25 +367,31 @@ std::variant<AddedPlugin, std::string> add_plugin_from_zip(const std::filesystem
     if (tops.size() > 1U) return std::string{"the archive has a plugin.json in more than one folder"};
     top = tops.front();
   }
-  const auto extract_small = [&zip](const ZipEntry& entry, const std::size_t max, std::string* out) -> std::optional<std::string> {
-    if (entry.size > max) return std::string{"too large"};
-    return extract_zip_entry(zip, entry, [out](const std::span<const std::uint8_t> chunk) {
-      out->append(reinterpret_cast<const char*>(chunk.data()), chunk.size());
-      return true;
-    });
+  // an entry's bytes, inflated or copied (at most `max`, and its own size): nullopt with `why` set when they are not
+  const auto extract = [&zip](const ZipEntry& entry, const std::uint64_t max, std::string* why) -> std::optional<std::string> {
+    if (entry.size > max) {
+      *why = "too large";
+      return std::nullopt;
+    }
+    std::string out;
+    if (auto problem = extract_zip_entry(zip, entry, [&out](const std::span<const std::uint8_t> chunk) {
+          out.append(reinterpret_cast<const char*>(chunk.data()), chunk.size());
+          return true;
+        })) {
+      *why = *problem;
+      return std::nullopt;
+    }
+    return out;
   };
-  std::string manifest_text;
-  if (auto problem = extract_small(*entry_named(top + std::string{kManifestFile}), kMaxPluginManifestBytes, &manifest_text)) {
-    return "its plugin.json cannot be read from the archive (" + *problem + ")";
-  }
+  std::string why;
+  const auto manifest_text = extract(*entry_named(top + std::string{kManifestFile}), kMaxPluginManifestBytes, &why);
+  if (!manifest_text) return "its plugin.json cannot be read from the archive (" + why + ")";
   std::optional<std::string> envelope;
   if (const auto* signature = entry_named(top + std::string{kPluginSignatureFile})) {
-    envelope.emplace();
-    if (auto problem = extract_small(*signature, kMaxPluginSignatureBytes, &*envelope)) {
-      return "its plugin.sig cannot be read from the archive (" + *problem + ")";
-    }
+    envelope = extract(*signature, kMaxPluginSignatureBytes, &why);
+    if (!envelope) return "its plugin.sig cannot be read from the archive (" + why + ")";
   }
-  auto checked = check_candidate(manifest_text, envelope, keys);
+  auto checked = check_candidate(*manifest_text, envelope, keys);
   if (auto* problem = std::get_if<std::string>(&checked)) return *problem;
   const auto& candidate = std::get<Candidate>(checked);
 
@@ -399,11 +427,13 @@ std::variant<AddedPlugin, std::string> add_plugin_from_zip(const std::filesystem
     if (to_hex(hash.finish()) != candidate.statement.files.at(name)) return "a file is not the one that was signed: " + name;
     sizes[name] = entry->size;
   }
-  const FileSource inflate = [&zip, &files](const std::string& name, const Sink& sink) -> std::optional<std::string> {
-    if (auto problem = extract_zip_entry(zip, *files.at(name), sink)) return "the archive: " + name + ": " + *problem;
-    return std::nullopt;
+  const FileSource inflate = [&extract, &files](const std::string& name, const std::uint64_t size) -> std::variant<std::string, std::string> {
+    std::string problem;
+    auto bytes = extract(*files.at(name), size, &problem);
+    if (!bytes) return std::variant<std::string, std::string>{std::in_place_index<1>, "the archive: " + name + ": " + problem};
+    return std::variant<std::string, std::string>{std::in_place_index<0>, std::move(*bytes)};
   };
-  if (auto problem = install_staged(root, candidate, manifest_text, envelope.value_or(""), sizes, inflate)) return *problem;
+  if (auto problem = install_staged(root, candidate, *manifest_text, envelope.value_or(""), sizes, inflate)) return *problem;
   return added(candidate);
 }
 
@@ -413,24 +443,24 @@ std::variant<RemovedPlugin, std::string> move_plugin_aside(const std::filesystem
   const std::string no_plugin = "no plugin with that id is installed";
   if (!valid_plugin_id(id)) return no_plugin;
   if (std::any_of(first_party.begin(), first_party.end(), [id](const FirstPartyPlugin& plugin) { return plugin.id == id; })) {
-    return std::string{"it is built in (one of make's): turn it off instead"};
+    return std::string{kBuiltInPluginProblem};
   }
   auto plugins = open_plugins(plugins_dir);
   if (auto* problem = std::get_if<std::string>(&plugins)) return *problem;
   const auto& root = std::get<CanonicalRoot>(plugins);
   if (!is_folder(root, std::nullopt, id)) return no_plugin;
-  const StoreEnvironment env;
-  if (auto failure = ensure_directory(root, must_rel(kRemovedFolder))) return "it could not be moved aside (" + failure->detail + ")";
+  if (auto problem = make_folder(root, std::string{kRemovedFolder})) return "it could not be moved aside: " + *problem;
   const std::string base = std::string{id} + "-" + stamp(now);
   for (int n = 1; n <= kMaxSameSecond; ++n) {
     const std::string entry = n == 1 ? base : base + "-" + std::to_string(n);
-    const auto target = join_rel(must_rel(kRemovedFolder), entry);
-    if (exists_within(root, target)) continue;
+    const auto target = relative(kRemovedFolder, entry);
     const auto named = parse_entry(entry);
-    if (!named) break;
-    auto plugin = describe(root, must_rel(id), entry, *named);
-    if (auto failure = rename_within(root, must_rel(id), target, env)) return "it could not be moved aside (" + failure->detail + ")";
-    (void)sync_directory(root, std::nullopt);
+    if (!target || !named) break;
+    if (exists(root, *target)) continue;
+    auto plugin = describe(root, std::string{id}, entry, *named);
+    std::error_code ec;
+    std::filesystem::rename(root.join(*relative(id)), root.join(*target), ec);
+    if (ec) return std::string{"it could not be moved aside (its folder is in use, or cannot be renamed)"};
     return plugin;
   }
   return std::string{"it could not be moved aside (too many of its id moved aside this second)"};
@@ -448,13 +478,13 @@ std::variant<RemovedPlugin, std::string> restore_plugin(const std::filesystem::p
   auto plugins = open_plugins(plugins_dir);
   if (auto* problem = std::get_if<std::string>(&plugins)) return *problem;
   const auto& root = std::get<CanonicalRoot>(plugins);
-  if (!is_folder(root, must_rel(kRemovedFolder), entry)) return kNotMovedAside;
-  if (exists_within(root, must_rel(named->id))) return "a plugin with the id " + named->id + " is installed: remove it first";
-  const auto from = join_rel(must_rel(kRemovedFolder), entry);
+  if (!is_folder(root, relative(kRemovedFolder), entry)) return kNotMovedAside;
+  if (exists(root, *relative(named->id))) return "a plugin with the id " + named->id + " is installed: remove it first";
+  const std::string from = std::string{kRemovedFolder} + "/" + std::string{entry};
   auto plugin = describe(root, from, std::string{entry}, *named);
-  const StoreEnvironment env;
-  if (auto failure = rename_within(root, from, must_rel(named->id), env)) return "it could not be put back (" + failure->detail + ")";
-  (void)sync_directory(root, std::nullopt);
+  std::error_code ec;
+  std::filesystem::rename(root.join(*relative(from)), root.join(*relative(named->id)), ec);
+  if (ec) return std::string{"it could not be put back (its folder cannot be renamed)"};
   return plugin;
 }
 
@@ -463,10 +493,11 @@ std::optional<std::string> purge_plugin(const std::filesystem::path& plugins_dir
   auto plugins = open_plugins(plugins_dir);
   if (auto* problem = std::get_if<std::string>(&plugins)) return *problem;
   const auto& root = std::get<CanonicalRoot>(plugins);
-  if (!is_folder(root, must_rel(kRemovedFolder), entry)) return kNotMovedAside;
-  if (auto failure = remove_tree_within(root, join_rel(must_rel(kRemovedFolder), entry))) {
-    return "it could not be deleted (" + failure->detail + ")";
-  }
+  if (!is_folder(root, relative(kRemovedFolder), entry)) return kNotMovedAside;
+  // owner-only, and a link in it is removed, never followed
+  std::error_code ec;
+  std::filesystem::remove_all(root.join(*relative(kRemovedFolder, entry)), ec);
+  if (ec) return std::string{"it could not be deleted (a file in it is in use, or cannot be removed)"};
   return std::nullopt;
 }
 

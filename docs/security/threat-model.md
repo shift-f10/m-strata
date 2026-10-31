@@ -1005,6 +1005,48 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`; as a plugin,
   `every_other_signature_says_why`,
   `a_plugin_signed_with_the_install_key_runs`,
   `the_plugins_view_trusts_and_drops_publisher_keys`).
+- Adding and removing plugins from the page (owner 2026-10-30: "enable the
+  ability to add and remove plugins via the webui", "it should check the
+  trust before processing it"; spec section 12; `plugin_install.hpp`):
+  `POST /v1/strata/plugins/add` (a folder on the server's PC) and `/upload`
+  (the .zip itself, `application/zip`, within `limits.http.max_request_bytes`)
+  take only a plugin signed by a key this server already trusts, for its id
+  and this platform. The manifest is checked as discovery checks one and the
+  signature verified before any file is looked at; then each listed file is
+  hashed where it is or inflated and compared with the signed statement; only
+  then is anything written - to `<install>/plugins/.staging/<id>`, each file
+  at most its checked size and hashed again as written, then renamed into
+  place (one volume, no copy). Every refusal says why before anything is
+  written: unsigned, a key not trusted (named, to trust first), another
+  plugin's or platform's signature, a file that is not the one signed, a
+  folder that is a link, a file that is not a single-link regular file, an
+  archive entry the manifest does not list, an id installed or moved aside.
+  **The power to add code from the page is exactly the trusted keys' power**
+  (above): an API-key holder on this PC, or on a listed control network
+  (`model_files_allowed`, as for every Plugins route), can install a plugin a
+  trusted key signed - nothing unsigned, nothing another key signed; an
+  unsigned plugin still needs the folder put there by hand and an approval.
+  The .zip is read by code written here (an RFC 1951 inflater and an APPNOTE
+  zip reader; no new dependency): at most 256 entries; no ZIP64, encryption,
+  links, duplicate names or overlapping entries; no name that is empty,
+  absolute, or has `.`, `..`, a drive, a backslash or a control character;
+  stored or deflated only; each entry at most its declared size and 1000
+  times its compressed size, 1 GiB in all, its CRC-32 checked. Malformed,
+  truncated, overlapping, oversized and traversing archives are tested, and
+  every prefix and every one-byte change of the test archives ends cleanly
+  under ASan and UBSan (`hostile_archives_are_refused_with_their_reason`,
+  `damaged_archives_end_cleanly`, `a_zip_is_refused_before_anything_is_written`,
+  `a_folder_is_refused_before_anything_is_written`). `/remove` refuses a
+  built-in plugin (make's: it is turned off instead), stops a running tool's
+  or notifier's program first, moves the folder to
+  `<install>/plugins/.removed/<id>-<UTC time>`, and forgets its approval, its
+  `plugins.<id>.*` rows and its secrets; `/restore` puts one back (waiting for
+  approval again unless a trusted key signed it); `/purge` deletes one for
+  good, after the page asks. Residual: an API-key holder on a control network
+  can move aside any plugin that is not built in, stopping its program until
+  the restart - a denial of that plugin, undone with Put back
+  (`a_removed_plugin_is_moved_aside_and_forgotten`,
+  `adding_and_removing_refusals_say_why`).
 - Plugin settings (owner 2026-10-30, decision 6; spec section 10): a
   tool's or notifier's manifest declares its settings by kind and bound,
   and every value is checked against it when saved and again when the

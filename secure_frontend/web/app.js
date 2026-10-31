@@ -3253,7 +3253,7 @@
   // server answers its route (model control on; the clients its other settings answer), a refusal shown in it.
   // tries: each tool plugin's Try (the tool chosen, the arguments typed, the last result) by plugin id, so a card drawn
   // again - after a Refresh, a change or a Try itself - keeps them
-  var plugins = { data: null, acting: false, tries: Object.create(null) };
+  var plugins = { data: null, acting: false, tries: Object.create(null), removed: null };
   var PLUGIN_KINDS = { engine: "engine family", tool: "tool", notifier: "notifier", diagnostics: "diagnostics" };
   var PLUGIN_STATES = {
     on: ["On", "st-badge--generating"], off: ["Off", "st-badge--stopped"], waiting: ["Waiting for approval", "st-badge--queued"],
@@ -3268,6 +3268,7 @@
     try { plugins.data = JSON.parse(text); } catch (e) { plugins.data = null; }
     showPluginsError("");
     renderPlugins();
+    await refreshRemovedPlugins();
   }
   // The owner (2026-10-29: "when set on, it will tell the user the implications of having this on and precautions to
   // take"): what a diagnostics plugin (the Debugging plugin) logs while it is on, said before it is turned on.
@@ -3340,8 +3341,15 @@
       button.type = "button";
       button.disabled = !editable || plugins.acting;
       actions.appendChild(button);
-      card.appendChild(actions);
     }
+    if (!p.first_party) {
+      var remove = el("button", "st-btn st-btn--secondary st-btn--sm", "Remove");
+      remove.type = "button";
+      remove.disabled = !editable || plugins.acting;
+      remove.addEventListener("click", function () { removePlugin(p); });
+      actions.appendChild(remove);
+    }
+    if (actions.childNodes.length) { card.appendChild(actions); }
     return card;
   }
   // A tool's or notifier's settings (owner 2026-10-30, decision 6; plugin spec section 10): each drawn by its kind, a
@@ -3698,22 +3706,28 @@
     clear(list);
     var d = plugins.data;
     renderPluginKeys(d);
+    $("plugins-add-card").hidden = !(d && d.editable);
+    $("plugins-add").disabled = plugins.acting;
+    renderRemovedPlugins();
     $("plugins-folder").textContent = d ? "Folder: " + String(d.folder || "-") + (d.editable ? "" : " (read only: this server keeps no choices)") : "";
     if (!d) { return; }
     var all = Array.isArray(d.plugins) ? d.plugins : [];
     if (!all.length) { list.appendChild(el("p", "muted small", "No plugins yet: each plugin is a folder holding its plugin.json, in the folder above.")); return; }
     all.forEach(function (p) { list.appendChild(pluginCard(p)); });
   }
-  async function pluginChange(request) {
+  async function pluginChange(request, noRestart, showError) {
+    var say = showError || showPluginsError;
     plugins.acting = true;
-    showPluginsError("");
+    say("");
+    $("plugins-add-result").textContent = "";
     renderPlugins();
     var answer = await downloadsAnswer(request);
     plugins.acting = false;
-    if (answer.signedOut) { return; }
-    if (answer.error) { renderPlugins(); showPluginsError(answer.error); return; }
-    $("plugins-restart-note").hidden = false;
+    if (answer.signedOut) { return answer; }
+    if (answer.error) { renderPlugins(); say(answer.error); return answer; }
+    if (!noRestart) { $("plugins-restart-note").hidden = false; }
     await refreshPlugins();
+    return answer;
   }
   async function approvePlugin(p) {
     if (plugins.acting) { return; }
@@ -3724,6 +3738,80 @@
     if (plugins.acting) { return; }
     if (on && p.kind === "diagnostics" && !window.confirm("Turn " + (p.name || p.id) + " on? " + diagnosticsNotice(p))) { return; }
     await pluginChange(api("/v1/strata/plugins/switch", jsonPost({ id: p.id, on: on })));
+  }
+  // Adding and removing plugins (plugin spec section 12; the owner: "it should check the trust before processing it",
+  // "move it to the side but once moved to the side, they can also be permanently removed"): a folder on the server's
+  // PC or an uploaded .zip, taken only when a key this server trusts signed it; a removed plugin is moved aside, from
+  // where it is put back or deleted for good. A built-in plugin has no Remove: it is turned off instead.
+  function showAddError(text) { $("plugins-add-error").textContent = text; $("plugins-add-error").hidden = !text; }
+  async function addPlugin() {
+    if (plugins.acting) { return; }
+    var folder = $("plugins-add-folder").value.trim();
+    var files = $("plugins-add-zip").files;
+    var zip = files && files.length ? files[0] : null;
+    $("plugins-add-result").textContent = "";
+    if (!folder && !zip) { showAddError("Name a folder on the server's PC, or choose a .zip."); return; }
+    if (folder && zip) { showAddError("Add a folder or a .zip, not both."); return; }
+    var request = zip ? api("/v1/strata/plugins/upload", { method: "POST", headers: { "Content-Type": "application/zip" }, body: zip })
+                      : api("/v1/strata/plugins/add", jsonPost({ folder: folder }));
+    var answer = await pluginChange(request, false, showAddError);
+    if (!answer || !answer.body) { return; }
+    var a = answer.body;
+    $("plugins-add-result").textContent = "Added " + String(a.name || a.id) + (a.version ? " " + a.version : "") + " from " +
+      String(a.publisher || "an unnamed publisher") + ", signed with " + String(a.signer || "a trusted key") + "'s key. It runs after the server restarts.";
+    $("plugins-add-folder").value = "";
+    $("plugins-add-zip").value = "";
+  }
+  function removeQuestion(p) {
+    return "Remove " + (p.name || p.id) + "? " + (p.running === true ? "Its program stops now, and its" : "Its") + " folder is moved " +
+      "aside: put it back or delete it for good under Moved aside. Its approval, its settings and its secrets are forgotten. " +
+      "The server is rid of it after it restarts.";
+  }
+  async function removePlugin(p) {
+    if (plugins.acting) { return; }
+    if (!window.confirm(removeQuestion(p))) { return; }
+    await pluginChange(api("/v1/strata/plugins/remove", jsonPost({ id: p.id })));
+  }
+  async function refreshRemovedPlugins() {
+    var response, text;
+    try { response = await api("/v1/strata/plugins/removed", jsonPost({})); text = await response.text(); } catch (e) { return; }
+    plugins.removed = null;
+    if (response.ok) {
+      try { plugins.removed = JSON.parse(text).removed; } catch (e) { plugins.removed = null; }
+    }
+    renderRemovedPlugins();
+  }
+  function renderRemovedPlugins() {
+    var box = $("plugins-removed");
+    clear(box);
+    var all = Array.isArray(plugins.removed) ? plugins.removed : [];
+    $("plugins-removed-card").hidden = !all.length;
+    var editable = !!(plugins.data && plugins.data.editable);
+    all.forEach(function (r) {
+      var row = el("div", "plugin-key");
+      row.appendChild(el("span", "plugin-key__name", String(r.name || r.id) + (r.version ? " " + r.version : "")));
+      row.appendChild(el("span", "muted small", r.id + DOT + "moved aside " + String(r.when || "-").replace("T", " ").replace("Z", " UTC")));
+      var back = el("button", "st-btn st-btn--secondary st-btn--sm", "Put back");
+      back.type = "button";
+      back.disabled = !editable || plugins.acting;
+      back.addEventListener("click", function () { restorePlugin(r); });
+      row.appendChild(back);
+      var gone = el("button", "st-btn st-btn--secondary st-btn--sm", "Delete permanently");
+      gone.type = "button";
+      gone.disabled = !editable || plugins.acting;
+      gone.addEventListener("click", function () { purgePlugin(r); });
+      row.appendChild(gone);
+      box.appendChild(row);
+    });
+  }
+  async function restorePlugin(r) {
+    if (plugins.acting) { return; }
+    await pluginChange(api("/v1/strata/plugins/restore", jsonPost({ entry: r.entry })));
+  }
+  async function purgePlugin(r) {
+    if (plugins.acting) { return; }
+    if (!window.confirm("Delete " + String(r.name || r.id) + " for good? Its folder is deleted from the server's PC. This cannot be undone.")) { return; }
+    await pluginChange(api("/v1/strata/plugins/purge", jsonPost({ entry: r.entry })), true);
   }
 
   // ---------------------------------------------------------------- Settings: model folders
@@ -4217,6 +4305,7 @@
     $("tab-btn-plugins").addEventListener("click", function () { showView("plugins"); });
     $("plugins-refresh").addEventListener("click", refreshPlugins);
     $("plugins-key-add").addEventListener("click", addPluginKey);
+    $("plugins-add").addEventListener("click", addPlugin);
     $("key-show").addEventListener("click", function () { keyShown = !keyShown; renderKey(); });
     $("key-copy").addEventListener("click", function () { if (state.key) { copyText(state.key); } });
     $("key-rotate").addEventListener("click", rotateKey);

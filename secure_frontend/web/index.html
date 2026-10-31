@@ -461,6 +461,31 @@
         <p class="msg-error" id="plugins-error" role="alert" hidden></p>
       </div>
       <div class="plugins-list" id="plugins-list"></div>
+      <div class="st-card alerts-settings" id="plugins-add-card" hidden>
+        <div class="models-head"><span class="card-title">Add a plugin</span></div>
+        <p class="muted small">Only a plugin signed with a key this server trusts (Publisher keys, below) is added: its
+          signature and every file's SHA-256 are checked before anything is copied or unpacked. Name its folder on the
+          server's PC, or choose its .zip to upload. An unsigned plugin can still be put in the plugins folder by hand and
+          approved. It runs after the server restarts.</p>
+        <div class="config-grid">
+          <label class="config-field"><span class="st-label">A folder on the server's PC</span>
+            <input class="st-input" id="plugins-add-folder" type="text" spellcheck="false" autocapitalize="off"
+                   placeholder="Its full path, as the server's PC names it"></label>
+          <label class="config-field"><span class="st-label">Or its .zip</span>
+            <input class="st-input" id="plugins-add-zip" type="file" accept=".zip,application/zip"></label>
+        </div>
+        <div class="model-actions">
+          <button type="button" class="st-btn st-btn--primary st-btn--sm" id="plugins-add">Add</button>
+        </div>
+        <p class="muted small" id="plugins-add-result" role="status" aria-live="polite"></p>
+        <p class="msg-error" id="plugins-add-error" role="alert" hidden></p>
+      </div>
+      <div class="st-card alerts-settings" id="plugins-removed-card" hidden>
+        <div class="models-head"><span class="card-title">Moved aside</span></div>
+        <p class="muted small">Plugins removed from this install are kept here until you put them back or delete them for
+          good. One put back waits for your approval again, unless a key this server trusts signed it.</p>
+        <div class="plugin-keys" id="plugins-removed"></div>
+      </div>
       <div class="st-card alerts-settings" id="plugins-keys-card" hidden>
         <div class="models-head"><span class="card-title">Publisher keys</span></div>
         <p class="muted small">A plugin signed with one of these keys runs without being approved one by one, as long as its

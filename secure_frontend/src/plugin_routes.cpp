@@ -5,6 +5,7 @@
 #include "secure_frontend/config_file.hpp"
 #include "secure_frontend/config_writer.hpp"
 #include "secure_frontend/json.hpp"
+#include "secure_frontend/plugin_install.hpp"
 #include "secure_frontend/plugin_secrets.hpp"
 #include "secure_frontend/token_store.hpp"
 
@@ -290,6 +291,12 @@ HttpResponse PluginRoutes::answer(const RouteId route, const std::string_view bo
     case RouteId::strata_plugins_try: return try_tool(body);
     case RouteId::strata_plugins_test: return test_notifier(body);
     case RouteId::strata_plugins_keys: return keys(body);
+    case RouteId::strata_plugins_add: return add(body, false);
+    case RouteId::strata_plugins_upload: return add(body, true);
+    case RouteId::strata_plugins_remove: return remove(body);
+    case RouteId::strata_plugins_removed: return removed();
+    case RouteId::strata_plugins_restore: return restore(body);
+    case RouteId::strata_plugins_purge: return purge(body);
     default: return make_error_response(ApiError::not_found);
   }
 }
@@ -300,6 +307,11 @@ std::optional<PluginChoices> PluginRoutes::choices() const {
 
 bool PluginRoutes::save(const PluginChoices& choices) {
   return settings_.state_dir && write_plugin_choices(*settings_.state_dir, choices);
+}
+
+bool PluginRoutes::running(const std::string& id) const {
+  const std::lock_guard lock(running_mutex_);
+  return settings_.running.contains(id) && !stopped_.contains(id);
 }
 
 HttpResponse PluginRoutes::list() const {
@@ -323,7 +335,7 @@ HttpResponse PluginRoutes::list() const {
       }
     }
     const auto tools = listed.find(entry.id);
-    out += (first ? "" : ",") + entry_json(entry, settings_.running.contains(entry.id), values[entry.id], secrets_set,
+    out += (first ? "" : ",") + entry_json(entry, running(entry.id), values[entry.id], secrets_set,
                                            tools != listed.end() ? &tools->second : nullptr);
     first = false;
   }
@@ -564,6 +576,161 @@ HttpResponse PluginRoutes::keys(const std::string_view body) {
                          : "[strata] plugins: the publisher key " + key.substr(0, 16) + "... is no longer trusted");
   }
   return json_answer(200, "{\"keys\":" + keys_json(trusted_keys(settings_.install_key, *chosen)) + ",\"restart_needed\":true}\n");
+}
+
+}  // namespace secure_frontend
+
+namespace secure_frontend {
+namespace {
+
+constexpr std::size_t kMaxFolderBytes = 4000U;
+constexpr std::size_t kMaxEntryBytes = 128U;
+
+// {"<key>": "<text>"} and nothing else, the text not empty, at most `max` bytes, without a control character; nullopt:
+// not such a body.
+std::optional<std::string> one_text(const std::string_view body, const std::string_view key, const std::size_t max) {
+  constexpr JsonLimits kLimits{.max_bytes = kModelControlBodyLimit, .max_depth = 2U, .max_container_entries = 2U,
+                               .max_string_bytes = kModelControlBodyLimit};
+  const auto parsed = parse_json(body, kLimits);
+  const auto* root = std::get_if<JsonValue>(&parsed);
+  const auto* members = root == nullptr ? nullptr : root->if_object();
+  if (members == nullptr || members->size() != 1U || members->front().key != key) return std::nullopt;
+  const auto* text = members->front().value.if_string();
+  if (text == nullptr || text->empty() || text->size() > max ||
+      std::any_of(text->begin(), text->end(), [](const char c) { return static_cast<unsigned char>(c) < 0x20U; })) {
+    return std::nullopt;
+  }
+  return *text;
+}
+
+// A refusal's reason as the error body carries one (at most 256 bytes): a long one cut at a character's start.
+HttpResponse refused_cut(std::string reason) {
+  if (reason.size() > 256U) {
+    std::size_t at = 253U;
+    while (at > 0U && (static_cast<unsigned char>(reason[at]) & 0xC0U) == 0x80U) --at;
+    reason = reason.substr(0, at) + "...";
+  }
+  return refused(reason);
+}
+
+std::string removed_json(const RemovedPlugin& plugin) {
+  return "{\"entry\":" + json_text(plugin.entry) + ",\"id\":" + json_text(plugin.id) + ",\"name\":" + json_text(plugin.name) +
+         ",\"version\":" + json_text(plugin.version) + ",\"when\":" + json_text(plugin.when) + "}";
+}
+
+}  // namespace
+
+HttpResponse PluginRoutes::add(const std::string_view body, const bool zip) {
+  std::optional<std::string> folder;
+  if (!zip) {
+    folder = one_text(body, "folder", kMaxFolderBytes);
+    if (!folder) return make_error_response(ApiError::invalid_request);
+  }
+  if (!settings_.state_dir) return refused("this server was started without a data folder to keep the plugins' choices in");
+  const std::scoped_lock lock(file_);
+  const auto chosen = choices();
+  if (!chosen) return unreadable_choices();
+  const auto keys = trusted_keys(settings_.install_key, *chosen);
+  const auto result =
+      zip ? add_plugin_from_zip(settings_.plugins_dir, {reinterpret_cast<const std::uint8_t*>(body.data()), body.size()}, keys)
+          : add_plugin_from_folder(settings_.plugins_dir, path_from_utf8(*folder), keys);
+  if (const auto* problem = std::get_if<std::string>(&result)) return refused_cut(*problem);
+  const auto& plugin = std::get<AddedPlugin>(result);
+  if (settings_.log) {
+    settings_.log("[strata] plugins: " + plugin.id + " was added" + (zip ? " from an uploaded .zip" : " from a folder") + ", signed by " +
+                  plugin.signer + " (it runs from the next start)");
+  }
+  return json_answer(200, "{\"id\":" + json_text(plugin.id) + ",\"name\":" + json_text(plugin.name) + ",\"version\":" +
+                              json_text(plugin.version) + ",\"publisher\":" + json_text(plugin.publisher) + ",\"signer\":" +
+                              json_text(plugin.signer) + ",\"key\":" + json_text(plugin.key) + ",\"restart_needed\":true}\n");
+}
+
+HttpResponse PluginRoutes::remove(const std::string_view body) {
+  const auto request = parse_request(body, false);
+  if (!request) return make_error_response(ApiError::invalid_request);
+  if (!settings_.state_dir) return refused("this server was started without a data folder to keep the plugins' choices in");
+  const std::string& id = request->id;
+  if (std::any_of(settings_.first_party.begin(), settings_.first_party.end(), [&id](const FirstPartyPlugin& p) { return p.id == id; })) {
+    return refused(std::string{kBuiltInPluginProblem});
+  }
+  const std::scoped_lock lock(file_);
+  auto chosen = choices();
+  if (!chosen) return unreadable_choices();
+  const auto entries = discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen, settings_.install_key);
+  const auto entry = std::find_if(entries.begin(), entries.end(), [&id](const PluginEntry& item) { return item.id == id; });
+  if (entry == entries.end()) return refused("there is no plugin " + id.substr(0, 64) + " in the plugins folder");
+  // a tool's or notifier's program first: its folder is moved while nothing runs from it
+  if (settings_.stop_plugin) settings_.stop_plugin(id);
+  {
+    const std::lock_guard running_lock(running_mutex_);
+    stopped_.insert(id);
+  }
+  const auto moved = move_plugin_aside(settings_.plugins_dir, id, settings_.first_party,
+                                       settings_.now ? settings_.now() : std::chrono::system_clock::now());
+  if (const auto* problem = std::get_if<std::string>(&moved)) return refused_cut(*problem + " (its program stays stopped until the restart)");
+  // forgotten: its approval and on/off, its settings, its secrets
+  bool forgotten = true;
+  forget_plugin_choices(*chosen, id);
+  forgotten = save(*chosen) && forgotten;
+  if (settings_.config_file) {
+    const std::string prefix = "plugins." + id + ".";
+    const auto failure = update_config_file(*settings_.config_file, [&prefix](FrontendConfigDraft& draft) {
+      std::erase_if(draft.entries, [&prefix](const auto& item) { return item.first.starts_with(prefix); });
+    });
+    forgotten = !failure && forgotten;
+  }
+  if (settings_.secret_dir && entry->manifest && entry->manifest->run) {
+    for (const auto& setting : entry->manifest->run->settings) {
+      if (setting.kind == SettingKind::secret) forgotten = remove_plugin_secret(*settings_.secret_dir, id, setting.name) && forgotten;
+    }
+  }
+  const auto& plugin = std::get<RemovedPlugin>(moved);
+  if (settings_.log) {
+    settings_.log("[strata] plugins: " + id + " was removed (moved aside as " + plugin.entry + ")" +
+                  (forgotten ? "" : "; some of its choices, settings or secrets could not be forgotten"));
+  }
+  return json_answer(200, "{\"id\":" + json_text(id) + ",\"entry\":" + json_text(plugin.entry) + ",\"forgotten\":" +
+                              (forgotten ? "true" : "false") + ",\"restart_needed\":true}\n");
+}
+
+HttpResponse PluginRoutes::removed() const {
+  std::string out = "{\"removed\":[";
+  bool first = true;
+  for (const auto& plugin : removed_plugins(settings_.plugins_dir)) {
+    out += (first ? "" : ",") + removed_json(plugin);
+    first = false;
+  }
+  return json_answer(200, out + "]}\n");
+}
+
+HttpResponse PluginRoutes::restore(const std::string_view body) {
+  const auto entry = one_text(body, "entry", kMaxEntryBytes);
+  if (!entry) return make_error_response(ApiError::invalid_request);
+  if (!settings_.state_dir) return refused("this server was started without a data folder to keep the plugins' choices in");
+  const std::scoped_lock lock(file_);
+  const auto back = restore_plugin(settings_.plugins_dir, *entry);
+  if (const auto* problem = std::get_if<std::string>(&back)) return refused_cut(*problem);
+  const auto& plugin = std::get<RemovedPlugin>(back);
+  // its state now: waiting for approval again, unless a key this server trusts signed it
+  std::string state = "waiting";
+  if (const auto chosen = choices()) {
+    for (const auto& found : discover_plugins(settings_.plugins_dir, settings_.first_party, *chosen, settings_.install_key)) {
+      if (found.id == plugin.id) state = plugin_state_name(found.state);
+    }
+  }
+  if (settings_.log) settings_.log("[strata] plugins: " + plugin.id + " was put back (" + state + "; it applies at the next start)");
+  return json_answer(200, "{\"entry\":" + json_text(plugin.entry) + ",\"id\":" + json_text(plugin.id) + ",\"state\":" +
+                              json_text(state) + ",\"restart_needed\":true}\n");
+}
+
+HttpResponse PluginRoutes::purge(const std::string_view body) {
+  const auto entry = one_text(body, "entry", kMaxEntryBytes);
+  if (!entry) return make_error_response(ApiError::invalid_request);
+  if (!settings_.state_dir) return refused("this server was started without a data folder to keep the plugins' choices in");
+  const std::scoped_lock lock(file_);
+  if (const auto problem = purge_plugin(settings_.plugins_dir, *entry)) return refused_cut(*problem);
+  if (settings_.log) settings_.log("[strata] plugins: " + *entry + " was deleted for good");
+  return json_answer(200, "{\"entry\":" + json_text(*entry) + ",\"deleted\":true}\n");
 }
 
 }  // namespace secure_frontend

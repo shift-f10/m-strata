@@ -165,7 +165,12 @@ summarizes it as of 2026-10-28. All GPU numbers are from the development system 
   and any publisher's key you add under **Publisher keys**; a card says who signed its plugin, and one signed with a key
   the server does not trust offers to trust that key. Approve, and turn on or off, from the tab; a tool's or notifier's settings are in its card too (a password or key is kept protected and never
   shown again); a running tool plugin's card lists its tools with **Try** (one call, with the arguments you type), and
-  a running notifier's has **Send a test**. A change applies when the server restarts.
+  a running notifier's has **Send a test**. **Add a plugin** takes one from a folder on the server's PC or an uploaded
+  .zip, but only one signed with a key the server trusts: its signature and every file's SHA-256 are checked before
+  anything is copied or unpacked (an unsigned plugin can still be put in the `plugins` folder by hand and approved).
+  **Remove** (every plugin but the built-in ones, which are turned off instead) stops its program and moves it aside,
+  forgetting its approval, settings and secrets; under **Moved aside** it can be put back or deleted for good. A change
+  applies when the server restarts.
 - **Model folders on network shares - experimental, off by default:** a model folder may be on an SMB/CIFS share
   or an NFS mount once Settings turns it on; see
   [Model folders on network shares](#model-folders-on-network-shares-experimental) for what it means and its status.

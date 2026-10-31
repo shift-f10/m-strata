@@ -1200,6 +1200,12 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
       // the tab's "Send a test"
       settings.test_notifier = [&hub = *notifier_hub](const std::string_view id) { return hub.test(id); };
     }
+    // removing a plugin (plugin spec section 12) stops its program first, in whichever host runs it
+    settings.stop_plugin = [tools = tool_hub.has_value() ? &*tool_hub : nullptr,
+                            notifiers = notifier_hub.has_value() ? &*notifier_hub : nullptr](const std::string_view id) {
+      if (tools != nullptr) (void)tools->stop(id);
+      if (notifiers != nullptr) (void)notifiers->stop(id);
+    };
     plugin_routes.emplace(std::move(settings));
     plugin_route_handler.handle = [&routes = *plugin_routes](const secure_frontend::RouteId route, const std::string_view body,
                                                              const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {
