@@ -623,13 +623,33 @@ void sampling_neutral_values_are_no_ops() {
   expect(fails_with(parse(body_with(R"("stop":["x"])")), ApiError::unsupported_parameter, "stop"), "stop array");
   expect(fails_with(parse(body_with(R"("n":2)")), ApiError::unsupported_parameter, "n"), "n 2");
   expect(fails_with(parse(body_with(R"("logprobs":true)")), ApiError::unsupported_parameter, "logprobs"), "logprobs true");
-  for (const char* key : {"top_k", "min_p", "top_logprobs", "response_format"}) {
+  for (const char* key : {"top_k", "min_p", "top_logprobs"}) {
     expect(fails_with(parse(body_with(std::string{"\""} + key + "\":1")), ApiError::unsupported_parameter, key), std::string{"SP5 key "} + key);
   }
   const auto passed = parse(body_with(R"("temperature":0.5,"top_p":0.9,"seed":42)"));
   expect(ok(passed) != nullptr && ok(passed)->sampling.temperature == std::optional<double>{0.5} &&
          ok(passed)->sampling.top_p == std::optional<double>{0.9} && ok(passed)->sampling.seed == std::optional<std::uint64_t>{42U},
          "bounded sampling values pass through (B6 option e)");
+}
+
+// The owner's client-compatibility spec (2026-10-31, Fix 1): response_format takes {"type":"text"} (nothing changes) and
+// {"type":"json_object"} (the request asks for a JSON object); {"type":"json_schema",...} is a schema this server has
+// no constrained decoder for, so it stays unsupported_parameter, named; any other shape - another type, another member,
+// not an object - is invalid_request.
+void response_format_takes_text_and_json_object() {
+  const auto text = parse(body_with(R"("response_format":{"type":"text"})"));
+  expect(ok(text) != nullptr && !ok(text)->json_object, "type text: accepted, nothing changes");
+  const auto json = parse(body_with(R"("response_format":{"type":"json_object"},"temperature":0.7,"top_p":0.8,"stream":false)"));
+  expect(ok(json) != nullptr && ok(json)->json_object && !ok(json)->reasoning_effort.has_value(), "type json_object: accepted, the request asks for JSON");
+  expect(ok(parse(body_with(""))) != nullptr && !ok(parse(body_with("")))->json_object, "absent: no JSON object asked for");
+  expect(fails_with(parse(body_with(R"("response_format":{"type":"json_schema","json_schema":{"name":"x","schema":{}}})")),
+                    ApiError::unsupported_parameter, "response_format"),
+         "type json_schema: no constrained decoder, unsupported and named");
+  for (const char* member : {R"("response_format":1)", R"("response_format":"json_object")", R"("response_format":{})",
+                             R"("response_format":{"type":"yaml"})", R"("response_format":{"type":"json_object","strict":true})",
+                             R"("response_format":{"type":1})", R"("response_format":null)"}) {
+    expect(fails_with(parse(body_with(member)), ApiError::invalid_request), std::string{"another shape: invalid_request: "} + member);
+  }
 }
 
 void sampling_bounds_rejected() {
@@ -674,6 +694,7 @@ int main(int argc, char** argv) {
       {"dos01_content_array_is_unsupported_parameter", dos01_content_array_is_unsupported_parameter},
       {"stream_flag_type_and_options_rules", stream_flag_type_and_options_rules},
       {"sampling_neutral_values_are_no_ops", sampling_neutral_values_are_no_ops},
+      {"response_format_takes_text_and_json_object", response_format_takes_text_and_json_object},
       {"sampling_bounds_rejected", sampling_bounds_rejected},
       {"sampling_integer_forms_accepted", sampling_integer_forms_accepted},
   }, failures);

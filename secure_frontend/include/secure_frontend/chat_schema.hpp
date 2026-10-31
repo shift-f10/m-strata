@@ -49,6 +49,9 @@ struct ChatCompletionRequest final {
   // Owner 2026-10-28 (the chat's web search checkbox): false = no search in this request; true or unset = the
   // server's and the card's choice. Any profile takes it; one without the tool has nothing to turn off.
   std::optional<bool> strata_search{};
+  // The owner's client-compatibility spec (2026-10-31): response_format {"type":"json_object"} - the request asks for a JSON object.
+  // Nothing constrains the decoding; such a request does not think unless it names its own reasoning_effort.
+  bool json_object{false};
 };
 
 // Chat request/response bounds; derived from FrontendConfig by chat_schema_limits().

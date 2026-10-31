@@ -177,36 +177,43 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
   // Session log step 14: a request's own reasoning_effort (none closes the think block)
   // wins over the server's reasoning.effort; the schema admits it on the qwen and gemma4
   // profiles (Gemma 4 plan 1 Task 10: gemma4's default is off, D10; glm53 refuses it).
+  // The owner's client-compatibility spec (2026-10-31, Fix 2b): a request asking for a JSON object (response_format json_object) and
+  // naming no reasoning_effort is one that names none - a JSON request never thinks unless it asks to; the GLM profile,
+  // which has no thinking switch, is as it was.
+  const std::optional<std::string> effort_word =
+      request.reasoning_effort.has_value() || !request.json_object || config_.profile == NativeChatProfile::glm53
+          ? request.reasoning_effort
+          : std::optional<std::string>{"none"};
   const bool thinking = [&] {
     switch (config_.profile) {
       case NativeChatProfile::qwen:
-        return request.reasoning_effort.has_value() ? *request.reasoning_effort != "none" : config_.qwen_thinking;
-      case NativeChatProfile::gemma4: return gemma4_request_thinks(request.reasoning_effort, config_.gemma4_thinking_default);
+        return effort_word.has_value() ? *effort_word != "none" : config_.qwen_thinking;
+      case NativeChatProfile::gemma4: return gemma4_request_thinks(effort_word, config_.gemma4_thinking_default);
       case NativeChatProfile::glm53: return false;  // the GLM profile has no thinking switch
       // raon1 (ChatML) honors reasoning_effort: none closes the think block (direct answer), any
       // level opens it; absent, KRAFTON's own default is thinking on.
       case NativeChatProfile::raon1:
-        return request.reasoning_effort.has_value() ? *request.reasoning_effort != "none" : true;
+        return effort_word.has_value() ? *effort_word != "none" : true;
       // flint: none closes the think block after the generation prompt, any level leaves it to the model; absent,
       // the server's reasoning.effort (unset: the template's own form, thinking).
       case NativeChatProfile::flint:
-        return request.reasoning_effort.has_value() ? *request.reasoning_effort != "none" : config_.flint_thinking_default;
+        return effort_word.has_value() ? *effort_word != "none" : config_.flint_thinking_default;
       // deepseek: none is chat mode, any level thinks (its effort below); absent, the server's reasoning.effort (the
       // card's thinking option, Maya's DS4_EFFORT high by default).
       case NativeChatProfile::deepseek:
-        return request.reasoning_effort.has_value() ? *request.reasoning_effort != "none" : config_.qwen_thinking;
+        return effort_word.has_value() ? *effort_word != "none" : config_.qwen_thinking;
       // minimax: off only for none (the request's, else the card's); its level is minimax_thinking below
       case NativeChatProfile::minimax:
-        return !minimax_request_thinking(request.reasoning_effort, config_.minimax_effort_default).off;
+        return !minimax_request_thinking(effort_word, config_.minimax_effort_default).off;
     }
     return false;
   }();
-  const MinimaxThinking minimax_thinking = minimax_request_thinking(request.reasoning_effort, config_.minimax_effort_default);
+  const MinimaxThinking minimax_thinking = minimax_request_thinking(effort_word, config_.minimax_effort_default);
   // Session log step 16: and its level writes the template's sentence (low, medium, high).
   QwenEffort level = config_.qwen_effort;
-  if (request.reasoning_effort == "low") level = QwenEffort::low;
-  else if (request.reasoning_effort == "medium") level = QwenEffort::medium;
-  else if (request.reasoning_effort == "high") level = QwenEffort::high;
+  if (effort_word == "low") level = QwenEffort::low;
+  else if (effort_word == "medium") level = QwenEffort::medium;
+  else if (effort_word == "high") level = QwenEffort::high;
   const QwenEffortPlacement effort{level, config_.effort_at_end};
   // SP5 M1 Task 12 (C-9): the image half of P4/P6, in the pinned order.
   // image_urls is empty on every text request; then everything below it is inert and

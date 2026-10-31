@@ -280,6 +280,43 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z82 (Windows box; owner-directed)
+
+The owner's client compatibility spec (pasted 2026-10-31, then again for the gemma4 profile; the owner: "make it work for
+both Qwen and Gemma4"): an external OpenAI-compatible client's two lanes, a JSON "analyst" lane and a streamed "red"
+lane, both refused. Each of its claims was checked against the code first:
+- **Fix 1, `response_format`** (was refused, `unsupported_parameter`): now its own branch in `chat_schema.cpp` -
+  `{"type":"text"}` changes nothing, `{"type":"json_object"}` sets `ChatCompletionRequest::json_object`, a `json_schema`
+  stays `unsupported_parameter` (named; no constrained decoder), any other shape is `invalid_request`. Out of `kSp5Keys`.
+- **Fix 2a, `reasoning_effort` per request**: already taken by every family but GLM-5.3, Qwen and Gemma 4 among them
+  (`per_request_reasoning_effort` from the family's descriptor, not a boot switch); GLM-5.3 still refuses it (owner item
+  46: its prompt always thinks).
+- **Fix 2b, the omitted effort**: a JSON-object request naming no `reasoning_effort` is one that names none
+  (`chat_route.cpp`, `effort_word`), for every family with a thinking switch; a request naming neither thinks as the
+  server's `reasoning.effort` says - the card's Thinking option. For a Qwen card High by default (the spec's
+  `qwen_thinking = true` is that already); for a Gemma 4 card Off by default (the Gemma spec's D10), so its card's
+  Thinking set On is the spec's `gemma4_thinking_default = true` (`gemma4_thinking_default()`: reasoning.effort set and
+  not none). No default was changed.
+- **Fix 3, streamed reasoning**: already incremental - `chat_stream.cpp` queues each decoded piece by channel and sends it
+  after a short hold, with the keepalive; nothing changed.
+- **Fix 4, transient errors**: already 503 (`server_busy`, `model_switching`, `no_model_running`, `engine_unavailable`,
+  `engine_error`, `server_shutting_down`); nothing changed.
+- Not done (the spec's optional polish and latent landmines): a json_object answer is not stripped of a ```json fence;
+  `top_k` and `repetition_penalty` per request stay refused (the client sends them only when its operator sets them).
+- **Tests**: the parser 1 (`response_format`'s shapes; the SP5 loop no longer lists it, as the spec changes its answer),
+  the API server 2, Qwen and Gemma 4 (Lane A answered and rendered as `none` renders it while a request naming neither
+  thinks - Gemma 4's card thinking by default, its prompts the fixture's thinking-off and thinking-on ones - Lane B
+  streamed with `none` and max_tokens 8192). README: the `response_format` note.
+- **Proof**: RED against the schema and the route as they were: 11 failures in the 2 Qwen-side cases (every
+  `response_format` shape refused as `unsupported_parameter`, Lane A 400, so 2 GEN lines of 3), and on Gemma 4 2
+  (Lane A 400, 2 GEN lines of 3); Lane B passed before and after (reasoning_effort was already taken). Then GREEN.
+  - Windows (MSVC, the shares tree, everything built, no warnings): the whole suite 1534 of 1536 (the two release-only
+    cases), before the Gemma 4 case; then it and the Gemma 4 thinking cases alone.
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc 1585/1588 and full-clang 1584/1588 (the two
+    release-only cases; egress and, on clang, switch_waits_for_the_generation_then_swaps pass alone), window-gcc Release
+    1541/1543 (net01_workers_add_no_listener and egress pass alone), before the Gemma 4 case; then each tree rebuilt, the
+    parser, chat schema and chat API cases 51/51.
+
 ### Claude Code session, 2026-10-31 z81 (Windows box; owner-directed)
 
 Phase 2's second step, its fourth part (the owner: "Yes, go on"): Add a model makes a card for a GGUF of an engine plugin's
