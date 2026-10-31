@@ -414,6 +414,13 @@
         <div class="model-actions"><button type="button" class="st-btn st-btn--primary st-btn--sm" id="startup-save">Save</button></div>
         <p class="msg-error" id="startup-error" role="alert" hidden></p>
       </div>
+      <div class="st-card alerts-settings" id="boot-settings" hidden>
+        <div class="models-head"><span class="card-title">Start at boot</span></div>
+        <p class="muted small">Whether this PC starts the server by itself. The installers set it up (install.sh --boot,
+          install.bat -Boot); this page only shows it.</p>
+        <p id="boot-says"></p>
+        <p class="muted small">To change it: <code id="boot-change"></code></p>
+      </div>
       <div class="st-card alerts-settings" id="paths-settings" hidden>
         <div class="models-head"><span class="card-title">Folders</span></div>
         <p class="muted small">Where downloads go, and the folder Add a model opens. These settings apply when the server restarts.</p>

@@ -77,6 +77,16 @@ struct Answer final {
                                                      const std::string* key, std::string_view json_body,
                                                      std::chrono::milliseconds timeout);
 
+// --------------------------------------------------------------------------- the window's own option
+// strata-window passes its arguments to the server unchanged but one: a first argument `--tray` (the log-on task's
+// start, install.ps1 -Boot logon; pinned and hot models spec part 6) opens it hidden in the tray. Only the first: a
+// later "--tray" may be another option's value.
+struct WindowStart final {
+  bool tray{false};
+  std::vector<std::string> arguments;  // the server's
+};
+[[nodiscard]] WindowStart window_start(const std::vector<std::string>& arguments);
+
 // --------------------------------------------------------------------------- what the window starts
 // The server the window starts and what it knows of its data: the server beside the window, the window's own
 // arguments passed through unchanged, and the data folder that start uses (none with --config or a bring-up start).

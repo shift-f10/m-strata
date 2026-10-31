@@ -736,6 +736,13 @@ asks quoted there.
   every other route and loopback only (`control_not_allowed` otherwise); it answers a new code
   (`no-store`), which replaces the one before it - so a key holder on this PC (strata-window
   attached to a server already running) can open the page signed in. It never answers the key.
+- **Start at boot** (2026-10-31). The installers make it, with the owner's sudo or administrator approval; the server
+  and the page never change it. install.sh's units run the server with no new privileges and the system and home
+  read-only but for the data folder; install.ps1's tasks run with the account's least privileges (an administrator's
+  account gets its filtered token, which the server's elevation refusal requires), the start-up one with the password
+  the owner types into schtasks' own prompt, which Task Scheduler keeps (DPAPI needs it for the key file). Settings
+  only reads the state: unit files and links on Linux; on Windows `schtasks /Query /TN M-Strata /XML`, run from
+  System32 only (service_ops' run_argv, never a planted copy), its XML searched for the trigger and nothing else used.
 - **Cards the page writes.** A card is built only from a GGUF file's header (flint and Gemma 4,
   the families that run from one GGUF): the page names a file in a folder, never an engine, a
   flag or a free-form argument. The card is written owner-only to `<roots.state>/cards`, then

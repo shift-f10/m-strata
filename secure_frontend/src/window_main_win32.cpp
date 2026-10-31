@@ -886,8 +886,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
           reinterpret_cast<SetAwareness>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetProcessDpiAwarenessContext")))) {
     (void)set_awareness(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
   }
-  const auto arguments = utf8_arguments();
-  auto setup = w::server_setup(arguments, secure_frontend::executable_directory());
+  // (--tray first: the log-on task's start, hidden in the tray; the rest are the server's)
+  const auto start = w::window_start(utf8_arguments());
+  auto setup = w::server_setup(start.arguments, secure_frontend::executable_directory());
   if (const auto* problem = std::get_if<std::string>(&setup)) {
     MessageBoxW(nullptr, wide(*problem).c_str(), kTitle, MB_OK | MB_ICONERROR);
     return 1;
@@ -944,7 +945,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     (void)AppendMenuW(system, MF_STRING, kSystemMenuLog, L"Server log\tCtrl+Shift+L");
   }
   add_tray_icon();
-  ShowWindow(app.window, show);
+  ShowWindow(app.window, start.tray ? SW_HIDE : show);
   UpdateWindow(app.window);
   if (app.attached) attach_server();
   else start_server();

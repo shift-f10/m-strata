@@ -847,6 +847,10 @@ secure_frontend_add_library(secure_frontend_card_routes SOURCES src/card_routes.
 # boot `strata-unified-server` and `strata serve` share (server_bootstrap.hpp).
 # The Settings tab's server half (spec 2026-10-28-server-window-design, Part 1): config_routes.hpp. The key rotation is
 # generate_token's (frontend_init.cpp, in secure_frontend_server_cli), as `strata key rotate`.
+# Start at boot (pinned and hot models, spec parts 5-6): what this PC starts the server with, read only, for Settings.
+secure_frontend_add_library(secure_frontend_boot_state SOURCES src/boot_state.cpp LINKS secure_frontend_service_ops secure_frontend_json)
+target_include_directories(secure_frontend_boot_state PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
 secure_frontend_add_library(secure_frontend_config_routes SOURCES src/config_routes.cpp
     LINKS secure_frontend_server_cli secure_frontend_config_writer secure_frontend_model_cards secure_frontend_token_reader
           secure_frontend_api_core secure_frontend_paths)
@@ -870,7 +874,7 @@ secure_frontend_add_library(secure_frontend_tui SOURCES src/tui_screen.cpp src/t
 
 secure_frontend_add_library(secure_frontend_server_bootstrap
     SOURCES src/server_bootstrap.cpp
-    LINKS secure_frontend_config secure_frontend_token_reader secure_frontend_secrets
+    LINKS secure_frontend_boot_state secure_frontend_config secure_frontend_token_reader secure_frontend_secrets
           secure_frontend_http_policy secure_frontend_http_request_handler secure_frontend_http_socket_server
           secure_frontend_api_router secure_frontend_model_inventory secure_frontend_tokenizer_pack
           secure_frontend_engine_protocol_client secure_frontend_engine_stdio_process secure_frontend_chat_schema
@@ -1542,7 +1546,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         web_ui_leaves_every_api_route_authenticated web_ui_still_checks_host_and_origin
         web_ui_assets_are_bundled_and_inert keyless_router_answers_without_a_key
         metrics_route_needs_the_key_and_the_switch about_route_needs_the_key_and_answers_its_provider
-        web_ui_has_the_monitor_and_four_thinking_levels the_chat_settings_follow_the_running_card the_page_sends_reasoning_effort_only_where_it_is_taken the_page_pins_a_card_to_start_at_startup
+        web_ui_has_the_monitor_and_four_thinking_levels the_chat_settings_follow_the_running_card the_page_sends_reasoning_effort_only_where_it_is_taken the_page_pins_a_card_to_start_at_startup the_page_shows_the_start_at_boot
         web_ui_has_the_models_tab_hidden_until_the_server_offers_it web_ui_models_tab_starts_stops_and_polls
         web_ui_chat_follows_the_running_model web_ui_models_tab_has_a_downloads_section
         web_ui_downloads_profile_picker_and_multipart
@@ -2260,7 +2264,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_config_routes secure_frontend_first_start secure_frontend_http_request_handler)
     secure_frontend_add_cases(secure_frontend_config_routes_tests
         the_settings_are_listed_with_their_rules a_save_is_held_to_the_start_up_rules the_key_is_rotated_in_its_store
-        troubleshooting_is_offered_only_in_a_debugging_build
+        troubleshooting_is_offered_only_in_a_debugging_build the_boot_start_is_said_with_the_settings
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # strata-window's portable half (spec 2026-10-28-server-window-design, Part 2), the server child driven with a fake
@@ -2275,7 +2279,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_tui_tests
         the_screen_draws_text_boxes_and_gauges charts_are_braille_or_blocks only_the_changes_are_written
         keys_decode_from_vt_sequences the_monitor_draws_the_servers_readings the_views_switch_and_keys_become_requests p_pins_the_card_under_the_cursor
-        settings_are_edited_then_saved a_message_is_shown_whole_before_the_keys quitting_asks_first quitting_an_attached_server_leaves_it_running downloads_say_what_is_on_this_pc a_debugging_build_waits_for_y
+        settings_are_edited_then_saved a_message_is_shown_whole_before_the_keys quitting_asks_first quitting_an_attached_server_leaves_it_running settings_say_what_starts_the_server_at_boot downloads_say_what_is_on_this_pc a_debugging_build_waits_for_y
         an_uncalibrated_start_asks_to_calibrate_first)
 
     secure_frontend_add_test_executable(secure_frontend_window_shell_tests tests/window_shell_test.cpp
@@ -2283,7 +2287,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_config_writer)
     secure_frontend_add_cases(secure_frontend_window_shell_tests
         the_sign_in_link_is_read_and_never_logged a_debugging_build_says_what_it_logs_before_it_starts
-        the_listening_line_names_the_pages_origin
+        the_listening_line_names_the_pages_origin the_window_takes_its_own_tray_option
         the_window_opens_on_the_monitor_first navigation_stays_on_the_pages_origin the_tray_lists_the_launchers_cards requests_carry_the_key_only_in_its_header
         the_log_rotates_at_its_bound the_log_view_keeps_the_newest_lines_in_its_bound the_log_view_holds_text_a_view_can_show
         the_log_view_saves_what_it_shows the_window_starts_the_server_beside_it)
@@ -2333,6 +2337,10 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
 
     # SP7 M1 Task 1: the hardened service unit (exact text) and the `current`
     # seam. The internal header lives in src/, like the SP2 launch seams.
+    secure_frontend_add_test_executable(secure_frontend_boot_state_tests tests/boot_state_test.cpp secure_frontend_boot_state
+        secure_frontend_json)
+    secure_frontend_add_cases(secure_frontend_boot_state_tests linux_boot_is_read_from_the_units windows_boot_is_read_from_the_task)
+
     secure_frontend_add_test_executable(secure_frontend_service_ops_tests tests/service_ops_test.cpp
         secure_frontend_service_ops secure_frontend_test_support)
     target_include_directories(secure_frontend_service_ops_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

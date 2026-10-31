@@ -3332,7 +3332,7 @@
     try { response = await api("/v1/strata/config", jsonPost({})); text = await response.text(); } catch (e) { return; }
     if (!response.ok) {
       serverConfig.built = false;
-      ["key-settings", "server-settings", "limits-settings", "paths-settings", "logs-settings"].forEach(function (id) { $(id).hidden = true; });
+      ["key-settings", "server-settings", "limits-settings", "paths-settings", "logs-settings", "boot-settings"].forEach(function (id) { $(id).hidden = true; });
       showSettingsSubtab();
       return;
     }
@@ -3343,7 +3343,17 @@
     $("logs-settings").hidden = serverConfig.data.debugging !== true;
     renderServerConfig();
     renderKey();
+    renderBoot();
     showSettingsSubtab();
+  }
+  // Start at boot (pinned and hot models, spec parts 5-6): what the server says this PC starts it with, read only
+  function renderBoot() {
+    var boot = serverConfig.data && serverConfig.data.boot;
+    var known = !!(boot && typeof boot.says === "string" && typeof boot.change === "string");
+    $("boot-settings").hidden = !known;
+    if (!known) return;
+    $("boot-says").textContent = boot.says;
+    $("boot-change").textContent = boot.change;
   }
   function configErrorBox(group) { return document.querySelector('[data-error="' + group + '"]'); }
   async function saveServerConfig(group) {

@@ -9,7 +9,8 @@
 //                                            "min"?, "max"?, "help"}], "key": {"rotatable"}}   (the config file's values;
 //                                            null: the file leaves it to the default. debugging: a make --debugging
 //                                            build, the only one that lists and saves logging.engine_output, the page's
-//                                            Troubleshooting section)
+//                                            Troubleshooting section; "boot" last, when the
+//                                            server says it: boot_state.hpp's answer, read only)
 //   POST /v1/strata/config/settings  {"values": {"<key>": <value or null>, ...}} -> {"saved": true, "restart_needed": true}
 //                                       (only the keys listed above; the whole file is checked after the change by the
 //                                       rules the server starts with, and a value it would refuse is refused by name)
@@ -39,6 +40,9 @@ struct ConfigRouteSettings final {
   // Who may read and save the settings (the server passes model_files_allowed, as for the other settings). Empty:
   // loopback clients only. Rotation answers loopback clients only, whatever this says.
   std::function<bool(const RequestContext& context)> client_allowed{};
+  // Start at boot (pinned and hot models, spec parts 5-6): boot_state.hpp's answer, read when the settings are; listed
+  // as "boot". Empty: not listed.
+  std::function<std::string()> boot{};
 };
 
 class ConfigRoutes final {

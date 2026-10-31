@@ -506,6 +506,20 @@ void a_server_already_running_is_found() {
                                                                        (wildcard ? wildcard->origin : std::string{"(none)"}));
 }
 
+// The log-on task (install.ps1 -Boot logon) opens the window in the tray: `--tray` as the first argument is the
+// window's, taken out before the rest go to the server; anywhere else it is the server's (another option's value).
+void the_window_takes_its_own_tray_option() {
+  const auto tray = w::window_start({"--tray", "--port", "9090"});
+  expect(tray.tray && tray.arguments == std::vector<std::string>{"--port", "9090"}, "first: the window's, taken out");
+  const auto alone = w::window_start({"--tray"});
+  expect(alone.tray && alone.arguments.empty(), "alone");
+  const auto plain = w::window_start({"--port", "9090"});
+  expect(!plain.tray && plain.arguments == std::vector<std::string>{"--port", "9090"}, "none: every argument the server's");
+  const auto later = w::window_start({"--engine-arg", "--tray"});
+  expect(!later.tray && later.arguments == std::vector<std::string>{"--engine-arg", "--tray"}, "later: another option's value");
+  expect(!w::window_start({}).tray, "no arguments");
+}
+
 // The window attached to a running server opens the page signed in: a fresh one-time link from the server, asked with
 // the key; a keyless server, or one that gives none, opens the page's own sign-in.
 void an_attached_window_signs_in_with_a_fresh_link() {
@@ -685,6 +699,7 @@ int main(int argc, char** argv) {
       {"the_sign_in_link_is_read_and_never_logged", the_sign_in_link_is_read_and_never_logged},
       {"a_debugging_build_says_what_it_logs_before_it_starts", a_debugging_build_says_what_it_logs_before_it_starts},
       {"the_listening_line_names_the_pages_origin", the_listening_line_names_the_pages_origin},
+      {"the_window_takes_its_own_tray_option", the_window_takes_its_own_tray_option},
       {"the_window_opens_on_the_monitor_first", the_window_opens_on_the_monitor_first},
       {"navigation_stays_on_the_pages_origin", navigation_stays_on_the_pages_origin},
       {"the_tray_lists_the_launchers_cards", the_tray_lists_the_launchers_cards},

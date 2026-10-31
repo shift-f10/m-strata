@@ -311,6 +311,12 @@ std::optional<Answer> loopback_request(const std::string_view origin, const std:
   return parse_answer(raw);
 }
 
+// --------------------------------------------------------------------------- the window's own option
+WindowStart window_start(const std::vector<std::string>& arguments) {
+  if (arguments.empty() || arguments.front() != "--tray") return WindowStart{.tray = false, .arguments = arguments};
+  return WindowStart{.tray = true, .arguments = std::vector<std::string>(arguments.begin() + 1, arguments.end())};
+}
+
 // --------------------------------------------------------------------------- what the window starts
 std::variant<ServerSetup, std::string> server_setup(const std::vector<std::string>& arguments, const std::filesystem::path& install_dir) {
   auto parsed = parse_arguments(arguments);

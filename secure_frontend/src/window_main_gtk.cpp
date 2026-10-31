@@ -66,6 +66,7 @@ struct App final {
   // start, and whether it was already running there (the window uses it as it is and leaves it running when it exits)
   std::optional<w::ServerAddress> address;
   bool attached{false};
+  bool tray{false};  // --tray: the log-on task's start, in the tray until its icon opens the window
   bool own_page{false};
   bool stopping{false};
   bool exiting{false};
@@ -627,7 +628,8 @@ void activate(GtkApplication* application, gpointer) {
   app_indicator_set_menu(app.indicator, GTK_MENU(app.menu));
   rebuild_menu();
   app.menu_timer = g_timeout_add_seconds(3, refresh_models, nullptr);
-  gtk_widget_show_all(app.window);
+  if (app.tray) gtk_widget_show_all(app.stack);  // (the page loads; the window shows from the tray)
+  else gtk_widget_show_all(app.window);
   gtk_stack_set_visible_child_name(GTK_STACK(app.stack), "status");
   if (app.attached) attach_server();
   else start_server();
@@ -638,7 +640,10 @@ void activate(GtkApplication* application, gpointer) {
 int main(int argc, char** argv) {
   std::vector<std::string> arguments;
   for (int i = 1; i < argc; ++i) arguments.emplace_back(argv[i]);
-  auto setup = w::server_setup(arguments, secure_frontend::executable_directory());
+  // (--tray first: the log-on start, hidden in the tray; the rest are the server's)
+  auto start = w::window_start(arguments);
+  app.tray = start.tray;
+  auto setup = w::server_setup(start.arguments, secure_frontend::executable_directory());
   if (const auto* problem = std::get_if<std::string>(&setup)) {
     gtk_init(&argc, &argv);
     GtkWidget* dialog = gtk_message_dialog_new(nullptr, GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "%s", problem->c_str());

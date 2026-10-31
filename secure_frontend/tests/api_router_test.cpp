@@ -401,6 +401,23 @@ void the_page_pins_a_card_to_start_at_startup() {
          "the page has the card's pin and Settings' choice");
 }
 
+// Start at boot (pinned and hot models, spec parts 5-6): Settings shows what the server says this PC starts it with and
+// the command that changes it - read only (no control, nothing sent), as text (never markup), hidden when not said.
+void the_page_shows_the_start_at_boot() {
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  const std::string html{secure_frontend::find_web_asset("/")->body};
+  expect(html.find("id=\"boot-settings\"") != std::string::npos && html.find("id=\"boot-says\"") != std::string::npos &&
+             html.find("id=\"boot-change\"") != std::string::npos,
+         "the card, its sentence and its command");
+  expect(js.find("$(\"boot-says\").textContent = boot.says;") != std::string::npos &&
+             js.find("$(\"boot-change\").textContent = boot.change;") != std::string::npos,
+         "the server's words, as text");
+  expect(js.find("$(\"boot-settings\").hidden = !known;") != std::string::npos, "hidden when the server says nothing");
+  const auto card = html.substr(html.find("id=\"boot-settings\""), 600);
+  expect(card.find("<button") == std::string::npos && card.find("<input") == std::string::npos && card.find("<select") == std::string::npos,
+         "read only: no control");
+}
+
 // Owner 2026-10-27 (item 46's fix, "Page omits it"): a running card whose profile refuses reasoning_effort (the list's
 // "reasoning_effort": false - a GLM card) gets no reasoning_effort from the page; every other chat still sends the
 // level (the server says so per card; with model control off the page cannot tell and sends it as before).
@@ -2056,6 +2073,7 @@ int main(int argc, char** argv) {
       {"web_ui_models_tab_shows_compatibility", web_ui_models_tab_shows_compatibility},
       {"web_ui_has_email_alert_settings", web_ui_has_email_alert_settings},
       {"web_ui_has_server_settings", web_ui_has_server_settings},
+      {"the_page_shows_the_start_at_boot", the_page_shows_the_start_at_boot},
       {"web_ui_claims_a_login_link_at_load_and_on_hashchange", web_ui_claims_a_login_link_at_load_and_on_hashchange},
       {"web_ui_opens_the_view_its_address_names", web_ui_opens_the_view_its_address_names},
       {"web_ui_has_web_search_settings", web_ui_has_web_search_settings},
