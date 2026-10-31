@@ -280,6 +280,27 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-30 z67 (Windows box; owner-directed)
+
+Adding plugins from the page, step one (spec section 12; the owner chose "Write our own inflater"): RFC 1951 DEFLATE
+decoding written here from the RFC, `secure_frontend_zip` (`inflate.hpp`, `inflate_raw`).
+- **What it does**: a raw DEFLATE stream decoded into a sink in chunks of at most 64 KiB, keeping the last 32 KiB as the
+  window, so a large plugin file never sits in memory whole and its SHA-256 is taken as it streams. Canonical Huffman
+  codes built from their lengths and decoded a bit at a time; stored, fixed and dynamic blocks; the run-length coded
+  code lengths; a single-code incomplete code allowed as zlib allows it. Refusals by name: truncated, bad block type,
+  stored length that does not check, code lengths that make no code, an unused symbol, a reference before the start,
+  more than the caller allows, the sink saying no. `consumed` says where the stream ended (a zip needs it).
+- **Fixtures**: `tools/secure/make_inflate_fixtures.py` writes `secure_frontend/tests/fixtures/inflate/` - six streams by
+  Python's zlib (empty, stored, fixed, dynamic, matches at nearly 32 KiB, a long run) and four malformed ones made bit by
+  bit; `tools/secure/test_inflate_fixtures.py` checks each decodes through Python's zlib to the length and SHA-256 the C++
+  test expects, and each malformed one is refused by zlib for the reason the C++ test names (zlib versions may compress
+  differently, so the files are fixed, not regenerated).
+- **Proof**: RED against a stub (21 failures; the damage sweep has nothing to assert against a stub), then GREEN: the
+  four cases - the streams decode by length and SHA-256 with the whole stream consumed, the malformed ones refused by
+  name, the bound and the sink hold, every prefix of three streams and every one-byte change of one ends cleanly - on
+  MSVC, and under gcc's AddressSanitizer and UndefinedBehaviorSanitizer with no finding (clang's sanitizer runtime is
+  not installed in WSL); gcc and clang compile both files with -Werror. The fixtures' Python test: 5 passed.
+
 ### Claude Code session, 2026-10-30 z66 (Windows box; owner-directed)
 
 The owner: "update the readme as well on the compatability, it is an Standard_NC4as_T4_v3". The README's compatibility
