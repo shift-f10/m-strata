@@ -196,6 +196,9 @@ class ModelLauncher final {
   [[nodiscard]] std::string list_json() const;
   // /v1/models: the running model's id and aliases (none while nothing runs or a switch is on).
   [[nodiscard]] ServedModels served() const;
+  // The owner's external client (2026-10-31, gap O3): {"name", "options"} - the running card and the option values its
+  // start used (its defaults where the start named none) - or null while none runs.
+  [[nodiscard]] std::string running_json() const;
   // POST /v1/chat/completions in launcher mode.
   [[nodiscard]] RouteResult chat(std::string_view body, const RequestContext& context);
   // GET /health: the running model's engine, "starting" while a start or switch runs, "none"
@@ -308,6 +311,7 @@ class ModelLauncher final {
   std::chrono::steady_clock::time_point start_asked_{};
   std::string_view start_phase_{};
   std::map<std::string, double, std::less<>> last_start_s_;
+  ModelOptionValues running_values_;  // gap O3: the option values the running card's start used
   bool busy_{false};                          // a start or stop is accepted and not finished
   bool switching_{false};                     // chat is refused: the old model is being retired or the new one loads
   bool shutting_down_{false};

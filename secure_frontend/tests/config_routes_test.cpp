@@ -100,6 +100,23 @@ void the_boot_start_is_said_with_the_settings() {
          "the boot member, last: " + shown(listed));
 }
 
+// The owner's external client (2026-10-31, gap O3: "A read endpoint would let the operator console display active
+// defaults (thinking/temperature)"): the settings answer names the running model and the option values its start used,
+// as the server says them, before "boot"; none given, no member.
+void the_running_models_values_are_said_with_the_settings() {
+  Fixture f;
+  expect(!has(f.post(secure_frontend::RouteId::strata_config, ""), "\"running\""), "none given: no running member");
+  secure_frontend::ConfigRouteSettings settings{.config_file = f.data.config_file};
+  settings.running = [] { return std::string{R"({"name":"Alpha","options":{"thinking":"high","temperature":0.3}})"}; };
+  settings.boot = [] { return std::string{R"({"system":"linux","starts":"none","says":"s","change":"c"})"}; };
+  secure_frontend::ConfigRoutes routes(std::move(settings));
+  const auto listed = routes.answer(secure_frontend::RouteId::strata_config, "",
+                                    secure_frontend::RequestContext{.client_gone = {}, .loopback_peer = true});
+  expect(listed.status == 200 &&
+             has(listed, R"(,"running":{"name":"Alpha","options":{"thinking":"high","temperature":0.3}},"boot":{)"),
+         "the running model's values, before boot: " + shown(listed));
+}
+
 // A save is checked as the server checks its config at start (the whole file, after the change): a value it would refuse
 // is refused by name and nothing is written; a good one is written, the rest of the file kept, and applies at the next
 // start. null puts a row back to its default.
@@ -204,5 +221,6 @@ int main(int argc, char** argv) {
       {"the_key_is_rotated_in_its_store", the_key_is_rotated_in_its_store},
       {"troubleshooting_is_offered_only_while_the_debugging_plugin_is_on", troubleshooting_is_offered_only_while_the_debugging_plugin_is_on},
       {"the_boot_start_is_said_with_the_settings", the_boot_start_is_said_with_the_settings},
+      {"the_running_models_values_are_said_with_the_settings", the_running_models_values_are_said_with_the_settings},
   }, failures);
 }

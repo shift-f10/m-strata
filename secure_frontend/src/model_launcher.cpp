@@ -1786,6 +1786,7 @@ void ModelLauncher::run_start(const Job& job) {
     status_[job.card] = CardStatus{CardState::running, {}};
     // the time this start took, from its request to READY: what the next start of this card is expected to take
     last_start_s_[card.name] = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_asked_).count();
+    running_values_ = job.values;
     start_phase_ = {};
     stop_reported_ = false;
     hot_running_ = kept_loaded;
@@ -1901,6 +1902,17 @@ std::string ModelLauncher::list_json() const {
   }
   out += "]}\n";
   return out;
+}
+
+// The owner's external client (2026-10-31, gap O3): the running card and the option values its start used - the card's
+// defaults, then what the start named - or null while none runs (or one is starting).
+std::string ModelLauncher::running_json() const {
+  std::lock_guard lock(mutex_);
+  if (!running_card_.has_value() || switching_ || status_[*running_card_].state != CardState::running) return "null";
+  const ModelCard& card = settings_.cards[*running_card_];
+  ModelOptionValues values = default_option_values(card);
+  for (const auto& [name, value] : running_values_) values[name] = value;
+  return "{\"name\":" + json_string(card.name) + ",\"options\":" + option_values_json(values) + "}";
 }
 
 ServedModels ModelLauncher::served() const {

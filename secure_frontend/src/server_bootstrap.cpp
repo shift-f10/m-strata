@@ -1281,6 +1281,8 @@ int launcher_run_impl(const secure_frontend::FrontendConfigDraft& main, const st
     settings.log = [](const std::string_view line) { std::cerr << line << '\n'; };
     // start at boot (pinned and hot models, spec parts 5-6): what this PC starts the server with, read when asked
     settings.boot = [] { return secure_frontend::boot_state_json(secure_frontend::this_pc_boot_probe()); };
+    // the running model and its start's option values (the owner's external client, 2026-10-31, gap O3)
+    settings.running = [&launcher] { return launcher.running_json(); };
     config_routes.emplace(std::move(settings));
     settings_route_handler.handle = [&routes = *config_routes](const secure_frontend::RouteId route, const std::string_view body,
                                                                const secure_frontend::RequestContext& context) -> secure_frontend::RouteResult {

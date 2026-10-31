@@ -164,6 +164,7 @@ HttpResponse ConfigRoutes::settings_json() const {
     first = false;
   }
   out += std::string{"],\"key\":{\"rotatable\":"} + (settings_.secret_dir ? "true" : "false") + "}";
+  if (settings_.running) out += ",\"running\":" + settings_.running();  // gap O3: the running model's option values
   if (settings_.boot) out += ",\"boot\":" + settings_.boot();  // start at boot, read only (boot_state.hpp)
   out += "}\n";
   return json_answer(200, std::move(out));

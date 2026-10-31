@@ -280,6 +280,25 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### 2026-10-31 z93 (Windows box; owner-directed)
+
+The owner's external client's gaps, O3: the settings are read with a GET, with the running model's values. The client:
+"GET /v1/strata/config -> 405 (config is write-only via POST). A read endpoint would let the operator console display
+active defaults (thinking/temperature) without guessing."
+- **The route:** `kConfigRoutes` takes `GET /v1/strata/config` beside the POST (the same answer; keyed, the same clients).
+- **The answer:** ConfigRouteSettings::running (set by the server: `ModelLauncher::running_json()`) lists `"running"` -
+  the running card and its start's option values over its defaults (`running_values_`, kept when it runs), or null -
+  before `"boot"`. model_options' `option_values_json` writes them.
+- **Docs:** secure_frontend/README.md (the Settings paragraph).
+- **Tests:** the router (`config_routes_need_their_handler_and_the_key`: the config read now takes a GET, keyed; the
+  other two stay POST only - its 405 expectation for this one route is the requirement that changed), config routes 1
+  (`the_running_models_values_are_said_with_the_settings`), the launcher 1 (`the_settings_say_the_running_models_values`:
+  over the real server - nothing runs: null; a card started with temperature 0.3: its name, 0.3, and top_p 0.95, a
+  default the start did not name).
+- **Proof:** RED (3: GET 405 at the router and over the server; no `running` member). GREEN: the launcher, config routes
+  and router suites 117/117 on Windows after the test's first guess (a Thinking option this fixture's card does not
+  offer) was replaced by its top_p. The full runs are z94's.
+
 ### 2026-10-31 z92 (Windows box; owner-directed)
 
 The owner's external client's gaps (z82's list; the owner: "Yes, start them"), L1: a start says its phase and time, a

@@ -46,6 +46,9 @@ struct ConfigRouteSettings final {
   // Start at boot (pinned and hot models, spec parts 5-6): boot_state.hpp's answer, read when the settings are; listed
   // as "boot". Empty: not listed.
   std::function<std::string()> boot{};
+  // The owner's external client (2026-10-31, gap O3): the running model and the option values its start used
+  // ({"name", "options"}, or null), read when the settings are; listed as "running", before "boot". Empty: not listed.
+  std::function<std::string()> running{};
 };
 
 class ConfigRoutes final {

@@ -1887,7 +1887,7 @@ void model_download_routes_need_the_switch_and_the_key() {
 }
 
 // The Settings tab (spec 2026-10-28-server-window-design, Part 1): its routes are keyed, POST, JSON, served only while
-// their handler is set (model control on), as the plugin routes'.
+// their handler is set (model control on), as the plugin routes'; the settings' read takes a GET too (gap O3).
 void config_routes_need_their_handler_and_the_key() {
   const std::vector<std::pair<std::string, secure_frontend::RouteId>> routes{
       {"/v1/strata/config", secure_frontend::RouteId::strata_config},
@@ -1920,8 +1920,15 @@ void config_routes_need_their_handler_and_the_key() {
     expect(request(router, "POST", target, "{\"x\":1}").status == 200 && !calls.empty() &&
                calls.back() == std::to_string(static_cast<int>(route)) + " {\"x\":1}",
            target + " reaches the handler");
-    expect(request(router, "GET", target).status == 405, target + " is POST only");
     expect(request(router, "POST", target, "{}", true, true, "text/plain").status == 415, target + " takes JSON");
+    if (target == "/v1/strata/config") {
+      // the owner's external client (2026-10-31, gap O3): the settings are read with a GET too, keyed like the POST
+      expect(request(router, "GET", target).status == 200 && calls.back() == std::to_string(static_cast<int>(route)) + " ",
+             target + " is read with a GET too");
+      expect(request(router, "GET", target, "", false).status == 401, target + "'s GET needs the key");
+    } else {
+      expect(request(router, "GET", target).status == 405, target + " is POST only");
+    }
   }
   std::vector<std::string> none;
   auto off = make(&none, false);

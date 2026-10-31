@@ -422,7 +422,10 @@ written. Saved settings apply at the next start; a command-line option (`--port`
 file for the start that names it. Troubleshooting shows only while the Debugging plugin is on (owner 2026-10-29; a
 plugin since 2026-10-30, see **Plugins**): the answer's `"debugging"` says whether it is, and otherwise the server
 neither lists nor saves `logging.engine_output` (it refuses it by name; the config file still takes it), and the page
-hides the section.
+hides the section. `GET /v1/strata/config` reads the same answer (an external OpenAI-compatible client's ask,
+2026-10-31: its console shows the active defaults), which also holds `"running"`: the running model and the option
+values its start used, its defaults where the start named none (`{"name": "...", "options": {"thinking": ...,
+"temperature": ..., ...}}`), or null while none runs - and `"boot"`, the Start at boot state.
 
 **Model folders** (every build with model control): "Use model folders as they are, even if other
 users of this PC can access them" saves `roots.allow_untrusted_media` to the config file; it applies at the next start.
