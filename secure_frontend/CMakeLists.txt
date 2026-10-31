@@ -1977,7 +1977,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_test_paths(secure_frontend_model_launcher_tests)
     secure_frontend_add_cases(secure_frontend_model_launcher_tests
         launcher_boots_idle_and_starts_a_card a_card_reads_pictures_with_its_encoder switch_waits_for_the_generation_then_swaps failed_start_keeps_the_server_usable
-        start_refusals_name_the_problem options_are_remembered models_start_and_control_off
+        start_refusals_name_the_problem a_start_says_its_phase_and_time_and_a_failure_its_code options_are_remembered models_start_and_control_off
         bad_card_refused_at_boot_and_main_rows_refused experts_show_as_soon_as_a_model_runs
         downloads_serve_the_catalog_and_load_download_cards
         cards_can_be_added_while_serving page_cards_can_be_replaced_and_removed a_gguf_card_reads_its_tokenizer_from_the_gguf

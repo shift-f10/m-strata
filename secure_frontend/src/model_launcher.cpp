@@ -38,6 +38,32 @@ constexpr std::string_view kExhausted = "the engine stopped after repeated failu
 constexpr std::string_view kCalibrationFailed = "the engine did not start for the calibration (see the server log)";
 constexpr std::string_view kCalibrationNotSaved = "the calibration could not be saved (see the server log)";
 
+// The owner's external client (2026-10-31, gap L1): each fixed failure sentence's stable, machine-readable code (the
+// models list's "error_code"); the sentences may be reworded, the codes not. Compose failures are model_runtime's.
+std::string_view failure_code(const std::string_view reason) noexcept {
+  struct Coded final {
+    std::string_view reason;
+    std::string_view code;
+  };
+  static constexpr Coded kCodes[] = {
+      {kStateDirFailed, "state_dir_failed"},
+      {kSupervisorFailed, "supervisor_failed"},
+      {kEndedBeforeReady, "engine_not_ready"},
+      {kVisionFailed, "picture_encoder_failed"},
+      {kExhausted, "engine_exhausted"},
+      {kCalibrationFailed, "calibration_failed"},
+      {kCalibrationNotSaved, "calibration_not_saved"},
+      {"the engine launch could not be composed (see the server log)", "launch_refused"},
+      {"the tokenizer could not be read from the model file (see the server log)", "tokenizer_unreadable"},
+      {"the tokenizer pack could not be loaded (see the server log)", "tokenizer_unreadable"},
+      {"the picture encoder could not be set up (see the server log)", "picture_encoder_failed"},
+  };
+  for (const auto& coded : kCodes) {
+    if (coded.reason == reason) return coded.code;
+  }
+  return "start_failed";
+}
+
 // GUI-first start-up (spec 2026-10-27 §5.1): the workload each candidate is measured on, upstream's shape - a warm-up,
 // then three fixed prompts through the card's own template, thinking off (where it can be), greedy, 128 new tokens each.
 constexpr std::array<std::string_view, 4> kCalibrationPrompts{
@@ -687,6 +713,9 @@ std::optional<ModelLauncher::Refusal> ModelLauncher::start(const std::string_vie
     std::lock_guard lock(mutex_);
     status_[*card] = CardStatus{calibrate_first || prefill_first ? CardState::calibrating : CardState::starting, {}};
     starting_card_ = *card;
+    start_asked_ = std::chrono::steady_clock::now();
+    // (a start that calibrates first is timed from its own start, after the calibration)
+    start_phase_ = calibrate_first || prefill_first ? std::string_view{} : std::string_view{"queued"};
     if (calibrate_first || prefill_first) cancel_calibration_.store(false);
     pending_ = Job{calibrate_first ? Job::Kind::calibrate : Job::Kind::start, *card, std::move(std::get<ModelOptionValues>(values)),
                    std::move(config), true, std::nullopt, prefill_first};
@@ -1161,6 +1190,18 @@ std::string ModelLauncher::calibration_json(const std::size_t index, const Model
   return out;
 }
 
+// The owner's external client (2026-10-31, gap L1): a starting card's start - its phase, the seconds since it was asked
+// for, the seconds its last start that ran took (null: none yet), and the progress estimated from the two (null without
+// an expected time; below 1 until READY) - or null.
+std::string ModelLauncher::start_json(const std::size_t index, const std::string_view name, const CardState state) const {
+  if (state != CardState::starting || starting_card_ != index || start_phase_.empty()) return "null";
+  const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_asked_).count();
+  std::string out = "{\"phase\":" + json_string(start_phase_) + ",\"elapsed_s\":" + decimal_text(elapsed) + ",\"expected_s\":";
+  const auto last = last_start_s_.find(name);
+  if (last == last_start_s_.end()) return out + "null,\"progress\":null}";
+  return out + decimal_text(last->second) + ",\"progress\":" + decimal_text(std::min(0.99, elapsed / std::max(last->second, 0.01))) + "}";
+}
+
 // §5.1: every candidate is one start of the card with those flags; the workload's median decode tok/s is its score.
 // The engine is stopped after each; a start that fails, a reply that is not one, or a cancel scores nothing.
 std::optional<double> ModelLauncher::measure(const ModelCard& card, const ModelOptionValues& values,
@@ -1628,10 +1669,18 @@ void ModelLauncher::run_start(const Job& job) {
     {
       std::lock_guard lock(mutex_);
       status_[job.card] = CardStatus{CardState::failed, reason};
+      start_phase_ = {};
     }
     log("[strata] models: " + card.name + " failed: " + std::string{reason});
     alert("engine_stopped", card.name + " did not start", "The model did not start: " + std::string{reason} + ".");
   };
+  {
+    std::lock_guard lock(mutex_);
+    // (a start the worker began itself - a card kept loaded started again, a calibration's start - is timed from here)
+    if (start_phase_.empty() || starting_card_ != job.card) start_asked_ = std::chrono::steady_clock::now();
+    starting_card_ = job.card;
+    start_phase_ = "loading";
+  }
   // §5.2 step 2: compose (the tokenizer loads) before the running model is touched.
   auto composed = compose_model(*job.config, true);
   if (auto* failure = std::get_if<ComposeFailure>(&composed)) {
@@ -1644,6 +1693,7 @@ void ModelLauncher::run_start(const Job& job) {
     // §5.2 step 3: from here chat is refused until the new model is ready (or failed).
     std::unique_lock lock(mutex_);
     switching_ = true;
+    start_phase_ = "stopping_previous";
     retire_running(lock);
     if (shutting_down_) {
       status_[job.card] = CardStatus{};
@@ -1651,6 +1701,7 @@ void ModelLauncher::run_start(const Job& job) {
     }
     // A restart of the running card: retiring it marked it stopped; it is starting again.
     status_[job.card] = CardStatus{CardState::starting, {}};
+    start_phase_ = "engine";
   }
   if (!prepare_state_dir(*job.config->roots.state, *model.plan.environment)) {
     fail(kStateDirFailed);
@@ -1708,6 +1759,10 @@ void ModelLauncher::run_start(const Job& job) {
     fail(kEndedBeforeReady);
     return;
   }
+  {
+    std::lock_guard lock(mutex_);
+    start_phase_ = "picture_encoder";
+  }
   if (!runtime->start_vision()) {
     runtime->stop_vision();
     runtime->supervisor().stop_engine();
@@ -1726,6 +1781,9 @@ void ModelLauncher::run_start(const Job& job) {
   {
     std::lock_guard lock(mutex_);
     status_[job.card] = CardStatus{CardState::running, {}};
+    // the time this start took, from its request to READY: what the next start of this card is expected to take
+    last_start_s_[card.name] = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_asked_).count();
+    start_phase_ = {};
     stop_reported_ = false;
     hot_running_ = kept_loaded;
     if (kept_loaded_ == card.name) restart_wait_ = settings_.restart_after;  // part 4: it runs again
@@ -1833,7 +1891,10 @@ std::string ModelLauncher::list_json() const {
     // not (owner 2026-10-27, item 46: a GLM card's profile refuses it)
     out += std::string{",\"reasoning_effort\":"} + (per_request_reasoning_effort_for(card.profile) ? "true" : "false");
     // the card pinned to start at startup (owner 2026-10-31), last, after the fields the page has read all along
-    out += std::string{",\"pinned\":"} + (settings_.pinned == card.name ? "true" : "false") + "}";
+    out += std::string{",\"pinned\":"} + (settings_.pinned == card.name ? "true" : "false");
+    // the owner's external client (2026-10-31, gap L1): the failure's stable code, and a start's phase and time
+    out += ",\"error_code\":" + (status.error.empty() ? std::string{"null"} : json_string(failure_code(status.error)));
+    out += ",\"start\":" + start_json(i, card.name, status.state) + "}";
   }
   out += "]}\n";
   return out;

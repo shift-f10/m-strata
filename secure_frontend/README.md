@@ -2139,6 +2139,15 @@ One model runs at a time.
   and the new one starts. An engine that ends before READY leaves its card `failed` with a fixed
   reason; nothing restarts the old model (D4). One start or stop at a time (409
   `switch_in_progress`).
+- **A start in the list** (an external OpenAI-compatible client's ask, 2026-10-31): each card's entry ends with
+  `"error_code"` - a failed card's stable, machine-readable code beside its sentence (`engine_not_ready`,
+  `engine_exhausted`, `launch_refused`, `tokenizer_unreadable`, `picture_encoder_failed`, `state_dir_failed`,
+  `supervisor_failed`, `calibration_failed`, `calibration_not_saved`; `start_failed` for any other; null when it has not
+  failed) - and `"start"`: while the card starts, `{"phase", "elapsed_s", "expected_s", "progress"}`, else null. The
+  phase is `queued`, `loading` (its tokenizer and launch), `stopping_previous` (the running model retires), `engine`
+  (the engine loads the model) or `picture_encoder`; `elapsed_s` counts from the start's request; `expected_s` is how
+  long this card's last start that ran took on this server (null until one did), and `progress` the share of it gone
+  (null without it, at most 0.99 before READY). The reasons may be reworded; the codes are not.
 - **Chat and the OpenAI surface:** chat uses the running card; a request naming another card gets
   409 `model_not_running` (D6), and with none running 503 `no_model_running`. `/v1/models` lists
   the running card and its aliases and adds `strata_models` (every card's id and state);

@@ -319,6 +319,76 @@ void failed_start_keeps_the_server_usable() {
   expect(server->wait_exit(std::chrono::seconds(20)) == std::optional<int>{0}, "a clean exit");
 }
 
+// A card's own entry in the models list, as text: {"name": ... } (empty: not there).
+std::string card_entry(const ServerProcess& server, const std::string& name) {
+  const auto listed = call(server, "GET", "/v1/strata/models");
+  if (!listed || listed->status != 200) return {};
+  const auto at = listed->body.find("{\"name\":\"" + name + "\",\"profile\":");
+  if (at == std::string::npos) return {};
+  // (the next card's entry: options are {"name": ...} objects too, but only a card has "profile")
+  const auto next_card = listed->body.find("\",\"profile\":\"", at + 1U);
+  const auto next = next_card == std::string::npos ? std::string::npos : listed->body.rfind("{\"name\":\"", next_card);
+  return listed->body.substr(at, next == std::string::npos || next <= at ? std::string::npos : next - at);
+}
+// The number after "<key>": in `text` (nullopt: none there, or null).
+std::optional<double> number_after(const std::string& text, const std::string& key) {
+  const auto at = text.find("\"" + key + "\":");
+  if (at == std::string::npos) return std::nullopt;
+  const auto value = text.substr(at + key.size() + 3U);
+  if (value.starts_with("null")) return std::nullopt;
+  try {
+    return std::stod(value);
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
+// The owner's external client (2026-10-31, gap L1: "During starting, expose progress/phase/elapsed ... On failed, make
+// error a stable machine-readable code"): a starting card's entry says what its start is doing and for how long -
+// "start": {"phase", "elapsed_s", "expected_s", "progress"}, the expected time this card's last start that ran took
+// (null until one did) and the progress estimated from it - and is null otherwise; a failed card names a stable
+// "error_code" beside its sentence.
+void a_start_says_its_phase_and_time_and_a_failure_its_code() {
+  auto server = ServerProcess::start(two_cards({"--ready-delay-ms=1500"}, {"--exit-before-ready=3"}));
+  expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots");
+  if (!server) return;
+  expect(card_entry(*server, "Alpha").find("\"start\":null") != std::string::npos, "stopped: no start: " + card_entry(*server, "Alpha"));
+  expect(call(*server, "POST", "/v1/strata/models/start", R"({"name":"Alpha"})")->status == 202, "Alpha starts");
+  std::string seen;
+  for (int i = 0; i < 40 && seen.find("\"phase\":\"engine\"") == std::string::npos; ++i) {
+    seen = card_entry(*server, "Alpha");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  expect(seen.find("\"state\":\"starting\"") != std::string::npos && seen.find("\"phase\":\"engine\"") != std::string::npos &&
+             number_after(seen, "elapsed_s").has_value() && seen.find("\"expected_s\":null") != std::string::npos &&
+             seen.find("\"progress\":null") != std::string::npos,
+         "the engine loads, for this long, with nothing to expect yet: " + seen);
+  expect(wait_for_card(*server, "Alpha", "running"), "Alpha runs");
+  expect(card_entry(*server, "Alpha").find("\"start\":null") != std::string::npos, "running: no start");
+  const auto stopped = call(*server, "POST", "/v1/strata/models/stop", "{}");
+  expect(stopped && stopped->status / 100 == 2 && wait_for_card(*server, "Alpha", "stopped"), "Alpha stops: " + shown(stopped));
+  expect(call(*server, "POST", "/v1/strata/models/start", R"({"name":"Alpha"})")->status == 202, "Alpha starts again");
+  seen.clear();
+  for (int i = 0; i < 40 && seen.find("\"phase\":\"engine\"") == std::string::npos; ++i) {
+    seen = card_entry(*server, "Alpha");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  const auto expected = number_after(seen, "expected_s");
+  const auto progress = number_after(seen, "progress");
+  expect(expected.has_value() && *expected >= 1.5 && progress.has_value() && *progress >= 0.0 && *progress < 1.0,
+         "the last start's time is expected now, and the progress estimated from it: " + seen);
+  expect(wait_for_card(*server, "Alpha", "running"), "Alpha runs again");
+  expect(call(*server, "POST", "/v1/strata/models/start", R"({"name":"Beta"})")->status == 202 && wait_for_card(*server, "Beta", "failed"),
+         "Beta fails to load");
+  const auto failed = card_entry(*server, "Beta");
+  expect(failed.find("\"error\":\"the engine ended before it was ready (see the server log)\"") != std::string::npos &&
+             failed.find("\"error_code\":\"engine_not_ready\"") != std::string::npos && failed.find("\"start\":null") != std::string::npos,
+         "the sentence, and its stable code: " + failed);
+  expect(card_entry(*server, "Alpha").find("\"error_code\":null") != std::string::npos, "no failure: no code");
+  server->stop(ServerProcess::Stop::ctrl_break);
+  expect(server->wait_exit(std::chrono::seconds(20)) == std::optional<int>{0}, "a clean exit");
+}
+
 void start_refusals_name_the_problem() {
   auto server = ServerProcess::start(two_cards({"--ready-delay-ms=1500"}));
   expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots");
@@ -1918,6 +1988,7 @@ int main(int argc, char** argv) {
       {"switch_waits_for_the_generation_then_swaps", switch_waits_for_the_generation_then_swaps},
       {"failed_start_keeps_the_server_usable", failed_start_keeps_the_server_usable},
       {"start_refusals_name_the_problem", start_refusals_name_the_problem},
+      {"a_start_says_its_phase_and_time_and_a_failure_its_code", a_start_says_its_phase_and_time_and_a_failure_its_code},
       {"options_are_remembered", options_are_remembered},
       {"models_start_and_control_off", models_start_and_control_off},
       {"experts_show_as_soon_as_a_model_runs", experts_show_as_soon_as_a_model_runs},
