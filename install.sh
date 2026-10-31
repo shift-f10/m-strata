@@ -19,6 +19,10 @@
 #                                                   the first start (asked when web search is built)
 #   ./install.sh --searxng-url URL                  a SearXNG you already run, for web search (asked before the local
 #                                                   one); the Web search plugin uses it from the first start
+#   ./install.sh --boot user|system|no              start the server when this PC starts (asked where systemd runs;
+#                                                   --yes takes no): as your systemd user service, with sudo
+#                                                   loginctl enable-linger so it starts without a login; as a system
+#                                                   service run as you (sudo installs it); or not
 #
 # What it does, each step only when needed:
 #   1. finds what the build needs: git, Python 3.10+ with venv, GCC 13+ (build-essential; on Ubuntu 22.04 gcc-13 from
@@ -32,7 +36,8 @@
 #   5. fetches the pinned llama.cpp commit the engine builds ggml from (.toolchains/llama.cpp; an existing ../llama.cpp at
 #      that commit is used as it is);
 #   6. with --searxng (or its question's yes), sets up SearXNG in Docker beside the repository (docker/searxng);
-#   7. runs make.sh into a new folder and says how to start it.
+#   7. runs make.sh into a new folder and says how to start it;
+#   8. with --boot user|system (or its question's answer), installs the systemd unit that starts the server at boot.
 # Downloads: apt packages (your distribution's and NVIDIA's signed repositories, and on Ubuntu 22.04 Ubuntu's
 # toolchain PPA for GCC 13), Python packages from PyPI, the repositories from GitHub, and with --searxng SearXNG's
 # image from Docker Hub. Nothing else is downloaded, and nothing is sent anywhere.
@@ -61,6 +66,8 @@ signing_passphrase_given=0
 searxng=0
 searxng_given=0
 searxng_url=""
+boot=no
+boot_given=0
 yes=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -73,8 +80,9 @@ while [ $# -gt 0 ]; do
     --signing-passphrase) signing_passphrase=1; signing_passphrase_given=1; shift ;;
     --searxng) searxng=1; searxng_given=1; shift ;;
     --searxng-url) searxng_url=$2; shift 2 ;;
+    --boot) boot=$2; boot_given=1; shift 2 ;;
     --yes) yes=1; shift ;;
-    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,43p' "$0"; exit 0 ;;
     *) echo "install: unknown option $1 (see ./install.sh --help)" >&2; exit 2 ;;
   esac
 done
@@ -204,6 +212,26 @@ if [ -n "$searxng_url" ] && ! has_feature search; then
   fail "--searxng-url is the Web search plugin's SearXNG: build web search too (--with ...,search)"
 fi
 
+# --- start at boot (the owner, 2026-10-31: "have a systemd option so we can have it autostart on boot, to which may
+# require sudo"; both ways, chosen here). The unit runs the install's own server on its data folder with no login link
+# (its output is the journal: sign in with strata key show, or through strata-window and strata-tui, which use it).
+# Only these steps run sudo, here in your terminal; the server and the page never run sudo or systemctl.
+systemd_run=${M_STRATA_SYSTEMD_RUN:-/run/systemd/system}
+case "$boot" in user|system|no) ;; *) fail "--boot takes user, system or no, not $boot" ;; esac
+if [ "$yes" = 0 ] && [ "$boot_given" = 0 ] && [ -d "$systemd_run" ]; then
+  step 'Start at boot'
+  while :; do
+    ask_text 'Start the server when this PC starts? u: as your user service (sudo turns on lingering, so it starts without a login), s: as a system service run as you (sudo installs it), Enter: no'
+    case "$reply" in
+      '') boot=no; break ;;
+      u|U|user) boot=user; break ;;
+      s|S|system) boot=system; break ;;
+      *) say '  u, s, or Enter for no, please' ;;
+    esac
+  done
+fi
+if [ "$boot" != no ] && [ ! -d "$systemd_run" ]; then fail "--boot $boot starts the server through systemd, which this PC does not run"; fi
+
 # --- 1. what is there ------------------------------------------------------------------------------------------------
 step 'Looking at what this PC has'
 [ "$(uname -s)" = Linux ] || fail 'install.sh is for Linux; on Windows run install.bat'
@@ -271,6 +299,27 @@ if [ -z "$out" ]; then
   # a new folder each time (make never deletes)
   while [ -d "$out" ] && [ -n "$(ls -A "$out" 2>/dev/null)" ]; do out="$parent/M-Strata-app-$n"; n=$((n + 1)); done
 fi
+# the boot unit (--boot): systemd splits its lines on spaces, so the folder has none; an absolute path
+owner=$(id -un)
+boot_unit_name=m-strata.service
+user_unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+system_unit_dir=/etc/systemd/system
+if [ "$boot" != no ]; then
+  case "$out" in /*) ;; *) out="$(pwd)/$out" ;; esac
+  case "$out" in *[[:space:]]*) fail "--boot: the --out folder has a space or tab, which a systemd unit cannot hold: choose another" ;; esac
+fi
+# boot_unit user|system: the unit's text - SP7's hardened unit (secure_frontend/src/service_ops.cpp), with the whole data
+# folder writable (downloads, models, logs, state) and the rest of home read-only
+boot_unit() {
+  printf '[Unit]\nDescription=M-Strata server\n'
+  if [ "$1" = system ]; then printf 'Wants=network-online.target\nAfter=network-online.target\n'; fi
+  printf '\n[Service]\n'
+  if [ "$1" = system ]; then printf 'User=%s\nGroup=%s\n' "$owner" "$(id -gn)"; fi
+  printf 'ExecStart=%s/strata-unified-server --data-dir %s/data --no-login-link\n' "$out" "$out"
+  printf 'Restart=on-failure\nRestartSec=5\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=read-only\n'
+  printf 'ReadWritePaths=%s/data\nPrivateTmp=yes\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n' "$out"
+  if [ "$1" = system ]; then printf '\n[Install]\nWantedBy=multi-user.target\n'; else printf '\n[Install]\nWantedBy=default.target\n'; fi
+}
 ggml_given=1
 if [ -z "$ggml" ]; then
   ggml_given=0
@@ -329,6 +378,14 @@ if [ "$debugging" = 1 ]; then
   say "  Plugins tab for everyday use. The engine's output alone can be turned off in Settings > Troubleshooting."
 fi
 if [ "${no_display:-0}" = 1 ]; then say "  (no display here: the TUI only; --with email,search,window,tui adds the window)"; fi
+if [ "$boot" = user ]; then
+  say "  start at boot: the systemd user service $user_unit_dir/$boot_unit_name (enabled), and"
+  say "  sudo loginctl enable-linger $owner (your services start at boot, without a login). The unit:"
+elif [ "$boot" = system ]; then
+  say "  start at boot: the systemd system service $system_unit_dir/$boot_unit_name, run as $owner (sudo installs and"
+  say "  enables it). The unit:"
+fi
+if [ "$boot" != no ]; then boot_unit "$boot" | sed 's/^/    | /'; fi
 if [ "$plan" = 1 ]; then say ''; say 'install: --plan given - nothing was installed or changed.'; exit 0; fi
 if [ "$yes" = 0 ]; then
   printf 'Go ahead? [y/N] '
@@ -466,11 +523,43 @@ fi
 step "Building into $out (the first build compiles the CUDA engine: allow an hour or more)"
 "$repo/make.sh" --out "$out" --ggml-dir "$ggml" --cuda-root "$cuda" --with "$with" $make_flags || fail 'make stopped; its message is above'
 
+# --- 8. start at boot -------------------------------------------------------------------------------------------------
+# The data folder made owner-only first (the server fills it at its first start; systemd makes only it writable).
+if [ "$boot" != no ]; then
+  step "Start at boot ($boot service)"
+  [ -d "$out/data" ] || mkdir -m 700 "$out/data"
+  if [ "$boot" = user ]; then
+    mkdir -p "$user_unit_dir"
+    boot_unit user > "$user_unit_dir/$boot_unit_name.tmp"
+    chmod 644 "$user_unit_dir/$boot_unit_name.tmp"
+    mv -f "$user_unit_dir/$boot_unit_name.tmp" "$user_unit_dir/$boot_unit_name"
+    systemctl --user daemon-reload || fail 'systemctl --user did not answer: log in to a session with a systemd user manager and run this again with --boot user'
+    systemctl --user enable "$boot_unit_name"
+    sudo loginctl enable-linger "$owner"
+  else
+    unit_file=$(mktemp)
+    boot_unit system > "$unit_file"
+    sudo install -m 0644 -o root -g root "$unit_file" "$system_unit_dir/$boot_unit_name"
+    rm -f -- "$unit_file"
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$boot_unit_name"
+  fi
+fi
+
 step 'Done'
 say "  M-Strata is in $out. Start it with:"
 if has_feature window; then say "    $out/strata-window          (a window with the page, and a tray icon)"; fi
 if has_feature tui; then say "    $out/strata-tui             (the same server in this terminal, with a dashboard)"; fi
 say "    $out/strata-unified-server  (prints a one-time login link: open it in a browser on this PC)"
+if [ "$boot" = user ]; then
+  say "  It starts at boot (systemctl --user start $boot_unit_name starts it now; strata-window and strata-tui use it). Its"
+  say "  output is the journal (journalctl --user -u $boot_unit_name); sign in with $out/strata key show, or the apps."
+  say "  To stop it starting: systemctl --user disable --now $boot_unit_name"
+elif [ "$boot" = system ]; then
+  say "  It starts at boot (sudo systemctl start $boot_unit_name starts it now; strata-window and strata-tui use it). Its"
+  say "  output is the journal (journalctl -u $boot_unit_name); sign in with $out/strata key show, or the apps."
+  say "  To stop it starting: sudo systemctl disable --now $boot_unit_name"
+fi
 if [ "$searxng" = 1 ]; then say "  Web search: SearXNG on http://127.0.0.1:8888 ($searxng_dir: docker compose there stops and starts it)"
 elif [ -n "$searxng_url" ]; then say "  Web search: your SearXNG at $searxng_url"; fi
 if [ -z "$driver" ]; then say '  No NVIDIA driver was found: install it before starting a model.'; fi

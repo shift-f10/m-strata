@@ -387,13 +387,28 @@ cd m-strata && ./install.sh
 
 It asks the same questions first. Its options are `--out DIR`, `--with email,search,window,tui`,
 `--without maya,raon1,vision`, `--ggml-dir DIR`, `--debugging`, `--signing-passphrase` (the key is
-`~/.config/m-strata/plugin-signing-key.json`, or under `XDG_CONFIG_HOME`), `--searxng-url URL`, `--searxng`, `--plan` and
-`--yes`, as above. Here `--searxng` (or the question's yes) also installs Docker and its compose plugin from the
+`~/.config/m-strata/plugin-signing-key.json`, or under `XDG_CONFIG_HOME`), `--searxng-url URL`, `--searxng`, `--boot`
+(below), `--plan` and `--yes`, as above. Here `--searxng` (or the question's yes) also installs Docker and its compose plugin from the
 distribution when they are missing; its question's default is yes where Docker is already there. The window's question
 defaults to yes on a desktop and to no on a machine with no display (no `DISPLAY` or `WAYLAND_DISPLAY`, as over SSH),
 so its GTK packages are not installed there; `--yes` builds both front ends on a desktop and only `strata-tui`
-without a display. On another distribution, install
-the packages of the table above its way and follow the steps by hand below.
+without a display.
+
+**Start at boot (Linux).** Where systemd runs, it also asks whether the server should start when the PC starts
+(`--boot user|system|no`; Enter and `--yes` take no). After the build it installs the unit, which runs
+`strata-unified-server --data-dir <out>/data --no-login-link` hardened as `strata service`'s unit is (no new
+privileges, the system and your home read-only but for the data folder, a restart after a failure):
+- `user`: your systemd user service `~/.config/systemd/user/m-strata.service`, enabled, and `sudo loginctl
+  enable-linger <you>`, so your services start at boot without a login;
+- `system`: `/etc/systemd/system/m-strata.service`, run as you, which `sudo` installs and enables.
+
+`systemctl --user start m-strata` (or `sudo systemctl start m-strata`) starts it now; its output is the journal
+(`journalctl --user -u m-strata`), which never holds a login link: sign in with `strata key show`, or open
+`strata-window` or `strata-tui`, which use the server already running. A model folder outside the data folder is read,
+never changed, by a server started this way. `systemctl --user disable --now m-strata` (or the `sudo systemctl` one)
+stops it starting.
+
+On another distribution, install the packages of the table above its way and follow the steps by hand below.
 
 ### Install by hand (Windows)
 

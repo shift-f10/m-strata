@@ -280,6 +280,27 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z88 (Windows box; owner-directed)
+
+Pinned and hot models, part 5 (spec part 5, "As built"): install.sh starts the server at boot, as the owner chose.
+- **install.sh**: `--boot user|system|no`, its question where systemd runs (Enter, no terminal and `--yes`: no), the plan's
+  lines and the unit it prints (`boot_unit`), and step 8 after the build: `<out>/data` made 0700, then the user unit +
+  `systemctl --user enable` + `sudo loginctl enable-linger <owner>`, or the system unit installed and enabled with sudo.
+  Refused without systemd, with a space in `--out`, or for another word. The help shows the option.
+- **Docs**: README (the Linux installer: Start at boot), the spec's part 5 "As built".
+- **Tests** (tools/secure/test_install.py): `test_install_sh_starts_the_server_at_boot_as_chosen` (a plan on this Linux
+  with a stand-in systemd folder: the question and its default, `--yes`, both units' lines, nothing written, the three
+  refusals) and `test_install_sh_installs_the_boot_unit_after_the_build` (step 8 after make, the data folder first, sudo
+  only for linger, install and systemctl, the help's range).
+- **Proof**: RED - both against the committed install.sh (no question; no step 8). GREEN - the installer tests on Linux
+  (WSL Ubuntu 24.04) 21 passed, 3 skipped (the PowerShell ones); on Windows the static one passes. Live under WSL's
+  systemd user manager: install.sh's own `boot_unit user` text (a scratch port added), over a scratch folder laid out as
+  make's (the Release server and CLI, the fake engine as engine/multiengine): active; the first start filled the data
+  folder through the sandbox; the journal held no login link; /health 200 with the folder's key, 401 without; a fresh
+  login link's code 43 characters; stop freed the port; the scratch unit removed.
+- **Not yet**: the Windows start (install.ps1) and Settings' read-only boot state (both OSes) - see the open question in
+  the spec's part 6 notes.
+
 ### Claude Code session, 2026-10-31 z87 (Windows box; owner-directed)
 
 Pinned and hot models, part 6 (spec part 6, "As built"): one server; strata-window and strata-tui attach to the one

@@ -136,6 +136,20 @@ may require sudo"; asked how, his answer: both ways, chosen at install.
   check for "stdout is not a terminal" was the first idea; strata-window reads its link from the server's piped output,
   so the flag is explicit instead.)
 
+**As built (2026-10-31, part 5: the Linux installer).** `install.sh --boot user|system|no`, asked where systemd runs
+(`/run/systemd/system`; Enter, no terminal and `--yes` take no) and refused elsewhere, with an `--out` folder holding a
+space, or for another word. The plan names what it installs and prints the unit (`boot_unit`): `ExecStart=<out>/strata-
+unified-server --data-dir <out>/data --no-login-link`, SP7's hardening (Restart=on-failure, RestartSec=5,
+NoNewPrivileges, ProtectSystem=strict, ProtectHome=read-only, PrivateTmp, RestrictAddressFamilies AF_UNIX AF_INET
+AF_INET6) with `ReadWritePaths=<out>/data`; the system unit adds `User=`/`Group=` (the owner) and network-online, and is
+wanted by multi-user.target (the user unit by default.target). After the build (step 8) it makes `<out>/data` owner-only
+(0700, so systemd can make it writable before the first start fills it), then either writes
+`~/.config/systemd/user/m-strata.service` (0644), `systemctl --user daemon-reload` and `enable`, and `sudo loginctl
+enable-linger <owner>`; or `sudo install -m 0644 -o root -g root` it as `/etc/systemd/system/m-strata.service`, `sudo
+systemctl daemon-reload` and `enable`. It enables and does not start (a server already running from a shell would make a
+started one retry its port); Done says how to start it now, read its journal, and stop it starting. The `strata service`
+verb is unchanged (its SP7 unit runs `strata --config ... serve`).
+
 ## 6. One server, the apps manage it; Windows start too (the owner, 2026-10-31)
 
 The owner: "we need the strata-unified-server binary as the main binary running the services, the window and tui should
@@ -164,6 +178,15 @@ server keeps it running when it quits.
   change it; the server only reads.
 - **The login link**: a service's start (`--no-login-link`) prints no one-time login link (part 5), on Windows as on
   Linux; the apps sign in with the key from the data folder.
+
+**Found before building the Windows start (2026-10-31; the owner's answer awaited).** A Windows service logged on as an
+account runs with that account's full token - no UAC split for a service logon - so on an administrator account it is
+elevated, and the server refuses an elevated token (G4, privilege_check.cpp): "a Windows service as the owner" would not
+start on an admin account. A Task Scheduler task with a start-up trigger, run whether or not the owner is logged on,
+with the least privileges (RunLevel Limited: the filtered, non-elevated token) and the owner's password kept by Task
+Scheduler (typed into Windows' own prompt at install), starts at boot as the owner and keeps the key file readable
+(DPAPI needs the password; an S4U task, which stores none, could not read it). Asked of the owner: that task in place of
+the service.
 
 **As built (2026-10-31, part 6: the apps attach).**
 - **The server**: `--no-login-link` sets `listener.login_link` false for that start. A keyed server with the page always
