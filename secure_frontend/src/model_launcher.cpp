@@ -372,6 +372,21 @@ ModelLauncher::ModelLauncher(LauncherSettings settings) : settings_(std::move(se
     cpu_fact_ = cpu_fact();
     machine_ = SweepMachine{std::max(1U, std::thread::hardware_concurrency()), physical_cores()};
   }
+  restart_wait_ = settings_.restart_after;
+  // part 4: the card kept loaded when the server last stopped ({"card": "<name>"}), if the server still holds it
+  if (settings_.hot_file.has_value()) {
+    auto text = read_trusted_config_text(*settings_.hot_file);
+    if (const auto* read = std::get_if<TrustedConfigText>(&text)) {
+      constexpr JsonLimits kLimits{.max_bytes = 4096U, .max_depth = 2U, .max_container_entries = 4U, .max_string_bytes = 256U};
+      const auto parsed = parse_json(read->text, kLimits);
+      const auto* root = std::get_if<JsonValue>(&parsed);
+      const auto* members = root == nullptr ? nullptr : root->if_object();
+      if (members != nullptr && members->size() == 1U && (*members)[0].key == "card" && (*members)[0].value.if_string() != nullptr &&
+          find_card(*(*members)[0].value.if_string()).has_value()) {
+        kept_loaded_ = *(*members)[0].value.if_string();
+      }
+    }
+  }
   worker_ = std::thread([this] { run_jobs(); });
 }
 
@@ -463,6 +478,14 @@ void ModelLauncher::forget_card(const std::string& name) {
     std::filesystem::remove(*settings_.calibration_dir / path_from_utf8(prefill_file_name(name)), ec);
   }
   log("[strata] models: removed " + name);
+  // a removed card kept loaded is forgotten (part 4)
+  bool was_kept = false;
+  {
+    std::lock_guard lock(mutex_);
+    was_kept = kept_loaded_ == name;
+    if (was_kept) kept_loaded_.reset();
+  }
+  if (was_kept) write_kept_loaded(std::nullopt);
   // a removed card that was pinned is unpinned, so the next start names no missing card
   const std::lock_guard pin_lock(pin_mutex_);
   {
@@ -509,6 +532,49 @@ std::optional<ModelLauncher::Refusal> ModelLauncher::pin(const std::optional<std
 std::optional<std::string> ModelLauncher::pinned() const {
   std::lock_guard lock(mutex_);
   return settings_.pinned;
+}
+
+std::optional<std::string> ModelLauncher::kept_loaded() const {
+  std::lock_guard lock(mutex_);
+  return kept_loaded_;
+}
+
+namespace {
+// Part 4: the options a card kept loaded starts again with - its remembered ones, kept loaded (a start that never ran may
+// have remembered none). A restart never calibrates: the owner's starts do.
+const JsonValue& kept_loaded_options() {
+  static const JsonValue options = [] {
+    constexpr JsonLimits kLimits{.max_bytes = 64U, .max_depth = 2U, .max_container_entries = 2U, .max_string_bytes = 16U};
+    return std::get<JsonValue>(parse_json(R"({"hot":true})", kLimits));
+  }();
+  return options;
+}
+}  // namespace
+
+std::optional<ModelLauncher::Refusal> ModelLauncher::start_kept_loaded() {
+  const auto name = kept_loaded();
+  if (!name.has_value()) return Refusal{ApiError::model_not_found};
+  log("[strata] models: " + *name + " was kept loaded when the server stopped: it starts again");
+  return start(*name, &kept_loaded_options(), false, false);
+}
+
+void ModelLauncher::write_kept_loaded(const std::optional<std::string>& name) const {
+  if (!settings_.hot_file.has_value()) return;
+  const auto& file = *settings_.hot_file;
+  if (!name.has_value()) {
+    std::error_code ec;
+    std::filesystem::remove(file, ec);
+    return;
+  }
+  std::string text = "{\"card\":";
+  append_json_string(&text, *name);
+  text += "}\n";
+  auto root = open_root(file.parent_path());
+  const auto relative = parse_relative_path(path_to_utf8(file.filename()));
+  if (!std::holds_alternative<CanonicalRoot>(root) || !std::holds_alternative<RelativePath>(relative) ||
+      write_private_file(std::get<CanonicalRoot>(root), std::get<RelativePath>(relative), text, TokenStoreMode::replace).has_value()) {
+    log("[strata] models: " + *name + " is kept loaded, and could not be kept for the server's next start");
+  }
 }
 
 std::vector<ModelCard> ModelLauncher::cards() const {
@@ -605,6 +671,18 @@ std::optional<ModelLauncher::Refusal> ModelLauncher::start(const std::string_vie
   for (const auto& [option, value] : std::get<ModelOptionValues>(values)) line += " " + option + "=" + value_text(value);
   line += remote_client ? " (remote client)" : " (loopback client)";
   log(line);
+  // part 4: the card kept loaded is this one, started kept loaded; any other start forgets it
+  const auto hot = std::get<ModelOptionValues>(values).find("hot");
+  const bool kept = hot != std::get<ModelOptionValues>(values).end() && std::holds_alternative<bool>(hot->second) && std::get<bool>(hot->second);
+  bool kept_changed = false;
+  {
+    std::lock_guard lock(mutex_);
+    const std::optional<std::string> now_kept = kept ? std::optional<std::string>{chosen.name} : std::nullopt;
+    kept_changed = kept_loaded_ != now_kept;
+    kept_loaded_ = now_kept;
+    restart_at_.reset();
+  }
+  if (kept_changed) write_kept_loaded(kept ? std::optional<std::string>{chosen.name} : std::nullopt);
   {
     std::lock_guard lock(mutex_);
     status_[*card] = CardStatus{calibrate_first || prefill_first ? CardState::calibrating : CardState::starting, {}};
@@ -628,6 +706,15 @@ std::optional<ModelLauncher::Refusal> ModelLauncher::stop(const bool remote_clie
     pending_ = Job{Job::Kind::stop, running_card_.value_or(0U), {}, {}};
   }
   log(std::string{"[strata] models: stop"} + (remote_client ? " (remote client)" : " (loopback client)"));
+  // part 4: the owner's stop forgets the card kept loaded (the server's own stop, its shutdown, keeps it)
+  bool forgot = false;
+  {
+    std::lock_guard lock(mutex_);
+    forgot = kept_loaded_.has_value();
+    kept_loaded_.reset();
+    restart_at_.reset();
+  }
+  if (forgot) write_kept_loaded(std::nullopt);
   changed_.notify_all();
   return std::nullopt;
 }
@@ -1375,6 +1462,35 @@ void ModelLauncher::run_jobs() {
       // by repeated failures alerts once - and a card kept loaded that has idled for warm_every is warmed (part 3)
       const auto every = std::min<std::chrono::milliseconds>(std::chrono::seconds(5), settings_.warm_every);
       while (!changed_.wait_for(lock, every, [this] { return pending_.has_value() || shutting_down_; })) {
+        // part 4: the card kept loaded is down - not running, its start failed, or its engine's circuit open - so it is
+        // started again once its cool-down has passed (each one twice the last, up to restart_most)
+        if (kept_loaded_.has_value() && !switching_ && !busy_) {
+          const bool runs_it = running_ != nullptr && running_card_.has_value() && settings_.cards[*running_card_].name == *kept_loaded_ &&
+                               running_->supervisor().snapshot().state != SupervisorState::circuit_open;
+          const bool starting_it = starting_card_.has_value() && settings_.cards[*starting_card_].name == *kept_loaded_ &&
+                                   status_[*starting_card_].state != CardState::failed && !runs_it &&
+                                   (status_[*starting_card_].state == CardState::starting || status_[*starting_card_].state == CardState::calibrating);
+          const auto now = std::chrono::steady_clock::now();
+          if (runs_it || starting_it) {
+            restart_at_.reset();
+          } else if (!find_card(*kept_loaded_).has_value()) {
+            kept_loaded_.reset();
+          } else if (!restart_at_.has_value()) {
+            restart_at_ = now + restart_wait_;
+            log("[strata] models: " + *kept_loaded_ + " is kept loaded and stopped: it starts again in " +
+                std::to_string(std::chrono::duration_cast<std::chrono::seconds>(restart_wait_).count()) + " s");
+          } else if (now >= *restart_at_) {
+            const std::string name = *kept_loaded_;
+            restart_at_.reset();
+            restart_wait_ = std::min(restart_wait_ * 2, settings_.restart_most);
+            lock.unlock();
+            if (start(name, &kept_loaded_options(), false, false).has_value()) {
+              log("[strata] models: " + name + " is kept loaded; its start again was refused: it is tried again later");
+            }
+            lock.lock();
+            continue;
+          }
+        }
         if (running_ == nullptr || !running_card_.has_value()) continue;
         if (hot_running_ && !switching_ && !busy_ && !stop_reported_ &&
             running_->supervisor().snapshot().state == SupervisorState::ready) {
@@ -1612,6 +1728,7 @@ void ModelLauncher::run_start(const Job& job) {
     status_[job.card] = CardStatus{CardState::running, {}};
     stop_reported_ = false;
     hot_running_ = kept_loaded;
+    if (kept_loaded_ == card.name) restart_wait_ = settings_.restart_after;  // part 4: it runs again
   }
   // The Monitor shows "N experts loaded" on the VRAM and RAM cards; push the engine's startup
   // readings now so a just-started model shows them before any chat (owner 2026-10-23).
