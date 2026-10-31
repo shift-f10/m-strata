@@ -49,6 +49,10 @@ struct CardError final {
 // read from the GGUF), and the options: the context up to the model's own (<arch>.context_length, at most 256K;
 // 64K by default), the expert VRAM auto, thinking as the template does it (flint on, Gemma 4 off), and the sampling
 // the GGUF recommends (general.sampling.temp / top_p / top_k; top_p to two places).
+// An architecture none of those has is an engine plugin's family's when one that is on lists it (plugin spec section 5):
+// its card, its tokenizer the GGUF's (a family reading a pack's is refused), each option its manifest declares with a
+// default as declared - max_context at most the model's own context (its manifest's context key) - and the GGUF's
+// sampling where the family offers it.
 [[nodiscard]] std::variant<CardText, CardError> card_for_gguf(const GgufMetadata& metadata, const GgufCardRequest& request);
 
 // The families whose card needs a pack built first (owner 2026-10-27, strata-prepare beside the engine): a Qwen3.8

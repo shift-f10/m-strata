@@ -296,7 +296,24 @@ an engine plugin's manifest block and its library's SHA-256:
 - **A start, end to end** (`an_engine_plugins_card_starts_through_the_launcher`): the real server over the fake engine
   standing in for the launcher lists the card with its family and its options, starts it as `--family acme3
   --family-sha256 <its library's> --serve --max-context 32768 --native <gguf>`, and it answers and stops.
-- **Not yet**: cards from Add a model by architecture; a thinking option; a plugin's downloads (phase 4).
+- **Not yet** (then): cards from Add a model by architecture (the fourth part, below); a thinking option; a plugin's
+  downloads (phase 4).
+
+**As built (2026-10-31, phase 2's second step, fourth part): Add a model makes an engine plugin's card.**
+- **By its architecture** (`card_for_gguf`): a GGUF whose general.architecture none of the built-in families takes
+  (flint, Gemma 4, Qwen3.6, and the packed ones - `packed_family`) is the family's of the first engine plugin that is on
+  and lists it among its GGUF architectures; with none, it is refused by its architecture, as before. The built-ins come
+  first, so no plugin takes their models.
+- **Its card**: its family's profile; the engine the page's cards start (models.default_engine, the launcher beside the
+  plugins folder); the file's stem as its model and its name as the card's; no tokenizer pack - a family whose tokenizer
+  is a pack's is refused by name, its pack its plugin's to build (phase 4); no engine.args. Its options: each one its
+  manifest declares with a default, at that default, but `max_context` (an integer option of that name) at most the
+  model's own context, its manifest's context key in the GGUF - the largest value it offers within it (its least when
+  none fits), or that context within its bounds - and at most its default; then the GGUF's sampling (general.sampling.temp
+  / top_p / top_k, shared with the built-ins' cards now) where the family offers the option. An option declared without
+  a default is the card file's to add; its GPUs are the server's to offer, as on every card.
+- **Not yet**: its draft layer from the manifest's MTP key, its picture encoder, a thinking option, a plugin's downloads
+  (phase 4).
 
 ### 6. Trust (decision 2)
 
@@ -618,7 +635,7 @@ Either way, the tests are:
    - Then manifest-driven descriptors for plugins: cards, options, arguments, calibration, Monitor, capabilities. Begun
      (section 5, as built): the descriptor, the families the server runs, its options and its engine's arguments; a
      plugin card's start, its calibration and its Monitor; the server running the families of its engine plugins that
-     are on, a card of one started end to end.
+     are on, a card of one started end to end; Add a model making a card for a plugin family's GGUF.
 3. **Prompt format.** The declarative template renderer, if decision 1 is (a), with its refusal tests.
 4. **Downloads.** Plugin entries in Download models, `prepare: plugin`, and the MTP and picture files.
 5. **Trust and the Plugins tab.** Discovery of every kind, approval and pinning, first-party trust through the build

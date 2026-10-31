@@ -7,6 +7,8 @@
 #include "secure_frontend/first_start.hpp"
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/model_cards.hpp"
+#include "secure_frontend/plugin_family.hpp"
+#include "secure_frontend/plugin_manifest.hpp"
 #include "support/gguf_builder.hpp"
 #include "support/test_paths.hpp"
 #include "support/test_support.hpp"
@@ -1000,6 +1002,44 @@ void the_shared_folders_setting_is_read_and_saved() {
          "without a config file the setting is shown, not saved: " + shown(refused));
 }
 
+// An engine plugin's family that is on (plugin spec section 5) takes a model of one of its architectures from a folder:
+// its card is added and held, its family's, with its context at most the model's own; while the plugin is not on, the
+// same file is refused by its architecture.
+void an_engine_plugins_model_is_added_by_its_architecture() {
+  const std::string manifest = R"({"schema": "m-strata.plugin/1", "id": "acme3", "kind": "engine", "name": "Acme-3", "version": "0.1.0",
+    "publisher": "Example Labs", "license": "Apache-2.0", "about": "A family.",
+    "files": {"windows": ["multiengine_acme3.dll"], "linux": ["libmultiengine_acme3.so"]},
+    "engine": {"abi": 1, "dialect": "strata_0143", "chat": "flint", "tokenizer": {"source": "gguf", "mode": "flint_bpe"},
+      "models": {"gguf_architectures": ["acme3"], "context_key": "acme3.context_length"},
+      "arguments": [{"flag": "--max-context", "value": "integer", "min": 4096, "max": 262144}],
+      "options": [{"name": "max_context", "kind": "integer", "label": "Context length", "flag": "--max-context", "min": 4096,
+                   "max": 262144, "default": 65536}],
+      "capabilities": {"vision": false, "web_search": false, "mtp": "none"}}})";
+  auto parsed = secure_frontend::parse_plugin_manifest(manifest, "acme3");
+  expect(std::holds_alternative<secure_frontend::PluginManifest>(parsed), "the test's manifest reads");
+  if (!std::holds_alternative<secure_frontend::PluginManifest>(parsed)) return;
+  Fixture f;
+  Fixture::write_gguf(f.models / "acme3-tiny-Q8_0.gguf", "acme3");
+  const auto off = f.add(f.models, "acme3-tiny-Q8_0.gguf");
+  expect(off.status == 422 && has(off, "acme3") && has(off, "\"code\":\"card_refused\""), "not on: refused by its architecture: " + shown(off));
+  secure_frontend::set_plugin_families({secure_frontend::PluginFamilySource{std::get<secure_frontend::PluginManifest>(parsed), std::string(64, 'a')}});
+  const auto added = f.add(f.models, "acme3-tiny-Q8_0.gguf");
+  expect(added.status == 201 && has(added, "\"name\":\"acme3-tiny-Q8_0\"") && has(added, "\"profile\":\"acme3\""), "on: its card is added: " + shown(added));
+  const auto held = f.launcher->card("acme3-tiny-Q8_0");
+  const auto* context = [&held]() -> const secure_frontend::ModelOptionLimits* {
+    if (!held) return nullptr;
+    for (const auto& limit : held->card.options) {
+      if (limit.spec != nullptr && limit.spec->name == "max_context") return &limit;
+    }
+    return nullptr;
+  }();
+  expect(held && held->page_card && secure_frontend::profile_name(held->card.profile) == "acme3" && context != nullptr &&
+             std::get<std::int64_t>(context->default_value) == 32768 && context->maximum == 32768,
+         "the launcher holds it, its context the model's 32768 at most");
+  expect(std::holds_alternative<secure_frontend::ModelCard>(secure_frontend::read_model_card(f.data.state / "cards" / "acme3-tiny-Q8_0.json")),
+         "its card file is written and reads");
+  secure_frontend::set_plugin_families({});
+}
 
 }  // namespace
 
@@ -1026,5 +1066,6 @@ int main(int argc, char** argv) {
       {"a_downloaded_model_leaves_its_store_too", a_downloaded_model_leaves_its_store_too},
       {"listed_remote_clients_use_the_file_routes", listed_remote_clients_use_the_file_routes},
       {"a_raon1_model_is_added_from_its_folder", a_raon1_model_is_added_from_its_folder},
+      {"an_engine_plugins_model_is_added_by_its_architecture", an_engine_plugins_model_is_added_by_its_architecture},
   }, failures);
 }

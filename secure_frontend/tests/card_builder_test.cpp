@@ -2,16 +2,21 @@
 // GGUF model file's header, its name and options, re-pointing its folder, and the danger zone's one-time codes.
 #include "secure_frontend/card_builder.hpp"
 #include "secure_frontend/canonical_path.hpp"
+#include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/gguf_metadata.hpp"
 #include "secure_frontend/model_cards.hpp"
+#include "secure_frontend/plugin_family.hpp"
+#include "secure_frontend/plugin_manifest.hpp"
 #include "support/test_support.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 
@@ -735,6 +740,146 @@ void a_cards_model_file_is_the_gguf_it_runs() {
   expect(model_file(handwritten) == "none", "a card that names no model folder or model: none: " + model_file(handwritten));
 }
 
+// Engine plugins (plugin spec section 5): a family whose tokenizer is its GGUF's, its options a context offering four
+// values, an expert VRAM auto or a number, its GPUs, a share with no default, a boolean and a KV choice; top_k in its
+// sampling. Beta reads its tokenizer from a pack.
+const std::string kAcmeEngine = R"({"abi": 1, "dialect": "strata_0143", "chat": "flint", "tokenizer": {"source": "gguf", "mode": "flint_bpe"},
+    "models": {"gguf_architectures": ["acme3", "acme3moe"], "context_key": "acme3.context_length"},
+    "arguments": [{"flag": "--max-context", "value": "integer", "min": 4096, "max": 262144},
+                  {"flag": "--expert-vram", "value": "gibibytes", "min": 0, "max": 1024},
+                  {"flag": "--pcie-frac", "value": "fraction"},
+                  {"flag": "--cpu-lane", "value": "on_off"},
+                  {"flag": "--kv", "value": "choice", "choices": ["f16", "q8"]}],
+    "options": [
+      {"name": "max_context", "kind": "integer", "label": "Context length", "flag": "--max-context", "min": 4096, "max": 262144,
+       "values": [8192, 32768, 65536, 131072], "default": 65536},
+      {"name": "expert_vram", "kind": "integer_or_auto", "label": "Expert VRAM", "flag": "--expert-vram", "min": 0, "max": 1024, "default": "auto"},
+      {"name": "gpus", "kind": "devices", "label": "GPUs", "max": 8},
+      {"name": "pcie_frac", "kind": "decimal", "label": "PCIe share", "flag": "--pcie-frac", "min": 0, "max": 1},
+      {"name": "cpu_lane", "kind": "boolean", "label": "CPU lane", "flag": "--cpu-lane", "default": true},
+      {"name": "kv", "kind": "choice", "label": "KV cache", "flag": "--kv", "choices": ["f16", "q8"], "default": "q8"}],
+    "sampling": {"temperature": 1.0, "top_p": 0.95, "top_k": 64},
+    "capabilities": {"vision": false, "web_search": false, "mtp": "none"}})";
+const std::string kBetaEngine = R"({"abi": 1, "dialect": "unified", "chat": "qwen", "tokenizer": {"source": "pack", "mode": "byte_bpe"},
+    "models": {"gguf_architectures": ["beta"], "context_key": "beta.context_length"},
+    "arguments": [{"flag": "--max-context", "value": "integer", "min": 1, "max": 65536}],
+    "capabilities": {"vision": false, "web_search": false, "mtp": "none"}})";
+
+secure_frontend::PluginManifest engine_plugin(const std::string& id, const std::string& name, const std::string& engine) {
+  const std::string text = R"({"schema": "m-strata.plugin/1", "id": ")" + id + R"(", "kind": "engine", "name": ")" + name +
+                           R"(", "version": "0.1.0", "publisher": "Example Labs", "license": "Apache-2.0", "about": "A family.",
+      "files": {"windows": ["multiengine_)" + id + R"(.dll"], "linux": ["libmultiengine_)" + id + R"(.so"]}, "engine": )" + engine + "}";
+  auto parsed = secure_frontend::parse_plugin_manifest(text, id);
+  if (const auto* reason = std::get_if<std::string>(&parsed)) {
+    expect(false, "the test's manifest " + id + " reads: " + *reason);
+    return secure_frontend::PluginManifest{};
+  }
+  return std::get<secure_frontend::PluginManifest>(std::move(parsed));
+}
+
+// A GGUF of an engine plugin's family that is on - any of its manifest's architectures - makes that family's card: the
+// engine the page's cards start (the launcher beside the plugins), its tokenizer the GGUF's; each option its manifest
+// declares with a default, as declared, but max_context's most the model's own context (the largest offered value within
+// it); its GPUs offered by the server as every card's are; the GGUF's sampling where the family offers the option. A
+// family whose tokenizer is a pack's is refused by name (its pack is built by its plugin, phase 4), and so is a family
+// that is not on.
+void an_engine_plugins_gguf_makes_its_card() {
+  std::string claims = kAcmeEngine;
+  const std::string listed = R"(["acme3", "acme3moe"])";
+  claims.replace(claims.find(listed), listed.size(), R"(["flint", "raon1"])");
+  secure_frontend::set_plugin_families({secure_frontend::PluginFamilySource{engine_plugin("acme3", "Acme-3", kAcmeEngine), std::string(64, 'a')},
+                                        secure_frontend::PluginFamilySource{engine_plugin("beta", "Beta", kBetaEngine), std::string(64, 'b')},
+                                        secure_frontend::PluginFamilySource{engine_plugin("gamma", "Gamma", claims), std::string(64, 'c')}});
+  const auto* family = secure_frontend::family_named("acme3");
+  expect(family != nullptr, "acme3 is a family while the server runs it");
+  if (family == nullptr) return;
+  const auto folder = secure_frontend_test::make_scratch_directory();
+  const auto engine = folder / "multiengine.exe";
+  auto md = metadata("acme3moe");
+  md.values["acme3.context_length"] = std::int64_t{100000};
+  const auto made = secure_frontend::card_for_gguf(md, {.folder = folder, .file = "Acme3-30B-Q8_0.gguf", .engine = engine, .source = "folder"});
+  const auto* card = std::get_if<secure_frontend::CardText>(&made);
+  expect(card != nullptr, "an acme3moe GGUF makes a card: " + (card == nullptr ? std::get<secure_frontend::CardError>(made).message : ""));
+  if (card == nullptr) return;
+  expect(card->name == "Acme3-30B-Q8_0" && card->profile == family->profile, "named after the file, its family's profile");
+  const auto parsed = secure_frontend::parse_model_card(card->json, folder);
+  const auto* back = std::get_if<secure_frontend::ModelCard>(&parsed);
+  std::string why;
+  if (const auto* issues = std::get_if<secure_frontend::ConfigErrors>(&parsed)) {
+    for (const auto& issue : *issues) why += secure_frontend::format_issue(issue) + "; ";
+  }
+  expect(back != nullptr && back->profile == family->profile && back->source == "folder", "the card is a valid card file of acme3: " + why);
+  if (back == nullptr) return;
+  const auto& rows = back->config.entries;
+  expect(std::get<std::string>(rows.at("roots.models").value) == secure_frontend::path_to_utf8(folder) &&
+             std::get<std::string>(rows.at("engine.model_id").value) == "Acme3-30B-Q8_0" &&
+             std::get<std::string>(rows.at("engine.executable").value) == secure_frontend::path_to_utf8(engine) &&
+             !rows.contains("roots.tokenizer_pack") && !rows.contains("engine.args"),
+         "its folder, its model, the engine; no tokenizer pack and no engine.args");
+  const auto option = [](const secure_frontend::ModelCard& of, const std::string_view name) -> const secure_frontend::ModelOptionLimits* {
+    for (const auto& limit : of.options) {
+      if (limit.spec != nullptr && limit.spec->name == name) return &limit;
+    }
+    return nullptr;
+  };
+  const auto* context = option(*back, "max_context");
+  expect(context != nullptr && std::get<std::int64_t>(context->default_value) == 65536 && context->maximum == 65536,
+         "its context: its default, at most the largest offered value within the model's 100000");
+  const auto* expert = option(*back, "expert_vram");
+  const auto* lane = option(*back, "cpu_lane");
+  const auto* kv = option(*back, "kv");
+  expect(expert != nullptr && std::get<std::string>(expert->default_value) == "auto" && lane != nullptr &&
+             std::get<bool>(lane->default_value) && kv != nullptr && std::get<std::string>(kv->default_value) == "q8",
+         "each declared option at its declared default");
+  expect(option(*back, "pcie_frac") == nullptr && option(*back, "gpus") == nullptr,
+         "an option with no default is left off; its GPUs are the server's to offer");
+  const auto* top_k = option(*back, "top_k");
+  const auto* top_p = option(*back, "top_p");
+  const auto* temperature = option(*back, "temperature");
+  expect(top_k != nullptr && std::get<std::int64_t>(top_k->default_value) == 20 && top_p != nullptr &&
+             std::get<double>(top_p->default_value) == 0.95 && temperature != nullptr && std::get<double>(temperature->default_value) == 1.0,
+         "the GGUF's sampling");
+  expect(option(*back, "thinking") == nullptr && option(*back, "min_p") == nullptr, "no option its family does not have");
+
+  // a short model: its context's most and default are the largest offered value within it; no context key: as declared
+  auto brief = metadata("acme3");
+  brief.values["acme3.context_length"] = std::int64_t{20000};
+  const auto read_back = [&folder](const std::variant<secure_frontend::CardText, secure_frontend::CardError>& made_card) {
+    const auto* text = std::get_if<secure_frontend::CardText>(&made_card);
+    auto read = text == nullptr ? std::variant<secure_frontend::ModelCard, secure_frontend::ConfigErrors>{secure_frontend::ConfigErrors{}}
+                                : secure_frontend::parse_model_card(text->json, folder);
+    return std::holds_alternative<secure_frontend::ModelCard>(read) ? std::optional<secure_frontend::ModelCard>{std::get<secure_frontend::ModelCard>(std::move(read))}
+                                                                   : std::nullopt;
+  };
+  const auto short_back = read_back(secure_frontend::card_for_gguf(brief, {.folder = folder, .file = "acme3-small.gguf", .engine = engine, .source = "folder"}));
+  const auto* short_context = short_back ? option(*short_back, "max_context") : nullptr;
+  expect(short_context != nullptr && std::get<std::int64_t>(short_context->default_value) == 8192 && short_context->maximum == 8192,
+         "a 20000-token model: 8192, the largest offered value within it");
+  auto unsized = metadata("acme3");
+  unsized.values.erase("acme3.context_length");
+  const auto plain_back = read_back(secure_frontend::card_for_gguf(unsized, {.folder = folder, .file = "acme3-plain.gguf", .engine = engine, .source = "folder"}));
+  const auto* plain_context = plain_back ? option(*plain_back, "max_context") : nullptr;
+  expect(plain_context != nullptr && std::get<std::int64_t>(plain_context->default_value) == 65536 && plain_context->maximum == 262144,
+         "no context in the GGUF: the option as its manifest declares it");
+
+  const auto beta = secure_frontend::card_for_gguf(metadata("beta"), {.folder = folder, .file = "beta.gguf", .engine = engine, .source = "folder"});
+  const auto* beta_refused = std::get_if<secure_frontend::CardError>(&beta);
+  expect(beta_refused != nullptr && beta_refused->message.find("Beta") != std::string::npos &&
+             beta_refused->message.find("pack") != std::string::npos,
+         "a family whose tokenizer is a pack's is refused by name: " + (beta_refused == nullptr ? std::string{"(a card)"} : beta_refused->message));
+  // the built-in families come first: a plugin listing flint's or a packed family's architecture takes neither model
+  const auto flint = secure_frontend::card_for_gguf(metadata("flint"), {.folder = folder, .file = "flint.gguf", .engine = engine, .source = "folder"});
+  const auto raon1 = secure_frontend::card_for_gguf(metadata("raon1"), {.folder = folder, .file = "raon1.gguf", .engine = engine, .source = "folder"});
+  expect(std::holds_alternative<secure_frontend::CardText>(flint) &&
+             std::get<secure_frontend::CardText>(flint).profile == secure_frontend::EngineProfile::flint &&
+             std::holds_alternative<secure_frontend::CardError>(raon1),
+         "flint's model stays flint's, and raon1's still needs its pack, whatever a plugin lists");
+  secure_frontend::set_plugin_families({});
+  const auto off = secure_frontend::card_for_gguf(md, {.folder = folder, .file = "Acme3-30B-Q8_0.gguf", .engine = engine, .source = "folder"});
+  const auto* off_refused = std::get_if<secure_frontend::CardError>(&off);
+  expect(off_refused != nullptr && off_refused->message.find("acme3moe") != std::string::npos, "a family that is not on: refused by its architecture");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -755,5 +900,6 @@ int main(int argc, char** argv) {
       {"delete_codes_are_one_time", delete_codes_are_one_time},
       {"deleting_removes_only_the_model_files", deleting_removes_only_the_model_files},
       {"a_cards_model_file_is_the_gguf_it_runs", a_cards_model_file_is_the_gguf_it_runs},
+      {"an_engine_plugins_gguf_makes_its_card", an_engine_plugins_gguf_makes_its_card},
   }, failures);
 }

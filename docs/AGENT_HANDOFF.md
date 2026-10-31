@@ -280,6 +280,31 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z81 (Windows box; owner-directed)
+
+Phase 2's second step, its fourth part (the owner: "Yes, go on"): Add a model makes a card for a GGUF of an engine plugin's
+family that is on (spec section 5, "As built ... fourth part").
+- **card_builder**: `card_for_gguf` tries the built-in architectures first (the packed ones too, `packed_family`), then
+  `plugin_family_for(arch)` (the first plugin family that is on listing it) and its `plugin_card`: the family's profile, the request's engine, the model's stem,
+  no tokenizer pack (a pack-tokenizer family refused by name), each declared option with a default (`default_literal`),
+  max_context bounded by the manifest's context key, then `gguf_sampling` - now shared with the built-ins' cards, each
+  option only where the family offers it (no change for flint, Gemma 4 or Qwen3.6). `model_file_of` is the file and name
+  check both share. The refusal for an architecture no family takes names the plugin families too.
+- **Tests**: the card builder 1 (an acme3moe GGUF's card read back - its rows, each declared option's default, the
+  context bounded to 65536 of the model's 100000, 8192 of 20000, as declared with no context key, the GGUF's sampling, no
+  option it does not have; a pack-tokenizer family and a family that is not on refused; a plugin listing flint's and
+  raon1's architectures taking neither); the card routes 1 (the add route
+  refuses the file while the plugin is not on, then adds and holds its card, its context the model's 32768).
+- **Proof**: RED against the builder as it was: 4 failures in the 2 cases (the GGUF refused as "can't be added from its
+  files yet"); the built-ins-first check (a plugin listing flint's and raon1's architectures) failed with the packed
+  family's guard taken out, which made raon1's model the plugin's. Then GREEN.
+  - Windows (MSVC, the shares tree, everything built, no warnings): the whole suite 1532 of 1534 (the two release-only
+    cases), before the guard; with it, the card builder's and card routes' suites whole.
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc 1583/1586 and full-clang 1583/1586 (the two
+    release-only cases; egress passes alone), before the guard; window-gcc Release 1538/1541 (net01_ipv6 and egress pass
+    alone; it was built while the guard was out for RED, so its new card case failed); then each tree rebuilt with the
+    guard, the card builder's and card routes' suites 39/39.
+
 ### Claude Code session, 2026-10-31 z80 (Windows box; owner-directed)
 
 Phase 2's second step, its third part (the owner: "Yes, go on"): the server runs the families of its engine plugins that

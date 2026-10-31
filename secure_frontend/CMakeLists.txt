@@ -2292,7 +2292,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
 
     # GUI-first start-up (spec 2026-10-27 §4): the page's card and folder routes over a real launcher.
     secure_frontend_add_test_executable(secure_frontend_card_routes_tests tests/card_routes_test.cpp
-        secure_frontend_card_routes secure_frontend_first_start)
+        secure_frontend_card_routes secure_frontend_first_start secure_frontend_plugins)
     secure_frontend_test_paths(secure_frontend_card_routes_tests)
     secure_frontend_add_cases(secure_frontend_card_routes_tests
         card_routes_answer_loopback_clients_only folders_list_the_drives_and_one_folder a_card_is_added_from_a_folder a_qwen_model_beside_its_encoder_reads_pictures qwen38_and_glm_models_are_added_with_their_packs
@@ -2303,6 +2303,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_downloaded_model_leaves_its_store_too listed_remote_clients_use_the_file_routes
         a_shared_folder_is_used_as_it_is_when_the_owner_allows_it the_shared_folders_setting_is_read_and_saved
         a_raon1_model_is_added_from_its_folder a_gemma4_model_beside_its_mtp_file_drafts_with_it
+        an_engine_plugins_model_is_added_by_its_architecture
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
 
     # GUI-first start-up (spec 2026-10-27 §4.2, §4.3): the drives and folders the page may pick, a model folder made private.
@@ -2340,7 +2341,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
 
     # GUI-first start-up (spec 2026-10-27 §4.2-§4.5): the card from a GGUF, re-pointing, the danger zone.
     secure_frontend_add_test_executable(secure_frontend_card_builder_tests tests/card_builder_test.cpp
-        secure_frontend_card_builder)
+        secure_frontend_card_builder secure_frontend_plugins)
     secure_frontend_add_cases(secure_frontend_card_builder_tests
         a_flint_gguf_makes_a_flint_card a_qwen36_gguf_makes_a_qwen_card names_are_made_valid_and_splits_named_once
         cards_name_their_picture_encoder
@@ -2348,7 +2349,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_minimax_pack_makes_a_minimax_card
         a_raon1_pack_makes_a_raon1_card repointing_rewrites_only_the_folder delete_codes_are_one_time
         a_gemma4_card_runs_its_mtp_file repointing_moves_the_mtp_file_with_the_folder
-        deleting_removes_only_the_model_files a_cards_model_file_is_the_gguf_it_runs
+        deleting_removes_only_the_model_files a_cards_model_file_is_the_gguf_it_runs an_engine_plugins_gguf_makes_its_card
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # The page's About (owner 2026-10-27): the engine build record, this PC's hardware, their JSON.

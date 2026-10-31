@@ -4,6 +4,8 @@
 #include "secure_frontend/canonical_path.hpp"
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/local_folders.hpp"
+#include "secure_frontend/model_options.hpp"
+#include "secure_frontend/plugin_family.hpp"
 #include "secure_frontend/secret_bytes.hpp"
 #include "secure_frontend/token_generator.hpp"
 
@@ -105,6 +107,116 @@ JsonValue with_member(const JsonValue& object, const std::string& key, JsonValue
   }
   return JsonValue::make_object(std::move(members));
 }
+
+// A GGUF model file's stem and the card name made from it.
+struct ModelFile final {
+  std::string stem;
+  std::string name;
+};
+std::variant<ModelFile, CardError> model_file_of(const std::string_view file) {
+  if (file.size() <= 5U || file.substr(file.size() - 5U) != ".gguf") return CardError{"the model file must be a .gguf file"};
+  std::string stem{file.substr(0, file.size() - 5U)};
+  std::string name = card_name_from(stem);
+  if (name.empty()) return CardError{"the model file's name gives no usable card name"};
+  return ModelFile{std::move(stem), std::move(name)};
+}
+
+// The GGUF's recommended sampling (general.sampling.temp / top_p / top_k) as the card's options, each where `profile`
+// offers it: ",\n    \"temperature\": {...}" and so on, top_p to two places.
+std::string gguf_sampling(const GgufMetadata& metadata, const EngineProfile profile) {
+  const auto offers = [profile](const std::string_view name) { return find_model_option(profile, name) != nullptr; };
+  std::string json;
+  if (const auto temperature = metadata.real("general.sampling.temp"); temperature && *temperature >= 0.0 && *temperature <= 2.0 && offers("temperature")) {
+    json += ",\n    \"temperature\": {\"default\": " + decimal(std::round(*temperature * 100.0) / 100.0) + "}";
+  }
+  if (const auto top_p = metadata.real("general.sampling.top_p"); top_p && *top_p > 0.0 && *top_p <= 1.0 && offers("top_p")) {
+    const double rounded = std::round(*top_p * 100.0) / 100.0;
+    if (rounded > 0.0) json += ",\n    \"top_p\": {\"default\": " + decimal(rounded) + "}";
+  }
+  if (const auto top_k = metadata.integer("general.sampling.top_k"); top_k && *top_k >= 1 && *top_k <= 64 && offers("top_k")) {
+    json += ",\n    \"top_k\": {\"default\": " + std::to_string(*top_k) + "}";
+  }
+  return json;
+}
+
+// The engine plugin's family that is on and lists `arch` among its GGUF architectures (nullptr: none).
+const PluginFamily* plugin_family_for(const std::string& arch) {
+  for (const auto* family : plugin_families()) {
+    const auto& listed = family->engine().gguf_architectures;
+    if (std::find(listed.begin(), listed.end(), arch) != listed.end()) return family;
+  }
+  return nullptr;
+}
+
+// A declared option's default as a card file holds it: a boolean, a number or auto, a decimal, a choice's text.
+std::string default_literal(const PluginEngineOption& option) {
+  const std::string& value = *option.default_value;
+  if (option.kind == ModelOptionKind::choice || (option.kind == ModelOptionKind::integer_or_auto && value == "auto")) {
+    std::string out;
+    append_json_string(&out, value);
+    return out;
+  }
+  return value;  // true or false, digits, or a decimal's text: the manifest's reader wrote it so
+}
+
+// An engine plugin's family's card (plugin spec section 5): its profile; the engine the page's cards start (the launcher
+// beside the plugins folder); its model the file; its tokenizer the GGUF's (a pack's is its plugin's to build, phase 4).
+// Each option its manifest declares with a default, as declared - max_context at most the model's own context (its
+// manifest's context key): the largest value it offers within it, or that context within its bounds - then the GGUF's
+// sampling where the family offers it. An option declared without a default is its card file's to add; its GPUs are the
+// server's to offer, as every card's are.
+std::variant<CardText, CardError> plugin_card(const PluginFamily& plugin, const GgufMetadata& metadata, const GgufCardRequest& request) {
+  const auto& engine = plugin.engine();
+  const auto& family = plugin.descriptor();
+  if (engine.tokenizer_source != TokenizerSource::gguf) {
+    return CardError{"a " + std::string{plugin.name()} + " model reads its tokenizer from a pack its plugin builds, so it can't be added "
+                     "from its files yet"};
+  }
+  auto file = model_file_of(request.file);
+  if (auto* error = std::get_if<CardError>(&file)) return std::move(*error);
+  const auto& model = std::get<ModelFile>(file);
+  const auto trained = engine.context_key.empty() ? std::nullopt : metadata.integer(engine.context_key);
+
+  std::string json = "{\n  \"schema_version\": 1,\n  \"name\": ";
+  append_json_string(&json, model.name);
+  json += ",\n  \"profile\": ";
+  append_json_string(&json, family.id);
+  json += ",\n  \"source\": ";
+  append_json_string(&json, request.source);
+  json += ",\n  \"config\": {\n    \"engine\": {\"executable\": ";
+  append_json_string(&json, path_to_utf8(request.engine));
+  json += ", \"model_id\": ";
+  append_json_string(&json, model.stem);
+  json += "},\n    \"roots\": {\"models\": ";
+  append_json_string(&json, path_to_utf8(request.folder));
+  json += "}\n  },\n  \"options\": {";
+  std::string options;
+  for (const auto& option : engine.options) {
+    if (option.kind == ModelOptionKind::devices || !option.default_value) continue;
+    std::string entry = "{\"default\": " + default_literal(option) + "}";
+    if (option.name == "max_context" && option.kind == ModelOptionKind::integer && trained && *trained > 0) {
+      // the largest value it offers within the model's context (its least when none fits), or that context in its bounds
+      std::int64_t most = std::clamp(*trained, option.minimum, option.maximum);
+      if (!option.values.empty()) {
+        most = option.values.front();
+        for (const auto value : option.values) {
+          if (value <= *trained) most = value;
+        }
+      }
+      std::int64_t declared = most;
+      const auto& text = *option.default_value;
+      if (std::from_chars(text.data(), text.data() + text.size(), declared).ec != std::errc{}) declared = most;
+      entry = "{\"default\": " + std::to_string(std::min(declared, most)) + ", \"max\": " + std::to_string(most) + "}";
+    }
+    options += options.empty() ? "\n    " : ",\n    ";
+    append_json_string(&options, option.name);
+    options += ": " + entry;
+  }
+  std::string sampling = gguf_sampling(metadata, family.profile);
+  if (options.empty() && !sampling.empty()) sampling.erase(0, 1);  // the first option takes no comma
+  json += options + sampling + (options.empty() && sampling.empty() ? "}\n}\n" : "\n  }\n}\n");
+  return CardText{model.name, family.profile, std::move(json)};
+}
 }  // namespace
 
 std::variant<CardText, CardError> card_for_gguf(const GgufMetadata& metadata, const GgufCardRequest& request) {
@@ -119,21 +231,23 @@ std::variant<CardText, CardError> card_for_gguf(const GgufMetadata& metadata, co
     profile = EngineProfile::gemma4;   // the template's default: thinking off
   } else if (*arch == "qwen35moe") {
     profile = EngineProfile::qwen;     // Qwen3.6: upstream's engine reads the GGUF itself (--native)
+  } else if (const auto* plugin = packed_family(metadata) ? nullptr : plugin_family_for(*arch)) {
+    return plugin_card(*plugin, metadata, request);   // an engine plugin's family, after every built-in one
   } else {
     std::string shown;
     for (const char c : arch->substr(0, 64)) shown.push_back(card_name_character(c) ? c : '?');
-    return CardError{"a " + shown + " model can't be added from its files yet (flint, Gemma 4 and Qwen3.6 can)"};
+    return CardError{"a " + shown + " model can't be added from its files yet (flint, Gemma 4, Qwen3.6 and the families of the "
+                     "engine plugins that are on can)"};
   }
   const bool qwen = profile == EngineProfile::qwen;
   // the MTP draft layer the file carries (Unsloth's Qwen3.6 GGUFs do): upstream runs it with two drafts
   const bool mtp = qwen && metadata.integer(*arch + ".nextn_predict_layers").value_or(0) > 0;
   // Gemma 4's MTP draft file (owner 2026-10-28), a GGUF of its own: the Gemma engine's --mtp <file>
   const bool drafts = profile == EngineProfile::gemma4 && request.mtp.has_value();
-  const std::string_view file = request.file;
-  if (file.size() <= 5U || file.substr(file.size() - 5U) != ".gguf") return CardError{"the model file must be a .gguf file"};
-  const std::string stem{file.substr(0, file.size() - 5U)};
-  const std::string name = card_name_from(stem);
-  if (name.empty()) return CardError{"the model file's name gives no usable card name"};
+  auto model_file = model_file_of(request.file);
+  if (auto* error = std::get_if<CardError>(&model_file)) return std::move(*error);
+  const std::string& stem = std::get<ModelFile>(model_file).stem;
+  const std::string& name = std::get<ModelFile>(model_file).name;
 
   // the context: the model's own, at most the dropdown's largest; 64K by default (or the largest that fits)
   const std::int64_t trained = metadata.integer(*arch + ".context_length").value_or(kContexts.back());
@@ -188,16 +302,7 @@ std::variant<CardText, CardError> card_for_gguf(const GgufMetadata& metadata, co
     }
     json += std::string{"    \"thinking\": {\"default\": \""} + (thinking ? "on" : "off") + "\"}";
   }
-  if (const auto temperature = metadata.real("general.sampling.temp"); temperature && *temperature >= 0.0 && *temperature <= 2.0) {
-    json += ",\n    \"temperature\": {\"default\": " + decimal(std::round(*temperature * 100.0) / 100.0) + "}";
-  }
-  if (const auto top_p = metadata.real("general.sampling.top_p"); top_p && *top_p > 0.0 && *top_p <= 1.0) {
-    const double rounded = std::round(*top_p * 100.0) / 100.0;
-    if (rounded > 0.0) json += ",\n    \"top_p\": {\"default\": " + decimal(rounded) + "}";
-  }
-  if (const auto top_k = metadata.integer("general.sampling.top_k"); top_k && *top_k >= 1 && *top_k <= 64) {
-    json += ",\n    \"top_k\": {\"default\": " + std::to_string(*top_k) + "}";
-  }
+  json += gguf_sampling(metadata, profile);
   if (profile == EngineProfile::gemma4) json += ",\n    \"min_p\": {\"default\": 0.05}";   // README: no repetition loops
   json += "\n  }\n}\n";
   return CardText{name, profile, std::move(json)};
