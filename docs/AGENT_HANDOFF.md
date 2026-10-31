@@ -309,9 +309,15 @@ was ready"), then "Yes, build it" (upstream's low-RAM mode).
   offers the low-RAM mode, auto"), then GREEN.
   - Windows (MSVC, the shares tree, everything built): the whole suite 1509 of the 1511 others (the two release-only cases); the new test first failed to compile there (near and small are Windows header macros: renamed), then the low-RAM, options, family and launcher suites 74/74.
   - Linux (WSL, gcc 13.3 / clang 18.1, -Werror): those suites 74/74 on gcc and clang; whole suites full-gcc and full-clang 1565/1569 (the two release-only cases; net01 and egress pass alone), window-gcc Release 1523/1524 (egress passes alone).
-- **Not run**: the real engine with `--mmap-experts` on the VM (its server must be restarted on the new build; the owner's
-  own start). Upstream's own numbers say the VM is short even so (31.4 GB of RAM and VRAM against 35.5): most experts
-  come from the disk while it answers, and the log says so.
+- **On the VM** (2026-10-31 05:40-05:49 UTC, owner: "you fix it yourself"): the owner's idle server and strata-tui
+  stopped (SIGTERM, no engine running), the new build started in a tmux session (`strata`), the card pointed at its
+  draft layer (POST /v1/strata/cards/mtp) and started at his calibration's options (16K, q4_0, KV streaming off). The
+  server logged "the low-RAM mode (low_ram auto): ... (--mmap-experts) ... the GPU holds about 28%"; the engine read
+  the GGUF shards in place, the T4 held 7,656 experts (10.3 GiB) and the 807 MiB draft layer, and ran after ~3.5 min.
+  A chat answered ("Red, yellow, blue"): prompt 443 tokens in 263 s (1.7 tok/s), 6 tokens in 16 s (0.4 tok/s), drafts
+  accepted 2 of 9, cache hit rate 56.5%, 30 GB read from the drive (rotational, ~0.15 GB/s; the page cache holds 23.5
+  of the 26.9 GiB file tier). Upstream's own numbers said so (31.4 GB of RAM and VRAM against 35.5). The engine also
+  warned of 495 MiB of free VRAM (below 512 MiB: #2065, `--vram-reserve-mib 768` or a smaller expert cache).
 
 ### Claude Code session, 2026-10-31 z76 (Windows box; owner-directed)
 
