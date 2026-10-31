@@ -265,6 +265,11 @@
               Recalibrate when settings change</label>
           </div>
         </div>
+        <div class="model-remove" id="model-pin-box">
+          <span class="st-label">Start at startup</span>
+          <div class="model-remove__row"><p class="muted small" id="model-pin-note">Start this model whenever the server starts.</p>
+            <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-pin">Pin</button></div>
+        </div>
         <div class="model-remove" id="model-remove-box" hidden>
           <span class="st-label">Card</span>
           <div class="model-remove__row"><p class="muted small">Take this card off the list; the model's files stay on this PC (add
@@ -402,6 +407,15 @@
         <div class="config-grid" data-group="limits"></div>
         <div class="model-actions"><button type="button" class="st-btn st-btn--primary st-btn--sm" data-save="limits">Save</button></div>
         <p class="msg-error" data-error="limits" role="alert" hidden></p>
+      </div>
+      <div class="st-card alerts-settings" id="startup-settings" hidden>
+        <div class="models-head"><span class="card-title">Start at startup</span></div>
+        <p class="muted small">The model the server starts whenever it starts, one at a time; a model's own page in the Models tab
+          pins it too. It changes nothing that runs now.</p>
+        <div class="config-grid"><div class="config-field"><label class="st-label" for="startup-card">Model</label>
+          <select class="st-input" id="startup-card"></select></div></div>
+        <div class="model-actions"><button type="button" class="st-btn st-btn--primary st-btn--sm" id="startup-save">Save</button></div>
+        <p class="msg-error" id="startup-error" role="alert" hidden></p>
       </div>
       <div class="st-card alerts-settings" id="paths-settings" hidden>
         <div class="models-head"><span class="card-title">Folders</span></div>

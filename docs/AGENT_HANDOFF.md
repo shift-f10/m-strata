@@ -280,6 +280,37 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Claude Code session, 2026-10-31 z83 (Windows box; owner-directed)
+
+Pinned and hot models, part 1 (the owner: "pin a model to start at startup in the settings and an option to make loaded
+models hot ... a prime feature we must have on both main and branch"; his answers: hot = idle unload, paging, crashes and
+restarts; the pin in Settings and on each card; Linux boot start both ways, chosen at install). Spec
+`docs/superpowers/specs/2026-10-31-pinned-and-hot-models-design.md` (parts 1-5; part 1 as built).
+- **The route**: `POST /v1/strata/models/pin` `{"name": "<card>" | null}` (`RouteId::strata_pin`, `ModelControl::pin`,
+  `pin_answer` in server_bootstrap): model control's clients and key; 200 `{"pinned": ...}`, 404 `model_not_found`, 422
+  `settings_refused` with a reason (`ModelLauncher::Refusal::reason`, passed by `refusal_answer` now), 400 for a body
+  that is not one.
+- **The launcher**: `pin()` / `pinned()`; `LauncherSettings::pinned` (the boot's `models.start`) and `save_pin` (the
+  config file, through `update_config_file`; none without a config file); each card's `"pinned"` last in the list;
+  `forget_card` unpins a removed pinned card.
+- **The page**: a card's Start at startup box (Pin / Unpin, toast), "starts with the server" in the list, Settings' Start
+  at startup card (the same route). **The TUI**: `p` on the Models view, `*` in the list, a Startup row, `p Pin` in the
+  keys.
+- **Tests**: the router 1 (keyed, POST, JSON, small, its handler; no route with control off), the launcher 2 (the boot's
+  pin listed, a pin kept first, an unknown card, a pin not kept, removal unpins, null; a pinned card starts with the
+  server, the route moves it in the config file and takes it out, bad bodies), the page 1, the TUI 1.
+- **Not yet** (spec parts 2-5): hot (kept loaded, warmed, restarted), the Linux boot service.
+- **Proof**: RED against stubs (the launcher's pin refused everything and listed none; no route): 19 failures in the
+  router's and the launcher's 3 cases (the boot start passed before and after: models.start already started its card);
+  the page's and the TUI's cases, written after their code, failed 7 times with that code stashed. Then GREEN.
+  - Windows (MSVC, the shares tree, everything built, no warnings): the whole suite 1540 of 1542 (the two release-only
+    cases). The page in the built-in browser against the x25 demo data (port 18091): Pin on a card's page (toast, the list's
+    "starts with the server", models.start written), Settings' Start at startup choice back to None (models.start taken out,
+    "no card is pinned" logged); the demo config restored byte for byte.
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc 1591/1594 (built again alone: its first build hit a
+    gcc segfault in a test-support header while three trees built) and full-clang 1591/1594 (the two release-only cases;
+    egress passes alone), window-gcc Release 1547/1549 (egress and net01_workers_add_no_listener pass alone).
+
 ### Claude Code session, 2026-10-31 z82 (Windows box; owner-directed)
 
 The owner's client compatibility spec (pasted 2026-10-31, then again for the gemma4 profile; the owner: "make it work for

@@ -1082,6 +1082,13 @@ Outcome App::models_key(const Key& key) {
                             "{\"name\":" + json_string(name) + ",\"on\":" + (on ? "false" : "true") + "}"});
   } else if (key.text == "r") {
     edited_.erase(name);  // back to the card's own values
+  } else if (key.text == "p") {
+    // owner 2026-10-31 ("pin a model to start at startup"): the card that starts with the server - p pins the card under
+    // the cursor, or unpins it when it is the pinned one
+    const auto* pinned = member(card, "pinned");
+    const bool is = pinned != nullptr && pinned->if_boolean() != nullptr && *pinned->if_boolean();
+    out.requests.push_back({is ? "unpin " + name : "pin " + name, "POST", "/v1/strata/models/pin",
+                            is ? std::string{"{\"name\":null}"} : "{\"name\":" + json_string(name) + "}"});
   }
   return out;
 }
@@ -1480,7 +1487,7 @@ void App::draw_keys(Screen& screen) const {
   switch (view_) {
     case View::models:
       if (option_ >= 0) keys.insert(keys.end(), {{"Up/Down", "Option"}, {"Left/Right", "Change"}, {"Enter", "Start"}, {"Esc", "Cards"}});
-      else keys.insert(keys.end(), {{"Enter", "Start"}, {"s", "Stop"}, {"o", "Options"}, {"c", "Calibrate"}, {"x", "Cancel"}, {"a", "Auto"}, {"Del", "Remove"}});
+      else keys.insert(keys.end(), {{"Enter", "Start"}, {"s", "Stop"}, {"o", "Options"}, {"c", "Calibrate"}, {"x", "Cancel"}, {"a", "Auto"}, {"p", "Pin"}, {"Del", "Remove"}});
       break;
     case View::downloads: keys.insert(keys.end(), {{"Enter", "Download"}, {"p", "Pause"}, {"x", "Cancel"}}); break;
     case View::settings: keys.insert(keys.end(), {{"Enter", "Edit"}, {"w", "Save"}, {"u", "Undo"}, {"k", "Key"}, {"R", "Rotate"}}); break;
@@ -1977,7 +1984,10 @@ void App::draw_models(Screen& screen, const Rect area) const {
     const Style base = selected ? (option_ < 0 ? Style{231, kAccent, true} : kSelected) : kNormal;
     screen.fill(Rect{l.x, l.y + static_cast<int>(i), l.width, 1}, U' ', base);
     screen.text(l.x + 1, l.y + static_cast<int>(i), utf8(state_glyph(state)), selected ? base : state_style(state));
-    screen.field(l.x + 3, l.y + static_cast<int>(i), l.width - 4, text(member(&entries[i], "name")), base);
+    // the pinned card (it starts with the server) carries a mark after its name
+    const auto* pinned = member(&entries[i], "pinned");
+    const bool is = pinned != nullptr && pinned->if_boolean() != nullptr && *pinned->if_boolean();
+    screen.field(l.x + 3, l.y + static_cast<int>(i), l.width - 4, text(member(&entries[i], "name")) + (is ? " *" : ""), base);
   }
   const auto* card = selected_card();
   if (card == nullptr) return;
@@ -1988,6 +1998,11 @@ void App::draw_models(Screen& screen, const Rect area) const {
   row(screen, r, 0, "State", state, state_style(state));
   row(screen, r, 1, "Profile", text(member(card, "profile")));
   row(screen, r, 2, "Folder", text(member(card, "folder"), "-"));
+  {
+    const auto* pinned = member(card, "pinned");
+    const bool is = pinned != nullptr && pinned->if_boolean() != nullptr && *pinned->if_boolean();
+    row(screen, r, 4, "Startup", is ? "starts with the server (* in the list; p unpins)" : "p: start it with the server");
+  }
   if (const auto* error = member(card, "error"); error != nullptr && error->if_string() != nullptr) row(screen, r, 3, "Error", *error->if_string(), Style{kRed, kDefault});
   int line = 5;
   screen.field(r.x, r.y + line++, r.width, "Options" + std::string{option_ >= 0 ? "  (Left/Right change, Enter starts with them)" : "  (o to change)"}, kTitle);

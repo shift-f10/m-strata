@@ -508,6 +508,107 @@ void cards_can_be_added_while_serving() {
   launcher.shutdown();
 }
 
+// Pinned and hot models (owner 2026-10-31, spec part 1): one card at most is pinned to start at startup - the boot's pin
+// to begin with - and the list says which. A pin is kept (save_pin: the config file's models.start) before it holds: a card
+// the launcher does not hold, a pin that cannot be kept, a launcher with nowhere to keep it are refused; null unpins.
+// Removing the pinned card unpins it, so the next start names no missing card.
+void a_card_is_pinned_and_its_removal_unpins_it() {
+  secure_frontend::ModelCard alpha;
+  alpha.name = "Alpha";
+  std::vector<std::optional<std::string>> saved;
+  bool keeps = true;
+  secure_frontend::LauncherSettings settings;
+  settings.cards = {alpha};
+  settings.log = [](std::string_view) {};
+  settings.pinned = std::string{"Alpha"};
+  settings.save_pin = [&saved, &keeps](const std::optional<std::string>& name) {
+    if (keeps) saved.push_back(name);
+    return keeps;
+  };
+  secure_frontend::ModelLauncher launcher(std::move(settings));
+  const auto pinned_in = [&launcher](const std::string& name) {
+    // the card's own "pinned", its last field: the first after its name (its options have names, never a pin)
+    const std::string list = launcher.list_json();
+    const auto at = list.find("\"name\":\"" + name + "\",\"profile\"");
+    const auto pin = at == std::string::npos ? std::string::npos : list.find("\"pinned\":", at);
+    if (pin == std::string::npos) return std::optional<bool>{};
+    if (list.compare(pin, 13U, "\"pinned\":true") == 0) return std::optional<bool>{true};
+    if (list.compare(pin, 14U, "\"pinned\":false") == 0) return std::optional<bool>{false};
+    return std::optional<bool>{};
+  };
+  expect(pinned_in("Alpha") == std::optional<bool>{true} && launcher.pinned() == std::optional<std::string>{"Alpha"},
+         "the boot's pin is listed: " + launcher.list_json().substr(0, 300));
+  secure_frontend::ModelCard gamma;
+  gamma.name = "Gamma";
+  expect(launcher.add_card(gamma), "a page card is added");
+  expect(!launcher.pin(std::string{"Gamma"}).has_value() && saved.size() == 1U && saved.back() == std::optional<std::string>{"Gamma"} &&
+             pinned_in("Gamma") == std::optional<bool>{true} && pinned_in("Alpha") == std::optional<bool>{false},
+         "pinning Gamma keeps it first, then moves the pin");
+  const auto unknown = launcher.pin(std::string{"Nobody"});
+  expect(unknown.has_value() && unknown->error == secure_frontend::ApiError::model_not_found && saved.size() == 1U,
+         "a card it does not hold: refused, nothing kept");
+  keeps = false;
+  const auto unkept = launcher.pin(std::string{"Alpha"});
+  expect(unkept.has_value() && unkept->error == secure_frontend::ApiError::settings_refused && !unkept->reason.empty() &&
+             launcher.pinned() == std::optional<std::string>{"Gamma"},
+         "a pin that cannot be kept: refused, saying why; the pin stays");
+  keeps = true;
+  expect(launcher.remove_card("Gamma") == secure_frontend::CardChange::done && saved.size() == 2U && !saved.back().has_value() &&
+             !launcher.pinned().has_value() && pinned_in("Alpha") == std::optional<bool>{false},
+         "removing the pinned card unpins it");
+  expect(!launcher.pin(std::string{"Alpha"}).has_value() && !launcher.pin(std::nullopt).has_value() && saved.size() == 4U &&
+             !saved.back().has_value() && !launcher.pinned().has_value(),
+         "null unpins");
+  launcher.shutdown();
+  secure_frontend::LauncherSettings nowhere;
+  nowhere.cards = {alpha};
+  nowhere.log = [](std::string_view) {};
+  secure_frontend::ModelLauncher fileless(std::move(nowhere));
+  const auto refused = fileless.pin(std::string{"Alpha"});
+  expect(refused.has_value() && refused->error == secure_frontend::ApiError::settings_refused, "nowhere to keep a pin: refused");
+  fileless.shutdown();
+}
+
+// The pin through the server (spec part 1): a card pinned in the config (models.start) starts with the server and is
+// listed pinned; POST /v1/strata/models/pin moves the pin in the config file, null takes it out, an unknown card is not
+// found and a body that is not one is refused.
+void a_pinned_card_starts_with_the_server_and_the_pin_is_kept() {
+  auto server = ServerProcess::start(two_cards({}, {}, {{"models.control", "true"}, {"models.start", "\"Beta\""}}));
+  expect(server && server->wait_until_listening(std::chrono::seconds(20)), "the launcher boots");
+  if (!server) return;
+  expect(wait_for_card(*server, "Beta", "running"), "the pinned card starts with the server: " + server->stderr_text());
+  const auto listed = call(*server, "GET", "/v1/strata/models");
+  expect(listed && listed->body.find(R"("name":"Beta")") != std::string::npos &&
+             listed->body.find(R"("pinned":true)") != std::string::npos,
+         "it is listed pinned: " + shown(listed));
+  const auto config = server->root() / "config.json";
+  const auto start_row = [&config]() -> std::optional<std::string> {
+    auto read = secure_frontend::read_config_file(config);
+    const auto* draft = std::get_if<secure_frontend::FrontendConfigDraft>(&read);
+    if (draft == nullptr) return std::string{"(unreadable)"};
+    const auto found = draft->entries.find("models.start");
+    if (found == draft->entries.end()) return std::nullopt;
+    const auto* text = std::get_if<std::string>(&found->second.value);
+    return text == nullptr ? std::string{"(not text)"} : *text;
+  };
+  const auto moved = call(*server, "POST", "/v1/strata/models/pin", R"({"name":"Alpha"})");
+  expect(moved && moved->status == 200 && moved->body.find(R"("pinned":"Alpha")") != std::string::npos &&
+             start_row() == std::optional<std::string>{"Alpha"},
+         "the pin moves to Alpha, in the config file: " + shown(moved));
+  const auto cleared = call(*server, "POST", "/v1/strata/models/pin", R"({"name":null})");
+  expect(cleared && cleared->status == 200 && cleared->body.find(R"("pinned":null)") != std::string::npos && !start_row().has_value(),
+         "null takes it out of the config file: " + shown(cleared));
+  expect(has_code(call(*server, "POST", "/v1/strata/models/pin", R"({"name":"Gamma"})"), 404, "model_not_found"),
+         "an unknown card is not found");
+  for (const char* body : {"{}", R"({"name":1})", R"({"name":"Alpha","more":true})", "[]"}) {
+    const auto bad = call(*server, "POST", "/v1/strata/models/pin", body);
+    expect(bad && bad->status == 400, std::string{"a body that is not one is refused: "} + body + " " + shown(bad));
+  }
+  expect(card_state(*server, "Beta") == "running", "a pin changes nothing that runs");
+  server->stop(ServerProcess::Stop::ctrl_break);
+  expect(server->wait_exit(std::chrono::seconds(20)) == std::optional<int>{0}, "a clean exit");
+}
+
 // GUI-first start-up (spec 2026-10-27 §4.2): a card the page built from a GGUF names no tokenizer pack; a start reads
 // the tokenizer from the model file's own header, in the profile's mode, and refuses one that is not the profile's.
 void a_gguf_card_reads_its_tokenizer_from_the_gguf() {
@@ -1701,6 +1802,8 @@ int main(int argc, char** argv) {
       {"experts_show_as_soon_as_a_model_runs", experts_show_as_soon_as_a_model_runs},
       {"downloads_serve_the_catalog_and_load_download_cards", downloads_serve_the_catalog_and_load_download_cards},
       {"cards_can_be_added_while_serving", cards_can_be_added_while_serving},
+      {"a_card_is_pinned_and_its_removal_unpins_it", a_card_is_pinned_and_its_removal_unpins_it},
+      {"a_pinned_card_starts_with_the_server_and_the_pin_is_kept", a_pinned_card_starts_with_the_server_and_the_pin_is_kept},
       {"page_cards_can_be_replaced_and_removed", page_cards_can_be_replaced_and_removed},
       {"cards_say_whether_their_profile_takes_reasoning_effort", cards_say_whether_their_profile_takes_reasoning_effort},
       {"cards_offer_web_search_when_the_server_has_it", cards_offer_web_search_when_the_server_has_it},

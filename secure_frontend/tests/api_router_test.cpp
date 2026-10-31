@@ -384,6 +384,23 @@ void web_ui_has_the_monitor_and_four_thinking_levels() {
          "the Thinking control notes that Gemma has no levels");
 }
 
+// Pinned and hot models (owner 2026-10-31, spec part 1): the page pins a card to start at startup from its page in the
+// Models tab (Pin / Unpin, the list saying which starts with the server) and from Settings' Start at startup choice - both
+// the same route, null for none.
+void the_page_pins_a_card_to_start_at_startup() {
+  const std::string js{secure_frontend::find_web_asset("/ui/app.js")->body};
+  const std::string html{secure_frontend::find_web_asset("/")->body};
+  expect(js.find("api(\"/v1/strata/models/pin\", jsonPost({ name: pin ? card.name : null }))") != std::string::npos,
+         "the card's Pin and Unpin send its name, or null");
+  expect(js.find("api(\"/v1/strata/models/pin\", jsonPost({ name: name === \"\" ? null : name }))") != std::string::npos,
+         "Settings' choice sends the chosen card, or null for None");
+  expect(js.find("card.pinned === true ? \" \\u00b7 starts with the server\" : \"\"") != std::string::npos,
+         "the list says which card starts with the server");
+  expect(html.find("id=\"model-pin\"") != std::string::npos && html.find("id=\"startup-card\"") != std::string::npos &&
+             html.find("id=\"startup-save\"") != std::string::npos,
+         "the page has the card's pin and Settings' choice");
+}
+
 // Owner 2026-10-27 (item 46's fix, "Page omits it"): a running card whose profile refuses reasoning_effort (the list's
 // "reasoning_effort": false - a GLM card) gets no reasoning_effort from the page; every other chat still sends the
 // level (the server says so per card; with model control off the page cannot tell and sends it as before).
@@ -1649,6 +1666,10 @@ secure_frontend::ApiRouter launcher_router(std::vector<std::string>* calls, std:
       calls->push_back("stop");
       return secure_frontend::HttpResponse{.status = 202, .headers = {}, .body = "{\"state\":\"stopped\"}\n"};
     };
+    handlers.pin = [calls](std::string_view body, const secure_frontend::RequestContext&) -> secure_frontend::RouteResult {
+      calls->push_back("pin " + std::string{body});
+      return secure_frontend::HttpResponse{.status = 200, .headers = {}, .body = "{\"pinned\":\"Qwen\"}\n"};
+    };
   }
   return secure_frontend::ApiRouter({
       .policy = secure_frontend::make_http_policy(*secure_frontend::parse_listener_address("127.0.0.1"), 8080, {}, {}),
@@ -1711,6 +1732,23 @@ void login_link_route_answers_without_the_key_only_when_on() {
   auto off = router_with({});
   expect(request(off, "POST", "/v1/strata/login-link", "{\"code\":\"abc\"}", false).status == 401,
          "with the link off the route is like any other: the key first");
+}
+
+// Pinned and hot models (owner 2026-10-31, spec part 1): POST /v1/strata/models/pin is a control route like start - keyed,
+// POST only, a small JSON body - and reaches its handler with the body; with control off it is no route.
+void the_pin_route_reaches_its_handler() {
+  std::vector<std::string> calls;
+  auto router = launcher_router(&calls);
+  expect(request(router, "POST", "/v1/strata/models/pin", "{\"name\":\"Qwen\"}", false).status == 401 && calls.empty(), "a pin needs the key");
+  expect(request(router, "POST", "/v1/strata/models/pin", "{\"name\":\"Qwen\"}").status == 200 && !calls.empty() &&
+             calls.back() == "pin {\"name\":\"Qwen\"}",
+         "a pin reaches its handler with the body");
+  expect(request(router, "GET", "/v1/strata/models/pin").status == 405, "a pin is POST only");
+  expect(request(router, "POST", "/v1/strata/models/pin", "{}", true, true, "text/plain").status == 415, "a pin body is JSON");
+  expect(request(router, "POST", "/v1/strata/models/pin", std::string(5000, ' ')).status == 413, "a pin body is small");
+  std::vector<std::string> none;
+  auto off = launcher_router(&none, "Gemma-4", {true, "ready", ""}, false);
+  expect(request(off, "POST", "/v1/strata/models/pin", "{\"name\":\"Qwen\"}").status == 404 && none.empty(), "no pin route with control off");
 }
 
 void model_control_routes_need_the_switch_and_the_key() {
@@ -2051,6 +2089,7 @@ int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"health_samples_status_before_state_once_each", health_samples_status_before_state_once_each},
       {"model_control_routes_need_the_switch_and_the_key", model_control_routes_need_the_switch_and_the_key},
+      {"the_pin_route_reaches_its_handler", the_pin_route_reaches_its_handler},
       {"login_link_route_answers_without_the_key_only_when_on", login_link_route_answers_without_the_key_only_when_on},
       {"model_download_routes_need_the_switch_and_the_key", model_download_routes_need_the_switch_and_the_key},
       {"model_card_routes_need_the_switch_and_the_key", model_card_routes_need_the_switch_and_the_key},
@@ -2094,6 +2133,7 @@ int main(int argc, char** argv) {
       {"web_ui_assets_are_bundled_and_inert", web_ui_assets_are_bundled_and_inert},
       {"web_ui_has_the_monitor_and_four_thinking_levels", web_ui_has_the_monitor_and_four_thinking_levels},
       {"the_page_sends_reasoning_effort_only_where_it_is_taken", the_page_sends_reasoning_effort_only_where_it_is_taken},
+      {"the_page_pins_a_card_to_start_at_startup", the_page_pins_a_card_to_start_at_startup},
       {"the_chat_settings_follow_the_running_card", the_chat_settings_follow_the_running_card},
       {"web_ui_has_the_models_tab_hidden_until_the_server_offers_it", web_ui_has_the_models_tab_hidden_until_the_server_offers_it},
       {"web_ui_models_tab_starts_stops_and_polls", web_ui_models_tab_starts_stops_and_polls},

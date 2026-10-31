@@ -142,7 +142,8 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
       if ((entry.id == RouteId::strata_calibrate && !config_.control.calibrate) ||
           (entry.id == RouteId::strata_calibrate_cancel && !config_.control.cancel_calibration) ||
           (entry.id == RouteId::strata_calibrate_auto && !config_.control.auto_recalibrate) ||
-          (entry.id == RouteId::strata_calibrate_report && !config_.control.calibration_report)) {
+          (entry.id == RouteId::strata_calibrate_report && !config_.control.calibration_report) ||
+          (entry.id == RouteId::strata_pin && !config_.control.pin)) {
         continue;
       }
       allow = entry.method;
@@ -212,7 +213,8 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
                                       [&decision](const RouteEntry& entry) { return entry.id == decision.route; }));
   const bool calibration_post = decision.route == RouteId::strata_calibrate || decision.route == RouteId::strata_calibrate_cancel ||
                                 decision.route == RouteId::strata_calibrate_auto || decision.route == RouteId::strata_calibrate_report;
-  if (decision.route == RouteId::strata_start || decision.route == RouteId::strata_stop || download_post || card_post ||
+  if (decision.route == RouteId::strata_start || decision.route == RouteId::strata_stop || decision.route == RouteId::strata_pin ||
+      download_post || card_post ||
       calibration_post) {
     const auto types = head.values("content-type");
     if (head.content_length.value_or(0U) > 0U && (types.size() != 1U || !is_json_content_type(types.front()))) {
@@ -344,6 +346,15 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
         RouteResult result = decision.route == RouteId::strata_models ? config_.control.list(context)
                              : decision.route == RouteId::strata_start ? config_.control.start(body, context)
                                                                         : config_.control.stop(context);
+        if (auto* complete = std::get_if<HttpResponse>(&result)) {
+          response = std::move(*complete);
+          break;
+        }
+        return result;
+      }
+      // Pinned and hot models (owner 2026-10-31): keyed above; served only while set.
+      case RouteId::strata_pin: {
+        RouteResult result = config_.control.pin(body, context);
         if (auto* complete = std::get_if<HttpResponse>(&result)) {
           response = std::move(*complete);
           break;

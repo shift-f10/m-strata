@@ -520,7 +520,7 @@ child, the environment copy, `<data>/logs/server.log` without the login link, an
   Plugins (owner 2026-10-30: the page's Plugins tab, view 7 so the other keys stay). They poll the page's own routes
   every second over loopback with the key (`/metrics`, `/v1/strata/models`, and the view's route; Settings and Plugins
   are read when shown and after a change), and the keys send the page's own requests (`models/start` with the card's
-  edited options, `stop`, `calibrate`, `calibrate/cancel`, `calibrate/auto`, `downloads/start|pause|cancel`,
+  edited options, `stop`, `pin`, `calibrate`, `calibrate/cancel`, `calibrate/auto`, `downloads/start|pause|cancel`,
   `config/settings`, `key/rotate`, `plugins/approve`, `plugins/switch`). An approval, and turning on a diagnostics
   plugin, ask first in the page's words, the question wrapped whole in its box. A refusal is shown in the server's own
   words on the status line.
@@ -2186,6 +2186,13 @@ One model runs at a time.
   then shows the Models tab with that reason instead of the cards). Each start
   and stop is logged on stderr (card, option values, loopback or remote; never the key).
   `models.start` names the card started at boot; unset, the server boots with no engine (D5).
+  `POST /v1/strata/models/pin` (`{"name": "..."}`, or `{"name": null}` for none; 200 `{"pinned": ...}`; owner
+  2026-10-31) pins a card to start at startup: it writes `models.start` in the config file (owner-only, as Settings
+  saves) and lists the card `"pinned": true`; nothing that runs changes. A card the server does not hold is 404
+  `model_not_found`; a server started without a config file it may write refuses it (422 `settings_refused`, saying
+  why). Removing the pinned card unpins it. The page pins from a card's page in the Models tab (Pin / Unpin; the list
+  says "starts with the server") and from Settings' Start at startup choice; the TUI with `p` on the Models view (the
+  list marks the pinned card `*`).
 - **A start:** the card, the option values and the card's config are validated at once (a
   refusal names the option: 400 `invalid_option`); the model is then composed and its tokenizer
   loaded before the running model is touched, so a bad start never takes it down. Then new chat

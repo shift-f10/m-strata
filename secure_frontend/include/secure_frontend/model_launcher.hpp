@@ -107,6 +107,11 @@ struct LauncherSettings final {
   // none) and tools.max_rounds. A calibration's engine never gets it.
   ToolRunner* tools{nullptr};
   std::size_t tool_rounds{8};
+  // Pinned and hot models (owner 2026-10-31, spec part 1): the card pinned to start at startup (the config's models.start
+  // at boot), and where a pin is kept - save_pin writes it to the config file (nullopt: none pinned) and says whether it
+  // did. Unset, a pin is refused.
+  std::optional<std::string> pinned{};
+  std::function<bool(const std::optional<std::string>& name)> save_pin{};
 };
 
 class ModelLauncher final {
@@ -116,11 +121,17 @@ class ModelLauncher final {
   ModelLauncher(const ModelLauncher&) = delete;
   ModelLauncher& operator=(const ModelLauncher&) = delete;
 
-  // A refusal of start/stop: the API error row and, for invalid_option, the option's name.
+  // A refusal of start/stop: the API error row and, for invalid_option, the option's name; for a refused pin, why.
   struct Refusal final {
     ApiError error;
     std::string param{};
+    std::string reason{};
   };
+  // Pins card `name` to start at startup (nullopt: none), kept first (save_pin), then listed (each card's "pinned"). A
+  // card it does not hold is model_not_found; a pin it cannot keep, settings_refused saying why. Nothing that runs
+  // changes. Removing the pinned card unpins it.
+  [[nodiscard]] std::optional<Refusal> pin(const std::optional<std::string>& name);
+  [[nodiscard]] std::optional<std::string> pinned() const;
   // Validates and accepts a start of card `name` with `options` (the body's "options" object;
   // nullptr = the remembered values, else the card's defaults). nullopt: accepted (202). `may_calibrate` false (owner
   // 2026-10-29: the page's "Start without calibrating") starts it without the calibration a first start or a settings
@@ -261,6 +272,7 @@ class ModelLauncher final {
   RememberedOptions remembered_;
   mutable std::mutex mutex_;
   mutable std::condition_variable changed_;
+  std::mutex pin_mutex_;  // one pin kept at a time (settings_.pinned itself is mutex_'s)
   std::vector<CardStatus> status_;
   std::vector<bool> page_card_;               // beside settings_.cards: the server wrote it
   std::shared_ptr<ModelRuntime> running_;     // the started (or starting) model's runtime
