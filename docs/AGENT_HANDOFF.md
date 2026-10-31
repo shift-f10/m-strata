@@ -280,6 +280,23 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### 2026-10-31 z87 (RTX 5090 PC; owner-directed) — no agent credited
+
+The owner: "ensure when pushing you do not reference any agents as contributors, make that a hard requirement", then
+"make sure claude does not make it a co-authored, remove it if you did".
+
+- **The rule:** `CLAUDE.md`, `AGENTS.md`, the resume document's rule 5 (and its opencode note) and
+  `briefs/subcontroller-common.md` now say that no commit, tag or pull request credits an agent or model. That means no
+  `Co-Authored-By:` trailer, no `Claude-Session:` line, no session links and no "Generated with" line. It replaces
+  2026-10-27's one-trailer rule. The trailer lines in older plans, briefs and reports are history, not instructions.
+  This commit is the first made without a trailer.
+- **Pushed history:** all 63 commits on `main` (up to `e23c4ab`) carry an agent trailer, so GitHub lists the agent as
+  a co-author. Removing them means rewriting all of `main` and force-pushing. The other PC's checkout would then have
+  to be reset to the new `main`. Not done: it waits on the owner's word.
+- **m-strata-rust:** the owner's new private repository for a Rust port, set up from this PC with M-Strata at
+  `e23c4ab` as its read-only reference submodule. Its first commit is rewritten without the trailer, as the owner
+  asked.
+
 ### Claude Code session, 2026-10-31 z86 (Windows box; owner-directed)
 
 Pinned and hot models, part 4 (spec part 4, "As built"): a card kept loaded is started again.
