@@ -337,6 +337,29 @@ void offer_low_ram(ModelCard& card) {
   card.options.insert(later, std::move(limit));
 }
 
+// VRAM kept free (owner 2026-11-01, the Azure VM's T4: "it also may need low vram mode"): a card that runs a Qwen3.6
+// GGUF on the Qwen engine (no --pack) offers upstream setup's --vram-reserve-mib, Off unless its file lists it, in the
+// table's order - not one whose own engine.args already give the experts a share (--expert-vram) or a reserve. A pack's
+// card keeps the server's engine.vram_reserve_mib row (its strata core's own flag).
+void offer_vram_reserve(ModelCard& card) {
+  const auto* spec = find_model_option(card.profile, "vram_reserve");
+  if (spec == nullptr) return;
+  if (std::any_of(card.options.begin(), card.options.end(), [spec](const ModelOptionLimits& limit) { return limit.spec == spec; })) return;
+  const auto* args = engine_args_of(card);
+  if (args != nullptr && (has_flag(*args, "--pack") || has_flag(*args, "--expert-vram") || has_flag(*args, "--vram-reserve-mib"))) return;
+  ModelOptionLimits limit;
+  limit.spec = spec;
+  limit.default_value = std::int64_t{0};
+  limit.minimum = spec->minimum;
+  limit.maximum = spec->maximum;
+  const auto order = model_options_for(card.profile);
+  const auto place = [&order](const ModelOptionSpec* listed) { return static_cast<std::size_t>(listed - order.data()); };
+  const auto later = std::find_if(card.options.begin(), card.options.end(), [&](const ModelOptionLimits& listed) {
+    return listed.spec != nullptr && place(listed.spec) > place(spec);
+  });
+  card.options.insert(later, std::move(limit));
+}
+
 // One decimal place ("35.5")
 std::string tenths(const double value) {
   const long long scaled = std::llround(value * 10.0);
@@ -346,7 +369,8 @@ std::string tenths(const double value) {
 // The options a card offers beyond its file's: its engine's RAM headroom (owner 2026-10-29: a GLM-engine card's, at the
 // server's glm.ram_headroom_gb), its model's recommended sampling, its longest answer (owner 2026-10-29: every card's,
 // at the server's limits.engine.generation_timeout_s in minutes, a part of a minute counted whole), Web search with the
-// server's, then its GPUs, and a Qwen pack's low-RAM mode (owner 2026-10-31); Keep loaded (owner 2026-10-31).
+// server's, then its GPUs, and a Qwen pack's low-RAM mode (owner 2026-10-31); Keep loaded (owner 2026-10-31); a Qwen3.6
+// card's VRAM kept free (owner 2026-11-01).
 void offer_options(ModelCard& card, const FrontendConfigDraft& main, const ToolRunner* tools) {
   offer_at_row(card, main, "ram_headroom", "glm.ram_headroom_gb", [](const std::int64_t gigabytes) { return gigabytes; });
   offer_sampling(card);
@@ -356,6 +380,7 @@ void offer_options(ModelCard& card, const FrontendConfigDraft& main, const ToolR
   offer_web_search(card, tools);
   offer_gpus(card);
   offer_low_ram(card);
+  offer_vram_reserve(card);
 }
 
 // The card's options as the page sees them: without the server's web search, no Web search checkbox.
@@ -824,6 +849,38 @@ bool ModelLauncher::calibration_supported(const ModelCard& card) const {
 }
 
 ModelOptionValues ModelLauncher::launch_values(const ModelCard& card, ModelOptionValues values, const bool say) const {
+  // VRAM kept free on a Qwen3.6 card (owner 2026-11-01): its engine has no --vram-reserve-mib, so the experts get
+  // upstream setup's share for that family (setup.py: --expert-vram max(VRAM - 3.0 - reserve / 1024, 0), one decimal) of
+  // the GPU it runs on - its gpus option's first as nvidia-smi numbers them (auto: the first) - which the start writes as
+  // --expert-vram; with no GPU read, nothing (the engine's own placement), and the log says why.
+  if (const auto reserve = values.find("vram_reserve"); reserve != values.end()) {
+    const auto* mib = std::get_if<std::int64_t>(&reserve->second);
+    const auto* own = engine_args_of(card);
+    if (mib != nullptr && *mib > 0 && !(own != nullptr && has_flag(*own, "--pack"))) {
+      const auto chosen = values.find("gpus");
+      const auto* listed = chosen == values.end() ? nullptr : std::get_if<std::string>(&chosen->second);
+      const std::string first = listed == nullptr || *listed == "auto" ? std::string{} : listed->substr(0, listed->find(','));
+      const auto host = settings_.host_memory ? settings_.host_memory() : HostMemory{};
+      const auto gpu = std::find_if(host.gpus.begin(), host.gpus.end(), [&first](const GpuListing& g) {
+        return first.empty() || std::to_string(g.index) == first;
+      });
+      if (gpu == host.gpus.end() || !gpu->mem_total_bytes.has_value()) {
+        if (say) {
+          log("[strata] models: " + card.name + ": VRAM kept free (" + std::to_string(*mib) +
+              " MiB): no GPU could be read (nvidia-smi), so the engine places its experts in what it finds free");
+        }
+        values.erase(reserve);
+      } else {
+        const double vram_gib = static_cast<double>(*gpu->mem_total_bytes) / static_cast<double>(1ULL << 30U);
+        const double share = std::round(std::max(vram_gib - 3.0 - static_cast<double>(*mib) / 1024.0, 0.0) * 10.0) / 10.0;
+        if (say) {
+          log("[strata] models: " + card.name + ": VRAM kept free (" + std::to_string(*mib) + " MiB): its experts get " + tenths(share) +
+              " GiB of GPU " + std::to_string(gpu->index) + "'s " + tenths(vram_gib) + " GiB (--expert-vram; upstream setup's rule)");
+        }
+        reserve->second = share;
+      }
+    }
+  }
   const auto found = values.find("low_ram");
   const auto* asked = found == values.end() ? nullptr : std::get_if<std::string>(&found->second);
   if (asked == nullptr || (*asked != "auto" && *asked != "on" && *asked != "resident")) return values;

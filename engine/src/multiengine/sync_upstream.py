@@ -4,8 +4,10 @@ Reads the commit from a local clone's git objects only (its working tree is neve
 every upstream path of the engine's scope whose content differs (line endings aside), in the checkout's CRLF form:
 src, include, tests, cmake, data, third_party/ggml, third_party/ggml-tq, the root CMakeLists.txt, and the bench files
 engine/ tracks.  The root CMakeLists.txt gets our one include of cmake/multiengine.cmake appended.  Our own files are
-not upstream paths, so they are never written: src/multiengine, cmake/multiengine.cmake, src/gemma4 (with its own core
-copy), tests/gemma4, third_party/project-maya, the raon1 tests.  An upstream deletion is reported, not applied.
+not upstream paths, so they are never written: src/multiengine, cmake/multiengine*.cmake, src/gemma4 (with its own core
+copy), tests/gemma4, tests/multiengine, third_party/project-maya, the raon1 tests.  An upstream deletion is reported, not
+applied.  cmake/multiengine_qwen35.cmake puts our lines into a copy of upstream's src/qwen35/q36_engine.cu at configure
+time: after a sync, a configure that stops naming one of its lines means upstream moved it there.
 
     python -I engine/src/multiengine/sync_upstream.py <upstream clone> <commit or tag> [--dry]
 
@@ -19,8 +21,8 @@ import sys
 ENGINE = pathlib.Path(__file__).resolve().parents[2]
 REPO = ENGINE.parent
 SCOPES = ["src", "include", "tests", "cmake", "data", "third_party/ggml", "third_party/ggml-tq", "CMakeLists.txt"]
-OURS = ("src/multiengine/", "cmake/multiengine", "src/gemma4/", "tests/gemma4/", "tests/core/raon1_geometry_test.cpp",
-        "tests/oracle/raon1_prefill_parity.py")
+OURS = ("src/multiengine/", "cmake/multiengine", "src/gemma4/", "tests/gemma4/", "tests/multiengine/",
+        "tests/core/raon1_geometry_test.cpp", "tests/oracle/raon1_prefill_parity.py")
 INCLUDE_LINE = (b"\n# multi-strata: the multiengine executable over its family libraries (ours, not upstream's)\n"
                 b"include(cmake/multiengine.cmake)\n")
 

@@ -163,8 +163,9 @@ void each_family_lists_its_options() {
     std::vector<std::string_view> flags;
   };
   const std::array<Row, 7> rows{{
-      {EngineProfile::qwen, 20U, "max_context", "gpus",
-       {"--max-context", "--rope-scaling", "--rope-scale", "--kv", "--kv-resident", "--kv-grow", "--spec", "--spec-min-p", "--expert-cache", "--prefill"}},
+      {EngineProfile::qwen, 21U, "max_context", "gpus",
+       {"--max-context", "--rope-scaling", "--rope-scale", "--kv", "--kv-resident", "--kv-grow", "--spec", "--spec-min-p", "--expert-cache", "--prefill",
+        "--vram-reserve-mib", "--expert-vram"}},
       {EngineProfile::glm53, 11U, "max_context", "gpus", {}},
       {EngineProfile::gemma4, 15U, "max_context", "gpus", {"--max-context", "--chunk", "--expert-vram", "--spec", "--spec-min-p"}},
       {EngineProfile::deepseek, 10U, "max_context", "gpus", {"--max-context"}},

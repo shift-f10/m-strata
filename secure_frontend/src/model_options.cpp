@@ -469,6 +469,11 @@ void write_option(const EngineProfile profile, const std::string_view name, cons
     // upstream's low-RAM mode: the variant a start resolved (auto and on are resolved by the launcher, low_ram.hpp)
     if (*text == "mmap") flags.emplace_back("--mmap-experts");
     if (*text == "resident") flags.emplace_back("--resident-experts");
+  } else if (name == "vram_reserve") {
+    // upstream setup's --vram-reserve-mib (Off: none): the strata core's own flag; a Qwen3.6 card's engine has none, so
+    // its start carries the experts' share the launcher worked out from the GPU instead (GiB, launch_values)
+    if (integer != nullptr && *integer > 0) flag_with("--vram-reserve-mib", std::to_string(*integer));
+    if (decimal != nullptr) flag_with("--expert-vram", decimal_text(std::round(*decimal * 10.0) / 10.0));
   } else if (name == "chunk" && integer != nullptr) flag_with("--chunk", std::to_string(*integer));
   else if (name == "expert_vram" && integer != nullptr) flag_with("--expert-vram", std::to_string(*integer));  // auto: no flag
   else if (name == "thinking" && text != nullptr) {
@@ -567,6 +572,7 @@ std::vector<std::string_view> option_flags(const EngineProfile profile, const st
   }
   if (name == "kv") return {family.kv_flag};  // (maya-mm3's own --kv-cache)
   if (name == "low_ram") return {"--mmap-experts", "--resident-experts"};
+  if (name == "vram_reserve") return {"--vram-reserve-mib", "--expert-vram"};
   static constexpr std::array<std::pair<std::string_view, std::string_view>, 8> kFlags{{
       {"kv_resident", "--kv-resident"}, {"kv_grow", "--kv-grow"}, {"spec", "--spec"},
       {"spec_min_p", "--spec-min-p"}, {"expert_cache", "--expert-cache"}, {"prefill", "--prefill"}, {"chunk", "--chunk"},

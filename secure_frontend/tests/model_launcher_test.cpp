@@ -1482,8 +1482,10 @@ struct QwenPackFixture final {
   std::unique_ptr<secure_frontend::ModelLauncher> launcher;
   const std::string name = "Q";
 
-  // extra_args: more of the card's own engine.args (after its pack's)
-  QwenPackFixture(const std::uint64_t ram_bytes, const std::vector<std::uint64_t>& vram, const std::vector<std::string>& extra_args = {}) {
+  // extra_args: more of the card's own engine.args (after its pack's); qwen36: a Qwen3.6 card from its GGUF instead (no
+  // pack: upstream's engine reads the file itself, its draft layer --mtp 2)
+  QwenPackFixture(const std::uint64_t ram_bytes, const std::vector<std::uint64_t>& vram, const std::vector<std::string>& extra_args = {},
+                  const bool qwen36 = false) {
     secure_frontend_test::make_private_directory(models);
     secure_frontend_test::make_private_directory(root / "packs");
     secure_frontend_test::make_private_directory(pack);
@@ -1510,7 +1512,17 @@ struct QwenPackFixture final {
     auto made = secure_frontend::card_for_pack({.family = secure_frontend::PackedFamily::qwen38, .name = name, .engine = engine,
                                                 .source = "download:q", .pack = pack, .folder = models, .model_id = "q-00001-of-00002",
                                                 .expert_profile = bin / "profiles" / "expert-profile.bin"});
-    if (!extra_args.empty()) {
+    if (qwen36) {
+      secure_frontend_test::write_file(models / "Q.gguf", test_support::gguf_with_tokenizer(test_support::byte_tokenizer(), "gpt2", "qwen35moe")
+                                                              .u32("qwen35moe.context_length", 262144U)
+                                                              .u32("qwen35moe.nextn_predict_layers", 1U)
+                                                              .bytes());
+      const auto header = secure_frontend::parse_gguf_metadata(secure_frontend_test::read_file(models / "Q.gguf"));
+      const auto gguf = secure_frontend::card_for_gguf(std::get<secure_frontend::GgufMetadata>(header),
+                                                       {.folder = models, .file = "Q.gguf", .engine = engine, .source = "folder"});
+      made = std::get<secure_frontend::CardText>(gguf);
+      for (const auto& a : extra_args) made.json.insert(made.json.find("\"2\"]") + 3U, ", \"" + a + "\"");
+    } else if (!extra_args.empty()) {
       std::string more;
       for (const auto& a : extra_args) more += ",\"" + a + "\"";
       made.json.insert(made.json.find("]},\"roots\""), more);
@@ -1592,6 +1604,33 @@ void a_card_with_room_keeps_its_experts_in_ram() {
   QwenPackFixture roomy(64ULL << 30U, {24ULL << 30U});
   const auto whole = roomy.started();
   expect(!has_argument(whole, "--mmap-experts") && !has_argument(whole, "--resident-experts"), "64 GiB: neither: " + joined(whole));
+}
+
+// VRAM kept free (owner 2026-11-01, the Azure VM's T4: "it also may need low vram mode"): a Qwen3.6 card is offered
+// upstream setup's --vram-reserve-mib, Off by default (the engine's own placement). Its engine has no such flag, so a
+// start works the experts' share out from the GPU it runs on as upstream's setup does - the VRAM less 3 GiB and the
+// reserve, at least 0 - and gives it as --expert-vram GiB, and says so. A Qwen3.8 pack's card is not offered it (its
+// strata core has the server's engine.vram_reserve_mib row).
+void a_qwen36_card_keeps_vram_free() {
+  QwenPackFixture f(static_cast<std::uint64_t>(27.4 * static_cast<double>(1ULL << 30U)), {16ULL << 30U}, {}, true);
+  const std::string listed = f.launcher->list_json();
+  expect(listed.find(R"("name":"vram_reserve","kind":"integer")") != std::string::npos, "the card offers VRAM kept free: " + listed);
+  const auto plain = f.started();
+  expect(!has_argument(plain, "--expert-vram") && !has_argument(plain, "--vram-reserve-mib"), "Off: neither flag: " + joined(plain));
+  const auto some = json_of(R"({"vram_reserve":1536})");
+  const auto kept = f.started(&some);
+  expect(has_pair(kept, "--expert-vram", "11.5") && !has_argument(kept, "--vram-reserve-mib"),
+         "16 GiB less 3 and 1.5: 11.5 GiB for the experts: " + joined(kept));
+  expect(f.said("VRAM kept free").find("11.5 GiB") != std::string::npos, "the log says so: " + f.said("VRAM kept free"));
+  const auto all = json_of(R"({"vram_reserve":8192})");
+  QwenPackFixture tight(32ULL << 30U, {8ULL << 30U}, {}, true);
+  expect(has_pair(tight.started(&all), "--expert-vram", "0"), "a reserve past the card: 0, as upstream's max(..., 0)");
+  QwenPackFixture none(32ULL << 30U, {}, {}, true);
+  const auto blind = none.started(&some);
+  expect(!has_argument(blind, "--expert-vram") && !has_argument(blind, "--vram-reserve-mib"), "no GPU read: no flag: " + joined(blind));
+  expect(!none.said("no GPU").empty(), "and the log says why");
+  QwenPackFixture pack(64ULL << 30U, {24ULL << 30U});
+  expect(pack.launcher->list_json().find(R"("name":"vram_reserve")") == std::string::npos, "a Qwen3.8 pack card is not offered it");
 }
 
 // A card whose own engine.args already choose (an operator's --mmap-experts) keeps its choice and is not offered one.
@@ -1815,14 +1854,17 @@ void cards_offer_their_models_recommended_sampling() {
     }
     return out;
   };
-  expect(defaults_of("Q") == "temperature=1 top_p=0.95 top_k=20 answer_minutes=30 hot=false gpus=\"auto\"", "Qwen3.8 / 3.6 (upstream's card): " + defaults_of("Q"));
+  // (a Qwen card without --pack runs a GGUF on the Qwen3.6 engine: it offers VRAM kept free, Off - owner 2026-11-01)
+  expect(defaults_of("Q") == "vram_reserve=0 temperature=1 top_p=0.95 top_k=20 answer_minutes=30 hot=false gpus=\"auto\"",
+         "Qwen3.6 (upstream's card): " + defaults_of("Q"));
   expect(defaults_of("G") == "ram_headroom=16 temperature=1 top_p=0.95 answer_minutes=30 hot=false gpus=\"auto\"", "GLM-5.3 (Maya's): " + defaults_of("G"));
   expect(defaults_of("R") == "ram_headroom=16 temperature=1 top_p=0.95 top_k=20 answer_minutes=30 hot=false gpus=\"auto\"", "raon1 (KRAFTON's): " + defaults_of("R"));
   expect(defaults_of("F") == "temperature=1 top_p=0.95 top_k=20 answer_minutes=30 hot=false gpus=\"auto\"", "flint (its card's): " + defaults_of("F"));
   expect(defaults_of("E") == "temperature=1 top_p=0.95 top_k=64 min_p=0.05 answer_minutes=30 hot=false gpus=\"auto\"", "Gemma 4 (Google's): " + defaults_of("E"));
   expect(defaults_of("D") == "temperature=1 top_p=1 answer_minutes=30 hot=false gpus=\"auto\"", "DeepSeek-V4.1 (upstream's card): " + defaults_of("D"));
   expect(defaults_of("M") == "temperature=1 top_p=0.95 answer_minutes=30 hot=false gpus=\"auto\"", "MiniMax (its card's): " + defaults_of("M"));
-  expect(defaults_of("Own") == "thinking=\"high\" temperature=0.6 top_p=0.95 top_k=20 vision=\"gpu\" answer_minutes=30 hot=false gpus=\"auto\"",
+  expect(defaults_of("Own") ==
+             "vram_reserve=0 thinking=\"high\" temperature=0.6 top_p=0.95 top_k=20 vision=\"gpu\" answer_minutes=30 hot=false gpus=\"auto\"",
          "a card's own temperature stays, the rest in the profile's order: " + defaults_of("Own"));
   expect(defaults_of("Rows") == "ram_headroom=16 temperature=0.8 top_p=0.95 top_k=40 answer_minutes=30 hot=false gpus=\"auto\"",
          "a card's own defaults.sampling rows are its defaults: " + defaults_of("Rows"));
@@ -2145,6 +2187,7 @@ int main(int argc, char** argv) {
       {"a_calibration_can_be_cancelled", a_calibration_can_be_cancelled},
       {"removing_a_card_removes_its_calibration", removing_a_card_removes_its_calibration},
       {"a_card_short_of_ram_starts_in_the_low_ram_mode", a_card_short_of_ram_starts_in_the_low_ram_mode},
+      {"a_qwen36_card_keeps_vram_free", a_qwen36_card_keeps_vram_free},
       {"a_card_with_room_keeps_its_experts_in_ram", a_card_with_room_keeps_its_experts_in_ram},
       {"a_card_that_fixes_its_experts_flag_keeps_it", a_card_that_fixes_its_experts_flag_keeps_it},
       {"a_stop_waits_for_an_engine_still_ending", a_stop_waits_for_an_engine_still_ending},

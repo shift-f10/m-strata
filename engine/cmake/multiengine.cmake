@@ -41,6 +41,7 @@ set(_me_families multiengine_strata)
 set(_me_defs)
 if(TARGET strata_qwen35)
   list(APPEND _me_defs MULTIENGINE_HAVE_QWEN35=1)
+  include(cmake/multiengine_qwen35.cmake)   # our copy of its engine, with load progress and read-ahead (multiengine_qwen35)
 endif()
 
 # Gemma 4 (arch gemma4), with the native experts: its decode misses run on the CPU pool's ggml-cpu rows (the CPU lane)
@@ -124,6 +125,11 @@ foreach(_p LINK_LIBRARIES INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTION
   endif()
 endforeach()
 set_target_properties(multiengine_strata PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+if(TARGET multiengine_qwen35)   # the Qwen3.6 engine: our copy (cmake/multiengine_qwen35.cmake), not upstream's library
+  get_target_property(_me_links multiengine_strata LINK_LIBRARIES)
+  list(TRANSFORM _me_links REPLACE "^strata_qwen35$" "multiengine_qwen35")
+  set_property(TARGET multiengine_strata PROPERTY LINK_LIBRARIES ${_me_links})
+endif()
 
 # every family library beside the launcher, which loads them from its own folder
 foreach(_t IN LISTS _me_families)
@@ -162,6 +168,13 @@ if(STRATA_BUILD_TESTS)
            COMMAND multiengine_family_test $<TARGET_FILE:multiengine> $<TARGET_FILE:multiengine_fake_testfam>
                    $<TARGET_FILE:multiengine_fake_badabi> $<TARGET_FILE:multiengine_fake_wrongid>
                    $<TARGET_FILE:multiengine_fake_nosym>)
+  # the Qwen3.6 engine's load progress line, and our copy of upstream's engine that prints it (no GPU, no model)
+  if(TARGET multiengine_qwen35)
+    add_executable(multiengine_q36_progress_test tests/multiengine/q36_progress_test.cpp)
+    target_include_directories(multiengine_q36_progress_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/multiengine)
+    target_compile_options(multiengine_q36_progress_test PRIVATE ${_me_warnings})
+    add_test(NAME multiengine_q36_progress_test COMMAND multiengine_q36_progress_test ${_me_q36_out})
+  endif()
 endif()
 
 # ---- strata-prepare: what a download needs before the engine runs it, with no Python ------------------------------

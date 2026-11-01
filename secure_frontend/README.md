@@ -2175,7 +2175,11 @@ One model runs at a time.
   `expert_cache` (`auto` or a count), `prefill` (`auto` or a chunk), `low_ram` (upstream's
   **low-RAM mode**, offered on a card that runs a pack: auto|on|resident|mmap|off; auto and on are
   decided at each start by upstream setup's rule from this PC's RAM, the GPUs' memory and the
-  pack's experts, and write `--mmap-experts` or `--resident-experts`), `thinking`
+  pack's experts, and write `--mmap-experts` or `--resident-experts`), `vram_reserve` (**VRAM kept
+  free**, upstream setup's `--vram-reserve-mib`, offered on a Qwen3.6 card: a dropdown of Off, 512,
+  1024, 1536, 2048, 3072, 4096, 6144 and 8192 MiB; its engine has no such flag, so each start gives
+  the experts the GPU's VRAM less 3 GiB and this, upstream setup's rule for that family, as
+  `--expert-vram`; Off lets the engine place them in what it finds free), `thinking`
   (none|low|medium|high) and the sampling defaults. The `gemma4` engine: `max_context` (the same
   dropdown up to its trained 256K), `chunk`, `expert_vram` (GiB or `auto`), `thinking` (off|on)
   and the sampling defaults (it has no KV streaming yet, D8). The GLM engine (`glm53`, `raon1`):

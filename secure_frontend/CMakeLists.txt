@@ -2047,7 +2047,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_minimax_card_measures_its_prompt_reading_first a_glm_card_calibrates a_failed_prefill_calibration_is_not_retried_by_itself
         a_prefill_calibration_falls_back_to_the_default_chunk
         a_calibration_can_be_cancelled
-        removing_a_card_removes_its_calibration a_card_short_of_ram_starts_in_the_low_ram_mode a_card_with_room_keeps_its_experts_in_ram a_card_that_fixes_its_experts_flag_keeps_it failures_raise_alerts a_failed_calibration_writes_a_report
+        removing_a_card_removes_its_calibration a_card_short_of_ram_starts_in_the_low_ram_mode a_qwen36_card_keeps_vram_free
+        a_card_with_room_keeps_its_experts_in_ram a_card_that_fixes_its_experts_flag_keeps_it failures_raise_alerts a_failed_calibration_writes_a_report
         a_stop_waits_for_an_engine_still_ending
         an_engine_plugins_card_starts_through_the_launcher a_card_of_an_engine_plugin_that_is_not_on_is_refused
         a_card_is_pinned_and_its_removal_unpins_it a_pinned_card_starts_with_the_server_and_the_pin_is_kept
@@ -2091,6 +2092,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         remembered_options_round_trip_and_tolerate_junk context_and_kv_streaming_offer_fixed_values
         past_trained_context_adds_yarn flint_options_follow_the_flint_engine glm_ram_headroom_is_a_card_option the_longest_answer_is_a_card_option every_card_offers_keep_loaded glm_options_write_the_glm_rows
         deepseek_options_are_mayas web_search_is_a_checkbox_of_the_tool_profiles minimax_options_are_mayas the_vision_option_writes_the_encoder_rows gpus_choose_the_cards_a_model_runs_on low_ram_writes_the_engines_flag
+        vram_reserve_writes_the_engines_share
         gemma4_mtp_off_drops_the_mtp_file)
 
     # Model launcher (plan 2026-10-23 Task 1): card files, their refusals, the main + card merge.
@@ -2483,7 +2485,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_calibration_report_tests tests/calibration_report_test.cpp
         secure_frontend_calibration_report)
     secure_frontend_add_cases(secure_frontend_calibration_report_tests
-        the_report_says_what_failed_and_on_what_hardware a_report_is_made_only_when_a_trial_failed paths_are_shortened
+        the_report_says_what_failed_and_on_what_hardware a_report_is_made_only_when_a_trial_failed
+        a_build_without_its_commit_says_unknown paths_are_shortened
         nvidia_smi_report_lines_are_read the_report_file_name_is_safe the_report_is_bounded
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
