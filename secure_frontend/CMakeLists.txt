@@ -1573,6 +1573,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         the_engine_sample_reaches_the_monitor diskstats_add_up_the_whole_disks disk_readings_reach_the_json
         conversation_cache_lines_parse_exactly conversation_cache_reaches_the_json)
     secure_frontend_add_cases(secure_frontend_serve_monitor_tests host_readings_are_plausible gpu_sampler_reads_a_fake_tool
+        gpu_sampler_starts_a_stopped_tool_again
         gpu_sampler_reads_the_real_tool_when_present
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 120)
     secure_frontend_add_test_executable(secure_frontend_api_router_tests tests/api_router_test.cpp secure_frontend_api_router)

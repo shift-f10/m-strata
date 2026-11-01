@@ -280,6 +280,26 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### 2026-11-01 z97 (Windows box; owner-directed)
+
+The owner, on his new Azure VM (a T4, the same disk under a new address): "it does not use the GPU and use the CPU only
+it seems when looking at the monitor". The model was on the GPU - the engine held 15.3 of the T4's 16 GB, hybrid with
+about 60% of the expert work there, 38.8 tok/s - but the Monitor had no GPU reading: the server's
+`"gpu_note":"nvidia-smi stopped"`. Its `nvidia-smi --loop-ms` had ended some hours into the server's run, saying
+nothing (no driver message, no OOM kill, no shared cgroup or process group with the engines), and the sampler starts it
+once. The GPU tile showed only "Tesla T4", the note hidden behind the name.
+- **The sampler** (host_readings.cpp `GpuSampler::run` / `read_tool`): a tool that ends is started again after 5 s
+  (`kGpuRestartAfter`), its note standing meanwhile and no reading stale; one that is not installed is not retried; a
+  stop says "stopped".
+- **The page** (app.js, the GPU tile): with no reading, the note beside the card's name ("Tesla T4: nvidia-smi
+  stopped"), not the name alone. The TUI already shows the note on its own row.
+- **Tests:** the Monitor 1 (`gpu_sampler_starts_a_stopped_tool_again`: the fake tool answers twice and ends; the note
+  says it stopped with no reading; readings arrive again with no note; a stop says "stopped").
+- **Proof:** RED (the tool stayed ended: "nvidia-smi stopped" after 15 s). GREEN: the Monitor suite 23/23; Windows
+  (MSVC, the shares tree, everything built, no warnings) 1570/1572 (the two release-only cases); Linux (WSL, gcc 13.3 /
+  clang 18.1, -Werror, no warnings) full-gcc and full-clang 1621/1624 (the release-only pair; egress alone), window-gcc
+  1577/1579 (net01_ipv6 and egress alone).
+
 ### 2026-11-01 z96 (Windows box; owner-directed, plugins only)
 
 The plugin Thinking option, last in the order the owner agreed (after the client gaps); flint needs it as a plugin
