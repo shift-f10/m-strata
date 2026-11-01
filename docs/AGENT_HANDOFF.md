@@ -280,6 +280,26 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### 2026-11-01 z99 (the owner's Azure VM; owner-directed)
+
+Start at boot vetted on a real Linux install (the owner: "Have it start automatically with systemd and default Gemma 4",
+"use this vm to test and vet the boot features"); before this, `install.sh --boot` was proven only under WSL's systemd.
+- **The install:** the VM's plugins install (Ubuntu 22.04, a T4, 4 vCPUs, 27 GiB RAM) rebuilt from plugins fbe33b81 with
+  z98's CMake fix: `install.sh --yes --with email,search,window,tui --debugging --ggml-dir <its llama.cpp> --boot system`
+  into an empty folder where the old install had been (it moved aside, its data/ moved in; the installer's own empty
+  data/ set aside). The build reused the old build trees: about 22 minutes. The installer found the SearXNG it had set up
+  before and left it running.
+- **The unit:** /etc/systemd/system/m-strata.service as written (User and Group the owner, the hardened rows, data/
+  the only writable path), enabled. Started, the server read the moved data folder as before (both cards, the owner's
+  remote clients), and Settings said "The server starts at boot, as the system service m-strata (install.sh --boot
+  system)".
+- **The pin:** `POST /v1/strata/models/pin {"name": "gemma-4-26B-A4B-it-Q8_0"}` wrote models.start; a restart started
+  Gemma 4 with the server ("is pinned: it starts with the server").
+- **A reboot:** the service was active 9 s after boot, started Gemma 4 at once, and it ran about 7 minutes later; the
+  Monitor read the GPU (15.9 GB of VRAM, no note - z97's sampler), and the journal held no engine error.
+- **Left on the VM:** the old install, the dev tree before the update, and the first build's folder, each moved aside
+  (nothing deleted).
+
 ### 2026-11-01 z98 (Windows box, the owner's Azure VM; owner-directed)
 
 z95's Qwen3.6 copy on Linux: the first Linux build of it (the owner's VM, updating its install) stopped at the engine's
