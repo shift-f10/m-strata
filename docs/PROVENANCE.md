@@ -449,7 +449,11 @@ sources (owner: "it should be in its own library so they don't collide"):
   `CMakeLists.txt`, which ends with our one `include(cmake/multiengine.cmake)`. The library is upstream's `strata`
   target's program (`src/program/generate.cpp`, not edited) compiled with that target's libraries, definitions and
   flags, its `main` renamed and exported (`engine/src/multiengine/strata_family.cpp`); upstream's own `strata.exe`
-  is still built beside it. The tree is written by `engine/src/multiengine/sync_upstream.py` from a local clone's git
+  is still built beside it. One of those libraries is ours instead (2026-11-01): the Qwen3.6 engine,
+  `multiengine_qwen35`, is upstream's `src/qwen35/q36_engine.cu` (the file itself unchanged) with a load-progress line
+  (`engine/src/multiengine/q36_progress.hpp`) and upstream's own `advise_willneed` read-ahead put in at configure time
+  by `engine/cmake/multiengine_qwen35.cmake`, each at a line that must be in upstream's file exactly once (a sync that
+  moves one stops the configure, naming it); upstream's `strata` and `strata-q36` executables keep `strata_qwen35`. The tree is written by `engine/src/multiengine/sync_upstream.py` from a local clone's git
   objects (`G:\Strata`; its working tree is not touched). MIT, "Copyright (c) 2026 Niko1221 and the Strata
   contributors". Before 2026-10-27 `engine/` held upstream `v0.2.4.2` (`dfa3f402`, engine 0.1.49.2) with our edits in
   13 of its files (Gemma 4's generalisations, the GLM and Gemma 4 family switches, a crash filter); those edits now

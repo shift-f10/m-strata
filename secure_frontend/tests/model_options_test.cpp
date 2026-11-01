@@ -187,10 +187,10 @@ bool engine_accepts(const secure_frontend::EngineArgumentsProfile profile, const
 }
 
 void option_tables_per_profile() {
-  // low_ram since 2026-10-31 (upstream's low-RAM mode)
+  // low_ram since 2026-10-31 (upstream's low-RAM mode); vram_reserve since 2026-11-01 (upstream setup's --vram-reserve-mib)
   expect(names_of(EngineProfile::qwen) == Strings{"max_context", "kv", "kv_resident", "kv_grow", "mtp", "spec", "spec_min_p",
-                                                  "expert_cache", "prefill", "low_ram", "thinking", "temperature", "top_p", "top_k",
-                                                  "min_p", "vision", "answer_minutes", "hot", "web_search", "gpus"},
+                                                  "expert_cache", "prefill", "low_ram", "vram_reserve", "thinking", "temperature",
+                                                  "top_p", "top_k", "min_p", "vision", "answer_minutes", "hot", "web_search", "gpus"},
          "the qwen options in display order: " + joined(names_of(EngineProfile::qwen)));
   // mtp since 2026-10-28 (the owner: "gemma4 has an mtp ... make sure we work that mtp in our gemma engine")
   expect(names_of(EngineProfile::gemma4) == Strings{"max_context", "chunk", "expert_vram", "mtp", "spec", "spec_min_p", "thinking",
@@ -803,7 +803,7 @@ void controlled_flags_listed() {
   };
   const auto qwen = as_strings(EngineProfile::qwen);
   expect(qwen == Strings{"--max-context", "--rope-scaling", "--rope-scale", "--kv", "--kv-resident", "--kv-grow", "--spec",
-                         "--spec-min-p", "--expert-cache", "--prefill"},
+                         "--spec-min-p", "--expert-cache", "--prefill", "--vram-reserve-mib", "--expert-vram"},
          "the qwen option-controlled flags: " + joined(qwen));
   expect(std::find(qwen.begin(), qwen.end(), "--mtp") == qwen.end(), "--mtp is the card's, not an option's");
   const auto gemma = as_strings(EngineProfile::gemma4);
@@ -1246,6 +1246,33 @@ void low_ram_writes_the_engines_flag() {
          "the strata engine's argument rules take both");
 }
 
+// VRAM kept free (owner 2026-11-01, the Azure VM's T4: "it also may need low vram mode"): upstream setup's
+// --vram-reserve-mib, MiB left for other programs (Off: none). A Qwen3.8 pack runs the strata core, whose own flag it
+// is; a Qwen3.6 card's engine has none, so the launcher works out the experts' share from the GPU as upstream's setup does
+// (the VRAM less 3 GiB and the reserve) and the start writes that as --expert-vram GiB. A card that lists it may not fix
+// either flag.
+void vram_reserve_writes_the_engines_share() {
+  const auto* spec = secure_frontend::find_model_option(EngineProfile::qwen, "vram_reserve");
+  expect(spec != nullptr && spec->kind == ModelOptionKind::integer && spec->minimum == 0 && spec->zero_label == "Off" &&
+             std::vector<std::int64_t>(spec->values.begin(), spec->values.end()) ==
+                 std::vector<std::int64_t>{0, 512, 1024, 1536, 2048, 3072, 4096, 6144, 8192},
+         "qwen vram_reserve: MiB, Off and upstream-sized steps");
+  expect(secure_frontend::find_model_option(EngineProfile::gemma4, "vram_reserve") == nullptr, "only the Qwen engine's cards have it");
+  expect(secure_frontend::option_flags(EngineProfile::qwen, "vram_reserve") ==
+             std::vector<std::string_view>{"--vram-reserve-mib", "--expert-vram"},
+         "the flags it owns");
+  const auto written = [](const secure_frontend::ModelOptionValue& value) {
+    auto draft = draft_with_args({"--mtp", "2"});
+    secure_frontend::apply_option_values(EngineProfile::qwen, ModelOptionValues{{"vram_reserve", value}}, draft);
+    return args_of(draft);
+  };
+  expect(written(std::int64_t{0}) == Strings{"--mtp", "2"}, "Off writes nothing: " + joined(written(std::int64_t{0})));
+  expect(written(std::int64_t{2048}) == Strings{"--mtp", "2", "--vram-reserve-mib", "2048"},
+         "MiB: the strata core's own flag: " + joined(written(std::int64_t{2048})));
+  expect(written(11.5) == Strings{"--mtp", "2", "--expert-vram", "11.5"}, "a resolved share: --expert-vram GiB: " + joined(written(11.5)));
+  expect(written(12.0) == Strings{"--mtp", "2", "--expert-vram", "12"}, "a whole GiB: " + joined(written(12.0)));
+}
+
 void the_vision_option_writes_the_encoder_rows() {
   const auto* spec = secure_frontend::find_model_option(EngineProfile::qwen, "vision");
   expect(spec != nullptr && spec->kind == ModelOptionKind::choice && spec->choices.size() == 3U && spec->choices[0] == "off" &&
@@ -1351,6 +1378,7 @@ int main(int argc, char** argv) {
       {"the_vision_option_writes_the_encoder_rows", the_vision_option_writes_the_encoder_rows},
       {"gpus_choose_the_cards_a_model_runs_on", gpus_choose_the_cards_a_model_runs_on},
       {"low_ram_writes_the_engines_flag", low_ram_writes_the_engines_flag},
+      {"vram_reserve_writes_the_engines_share", vram_reserve_writes_the_engines_share},
       {"gemma4_mtp_off_drops_the_mtp_file", gemma4_mtp_off_drops_the_mtp_file},
   }, failures);
 }

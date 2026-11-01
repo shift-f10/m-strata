@@ -144,8 +144,10 @@ void build_section(std::string& out, const std::optional<EngineBuild>& build) {
     out += "The engine folder has no build record (make writes engine/build.json).\n";
     return;
   }
-  out += "- Built " + build->built + " from commit " + build->commit + "\n";
-  out += "- ggml " + build->ggml + ", GPU targets " + build->cuda_arch + "\n";
+  // a build from a copy without its git history (an archive) records no commit: unknown, not a blank
+  const auto known = [](const std::string& value) { return value.empty() ? std::string{"unknown"} : value; };
+  out += "- Built " + known(build->built) + " from commit " + known(build->commit) + "\n";
+  out += "- ggml " + known(build->ggml) + ", GPU targets " + known(build->cuda_arch) + "\n";
   out += "- Features: " + (build->features.empty() ? std::string{"none"} : joined(build->features, ", ")) + "\n";
   out += "- Engines:\n";
   for (const auto& engine : build->engines) {

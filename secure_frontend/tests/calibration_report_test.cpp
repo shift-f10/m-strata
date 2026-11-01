@@ -94,6 +94,17 @@ void the_report_says_what_failed_and_on_what_hardware() {
          "the GPU list stands in, and a missing build record is said: " + other);
 }
 
+// A build made from a copy without its git history (an archive) records no commit, nor perhaps the ggml one: the report
+// says unknown rather than a blank (the owner's VM report, 2026-11-01: "Built ... from commit " and nothing after it).
+void a_build_without_its_commit_says_unknown() {
+  auto report = sample();
+  report.machine.build->commit.clear();
+  report.machine.build->ggml.clear();
+  const auto text = secure_frontend::render_calibration_report(report);
+  expect(has(text, "- Built 2026-10-30T01:12:21Z from commit unknown\n"), "the commit says unknown: " + text);
+  expect(has(text, "- ggml unknown, GPU targets 89-real\n"), "the ggml commit says unknown: " + text);
+}
+
 // A failed trial is one whose failure is set; a report is made only then.
 void a_report_is_made_only_when_a_trial_failed() {
   auto report = sample();
@@ -192,6 +203,7 @@ int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"the_report_says_what_failed_and_on_what_hardware", the_report_says_what_failed_and_on_what_hardware},
       {"a_report_is_made_only_when_a_trial_failed", a_report_is_made_only_when_a_trial_failed},
+      {"a_build_without_its_commit_says_unknown", a_build_without_its_commit_says_unknown},
       {"paths_are_shortened", paths_are_shortened},
       {"nvidia_smi_report_lines_are_read", nvidia_smi_report_lines_are_read},
       {"the_report_file_name_is_safe", the_report_file_name_is_safe},

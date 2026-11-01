@@ -89,6 +89,9 @@ constexpr std::array<std::int64_t, 11> kQwenContexts{4096, 8192, 16384, 32768, 6
                                                      262144, 393216, 524288, 786432, 1048576};
 constexpr std::array<std::int64_t, 7> kGemmaContexts{4096, 8192, 16384, 32768, 65536, 131072, 262144};
 constexpr std::array<std::int64_t, 7> kKvResidentCells{0, 20480, 32768, 65536, 131072, 262144, 524288};
+// VRAM kept free (MiB, upstream setup's --vram-reserve-mib): Off, then steps up to 8 GiB (a GPU picture encoder takes
+// upstream's 700, a desktop or another program a few GiB)
+constexpr std::array<std::int64_t, 9> kVramReserveMib{0, 512, 1024, 1536, 2048, 3072, 4096, 6144, 8192};
 // Qwen's trained positions: past them a start adds YaRN with factor context / 262,144, upstream's
 // own setup rule (docs/INSTALL.md "How much context?"; generate.cpp's --yarn-orig-ctx default).
 constexpr std::int64_t kQwenTrainedContext = 262144;
@@ -147,7 +150,7 @@ constexpr ModelOptionSpec kHot =
 // draft must reach, core/mtp.cpp:1689); --expert-cache :2541-2544 (auto or a count of expert blobs
 // in VRAM, >= -1 :3304; at most the 48 x 512 experts there are, core/geometry.hpp:25/:53);
 // --prefill :2558-2565 (auto or a chunk of N prompt tokens; auto's largest is 32,768, :2564).
-constexpr std::array<ModelOptionSpec, 20> kQwenOptions{{
+constexpr std::array<ModelOptionSpec, 21> kQwenOptions{{
     listed(integer_option("max_context", "Context length",
                           "Tokens of context the engine allocates; past the trained 256K the engine stretches the model with "
                           "YaRN rope scaling (experimental, upstream's own rule)",
@@ -174,6 +177,15 @@ constexpr std::array<ModelOptionSpec, 20> kQwenOptions{{
                   "auto decides by this PC's RAM and GPU (upstream's rule), on always, resident keeps the ones the GPU does not "
                   "hold in RAM, mmap reads them through the file cache, off keeps them all in RAM",
                   kQwenLowRam),
+    // owner 2026-11-01 (the Azure VM's T4: "it also may need low vram mode"): upstream setup's --vram-reserve-mib - the
+    // strata core's own flag for a pack; a Qwen3.6 card's engine has none, so the launcher gives its experts the GPU's
+    // VRAM less 3 GiB and this (--expert-vram), setup.py's rule for that family
+    listed(integer_option("vram_reserve", "VRAM kept free",
+                          "MiB of VRAM left for other programs, so the model takes that much less (Off: the engine uses what "
+                          "it finds free); a Qwen3.6 model's experts then get the card's VRAM less 3 GiB and this, as upstream's "
+                          "setup gives them",
+                          0, 65536),
+           kVramReserveMib, "Off"),
     choice_option("thinking", "Thinking", "The thinking level for requests that name none", kQwenThinking),
     kTemperature,
     kTopP,
@@ -333,9 +345,9 @@ constexpr std::array<ModelOptionSpec, 9> kMinimaxOptions{{
 
 constexpr std::array<std::string_view, 1> kDeepseekFlags{"--max-context"};
 constexpr std::array<std::string_view, 2> kMinimaxFlags{"--max-context", "--kv-cache"};
-constexpr std::array<std::string_view, 10> kQwenFlags{"--max-context", "--rope-scaling", "--rope-scale",   "--kv",
+constexpr std::array<std::string_view, 12> kQwenFlags{"--max-context", "--rope-scaling", "--rope-scale",   "--kv",
                                                       "--kv-resident", "--kv-grow",      "--spec",         "--spec-min-p",
-                                                      "--expert-cache", "--prefill"};
+                                                      "--expert-cache", "--prefill",     "--vram-reserve-mib", "--expert-vram"};
 constexpr std::array<std::string_view, 3> kGemmaFlags{"--max-context", "--chunk", "--expert-vram"};   // flint's too
 // Gemma 4's: flint's, and its MTP drafter's window and confidence (owner 2026-10-28)
 constexpr std::array<std::string_view, 5> kGemma4Flags{"--max-context", "--chunk", "--expert-vram", "--spec", "--spec-min-p"};
@@ -734,6 +746,11 @@ void write_option(const EngineProfile profile, const std::string_view name, cons
     // upstream's low-RAM mode: the variant a start resolved (auto and on are resolved by the launcher, low_ram.hpp)
     if (*text == "mmap") flags.emplace_back("--mmap-experts");
     if (*text == "resident") flags.emplace_back("--resident-experts");
+  } else if (name == "vram_reserve") {
+    // upstream setup's --vram-reserve-mib (Off: none): the strata core's own flag; a Qwen3.6 card's engine has none, so
+    // its start carries the experts' share the launcher worked out from the GPU instead (GiB, launch_values)
+    if (integer != nullptr && *integer > 0) flag_with("--vram-reserve-mib", std::to_string(*integer));
+    if (decimal != nullptr) flag_with("--expert-vram", decimal_text(std::round(*decimal * 10.0) / 10.0));
   } else if (name == "chunk" && integer != nullptr) flag_with("--chunk", std::to_string(*integer));
   else if (name == "expert_vram" && integer != nullptr) flag_with("--expert-vram", std::to_string(*integer));  // auto: no flag
   else if (name == "thinking" && text != nullptr) {
@@ -826,6 +843,7 @@ std::vector<std::string_view> option_flags(const EngineProfile profile, const st
   }
   if (profile == EngineProfile::minimax && name == "kv") return {"--kv-cache"};  // maya-mm3's own
   if (name == "low_ram") return {"--mmap-experts", "--resident-experts"};
+  if (name == "vram_reserve") return {"--vram-reserve-mib", "--expert-vram"};
   static constexpr std::array<std::pair<std::string_view, std::string_view>, 9> kFlags{{
       {"kv", "--kv"}, {"kv_resident", "--kv-resident"}, {"kv_grow", "--kv-grow"}, {"spec", "--spec"},
       {"spec_min_p", "--spec-min-p"}, {"expert_cache", "--expert-cache"}, {"prefill", "--prefill"}, {"chunk", "--chunk"},

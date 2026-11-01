@@ -280,6 +280,63 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### 2026-11-01 z95 (Windows box; owner-directed)
+
+The owner's Azure VM (T4 16 GB, 27.4 GiB RAM, a slow disk) failed a Qwen3.6-35B-A3B UD-Q4_K_XL calibration: the
+server's start limit (`limits.engine.ready_timeout_s`, 900 s) ended the engine while it was still copying about 17 GB
+of routed experts into RAM - 4.40 GiB of weights had taken 213.6 s (about 21 MB/s), and the engine said nothing after
+its context line. His notes: no KV type on the card (the Qwen3.6 engine has none: its cache is fp32; the log's "MMQ
+(int8)" is the prompt's expert arithmetic) and "it also may need low vram mode". He chose all three fixes; the
+workaround meanwhile is Settings, Longest model start, 3600 (a restart).
+- **VRAM kept free (the card option):** `vram_reserve`, upstream setup's `--vram-reserve-mib` (MiB; Off, 512 ... 8192),
+  in the Qwen table after `low_ram`. A Qwen card without `--pack` (the GGUF-direct path: Qwen3.6 and a matched custom
+  paste) is offered it, Off, unless its args fix `--expert-vram` or `--vram-reserve-mib` (`offer_vram_reserve`). Its
+  engine has no reserve flag, so `launch_values` turns a reserve into upstream setup's share for that family -
+  `max(VRAM - 3.0 - reserve / 1024, 0)` GiB of the card's first GPU (nvidia-smi's listing, the gpus option's first) to
+  one decimal - and the start writes `--expert-vram <GiB>` and says so; no GPU read: no flag, and the log says why. A
+  plain MiB value writes `--vram-reserve-mib` (the strata core's own flag, for a pack card that lists it).
+  `option_flags` and the controlled flags gain both flags.
+- **The engine's load progress and read-ahead:** upstream's files under engine/ stay upstream's (PROVENANCE), so
+  `engine/cmake/multiengine_qwen35.cmake` writes `<build>/multiengine/q36_engine.cu` at configure time from upstream's
+  `src/qwen35/q36_engine.cu` with 13 insertions, each at a line that must be there exactly once (else the configure
+  stops naming it): a line at most every 10 s while the weights are read and while the experts are placed
+  (`engine/src/multiengine/q36_progress.hpp`, `multiengine::LoadProgress`), and upstream's
+  `strata::platform::advise_willneed` before each tensor's GPU copy and each layer's expert copy (Linux and macOS; a
+  no-op on Windows and with `STRATA_READ_AHEAD=0`). `multiengine_qwen35` builds it with `strata_qwen35`'s settings and
+  `multiengine_strata` links it in its place; upstream's `strata` and `strata-q36` keep upstream's. sync_upstream.py
+  lists tests/multiengine as ours.
+- **The calibration report:** a build without its git history (the VM's, from an archive) says `from commit unknown`
+  (and unknown for any other blank build field) instead of a blank.
+- **Docs:** secure_frontend/README.md (the option), docs/PROVENANCE.md (the Qwen3.6 copy).
+- **Tests:** model options 1 (`vram_reserve_writes_the_engines_share`), the launcher 1 (`a_qwen36_card_keeps_vram_free`:
+  offered Off on a Qwen3.6 card from its GGUF; 1536 MiB on a 16 GiB GPU starts with `--expert-vram 11.5` and says so; a
+  reserve past an 8 GiB card gives 0; no GPU read, no flag; a Qwen3.8 pack card is not offered it), the report 1
+  (`a_build_without_its_commit_says_unknown`), the engine 1 (`multiengine_q36_progress_test`: the line's timing and text,
+  and the generated copy holds each insertion); the Qwen tables' tests (21 options, the two flags) and
+  `cards_offer_their_models_recommended_sampling` (its bare Qwen cards now list `vram_reserve=0`).
+- **Proof:** RED - the report case before the fix; the option, table and launcher cases before the option (the launcher's
+  with the launcher change set aside: no option, no flag, no line); the engine test with its line stubbed out. GREEN.
+  - GPU (this PC's RTX 4080 SUPER, Qwen3.6-35B-A3B Q8_0, hybrid: 41-42 of 256 experts per layer in VRAM):
+    `multiengine.exe --native <it> --bench-pp 512 --bench-tg 32 --mtp 2` printed "placing the routed experts: 10 of 41
+    layers (7.97 of 32.67 GiB) in 10 s" and one more, placed them in 26.9 s, and ran pp512 366 / tg32 38-40 tok/s (the
+    same as with the engine's insertions made in upstream's file first: 367 / 34-37). The generated copy differs from
+    upstream's file by exactly the insertions; the sync's dry run against v0.2.6 lists q36_engine.cu as upstream's.
+    The read-ahead's effect needs the VM (Linux, its slow disk): not measured here.
+  - Windows (MSVC, the shares tree, everything built): 1565 of 1569 before the sampling test's fix - the two
+    release-only cases, `switch_waits_for_the_generation_then_swaps` (a known flake) and that test; after it the four
+    touched suites 89/89. The engine tree (nvcc, MSVC): the copy, multiengine_strata and the test built, its
+    multiengine tests 2/2.
+  - Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc and full-clang 1616/1621 (the two release-only
+    cases, the sampling test; net01_ipv6 and egress pass alone), window-gcc 1574/1576 (egress alone; the sampling test);
+    after the fix the four suites 89/89 on full-gcc, full-clang and window-gcc.
+  - main (cherry-picked from plugins: the option in model_options.cpp's Qwen table, where main keeps it; the engine
+    test in a block of its own, main having no plugin tests): Windows main-check (the window on) 1459/1463 (the two Maya
+    parity scans - maya-ref is not checked out - and the two release-only cases); Linux main-gcc 1509/1515, main-clang
+    1510/1515, main-window-gcc 1465/1470 (the Maya scans, the release-only pair in the debug trees; egress, net01_ipv6
+    and net01_workers pass alone); main's engine CMake configured in a scratch tree wrote the same copy as plugins'
+    and its test passed. The engine test with g++ and clang++
+    (-Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror).
+
 ### 2026-10-31 z94 (Windows box; owner-directed)
 
 The owner's external client's gaps, L4: an inference-only key. The client: "One bearer currently authorizes
