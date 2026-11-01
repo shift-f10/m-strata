@@ -880,6 +880,40 @@ void an_engine_plugins_gguf_makes_its_card() {
   expect(off_refused != nullptr && off_refused->message.find("acme3moe") != std::string::npos, "a family that is not on: refused by its architecture");
 }
 
+// A plugin whose manifest declares Thinking (its levels its renderer's): its GGUF's card offers it at its default, and a
+// start writes the level as the renderer's family does (flint's on: reasoning.effort high).
+void an_engine_plugins_card_offers_its_thinking() {
+  std::string thinks = kAcmeEngine;
+  const std::string kv = R"({"name": "kv", "kind": "choice", "label": "KV cache", "flag": "--kv", "choices": ["f16", "q8"], "default": "q8"})";
+  thinks.replace(thinks.find(kv), kv.size(), kv + R"(, {"name": "thinking", "kind": "choice", "label": "Thinking", "default": "on"})");
+  secure_frontend::set_plugin_families({secure_frontend::PluginFamilySource{engine_plugin("acme3", "Acme-3", thinks), std::string(64, 'a')}});
+  const auto folder = secure_frontend_test::make_scratch_directory();
+  const auto made = secure_frontend::card_for_gguf(metadata("acme3"),
+                                                   {.folder = folder, .file = "acme3.gguf", .engine = folder / "multiengine.exe", .source = "folder"});
+  const auto* text = std::get_if<secure_frontend::CardText>(&made);
+  expect(text != nullptr, "an acme3 GGUF makes a card");
+  if (text != nullptr) {
+    const auto parsed = secure_frontend::parse_model_card(text->json, folder);
+    const auto* card = std::get_if<secure_frontend::ModelCard>(&parsed);
+    const secure_frontend::ModelOptionLimits* thinking = nullptr;
+    if (card != nullptr) {
+      for (const auto& limit : card->options) {
+        if (limit.spec != nullptr && limit.spec->name == "thinking") thinking = &limit;
+      }
+    }
+    expect(thinking != nullptr && std::get<std::string>(thinking->default_value) == "on" &&
+               thinking->choices == std::vector<std::string>{"off", "on"},
+           "its card offers Thinking, on by its manifest, off or on: " + text->json);
+    if (card != nullptr) {
+      secure_frontend::FrontendConfigDraft draft = secure_frontend::card_draft(secure_frontend::FrontendConfigDraft{}, *card,
+                                                                               secure_frontend::default_option_values(*card));
+      const auto effort = draft.entries.find("reasoning.effort");
+      expect(effort != draft.entries.end() && std::get<std::string>(effort->second.value) == "high", "a start thinks: reasoning.effort high");
+    }
+  }
+  secure_frontend::set_plugin_families({});
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -901,5 +935,6 @@ int main(int argc, char** argv) {
       {"deleting_removes_only_the_model_files", deleting_removes_only_the_model_files},
       {"a_cards_model_file_is_the_gguf_it_runs", a_cards_model_file_is_the_gguf_it_runs},
       {"an_engine_plugins_gguf_makes_its_card", an_engine_plugins_gguf_makes_its_card},
+      {"an_engine_plugins_card_offers_its_thinking", an_engine_plugins_card_offers_its_thinking},
   }, failures);
 }

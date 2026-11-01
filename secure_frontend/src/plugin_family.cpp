@@ -43,6 +43,7 @@ PluginFamily::PluginFamily(const PluginManifest& manifest, std::string library_s
       continue;
     }
     options_.push_back(spec_of(option));
+    if (option.flag.empty()) continue;   // its Thinking option: no flag (the level is written as its renderer's family does)
     if (std::find(flags_.begin(), flags_.end(), option.flag) == flags_.end()) flags_.emplace_back(option.flag);
   }
   const auto server = [this](const std::string_view name) {
@@ -57,11 +58,14 @@ PluginFamily::PluginFamily(const PluginManifest& manifest, std::string library_s
   if (engine_.web_search) server("web_search");
   if (devices != nullptr) options_.push_back(spec_of(*devices));
 
-  // the renderer's own family says whether a request's reasoning_effort means anything to it
+  // the renderer's own family says whether a request's reasoning_effort means anything to it, and how a Thinking level
+  // is written (reasoning.effort)
   bool effort = true;
+  ThinkingWrite thinking = ThinkingWrite::verbatim;
   for (const auto& built_in : family_descriptors()) {
     if (built_in.chat_profile == engine_.chat) {
       effort = built_in.per_request_reasoning_effort;
+      thinking = built_in.thinking_write;
       break;
     }
   }
@@ -76,6 +80,7 @@ PluginFamily::PluginFamily(const PluginManifest& manifest, std::string library_s
   family.tokenizer_mode = engine_.tokenizer_mode;
   family.tokenizer_source = engine_.tokenizer_source;
   family.per_request_reasoning_effort = effort;
+  family.thinking_write = thinking;
   // it composes no qwen tails, so qwen's launch rows would do nothing: refused, in its own words
   family.refuses_qwen_launch_rows = true;
   family.engine_words = engine_words_;

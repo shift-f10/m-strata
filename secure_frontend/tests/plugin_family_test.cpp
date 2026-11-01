@@ -209,6 +209,88 @@ void its_cards_offer_its_options_then_the_servers() {
          "the least plugin: the server's options only (no top_k or min_p, no search, no GPUs): " + joined(names_of(beta.descriptor())));
 }
 
+// A plugin's Thinking option (the owner's agreed order 2026-10-31, after the client gaps): an option named thinking, a
+// choice with no flag - its engine reads no thinking flag; the server writes the level for requests that name none as its
+// chat renderer's own family does (reasoning.effort: flint's and Gemma 4's off or on as none or high, Qwen's levels as
+// they are). Its choices are among that family's (all of them when it lists none) and it names its default. A flag, another
+// kind, a level the renderer lacks, no default, or a renderer with no thinking levels (glm53, raon1) is refused by name.
+Strings args_of(const secure_frontend::FrontendConfigDraft& draft);   // (below, with the flags' test)
+
+void a_plugin_thinks_as_its_renderer() {
+  const std::string arguments = R"("arguments": [{"flag": "--max-context", "value": "integer", "min": 1, "max": 65536}])";
+  const auto with_options = [&arguments](const std::string& chat, const std::string& options) {
+    std::string engine = kBetaEngine;
+    engine.replace(engine.find(arguments), arguments.size(), arguments + R"(, "options": )" + options);
+    const std::string qwen = R"("chat": "qwen")";
+    engine.replace(engine.find(qwen), qwen.size(), R"("chat": ")" + chat + "\"");
+    return secure_frontend::parse_plugin_manifest(manifest_text("beta", "Beta", engine), "beta");
+  };
+  const auto reason_of = [](const std::variant<PluginManifest, std::string>& parsed) {
+    const auto* reason = std::get_if<std::string>(&parsed);
+    return reason != nullptr ? *reason : std::string{"(accepted)"};
+  };
+  // Qwen's renderer: every level when it lists none
+  const auto qwen = with_options("qwen", R"([{"name": "thinking", "kind": "choice", "label": "Thinking", "default": "medium"}])");
+  expect(std::holds_alternative<PluginManifest>(qwen), "a Qwen-rendered plugin's thinking reads: " + reason_of(qwen));
+  if (const auto* manifest = std::get_if<PluginManifest>(&qwen)) {
+    const auto& option = manifest->engine->options.front();
+    expect(option.flag.empty() && option.choices == Strings{"none", "low", "medium", "high"} && option.default_value == std::string{"medium"},
+           "no flag, the renderer's levels, its default");
+  }
+  // flint's renderer, its two levels: the family lists it with them, writes reasoning.effort as flint does, owns no flag
+  std::string engine = kAcmeEngine;
+  const std::string kv = R"({"name": "kv", "kind": "choice", "label": "KV cache", "flag": "--kv", "choices": ["f16", "q8"], "default": "q8"})";
+  engine.replace(engine.find(kv), kv.size(),
+                 kv + R"(, {"name": "thinking", "kind": "choice", "label": "Thinking", "help": "Whether it thinks.", "choices": ["off", "on"], "default": "on"})");
+  if (std::holds_alternative<PluginManifest>(qwen)) {
+    secure_frontend::set_plugin_families({PluginFamilySource{manifest_of("acme3", "Acme-3", engine), kSha},
+                                          PluginFamilySource{std::get<PluginManifest>(qwen), kSha}});
+  }
+  const auto* acme = secure_frontend::family_named("acme3");
+  const auto* beta = secure_frontend::family_named("beta");
+  expect(acme != nullptr && beta != nullptr, "both families run");
+  if (acme != nullptr && beta != nullptr) {
+    const auto* spec = secure_frontend::find_model_option(acme->profile, "thinking");
+    expect(spec != nullptr && spec->kind == ModelOptionKind::choice && Strings(spec->choices.begin(), spec->choices.end()) == Strings{"off", "on"},
+           "its card offers Thinking, off or on");
+    expect(std::find(acme->option_controlled_flags.begin(), acme->option_controlled_flags.end(), std::string_view{}) ==
+                   acme->option_controlled_flags.end() &&
+               secure_frontend::option_flags(acme->profile, "thinking").empty(),
+           "it owns no flag");
+    expect(acme->thinking_write == secure_frontend::ThinkingWrite::on_off && beta->thinking_write == secure_frontend::ThinkingWrite::verbatim,
+           "each writes as its renderer's family");
+    const auto effort = [](const EngineProfile profile, const std::string& level) {
+      secure_frontend::FrontendConfigDraft draft;
+      secure_frontend::apply_option_values(profile, ModelOptionValues{{"thinking", level}}, draft);
+      const auto found = draft.entries.find("reasoning.effort");
+      const auto* text = found == draft.entries.end() ? nullptr : std::get_if<std::string>(&found->second.value);
+      return (text != nullptr ? *text : std::string{"(unset)"}) + (args_of(draft).empty() ? "" : " + flags");
+    };
+    expect(effort(acme->profile, "on") == "high" && effort(acme->profile, "off") == "none",
+           "flint's on and off: high and none, no flag: " + effort(acme->profile, "on") + ", " + effort(acme->profile, "off"));
+    expect(effort(beta->profile, "low") == "low", "Qwen's level as it is: " + effort(beta->profile, "low"));
+  }
+  secure_frontend::set_plugin_families({});
+  // what is refused, in its words
+  const std::string option = R"({"name": "thinking", "kind": "choice", "label": "Thinking", "default": "on")";
+  const auto refusal = [&](const std::string& chat, const std::string& options) { return reason_of(with_options(chat, options)); };
+  const auto flagged = refusal("flint", "[" + option + R"(, "flag": "--max-context"}])");
+  expect(flagged == "engine.options: thinking takes no flag: the server writes the level as its flint renderer does", "a flag: " + flagged);
+  const auto kind = refusal("flint", R"([{"name": "thinking", "kind": "boolean", "label": "Thinking", "default": true}])");
+  expect(kind == "engine.options: thinking's kind must be choice", "another kind: " + kind);
+  const auto foreign = refusal("flint", "[" + option + R"(, "choices": ["off", "high"]}])");
+  expect(foreign == "engine.options: thinking's choices must be among the flint renderer's levels (off, on), each once",
+         "a level flint lacks: " + foreign);
+  const auto bare = refusal("flint", R"([{"name": "thinking", "kind": "choice", "label": "Thinking"}])");
+  expect(bare == "engine.options: thinking needs a default (the level for requests that name none)", "no default: " + bare);
+  const auto bound = refusal("flint", "[" + option + R"(, "min": 1}])");
+  expect(bound == "engine.options: thinking takes only a label, help, choices and default", "a bound: " + bound);
+  const auto other = refusal("flint", R"([{"name": "thinking", "kind": "choice", "label": "Thinking", "default": "medium"}])");
+  expect(other == "engine.options: thinking's default is not one it takes", "a default it does not offer: " + other);
+  const auto glm = refusal("glm53", "[" + option + "}]");
+  expect(glm == "engine.options: thinking: the glm53 renderer has no thinking levels", "GLM's renderer: " + glm);
+}
+
 // A declared option may not take a server option's name: its cards have that one already.
 void a_manifest_may_not_take_a_server_options_name() {
   for (const std::string name : {"temperature", "top_p", "top_k", "min_p", "answer_minutes", "hot", "web_search"}) {
@@ -601,6 +683,7 @@ int main(int argc, char** argv) {
       {"a_manifest_may_not_take_a_server_options_name", a_manifest_may_not_take_a_server_options_name},
       {"the_server_finds_the_families_it_runs", the_server_finds_the_families_it_runs},
       {"its_options_write_their_flags", its_options_write_their_flags},
+      {"a_plugin_thinks_as_its_renderer", a_plugin_thinks_as_its_renderer},
       {"its_engine_takes_only_its_flags", its_engine_takes_only_its_flags},
       {"a_card_names_a_plugin_family", a_card_names_a_plugin_family},
       {"its_card_starts_through_the_launcher", its_card_starts_through_the_launcher},

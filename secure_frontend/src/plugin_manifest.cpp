@@ -7,6 +7,7 @@
 #include <charconv>
 #include <initializer_list>
 #include <limits>
+#include <span>
 #include <system_error>
 #include <tuple>
 #include <utility>
@@ -547,7 +548,66 @@ std::variant<PluginArgument, std::string> parse_engine_argument(const JsonValue&
   return argument;
 }
 
-// One "options" entry, on a declared flag; why not, naming the option.
+// The Thinking option: a choice with no flag - its engine reads none; the server writes the level for requests that name
+// none as its renderer's own family does (model_options' thinking write, the family's ThinkingWrite) - its choices among
+// that family's levels (all of them when it lists none), its default named. Why not, naming it.
+std::variant<PluginEngineOption, std::string> parse_thinking_option(const JsonValue& item, const PluginEngine& engine,
+                                                                    const std::string& where) {
+  PluginEngineOption option;
+  option.name = "thinking";
+  const auto kind = named(kOptionKinds, member(item, "kind"));
+  if (!kind || *kind != ModelOptionKind::choice) return where + "'s kind must be choice";
+  option.kind = *kind;
+  auto label = text_of(item, "label", 1U, 64U);
+  if (label.index() == 1U) return where + "'s " + std::get<1>(label);
+  option.label = std::get<0>(std::move(label));
+  if (member(item, "help") != nullptr) {
+    auto help = text_of(item, "help", 0U, 200U);
+    if (help.index() == 1U) return where + "'s " + std::get<1>(help);
+    option.help = std::get<0>(std::move(help));
+  }
+  const std::string renderer{name_in(kRenderers, engine.chat)};
+  if (member(item, "flag") != nullptr) return where + " takes no flag: the server writes the level as its " + renderer + " renderer does";
+  if (member(item, "min") != nullptr || member(item, "max") != nullptr || member(item, "values") != nullptr) {
+    return where + " takes only a label, help, choices and default";
+  }
+  std::span<const std::string_view> levels;
+  for (const auto& family : family_descriptors()) {
+    if (family.chat_profile != engine.chat) continue;
+    for (const auto& spec : family.options) {
+      if (spec.name == "thinking") levels = spec.choices;
+    }
+    break;
+  }
+  if (levels.empty()) return where + ": the " + renderer + " renderer has no thinking levels";
+  if (const JsonValue* choices = member(item, "choices")) {
+    std::string named_levels;
+    for (const auto level : levels) named_levels += (named_levels.empty() ? "" : ", ") + std::string{level};
+    const std::string bad = where + "'s choices must be among the " + renderer + " renderer's levels (" + named_levels + "), each once";
+    const auto* list = choices->if_array();
+    if (list == nullptr || list->empty()) return bad;
+    for (const auto& each : *list) {
+      const std::string* text = each.if_string();
+      if (text == nullptr || std::find(levels.begin(), levels.end(), *text) == levels.end() ||
+          std::find(option.choices.begin(), option.choices.end(), *text) != option.choices.end()) {
+        return bad;
+      }
+      option.choices.push_back(*text);
+    }
+  } else {
+    for (const auto level : levels) option.choices.emplace_back(level);
+  }
+  const JsonValue* fallback = member(item, "default");
+  if (fallback == nullptr) return where + " needs a default (the level for requests that name none)";
+  const std::string* text = fallback->if_string();
+  if (text == nullptr || std::find(option.choices.begin(), option.choices.end(), *text) == option.choices.end()) {
+    return where + "'s default is not one it takes";
+  }
+  option.default_value = *text;
+  return option;
+}
+
+// One "options" entry, on a declared flag (thinking: none); why not, naming the option.
 std::variant<PluginEngineOption, std::string> parse_engine_option(const JsonValue& item, const PluginEngine& engine) {
   if (auto problem = keys_problem(&item, "engine.options' entry",
                                   {"name", "kind", "label", "help", "flag", "min", "max", "values", "choices", "default"},
@@ -564,6 +624,7 @@ std::variant<PluginEngineOption, std::string> parse_engine_option(const JsonValu
   // (a plugin family's cards have the server's options after its own: plugin_family.hpp)
   if (server_card_option(*name) != nullptr) return "engine.options: " + *name + " is one of the server's own options (every card has it)";
   const std::string where = "engine.options: " + *name;
+  if (*name == "thinking") return parse_thinking_option(item, engine, where);
   PluginEngineOption option;
   option.name = *name;
   const auto kind = named(kOptionKinds, member(item, "kind"));

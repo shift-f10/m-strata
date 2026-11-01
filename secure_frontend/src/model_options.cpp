@@ -388,7 +388,7 @@ void write_plugin_option(const PluginEngine& engine, const PluginEngineOption& o
 void write_option(const EngineProfile profile, const std::string_view name, const ModelOptionValue& value, const bool draft_layer_on,
                   std::vector<std::string>& flags, FrontendConfigDraft& draft) {
   const auto& family = family_descriptor(profile);
-  if (family.plugin != nullptr) {
+  if (family.plugin != nullptr && name != "thinking") {   // (its Thinking option is written below, as every family's)
     if (const auto* declared = plugin_option(*family.plugin, name)) {
       write_plugin_option(*family.plugin, *declared, value, flags, draft);
       return;

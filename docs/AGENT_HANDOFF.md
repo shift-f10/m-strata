@@ -280,6 +280,30 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### 2026-11-01 z96 (Windows box; owner-directed, plugins only)
+
+The plugin Thinking option, last in the order the owner agreed (after the client gaps); flint needs it as a plugin
+(phase 7). Main has no engine plugins, so this is the plugins branch's alone.
+- **The manifest** (`parse_thinking_option`, plugin_manifest.cpp): an `engine.options` entry named `thinking` is a choice
+  with no flag - its engine reads none. Its choices are among the levels of its chat renderer's own built-in family
+  (that family's `thinking` option: flint's and Gemma 4's off and on, Qwen's and DeepSeek's none to high, MiniMax's auto
+  too), all of them when it lists none; it must name a default. A flag, another kind, a bound or values, a level the
+  renderer lacks, no default, or a renderer with no levels (glm53, raon1) is refused by name.
+- **The family** (plugin_family.cpp): the option is listed in the manifest's order and owns no flag; the family takes
+  its renderer family's `thinking_write` beside its `per_request_reasoning_effort`.
+- **The write** (model_options.cpp `write_option`): a plugin's `thinking` skips the declared-flag path and is written as
+  every family's - reasoning.effort, on_off as none or high, verbatim, or MiniMax's auto left unset.
+- **Its card:** plugin_card already writes each declared option with its default, so a GGUF's card offers it.
+- **Docs:** the plugin spec (the as-built options paragraph; the two "Not yet" lists).
+- **Tests:** plugin family 1 (`a_plugin_thinks_as_its_renderer`: a Qwen-rendered plugin's levels when it lists none;
+  flint's two on the family, no flag owned, on_off and verbatim writes - on high, off none, low low; each refusal's
+  words), card builder 1 (`an_engine_plugins_card_offers_its_thinking`: the GGUF's card offers it at "on", off or on, and
+  its draft says reasoning.effort high).
+- **Proof:** RED - the plugin case before the change (every thinking entry refused: "needs the flag it sets"), the card
+  case with the manifest's rule stubbed out (the same refusal). GREEN: Windows (MSVC, the shares tree, everything built,
+  no warnings) 1569/1571 (the two release-only cases); Linux (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings) full-gcc
+  and full-clang 1620/1623 (the release-only pair; egress passes alone), window-gcc 1577/1578 (egress alone).
+
 ### 2026-11-01 z95 (Windows box; owner-directed)
 
 The owner's Azure VM (T4 16 GB, 27.4 GiB RAM, a slow disk) failed a Qwen3.6-35B-A3B UD-Q4_K_XL calibration: the

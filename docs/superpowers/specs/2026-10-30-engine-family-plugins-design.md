@@ -193,7 +193,10 @@ plugin_manifest.hpp), its types those of the built-in families' descriptors:
   choice (with its choices). The server composes --native, --pack, --family, --family-sha256, --gpu and --serve
   itself, so none of them may be declared;
 - `options` (at most 24): each on a declared flag whose value it fits, within that flag's bounds, with the values or
-  choices it offers and a default; devices takes no flag (the server composes --gpu from it);
+  choices it offers and a default; devices takes no flag (the server composes --gpu from it), and neither does
+  `thinking` (2026-10-31): a choice among its renderer's own family's levels (all of them when it lists none; flint's
+  and Gemma 4's off and on, Qwen's and DeepSeek's none to high, MiniMax's auto too), with a default, which a start
+  writes as that family writes it (reasoning.effort) - a renderer with no levels (glm53, raon1) refuses it;
 - `sampling`: the recommended temperature, top_p, top_k, min_p;
 - `calibration`: whether it runs before the first start, the keep margin (at most 0.2), at most 4 steps over integer
   or fraction flags, each candidate a number within the flag's bounds or {cores}, {threads}, {cores/N}, {cores*N/M};
@@ -296,8 +299,8 @@ an engine plugin's manifest block and its library's SHA-256:
 - **A start, end to end** (`an_engine_plugins_card_starts_through_the_launcher`): the real server over the fake engine
   standing in for the launcher lists the card with its family and its options, starts it as `--family acme3
   --family-sha256 <its library's> --serve --max-context 32768 --native <gguf>`, and it answers and stops.
-- **Not yet** (then): cards from Add a model by architecture (the fourth part, below); a thinking option; a plugin's
-  downloads (phase 4).
+- **Not yet** (then): cards from Add a model by architecture (the fourth part, below); a thinking option (built
+  2026-11-01, `thinking` above); a plugin's downloads (phase 4).
 
 **As built (2026-10-31, phase 2's second step, fourth part): Add a model makes an engine plugin's card.**
 - **By its architecture** (`card_for_gguf`): a GGUF whose general.architecture none of the built-in families takes
@@ -312,8 +315,8 @@ an engine plugin's manifest block and its library's SHA-256:
   none fits), or that context within its bounds - and at most its default; then the GGUF's sampling (general.sampling.temp
   / top_p / top_k, shared with the built-ins' cards now) where the family offers the option. An option declared without
   a default is the card file's to add; its GPUs are the server's to offer, as on every card.
-- **Not yet**: its draft layer from the manifest's MTP key, its picture encoder, a thinking option, a plugin's downloads
-  (phase 4).
+- **Not yet**: its draft layer from the manifest's MTP key, its picture encoder, a plugin's downloads (phase 4). Its
+  Thinking option, when its manifest declares one, is on the card at its default like any declared option (2026-11-01).
 
 ### 6. Trust (decision 2)
 

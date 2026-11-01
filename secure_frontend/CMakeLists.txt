@@ -2362,6 +2362,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_raon1_pack_makes_a_raon1_card repointing_rewrites_only_the_folder delete_codes_are_one_time
         a_gemma4_card_runs_its_mtp_file repointing_moves_the_mtp_file_with_the_folder
         deleting_removes_only_the_model_files a_cards_model_file_is_the_gguf_it_runs an_engine_plugins_gguf_makes_its_card
+        an_engine_plugins_card_offers_its_thinking
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
     # The page's About (owner 2026-10-27): the engine build record, this PC's hardware, their JSON.
@@ -2429,7 +2430,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_model_cards secure_frontend_launch secure_frontend_strata_cli secure_frontend_calibration)
     secure_frontend_add_cases(secure_frontend_plugin_family_tests
         an_engine_plugin_makes_its_family its_cards_offer_its_options_then_the_servers a_manifest_may_not_take_a_server_options_name
-        the_server_finds_the_families_it_runs its_options_write_their_flags its_engine_takes_only_its_flags a_card_names_a_plugin_family
+        the_server_finds_the_families_it_runs its_options_write_their_flags a_plugin_thinks_as_its_renderer
+        its_engine_takes_only_its_flags a_card_names_a_plugin_family
         its_card_starts_through_the_launcher its_files_are_held_to_the_model_folders_rule its_calibration_is_its_manifests
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     secure_frontend_add_test_executable(secure_frontend_plugin_registry_tests tests/plugin_registry_test.cpp secure_frontend_plugins)
