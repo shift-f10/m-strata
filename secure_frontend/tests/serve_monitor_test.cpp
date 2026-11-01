@@ -432,6 +432,28 @@ void gpu_sampler_reads_a_fake_tool() {
   }
 }
 
+// Owner 2026-11-01 (his VM's Monitor had no GPU reading, its note "nvidia-smi stopped", while the model ran on the T4):
+// nvidia-smi --loop-ms had ended hours into the server's run, saying nothing, and the sampler never started it again. A
+// tool that ends is started again after a pause; meanwhile the note says it stopped and no reading is stale.
+void gpu_sampler_starts_a_stopped_tool_again() {
+  secure_frontend::GpuSampler sampler;
+  sampler.start({.executable = STRATA_FAKE_ENGINE_PATH, .arguments = {"--fake-nvidia-smi=2"}, .environment = {}, .insert_serve = false});
+  bool stopped = false;
+  for (int i = 0; i < 100 && !stopped; ++i) {
+    std::this_thread::sleep_for(50ms);
+    stopped = sampler.note().rfind("nvidia-smi stopped", 0) == 0 && !sampler.latest().has_value();
+  }
+  expect(stopped, "the tool ended: no reading, the note says so: " + sampler.note());
+  bool again = false;
+  for (int i = 0; i < 300 && !again; ++i) {
+    std::this_thread::sleep_for(50ms);
+    again = sampler.latest().has_value();
+  }
+  expect(again && sampler.note().empty(), "started again: readings arrive, no note: " + sampler.note());
+  sampler.stop();
+  expect(sampler.note() == "stopped", "stopped says so: " + sampler.note());
+}
+
 // The server's own command against the real tool, where the box has one (the owner's does; a
 // CI runner without NVIDIA passes on the absence). Session log step 16: with an empty
 // environment NVML failed to start and the sampler only said "nvidia-smi stopped".
@@ -833,6 +855,7 @@ int main(int argc, char** argv) {
       {"monitor_keeps_a_bounded_history", monitor_keeps_a_bounded_history},
       {"host_readings_are_plausible", host_readings_are_plausible},
       {"gpu_sampler_reads_a_fake_tool", gpu_sampler_reads_a_fake_tool},
+      {"gpu_sampler_starts_a_stopped_tool_again", gpu_sampler_starts_a_stopped_tool_again},
       {"gpu_sampler_reads_the_real_tool_when_present", gpu_sampler_reads_the_real_tool_when_present},
       {"engine_memory_reads_every_familys_ram_tier", engine_memory_reads_every_familys_ram_tier},
       {"engine_readings_show_only_while_an_engine_is_up", engine_readings_show_only_while_an_engine_is_up},

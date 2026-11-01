@@ -3706,7 +3706,9 @@
     var has = function (v) { return v !== null && v !== undefined; };
     // A PC without a GPU reading keeps the GPU tiles in place, each saying so (GPU load says why: the note).
     var gpuNone = !offline && !has(hw.gpu_util) && !has(hw.gpu_mem_used) && !has(hw.gpu_temp) ? "no GPU reading" : "";
-    var gpuSub = st.gpu_name || st.gpu_note || "";
+    // with no reading, why (the sampler's note) beside the card's name, not the name alone (owner 2026-11-01: "it does not
+    // use the GPU" - nvidia-smi had stopped, and the tile showed only "Tesla T4")
+    var gpuSub = st.gpu_note && !has(hw.gpu_util) ? (st.gpu_name ? st.gpu_name + ": " : "") + st.gpu_note : st.gpu_name || st.gpu_note || "";
     setMetric("gpu", hw.gpu_util === null || hw.gpu_util === undefined ? null : fmt(hw.gpu_util), "%", gpuSub);
     spark("gpu", h.gpu_util, 100);
     setMetric("vram", hw.gpu_mem_used === null || hw.gpu_mem_used === undefined ? null : gb(hw.gpu_mem_used),

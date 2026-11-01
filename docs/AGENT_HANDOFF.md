@@ -280,6 +280,37 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### 2026-11-01 z98 (Windows box, the owner's Azure VM; owner-directed)
+
+z95's Qwen3.6 copy on Linux: the first Linux build of it (the owner's VM, updating its install) stopped at the engine's
+configure - "file failed to open for writing (Not a directory): <build>/multiengine/q36_engine.cu.new". On Linux
+`<build>/multiengine` is the launcher itself (no .exe), so the copy's folder could not be made there; on Windows the
+launcher is multiengine.exe, which is why this PC's builds passed. The copy is now `<build>/multiengine_qwen35/
+q36_engine.cu` (the library is libmultiengine_qwen35.a, its objects under CMakeFiles, so the name is free).
+- **Proof:** this PC's engine tree reconfigured, the copy there, its multiengine tests 2/2; the VM's configure passed
+  with it and its build went on.
+
+### 2026-11-01 z97 (Windows box; owner-directed)
+
+The owner, on his new Azure VM (a T4, the same disk under a new address): "it does not use the GPU and use the CPU only
+it seems when looking at the monitor". The model was on the GPU - the engine held 15.3 of the T4's 16 GB, hybrid with
+about 60% of the expert work there, 38.8 tok/s - but the Monitor had no GPU reading: the server's
+`"gpu_note":"nvidia-smi stopped"`. Its `nvidia-smi --loop-ms` had ended some hours into the server's run, saying
+nothing (no driver message, no OOM kill, no shared cgroup or process group with the engines), and the sampler starts it
+once. The GPU tile showed only "Tesla T4", the note hidden behind the name.
+- **The sampler** (host_readings.cpp `GpuSampler::run` / `read_tool`): a tool that ends is started again after 5 s
+  (`kGpuRestartAfter`), its note standing meanwhile and no reading stale; one that is not installed is not retried; a
+  stop says "stopped".
+- **The page** (app.js, the GPU tile): with no reading, the note beside the card's name ("Tesla T4: nvidia-smi
+  stopped"), not the name alone. The TUI already shows the note on its own row.
+- **Tests:** the Monitor 1 (`gpu_sampler_starts_a_stopped_tool_again`: the fake tool answers twice and ends; the note
+  says it stopped with no reading; readings arrive again with no note; a stop says "stopped").
+- **Proof:** RED (the tool stayed ended: "nvidia-smi stopped" after 15 s). GREEN: the Monitor suite 23/23; Windows
+  (MSVC, the shares tree, everything built, no warnings) 1570/1572 (the two release-only cases); Linux (WSL, gcc 13.3 /
+  clang 18.1, -Werror, no warnings) full-gcc and full-clang 1621/1624 (the release-only pair; egress alone), window-gcc
+  1577/1579 (net01_ipv6 and egress alone). main (cherry-picked with z98): the Monitor suite 22/22 on Windows (main-check)
+  and Linux (main-gcc); main's engine CMake configured with z98's folder, its copy test passed.
+
 ### 2026-11-01 z95 (Windows box; owner-directed)
 
 The owner's Azure VM (T4 16 GB, 27.4 GiB RAM, a slow disk) failed a Qwen3.6-35B-A3B UD-Q4_K_XL calibration: the
@@ -297,7 +328,7 @@ workaround meanwhile is Settings, Longest model start, 3600 (a restart).
   plain MiB value writes `--vram-reserve-mib` (the strata core's own flag, for a pack card that lists it).
   `option_flags` and the controlled flags gain both flags.
 - **The engine's load progress and read-ahead:** upstream's files under engine/ stay upstream's (PROVENANCE), so
-  `engine/cmake/multiengine_qwen35.cmake` writes `<build>/multiengine/q36_engine.cu` at configure time from upstream's
+  `engine/cmake/multiengine_qwen35.cmake` writes `<build>/multiengine_qwen35/q36_engine.cu` (z98) at configure time from upstream's
   `src/qwen35/q36_engine.cu` with 13 insertions, each at a line that must be there exactly once (else the configure
   stops naming it): a line at most every 10 s while the weights are read and while the experts are placed
   (`engine/src/multiengine/q36_progress.hpp`, `multiengine::LoadProgress`), and upstream's

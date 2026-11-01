@@ -155,6 +155,7 @@ class GpuSampler final {
 
  private:
   void run(EngineCommand command);
+  void read_tool(const EngineCommand& command);  // one run of the tool, until it ends or the sampler stops
   void set_note(std::string note);
 
   mutable std::mutex mutex_;

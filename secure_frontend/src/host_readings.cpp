@@ -36,6 +36,9 @@ constexpr std::size_t kMaximumPlaceholderBytes = 64U;
 constexpr std::size_t kMaximumAnswerQuoteBytes = 120U;
 // nvidia-smi answers once a second; this long without a valid line and the reading is stale.
 constexpr std::chrono::seconds kGpuStaleAfter{5};
+// A tool that ended is started again after this pause (owner 2026-11-01: his VM's nvidia-smi --loop-ms ended hours into
+// the server's run, saying nothing, and the Monitor had no GPU reading until the server restarted).
+constexpr std::chrono::seconds kGpuRestartAfter{5};
 
 std::string_view trim(std::string_view text) {
   while (!text.empty() && text.front() == ' ') text.remove_prefix(1U);
@@ -430,6 +433,18 @@ void GpuSampler::run(EngineCommand command) {
     set_note("nvidia-smi is not installed");
     return;
   }
+  // nvidia-smi --loop-ms runs for as long as the server does; one that ends is started again after a pause, its note
+  // standing meanwhile
+  while (!stopping_.load()) {
+    read_tool(command);
+    for (auto waited = std::chrono::milliseconds{0}; waited < kGpuRestartAfter && !stopping_.load(); waited += std::chrono::milliseconds{100}) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{100});
+    }
+  }
+  set_note("stopped");
+}
+
+void GpuSampler::read_tool(const EngineCommand& command) {
   EngineStdioProcess child;
   if (child.start(command).has_value()) {
     set_note("nvidia-smi did not start");
@@ -462,7 +477,6 @@ void GpuSampler::run(EngineCommand command) {
     }
   }
   (void)child.terminate(std::chrono::milliseconds(500));
-  if (stopping_.load()) set_note("stopped");
 }
 
 void GpuSampler::set_note(std::string note) {
