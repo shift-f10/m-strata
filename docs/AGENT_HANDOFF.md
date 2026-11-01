@@ -280,6 +280,16 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### 2026-11-01 z98 (Windows box, the owner's Azure VM; owner-directed)
+
+z95's Qwen3.6 copy on Linux: the first Linux build of it (the owner's VM, updating its install) stopped at the engine's
+configure - "file failed to open for writing (Not a directory): <build>/multiengine/q36_engine.cu.new". On Linux
+`<build>/multiengine` is the launcher itself (no .exe), so the copy's folder could not be made there; on Windows the
+launcher is multiengine.exe, which is why this PC's builds passed. The copy is now `<build>/multiengine_qwen35/
+q36_engine.cu` (the library is libmultiengine_qwen35.a, its objects under CMakeFiles, so the name is free).
+- **Proof:** this PC's engine tree reconfigured, the copy there, its multiengine tests 2/2; the VM's configure passed
+  with it and its build went on.
+
 ### 2026-11-01 z97 (Windows box; owner-directed)
 
 The owner, on his new Azure VM (a T4, the same disk under a new address): "it does not use the GPU and use the CPU only
@@ -341,7 +351,7 @@ workaround meanwhile is Settings, Longest model start, 3600 (a restart).
   plain MiB value writes `--vram-reserve-mib` (the strata core's own flag, for a pack card that lists it).
   `option_flags` and the controlled flags gain both flags.
 - **The engine's load progress and read-ahead:** upstream's files under engine/ stay upstream's (PROVENANCE), so
-  `engine/cmake/multiengine_qwen35.cmake` writes `<build>/multiengine/q36_engine.cu` at configure time from upstream's
+  `engine/cmake/multiengine_qwen35.cmake` writes `<build>/multiengine_qwen35/q36_engine.cu` (z98) at configure time from upstream's
   `src/qwen35/q36_engine.cu` with 13 insertions, each at a line that must be there exactly once (else the configure
   stops naming it): a line at most every 10 s while the weights are read and while the experts are placed
   (`engine/src/multiengine/q36_progress.hpp`, `multiengine::LoadProgress`), and upstream's

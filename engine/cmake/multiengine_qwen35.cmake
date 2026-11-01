@@ -5,7 +5,7 @@
 # Upstream's files under engine/ stay as upstream ships them (docs/PROVENANCE.md; src/multiengine/sync_upstream.py writes
 # them), so the change is made here, at configure time: upstream's file is read, each insertion is put at a line of its
 # that must be there exactly once - an upstream update that moves one stops the configure, naming it - and the result is
-# written to <build>/multiengine/q36_engine.cu, which multiengine_qwen35 builds with strata_qwen35's own settings.
+# written to <build>/multiengine_qwen35/q36_engine.cu, which multiengine_qwen35 builds with strata_qwen35's own settings.
 # multiengine_strata links it instead of strata_qwen35; upstream's strata and strata-q36 executables keep upstream's.
 #   - progress: a line at most every 10 s while the weights are read and while the routed experts are placed
 #     (src/multiengine/q36_progress.hpp)
@@ -15,7 +15,8 @@
 # Included by cmake/multiengine.cmake when strata_qwen35 exists.
 
 set(_me_q36_in ${CMAKE_CURRENT_SOURCE_DIR}/src/qwen35/q36_engine.cu)
-set(_me_q36_out ${CMAKE_CURRENT_BINARY_DIR}/multiengine/q36_engine.cu)
+# (not <build>/multiengine/: on Linux that is the launcher itself, the file multiengine)
+set(_me_q36_out ${CMAKE_CURRENT_BINARY_DIR}/multiengine_qwen35/q36_engine.cu)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_me_q36_in} ${CMAKE_CURRENT_LIST_FILE})
 file(READ ${_me_q36_in} _me_q36)
 string(REPLACE "\r\n" "\n" _me_q36 "${_me_q36}")
