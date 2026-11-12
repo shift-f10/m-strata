@@ -281,6 +281,17 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Fresh frontend package rebuild, owner launches (2026-11-12)
+
+Owner reported the desktop window's generic server-start failure and requested a fresh compile
+without running the result. Rebuilt all five frontend programs from clean intermediates with
+native Release warnings-as-errors, staged the runtime component, then backed up and replaced
+14 runtime files in the existing installation. Every copied file's SHA-256 matches staging;
+the configuration hash is unchanged. Server and window executables are beside each other.
+No rebuilt program was launched and no OS security settings were changed. The owner's launch
+and final calibration validation remain pending; a rebuild alone does not prove the prior
+Application Control block is resolved. Private staging/backup: frontend-recompile-20261112.
+
 ### Calibration trial counts from startup (2026-11-12)
 
 Manual quick/thorough benchmarks now publish their planned upper bound before expensive identity
