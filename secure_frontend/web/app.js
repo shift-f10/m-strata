@@ -1917,6 +1917,9 @@
         box.appendChild(el("p", "msg-error", "Trial stopped: " + String(e.summary.reason)));
       }
       if (e.noisy === true) { box.appendChild(el("p", "small", "Noisy measurements: variation was too high for a stable conclusion.")); }
+      if (e.retained_baseline === true) {
+        box.appendChild(el("p", "small", "Current settings verified and retained. Candidate tuning was discarded because its confirmation speeds varied too much."));
+      }
       var progress = el("p", "small");
       progress.setAttribute("aria-live", "polite");
       progress.textContent = "Completed " + calibrationMetric(e.completed, "") + " of about " + calibrationMetric(e.estimated_trials, "") +

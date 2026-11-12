@@ -328,6 +328,18 @@ ExperimentOutcome run_experiment(const ExperimentPlan& plan, const BenchmarkOpti
   out.best_variance = best_stats.variance;
   out.relative_variation = std::max(base_stats.cv, best_stats.cv);
   out.noisy = out.relative_variation > kNoiseThreshold;
+  // A rejected candidate does not invalidate independently quality-checked,
+  // uncontaminated and stable confirmation measurements of the current baseline.
+  if (!options.compare_speed && !chosen.empty() && base_stats.cv <= kNoiseThreshold && best_stats.cv > kNoiseThreshold) {
+    out.retained_baseline = true;
+    out.rejected_candidate_variation = best_stats.cv;
+    out.best_tok_s = base_stats.middle;
+    out.best_variance = base_stats.variance;
+    out.relative_variation = base_stats.cv;
+    out.noisy = false;
+    out.apply_allowed = true;
+    return out;
+  }
   // A conservative noise margin, not a claim of statistical significance or
   // semantic correctness. Small gains and unstable measurements stay unapplied.
   const double uncertainty = 2.0 * std::sqrt(base_stats.cv * base_stats.cv / static_cast<double>(defaults.size()) +

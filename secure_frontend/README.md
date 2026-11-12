@@ -2262,6 +2262,9 @@ answer checks and repeated confirmation; its duration includes the initial model
 Results separate prompt tokens/second, decode tokens/second and time to first token, with
 startup, warm and (Thorough) sustained measurements. Repeated/interleaved trials report
 variation; unstable, contaminated, failed or incomplete runs retain the prior result.
+When only a proposed candidate is noisy and the current settings have independently
+passed stable, quality-checked confirmations, calibration verifies and retains the
+current settings. Candidate noise is reported separately and never accepted as a win.
 The optional context probe must cover at least 95% of the requested input budget to pass;
 frontend prompt limits or the bounded synthetic prompt may prevent full coverage.
 Telemetry is best effort: missing readings and unsupported thermal flags are shown as such.

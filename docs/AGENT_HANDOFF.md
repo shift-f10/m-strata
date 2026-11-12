@@ -281,6 +281,24 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Stable baseline retained when a candidate is noisy (2026-11-12)
+
+The owner's Quick run completed in about three minutes with passing answer checks, but the
+result was withheld because a candidate's confirmation variance was combined with the stable
+baseline's variance. Ordinary calibration can now accept the independently confirmed stable
+baseline while discarding noisy candidate tuning. The selected result reports baseline speed
+and variation; rejected-candidate variation is separate. The UI explicitly says current settings
+were verified and retained. Quick still preserves prior fresh startup tuning through its baseline.
+The 5% threshold is unchanged. Unstable baselines, failed quality, contamination, incomplete
+runs and explicit comparisons cannot use this fallback to bypass their existing gates.
+
+RED: the new synthetic stable-baseline/noisy-candidate regression fails on the old selection
+logic. GREEN: 15 planner/integration cases and both calibration UI checks pass; assertions also
+cover unstable-baseline rejection and report-only comparisons. Native Release builds with
+warnings-as-errors. The two changed frontend executables were backed up, copied into the
+closed installation and SHA-256 verified; the configuration hash is unchanged. No installed
+app was launched. The owner must rerun calibration; historical records were not rewritten.
+
 ### Quick default and visible calibration explanation (2026-11-12)
 
 Owner first requested a visible note, then directed Quick to be the default when the extra

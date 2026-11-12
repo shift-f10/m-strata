@@ -39,6 +39,12 @@ Trust boundaries:
 
 ### Explicit calibration benchmarks (2026-11-11)
 
+Result selection distinguishes baseline uncertainty from a rejected candidate's uncertainty.
+A stable, quality-checked, uncontaminated baseline may be verified while noisy candidate tuning
+is discarded. Baseline instability, failed quality, contamination, cancellation and incomplete
+confirmation still prevent acceptance. The noise threshold is unchanged; explicit comparison
+runs remain report-only and retain their candidate-noise reporting.
+
 Quick benchmarks reuse a private calibration runtime. Only Qwen's bounded per-request
 pcie_frac and spec_min_p wire controls are set internally, after profile and fraction
 validation; neither is accepted from client chat JSON. Changing startup settings or

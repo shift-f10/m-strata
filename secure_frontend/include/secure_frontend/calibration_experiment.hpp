@@ -70,8 +70,10 @@ struct ExperimentOutcome final {
   double best_tok_s{0.0};
   double baseline_variance{0.0};
   double best_variance{0.0};
-  double relative_variation{0.0};  // maximum coefficient of variation of the confirmed groups
+  double relative_variation{0.0};  // variation of selected settings; rejected candidates are separate
   bool noisy{false};
+  bool retained_baseline{false};
+  double rejected_candidate_variation{0.0};
   bool apply_allowed{false};
   std::vector<ExperimentRecord> records;
   std::vector<ExperimentSkip> skipped;

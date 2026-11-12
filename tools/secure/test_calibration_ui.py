@@ -148,6 +148,10 @@ const startModel = () => { throw new Error("restore must not restart model"); };
     summary: {status: "failed", reason: "Benchmark request rejected: max_tokens"}});
   assert.ok(report.children.some(n => n.textContent === "Trial stopped: Benchmark request rejected: max_tokens"),
     "the failure reason is visible without expanding trial details");
+  renderCalibrationExperiment(card, {outcome: "applied", mode: "quick", workload: "chat", retained_baseline: true,
+    before: 103.2, after: 103.2, variation_pct: 0.6, rejected_candidate_variation_pct: 11.8});
+  assert.match(text(report), /Current settings verified and retained/, "accepted baseline is explained explicitly");
+  assert.doesNotMatch(text(report), /Noisy measurements:/, "rejected candidate noise is not attributed to the accepted baseline");
   renderCalibration({name: "another", calibration: {state: "missing"}}, false);
   assert.equal($("calibration-custom").value, "", "switching card clears custom input");
   assert.equal($("calibration-manual-enabled").checked, false);

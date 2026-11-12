@@ -959,6 +959,9 @@ bool ModelLauncher::run_benchmark(const Job& job) {
   set(status, "settings", strings(outcome.args));
   set(status, "variation_pct", number(outcome.relative_variation * 100));
   set(status, "noisy", boolean(outcome.noisy));
+  set(status, "retained_baseline", boolean(outcome.retained_baseline));
+  if (outcome.retained_baseline)
+    set(status, "rejected_candidate_variation_pct", number(outcome.rejected_candidate_variation * 100));
   if (outcome.end == ExperimentOutcome::End::done && error.empty()) {
     for (auto it = details.rbegin(); it != details.rend(); ++it) {
       const auto* args = get(*it, "settings");

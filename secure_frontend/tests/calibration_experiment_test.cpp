@@ -128,6 +128,33 @@ void quality_contamination_noise_and_comparison_gate_application() {
          typed_comparison.args == std::vector<std::string>{"option:speed_fast_math", "true"},
          "typed controller comparison plans report options without applying them");
 }
+void stable_baseline_survives_a_noisy_candidate() {
+  const ExperimentPlan plan{{{"--pcie-frac", {"0"}}}};
+  BenchmarkOptions options;
+  const auto measured = [](const ExperimentTrial& trial) -> std::optional<ExperimentSample> {
+    if (trial.stage == "defaults") return ExperimentSample{100.0};
+    if (trial.stage == "confirming-baseline") return ExperimentSample{trial.replicate == 0 ? 102.0 : 103.0};
+    if (trial.stage == "confirming-winner") return ExperimentSample{trial.replicate == 0 ? 84.0 : 100.0};
+    return ExperimentSample{trial.replicate == 0 ? 120.0 : 116.0};
+  };
+  const auto result = run_experiment(plan, options, measured);
+  expect(result.end == ExperimentOutcome::End::done && result.apply_allowed && !result.noisy,
+         "a stable verified baseline remains accepted when only the candidate is noisy");
+  expect(result.args.empty() && result.best_tok_s == result.baseline_tok_s && result.relative_variation < 0.01,
+         "noisy candidate cannot replace current settings or pollute their reported variation");
+  expect(result.retained_baseline && result.rejected_candidate_variation > 0.1,
+         "discarded candidate variation remains reported separately");
+  const auto unstable_baseline = run_experiment(plan, options, [](const ExperimentTrial& trial) -> std::optional<ExperimentSample> {
+    if (trial.stage == "confirming-baseline") return ExperimentSample{trial.replicate == 0 ? 80.0 : 120.0};
+    return ExperimentSample{trial.args.empty() ? 100.0 : 150.0};
+  });
+  expect(unstable_baseline.noisy && !unstable_baseline.apply_allowed && !unstable_baseline.retained_baseline,
+         "an unstable baseline still prevents calibration acceptance");
+  options.compare_speed = true;
+  const auto comparison = run_experiment(plan, options, measured);
+  expect(!comparison.apply_allowed && comparison.noisy, "explicit comparison still reports candidate noise and never applies");
+}
+
 void progress_is_available_before_measurement_and_after_failure() {
   for (const auto mode : {BenchmarkMode::quick, BenchmarkMode::thorough}) {
     BenchmarkOptions options; options.mode = mode;
@@ -150,6 +177,7 @@ void progress_is_available_before_measurement_and_after_failure() {
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"progress_is_available_before_measurement_and_after_failure", progress_is_available_before_measurement_and_after_failure},
+      {"stable_baseline_survives_a_noisy_candidate", stable_baseline_survives_a_noisy_candidate},
       {"benchmark_options_are_strict_and_bounded", benchmark_options_are_strict_and_bounded},
       {"experiment_plan_explains_fixed_and_inactive_settings", experiment_plan_explains_fixed_and_inactive_settings},
       {"thorough_revisits_combinations_and_confirms", thorough_revisits_combinations_and_confirms},
