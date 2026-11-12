@@ -292,7 +292,12 @@ and thorough counts from inside the first measurement and after first-trial fail
 experiment suite and both calibration UI checks pass. RED runtime attempt was blocked by Windows
 Application Control; no policy was bypassed. Native Release build passes warnings-as-errors.
 The new server's --help launch succeeds; the workload test executable remains OS-blocked.
-Installation is pending app closure; the running calibration has not been interrupted.
+After the owner closed the app, the final server was copied into the installation and its
+hash verified. Its isolated verification launch was blocked by Windows Application Control.
+The preceding build's successful --help launch does not establish permission for this final
+binary. The previous working installed server was immediately restored and hash verified.
+The functional/count corrections remain saved in source; they are NOT active in the installed
+app. No security policy was bypassed and no calibration is running from this verification.
 
 ### Manual calibration functional corrections (2026-11-12)
 
