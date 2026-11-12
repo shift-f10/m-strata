@@ -137,7 +137,7 @@ std::optional<std::string> render_flint_text_prompt(const std::vector<ChatMessag
 std::optional<std::vector<PromptPiece>> render_flint_tool_prompt(const std::vector<ChatMessage>& messages,
                                                                  const std::span<const std::string> tools,
                                                                  const std::span<const ToolRound> rounds, const bool thinking) {
-  if (tools.empty() || !sayable(rounds)) return std::nullopt;
+  if ((tools.empty() && !has_tool_rounds(messages, rounds)) || !sayable(rounds)) return std::nullopt;
   // The conversation obeys every rule of the plain prompt (roles, markers, escapes, sizes); an earlier answer's
   // searches those of this turn's rounds (history_ok).
   if (!flint_text_prompt(messages, thinking, true)) return std::nullopt;
@@ -149,6 +149,7 @@ std::optional<std::vector<PromptPiece>> render_flint_tool_prompt(const std::vect
   PromptBuilder out;
   // the template's tool_preamble, written before the first message that is no system message
   const auto preamble = [&out, tools] {
+    if (tools.empty()) return;
     out.marker("<|system|>");
     out.templated("\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function "
                   "signatures within <tools></tools> XML tags:\n<tools>",

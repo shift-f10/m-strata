@@ -252,7 +252,8 @@ RouteDecision ApiRouter::authorize(const RequestHead& head) {
     if (head.content_length.value_or(0U) > 0U && (types.size() != 1U || !is_json_content_type(types.front()))) {
       return early(make_error_response(ApiError::unsupported_media_type));
     }
-    if (head.content_length.value_or(0U) > kModelControlBodyLimit) return early(make_error_response(ApiError::request_too_large));
+    const auto limit = decision.route == RouteId::strata_calibrate ? kCalibrationBodyLimit : kModelControlBodyLimit;
+    if (head.content_length.value_or(0U) > limit) return early(make_error_response(ApiError::request_too_large));
   }
   decision.expect_continue = head.expect_continue;
   decision.body_limit = head.content_length.value_or(0U);
@@ -431,6 +432,7 @@ RouteResult ApiRouter::handle(const RequestHead& head, const std::string_view bo
       case RouteId::strata_card_add:
       case RouteId::strata_card_folder:
       case RouteId::strata_card_mtp:
+      case RouteId::strata_card_template:
       case RouteId::strata_card_delete_begin:
       case RouteId::strata_card_delete:
       case RouteId::strata_card_remove: {

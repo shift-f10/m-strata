@@ -55,7 +55,9 @@ struct EngineCommand final {
   bool read_conversation_cache{false};
   // The engine's own output (owner 2026-10-29, logging.engine_output: to see why an engine fails on a new GPU):
   // EngineStdioProcess reads the child's stderr through the same pipe and hands each line here, in order, as
-  // printable_stderr_line made it. Called on the drain's thread. Empty: no stderr text leaves the drain. `{}`:
+  // printable_stderr_line made it. Also receives stdout ERR records, sanitized and capped at the same bound;
+  // no other stdout or protocol commands are forwarded. Calls are serialized across the stderr drain and stdout
+  // reader threads; ordering between the two streams is unspecified. Empty: no raw engine text is forwarded. `{}`:
   // designated initializers that omit it keep compiling (-Werror).
   std::function<void(std::string_view)> stderr_lines{};
 };

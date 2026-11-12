@@ -638,8 +638,8 @@ secure_frontend::HttpResponse start_answer(secure_frontend::ModelLauncher& launc
 // GUI-first start-up (spec 2026-10-27 §5.3): POST /v1/strata/models/calibrate {"name", "options"?, "then_start"?,
 // "auto_recalibrate"?}.
 secure_frontend::HttpResponse calibrate_answer(secure_frontend::ModelLauncher& launcher, const std::string_view body, const bool remote) {
-  constexpr secure_frontend::JsonLimits kLimits{.max_bytes = secure_frontend::kModelControlBodyLimit, .max_depth = 3U,
-                                                .max_container_entries = 64U, .max_string_bytes = 256U, .allow_fractions = true};
+  constexpr secure_frontend::JsonLimits kLimits{.max_bytes = secure_frontend::kCalibrationBodyLimit, .max_depth = 3U,
+                                                .max_container_entries = 128U, .max_string_bytes = 16384U, .allow_fractions = true};
   const auto parsed = secure_frontend::parse_json(body, kLimits);
   const auto* root = std::get_if<secure_frontend::JsonValue>(&parsed);
   if (root == nullptr) return secure_frontend::make_error_response(secure_frontend::ApiError::invalid_json);
@@ -649,15 +649,29 @@ secure_frontend::HttpResponse calibrate_answer(secure_frontend::ModelLauncher& l
   const secure_frontend::JsonValue* options = nullptr;
   bool then_start = false;
   std::optional<bool> automatic;
+  std::optional<secure_frontend::BenchmarkOptions> benchmark;
+  const std::string* restore = nullptr;
   for (const auto& member : *members) {
     if (member.key == "name" && member.value.if_string() != nullptr) name = member.value.if_string();
     else if (member.key == "options" && member.value.if_object() != nullptr) options = &member.value;
     else if (member.key == "then_start" && member.value.if_boolean() != nullptr) then_start = *member.value.if_boolean();
     else if (member.key == "auto_recalibrate" && member.value.if_boolean() != nullptr) automatic = *member.value.if_boolean();
+    else if (member.key == "restore" && member.value.if_string() != nullptr) restore = member.value.if_string();
+    else if (member.key == "benchmark") {
+      auto checked = secure_frontend::parse_benchmark_options(member.value);
+      if (std::holds_alternative<std::string>(checked)) return secure_frontend::make_error_response(secure_frontend::ApiError::invalid_request);
+      benchmark = std::get<secure_frontend::BenchmarkOptions>(std::move(checked));
+    }
     else return secure_frontend::make_error_response(secure_frontend::ApiError::invalid_request);
   }
   if (name == nullptr) return secure_frontend::make_error_response(secure_frontend::ApiError::invalid_request);
-  if (const auto refused = launcher.calibrate(*name, options, then_start, automatic, remote)) return refusal_answer(*refused);
+  if (restore) {
+    if (members->size() != 2U) return secure_frontend::make_error_response(secure_frontend::ApiError::invalid_request);
+    if (const auto refused = launcher.restore_calibration(*name, *restore)) return refusal_answer(*refused);
+    return json_answer(200, "{\"state\":\"restored\"}\n");
+  }
+  if (benchmark && benchmark->compare_speed && then_start) return secure_frontend::make_error_response(secure_frontend::ApiError::invalid_request);
+  if (const auto refused = launcher.calibrate(*name, options, then_start, automatic, remote, std::move(benchmark))) return refusal_answer(*refused);
   std::string text = "{\"state\":\"calibrating\",\"name\":";
   secure_frontend::append_json_string(&text, *name);
   return json_answer(202, text + "}\n");

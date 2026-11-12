@@ -61,6 +61,29 @@ std::string render_final_event(const SseIdentity& identity, const std::string_vi
   return out;
 }
 
+std::string render_tool_call_event(const SseIdentity& identity, const std::size_t index, const std::string_view id,
+                                   const std::string_view name, const std::string_view arguments) {
+  std::string out = envelope(identity);
+  out += R"(,"choices":[{"index":0,"delta":{"tool_calls":[{"index":)" + std::to_string(index) + R"(,"id":)";
+  append_json_string(&out, id);
+  out += R"(,"type":"function","function":{"name":)";
+  append_json_string(&out, name);
+  out += R"(,"arguments":)";
+  append_json_string(&out, arguments);
+  out += "}}]}";
+  out += kChoiceTail;
+  return out;
+}
+
+std::string render_tool_arguments_event(const SseIdentity& identity, const std::size_t index, const std::string_view arguments) {
+  std::string out = envelope(identity);
+  out += R"(,"choices":[{"index":0,"delta":{"tool_calls":[{"index":)" + std::to_string(index) + R"(,"function":{"arguments":)";
+  append_json_string(&out, arguments);
+  out += "}}]}";
+  out += kChoiceTail;
+  return out;
+}
+
 std::string render_search_event(const SseIdentity& identity, const std::string_view event_json) {
   std::string out = envelope(identity);
   out += R"(,"choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":null}],"strata_search":)";

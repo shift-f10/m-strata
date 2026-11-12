@@ -206,7 +206,7 @@
         <button type="button" class="models-subtab" id="models-subtab-compat" role="tab" aria-selected="false">Compatibility</button>
       </nav>
       <div class="models-pane" id="models-pane-start">
-      <div class="st-card models-card">
+      <div class="st-card models-card" id="model-selection">
         <div class="models-head"><span class="card-title">Models</span>
           <button type="button" class="st-btn st-btn--icon" id="models-refresh" title="Refresh" aria-label="Refresh the model list">
             <svg class="st-icon"><use href="/ui/sprite.svg#i-refresh"/></svg></button></div>
@@ -217,14 +217,116 @@
             already on this PC.</p>
           <button type="button" class="st-btn st-btn--primary st-btn--sm" id="models-empty-add">Add a model</button>
         </div>
+        <div class="model-launch-controls" id="model-launch-controls" hidden>
+          <p class="muted small">Selected: <strong id="model-launch-name"></strong></p>
+        <div class="st-progress model-loading" id="model-loading" hidden><div class="st-progress__bar"></div></div>
+        <div class="model-actions">
+          <button type="button" class="st-btn st-btn--primary" id="model-start">Start</button>
+          <button type="button" class="st-btn st-btn--secondary" id="model-stop">Stop</button>
+          <span class="model-progress" id="model-progress" role="status" aria-live="polite"></span>
+        </div>
+        <p class="msg-error" id="model-start-error" role="alert" hidden></p>
+        </div>
         <p class="muted" id="models-denied" hidden>This server lets only its own machine start and stop models. To allow
           other machines, add <code>"control_remote": true</code> to the <code>models</code> block of the server's
           config file and restart the server, or open this page on the server itself.</p>
       </div>
       <div class="st-card model-detail" id="model-detail" hidden>
         <div class="model-detail__head"><span class="card-title" id="model-detail-name"></span><span id="model-detail-state"></span></div>
-        <p class="muted small" id="model-detail-profile"></p>
+        <div class="model-settings-head">
+          <p class="muted small" id="model-detail-profile"></p>
+          <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-defaults" title="Put every option in every tab back to the card's default">Defaults</button>
+        </div>
         <p class="msg-error" id="model-detail-error" role="alert" hidden></p>
+        <nav class="model-card-tabs" role="tablist" aria-label="Model settings">
+          <button type="button" class="model-card-tab" id="model-card-tab-generation" role="tab" aria-controls="model-card-panel-generation" aria-selected="true" tabindex="0">Generation</button>
+          <button type="button" class="model-card-tab" id="model-card-tab-memory" role="tab" aria-controls="model-card-panel-memory" aria-selected="false" tabindex="-1">Memory &amp; GPU</button>
+          <button type="button" class="model-card-tab" id="model-card-tab-speed" role="tab" aria-controls="model-card-panel-speed" aria-selected="false" tabindex="-1">Speed</button>
+          <button type="button" class="model-card-tab" id="model-card-tab-template" role="tab" aria-controls="model-card-panel-template" aria-selected="false" tabindex="-1">Template</button>
+          <button type="button" class="model-card-tab" id="model-card-tab-calibration" role="tab" aria-controls="model-card-panel-calibration" aria-selected="false" tabindex="-1">Calibration</button>
+          <button type="button" class="model-card-tab" id="model-card-tab-files" role="tab" aria-controls="model-card-panel-files" aria-selected="false" tabindex="-1">Files</button>
+        </nav>
+        <p class="msg-warn small" id="model-tradeoff-warning" role="status" hidden></p>
+        <div class="model-options" id="model-options"></div>
+        <section class="model-card-panel" id="model-card-panel-template" role="tabpanel" aria-labelledby="model-card-tab-template" tabindex="0" hidden>
+        <p class="st-label" id="model-template-status" role="status" aria-live="polite">Loading saved template choice...</p>
+        <p class="msg-error" id="model-template-error" role="alert" hidden></p>
+        <div class="model-template" id="model-template">
+          <p class="muted small">Review the model's embedded template before choosing it. The frontend template is the default.</p>
+          <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-template-frontend">Use frontend template</button>
+          <div id="model-template-review" hidden>
+            <div class="st-field">
+              <label class="st-label" for="model-template-mode">Template for this card</label>
+              <select class="st-input" id="model-template-mode">
+                <option value="frontend">Frontend template (default)</option>
+                <option value="embedded">Model's embedded template</option>
+              </select>
+            </div>
+            <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-template-inspect" hidden>View GGUF chat template</button>
+            <div id="model-template-source-review" hidden>
+            <p class="msg-warn">The scan highlights suspicious constructs; it cannot guarantee that a template is safe or correct.
+              Template content can change what the model sees. Review the source and warnings before enabling it.</p>
+            <ul class="template-risks" id="model-template-risks"></ul>
+            <p class="muted small template-hash">Reviewed SHA-256: <code id="model-template-hash"></code></p>
+            <p class="muted small">Directional control characters are shown as [U+....] so they cannot disguise the source.</p>
+            <div class="template-source" role="region" aria-label="Embedded template source with line numbers" tabindex="0">
+              <div id="model-template-source"></div>
+            </div>
+            </div>
+            <label class="template-ack" id="model-template-ack-row" hidden>
+              <input type="checkbox" id="model-template-ack">
+              I reviewed this source and accept using the embedded template, including any highlighted warnings.
+            </label>
+            <button type="button" class="st-btn st-btn--primary st-btn--sm" id="model-template-save" disabled>Save template choice</button>
+            <p class="muted small">After choosing and agreeing, press Save embedded template. The button shows Saved when the choice is stored.
+              Start or restart the model to apply it. Changed template content requires a new review.</p>
+          </div>
+        </div>
+        </section>
+        <section class="model-card-panel" id="model-card-panel-calibration" role="tabpanel" aria-labelledby="model-card-tab-calibration" tabindex="0" hidden>
+        <div class="model-calibration" id="model-calibration" hidden>
+          <div class="model-calibration__head"><span class="st-label">Calibration</span><span id="model-calibration-state"></span></div>
+          <p class="muted small" id="model-calibration-text"></p>
+          <p class="muted small" id="model-calibration-prefill" hidden></p>
+          <p class="muted small model-calibration__report" id="model-calibration-report" hidden>
+            <span id="model-calibration-report-text"></span>
+            <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-calibration-report-show">Show the report</button>
+          </p>
+          <div class="st-progress" id="model-calibration-progress" hidden><div class="st-progress__bar" id="model-calibration-bar"></div></div>
+          <details class="calibration-manual">
+            <summary>Manual benchmark options</summary>
+            <p class="muted small">Choose a synthetic workload and time budget. No conversation history is collected. These options apply only to the Calibrate button below; automatic calibration keeps its existing behavior.</p>
+            <label class="model-calibration__auto"><input type="checkbox" id="calibration-manual-enabled"> Use these options for a manual benchmark</label>
+            <fieldset id="calibration-manual-fields" class="calibration-manual-fields" disabled>
+              <legend class="st-label">Manual benchmark settings</legend>
+              <div class="st-field"><label class="st-label" for="calibration-mode">Mode</label>
+                <select id="calibration-mode" class="st-input"><option value="quick">Quick</option><option value="thorough">Thorough</option></select></div>
+              <div class="st-field"><label class="st-label" for="calibration-workload">Workload</label>
+                <select id="calibration-workload" class="st-input"><option value="chat">Short chat</option><option value="long_context">Long context</option><option value="coding">Coding</option><option value="tools">Tool calling</option><option value="custom">Custom prompt</option></select></div>
+              <div class="st-field"><label class="st-label" for="calibration-budget">Time budget (minutes)</label>
+                <input id="calibration-budget" class="st-input" type="number" min="1" max="1440" step="0.5" value="30"></div>
+              <div class="st-field"><label class="st-label" for="calibration-label">Run label (optional)</label>
+                <input id="calibration-label" class="st-input" type="text" maxlength="64" autocomplete="off" placeholder="Up to 64 printable ASCII characters"></div>
+              <div class="st-field calibration-wide" id="calibration-custom-field" hidden><label class="st-label" for="calibration-custom">Explicit custom prompt</label>
+                <textarea id="calibration-custom" class="st-input" rows="5" maxlength="16384" autocomplete="off" spellcheck="false" aria-describedby="calibration-custom-help"></textarea>
+                <span class="muted small" id="calibration-custom-help">At most 16384 UTF-8 bytes. This text is used only when Custom prompt is selected and is not saved in benchmark history. Re-enter it to resume the same workload.</span></div>
+              <label class="model-calibration__auto"><input id="calibration-memory" type="checkbox"> Probe memory at the selected context</label>
+              <label class="model-calibration__auto"><input id="calibration-resume" type="checkbox"> Resume matching completed trials</label>
+              <label class="model-calibration__auto calibration-wide"><input id="calibration-compare" type="checkbox" aria-describedby="calibration-compare-warning"> Compare speed settings that may reduce accuracy</label>
+              <p class="muted small calibration-wide" id="calibration-compare-warning">Explicit comparison may test fast math or other accuracy tradeoffs. It reports alternatives without automatically applying them. Ordinary calibration holds your accuracy and KV precision settings fixed.</p>
+            </fieldset>
+          </details>
+          <div class="model-actions">
+            <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-calibrate"
+                    title="Compare candidate engine settings for this model at these options">Calibrate</button>
+            <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-calibrate-cancel" hidden>Cancel</button>
+            <label class="model-calibration__auto"><input type="checkbox" id="model-calibration-auto">
+              Recalibrate when settings change</label>
+          </div>
+          <div id="model-calibration-experiment" class="calibration-experiment" hidden></div>
+        </div>
+        </section>
+        <section class="model-card-panel" id="model-card-panel-files" role="tabpanel" aria-labelledby="model-card-tab-files" tabindex="0" hidden>
         <div class="model-folder" id="model-folder" hidden>
           <span class="st-label">Model folder</span>
           <div class="model-folder__row"><code id="model-folder-path"></code>
@@ -236,32 +338,6 @@
           <div class="model-folder__row"><code id="model-draft-path"></code>
             <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-draft-change">Choose...</button></div>
           <p class="muted small" id="model-draft-help">The model's draft layer guesses tokens ahead, so answers come faster. Kept somewhere else? Point the card at it.</p>
-        </div>
-        <div class="model-options" id="model-options"></div>
-        <div class="st-progress model-loading" id="model-loading" hidden><div class="st-progress__bar"></div></div>
-        <div class="model-actions">
-          <button type="button" class="st-btn st-btn--primary" id="model-start">Start</button>
-          <button type="button" class="st-btn st-btn--secondary" id="model-stop">Stop</button>
-          <button type="button" class="st-btn st-btn--secondary" id="model-defaults" title="Put every option back to the card's default">Defaults</button>
-          <span class="model-progress" id="model-progress" role="status" aria-live="polite"></span>
-        </div>
-        <p class="msg-error" id="model-start-error" role="alert" hidden></p>
-        <div class="model-calibration" id="model-calibration" hidden>
-          <div class="model-calibration__head"><span class="st-label">Calibration</span><span id="model-calibration-state"></span></div>
-          <p class="muted small" id="model-calibration-text"></p>
-          <p class="muted small" id="model-calibration-prefill" hidden></p>
-          <p class="muted small model-calibration__report" id="model-calibration-report" hidden>
-            <span id="model-calibration-report-text"></span>
-            <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-calibration-report-show">Show the report</button>
-          </p>
-          <div class="st-progress" id="model-calibration-progress" hidden><div class="st-progress__bar" id="model-calibration-bar"></div></div>
-          <div class="model-actions">
-            <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-calibrate"
-                    title="Measure this PC's fastest engine settings for this model at these options">Calibrate</button>
-            <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-calibrate-cancel" hidden>Cancel</button>
-            <label class="model-calibration__auto"><input type="checkbox" id="model-calibration-auto">
-              Recalibrate when settings change</label>
-          </div>
         </div>
         <div class="model-remove" id="model-pin-box">
           <span class="st-label">Start at startup</span>
@@ -280,6 +356,7 @@
             key again, then a last confirmation. This cannot be undone.</p>
           <button type="button" class="st-btn st-btn--danger st-btn--sm" id="model-delete">Delete this model</button>
         </details>
+        </section>
       </div>
       <!-- Downloads (models.downloads, GET /v1/strata/downloads): hidden unless the server offers them -->
       </div>
@@ -410,6 +487,15 @@
         <div class="config-grid" data-group="server"></div>
         <div class="model-actions"><button type="button" class="st-btn st-btn--primary st-btn--sm" data-save="server">Save</button></div>
         <p class="msg-error" data-error="server" role="alert" hidden></p>
+      </div>
+      <div class="st-card alerts-settings" id="tool-calling-settings" hidden>
+        <div class="models-head"><span class="card-title">Tool calling</span></div>
+        <p class="muted small">Choose which clients may send function tools. Enter one IP address per line.
+          Include 127.0.0.1 or ::1 for local clients when the restriction is on. An empty list blocks all client function tools.
+          Changes apply after restart.</p>
+        <div class="config-grid" data-group="tool-calling"></div>
+        <div class="model-actions"><button type="button" class="st-btn st-btn--primary st-btn--sm" data-save="tool-calling">Save</button></div>
+        <p class="msg-error" data-error="tool-calling" role="alert" hidden></p>
       </div>
       <div class="st-card alerts-settings" id="limits-settings" hidden>
         <div class="models-head"><span class="card-title">Limits and timeouts</span></div>
@@ -690,12 +776,12 @@
     </div>
     <div class="st-field">
       <label class="st-label" for="s-temp">Temperature <output id="o-temp"></output></label>
-      <input class="st-slider" type="range" id="s-temp" min="0" max="1.5" step="0.05">
+      <input class="st-slider" type="range" id="s-temp" min="0" max="2" step="0.01">
       <span class="muted small">0 = always the most likely word (exact, repeatable)</span>
     </div>
     <div class="st-field">
       <label class="st-label" for="s-topp">Top-p <output id="o-topp"></output></label>
-      <input class="st-slider" type="range" id="s-topp" min="0.05" max="1" step="0.05">
+      <input class="st-slider" type="range" id="s-topp" min="0.01" max="1" step="0.01">
       <span class="muted small" id="s-card-note" hidden></span>
     </div>
     <div class="st-field">

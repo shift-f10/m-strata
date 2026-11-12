@@ -14,11 +14,15 @@
 #   multiengine           the launcher (src/multiengine/launcher.cpp): reads which family a command line is for and
 #                         loads only that library, from its own folder - where the build puts them all
 # The libraries share only the pinned ggml (third_party/ggml/VERSION.txt, one commit for every family) and the CUDA
-# toolkit.  Upstream's own `strata` executable is still built as upstream builds it.  NVIDIA builds only (the Gemma 4,
+# toolkit. Unless MULTIENGINE_FAST_MATH is explicitly ON, the accuracy overlay removes compiler fast-math from shared
+# kernels and upstream executables too; source-written intrinsics stay intact. NVIDIA builds only (the Gemma 4,
 # Maya and raon1 libraries are built for CUDA here; the launcher's switch is written for them).
 if(NOT STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP OR STRATA_HIP_GFX906 OR NOT TARGET strata)
   return()
 endif()
+
+# Declare the default before forwarding it to the independent Maya configure.
+include("${CMAKE_CURRENT_LIST_DIR}/multiengine_accuracy.cmake")
 
 if(MSVC)
   set(_me_warnings /W4 /WX /permissive- /utf-8 /EHsc /Zc:__cplusplus)
@@ -91,6 +95,7 @@ if(STRATA_BUILD_MAYA AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/maya/CMa
     -DSTRATA_ENABLE_CUDA=ON
     -DSTRATA_NATIVE_EXPERTS=ON
     -DSTRATA_BUILD_TESTS=${MULTIENGINE_MAYA_TESTS}
+    -DMULTIENGINE_FAST_MATH=${MULTIENGINE_FAST_MATH}
     -DSTRATA_GGML_DIR=${STRATA_GGML_DIR}
     -DCMAKE_PROJECT_strata_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/multiengine_maya.cmake
     -DMULTIENGINE_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
@@ -112,6 +117,11 @@ if(STRATA_BUILD_MAYA AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/maya/CMa
     BUILD_ALWAYS ON
     USES_TERMINAL_CONFIGURE ON
     USES_TERMINAL_BUILD ON)
+  # Track policy changes at the outer configure step as well as the nested
+  # build's own CMake regeneration dependencies, including incremental builds.
+  ExternalProject_Add_StepDependencies(multiengine_maya_build configure
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/multiengine_maya.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/multiengine_accuracy.cmake")
   list(APPEND _me_external multiengine_maya_build)
   list(APPEND _me_defs MULTIENGINE_HAVE_MAYA=1)
 endif()
@@ -240,3 +250,6 @@ if(MULTIENGINE_BUNDLE_CUBLAS)
     message(FATAL_ERROR "MULTIENGINE_BUNDLE_CUBLAS: no cuBLAS library found in the CUDA toolkit (${CUDAToolkit_BIN_DIR})")
   endif()
 endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/multiengine_accuracy.cmake")
+multiengine_preserve_cuda_accuracy("${CMAKE_CURRENT_SOURCE_DIR}")

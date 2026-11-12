@@ -240,6 +240,9 @@ void ServeMonitor::end_locked(const std::string_view finish) {
   record.prompt_tokens = figures.prompt_tokens.value_or(live.prompt_tokens);
   record.output_tokens = live.generated;
   record.reused = figures.reused;
+  if (figures.prompt_ms && std::isfinite(*figures.prompt_ms) && *figures.prompt_ms > 0.0)
+    record.engine_prompt_ms = figures.prompt_ms;
+  if (live.first_token) record.ttft_ms = milliseconds_between(live.started, *live.first_token);
   // The engine's own timings when its DONE gave them; else this server's view of the
   // same intervals (GEN to the first token; the first token to the last).
   if (figures.prompt_ms.has_value() && *figures.prompt_ms > 0.0) {
@@ -293,6 +296,7 @@ std::optional<double> ServeMonitor::live_tok_s_locked() const {
 void ServeMonitor::add_host_sample(const HostSample& sample) {
   std::lock_guard lock(mutex_);
   host_ = sample;
+  host_sampled_at_ = steady_();
   host_.engine.reset();  // kept below in its own members
   if (sample.gpu.has_value()) gpu_name_ = sample.gpu->name;
   const auto gpu = [&sample](const auto field) -> std::optional<double> {
@@ -330,6 +334,33 @@ std::optional<double> ServeMonitor::last_decode_tok_s() const {
   std::lock_guard lock(mutex_);
   if (requests_.empty()) return std::nullopt;
   return requests_.front().decode_tok_s;
+}
+
+std::optional<MonitorGenerationMetrics> ServeMonitor::latest_generation_metrics() const {
+  std::lock_guard lock(mutex_);
+  if (requests_.empty()) return std::nullopt;
+  const auto& last = requests_.front();
+  MonitorGenerationMetrics out;
+  out.sequence = total_requests_;
+  out.prompt_tokens = last.prompt_tokens;
+  out.generated_tokens = last.output_tokens;
+  out.reused_tokens = last.reused;
+  out.prompt_ms = last.engine_prompt_ms;
+  if (out.prompt_ms) {
+    const auto processed = last.prompt_tokens - std::min(last.prompt_tokens, last.reused.value_or(0U));
+    out.prompt_tok_s = static_cast<double>(processed) * 1000.0 / *out.prompt_ms;
+  }
+  out.ttft_ms = last.ttft_ms;
+  out.decode_ms = last.decode_ms;
+  out.decode_tok_s = last.decode_tok_s;
+  out.elapsed_ms = last.duration_s * 1000.0;
+  out.finish = last.finish;
+  return out;
+}
+std::optional<MonitorHostSnapshot> ServeMonitor::latest_host_sample() const {
+  std::lock_guard lock(mutex_);
+  if (!host_sampled_at_) return std::nullopt;
+  return MonitorHostSnapshot{host_, *host_sampled_at_};
 }
 
 std::string ServeMonitor::gpu_fact() const {

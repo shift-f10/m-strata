@@ -65,8 +65,8 @@ class ConfigRoutes final {
   [[nodiscard]] HttpResponse answer(RouteId route, std::string_view body, const RequestContext& context);
 
  private:
-  [[nodiscard]] HttpResponse settings_json() const;
-  [[nodiscard]] HttpResponse save(std::string_view body);
+  [[nodiscard]] HttpResponse settings_json(bool loopback) const;
+  [[nodiscard]] HttpResponse save(std::string_view body, bool loopback);
   [[nodiscard]] HttpResponse rotate(std::string_view body);
   [[nodiscard]] HttpResponse inference(std::string_view body);
 

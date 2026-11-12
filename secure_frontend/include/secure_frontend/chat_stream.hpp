@@ -20,6 +20,8 @@ namespace secure_frontend {
 class StreamRounds {
  public:
   virtual ~StreamRounds() = default;
+  [[nodiscard]] virtual bool ended_with_tool_calls() const { return false; }
+  virtual void set_event_queue(std::function<void(std::string)> /*enqueue*/) {}
   [[nodiscard]] virtual GenerationObserver& observer(GenerationObserver& stream) = 0;
   struct Next final {
     std::optional<GenerationRunLimits> limits{};  // the next generation's, its GEN written; unset: the answer is complete

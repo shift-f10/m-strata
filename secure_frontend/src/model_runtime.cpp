@@ -8,12 +8,15 @@
 #include "secure_frontend/chat_schema.hpp"
 #include "secure_frontend/engine_arguments.hpp"
 #include "secure_frontend/engine_environment.hpp"
+#include "secure_frontend/engine_variant.hpp"
 #include "secure_frontend/acquire_reason.hpp"
 #include "secure_frontend/canonical_path.hpp"
 #include "secure_frontend/gguf_metadata.hpp"
 #include "secure_frontend/subsystem_limits.hpp"
 #include "secure_frontend/engine_stdio_process.hpp"
 #include "secure_frontend/exit_status.hpp"
+#include "secure_frontend/embedded_template_plan.hpp"
+#include "secure_frontend/template_review.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -108,6 +111,11 @@ VisionRole make_vision_role(const VisionPlan& plan, ProcessFactory factory) {
 }
 
 std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& config, const bool expert) {
+  const auto variant = select_engine_variant(config.engine.executable, config.engine.fast_math);
+  if (const auto* failure = std::get_if<std::string>(&variant)) {
+    return ComposeFailure{{*failure}, "CUDA fast math is unavailable; verify the installed variant", EXIT_FAILURE};
+  }
+  const auto& executable = std::get<CanonicalFile>(variant).path();
   // Derived once, before bind/spawn; each subsystem keeps its own const copy.
   auto schema_limits = chat_schema_limits(config);
   // SP4 §2.3/§4.9 (Task 24b): managed models launch from the installed manifest;
@@ -154,6 +162,31 @@ std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& 
                           "the tokenizer pack could not be loaded (see the server log)", EXIT_FAILURE};
   }
   auto& tokenizer = std::get<TokenizerPack>(tokenizer_result);
+  std::shared_ptr<const EmbeddedTemplateSelection> embedded_template;
+  if (!config.engine.chat_template_sha256.empty()) {
+    const auto loaded_template = read_embedded_chat_template(config.roots.models, launch);
+    const auto* reviewed = std::get_if<EmbeddedChatTemplate>(&loaded_template);
+    if (reviewed == nullptr || reviewed->sha256 != config.engine.chat_template_sha256) {
+      return ComposeFailure{{"The selected embedded template is missing or has changed; review it again."},
+                            "the selected embedded template must be reviewed again", EXIT_FAILURE};
+    }
+    auto bos = reviewed->bos_token;
+    auto eos = reviewed->eos_token;
+    for (const auto id : {reviewed->bos_id, reviewed->eos_id}) {
+      if (id && *id >= tokenizer.tokens_by_id.size())
+        return ComposeFailure{{"The selected template's token metadata is outside the model vocabulary."},
+                              "the selected embedded template has invalid token metadata", EXIT_FAILURE};
+    }
+    if (!bos && reviewed->bos_id) bos = tokenizer.tokens_by_id[*reviewed->bos_id];
+    if (!eos && reviewed->eos_id) eos = tokenizer.tokens_by_id[*reviewed->eos_id];
+    const auto helper = jinja_helper_path();
+    if (helper.empty()) {
+      return ComposeFailure{{"The embedded template renderer is not available beside the server."},
+                            "the embedded template renderer is unavailable", EXIT_FAILURE};
+    }
+    embedded_template = std::make_shared<const EmbeddedTemplateSelection>(EmbeddedTemplateSelection{
+        reviewed->source, helper, std::move(bos), std::move(eos)});
+  }
   // model.name (session log step 13; the pin's model_name): the name the API serves; the
   // launch's own id (the inventory file, or name:tag) when it is unset.
   std::string model_id = config.engine.served_name.value_or(launch.model_id);
@@ -174,7 +207,7 @@ std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& 
   // reasoning.effort_position on an explicit gemma4 profile; glm53's runner has no such flag).
   bool effort_at_end = false;
   if (launch.profile == EngineProfile::qwen && config.reasoning.effort_position == EffortPosition::end) {
-    const auto tail = compose_effort_end_arguments(config.engine.executable.path(), tokenizer);
+    const auto tail = compose_effort_end_arguments(executable, tokenizer);
     std::cerr << "[strata] " << tail.notice << '\n';
     engine_arguments->insert(engine_arguments->end(), tail.arguments.begin(), tail.arguments.end());
     effort_at_end = !tail.arguments.empty();
@@ -194,8 +227,14 @@ std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& 
   supervisor.flavor = protocol_flavor_for(launch.profile);
   const std::filesystem::path& state_dir = *config.roots.state;
   std::vector<std::filesystem::path> lib_dirs = config.engine.lib_dirs;
-  if (lib_dirs.empty()) lib_dirs.push_back(config.engine.executable.path().parent_path());
-  EngineLaunchPlan plan{.command = {.executable = config.engine.executable.path(), .arguments = std::move(*engine_arguments),
+  if (config.engine.fast_math) {
+    const auto selected_dir = executable.parent_path();
+    lib_dirs.erase(std::remove(lib_dirs.begin(), lib_dirs.end(), selected_dir), lib_dirs.end());
+    lib_dirs.insert(lib_dirs.begin(), selected_dir);
+  } else if (lib_dirs.empty()) {
+    lib_dirs.push_back(executable.parent_path());
+  }
+  EngineLaunchPlan plan{.command = {.executable = executable, .arguments = std::move(*engine_arguments),
                                     .environment = {}}};
   // Spec §3.9: the engine's whole environment, rendered per generation; nothing
   // is inherited from this server's environment.
@@ -210,6 +249,7 @@ std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& 
     environment.glm_knobs = glm_environment_knobs(config);
     environment.glm_vision_turn = config.vision.enabled && !config.vision.resident;
   }
+  environment.speed_settings = config.engine.speed_settings;
   plan.environment = std::move(environment);
   // Spec §3.12: the engine's cwd-relative files (`pack/full`, stall dumps)
   // land in <state_dir>/engine, created by prepare_state_dir() before the spawn.
@@ -260,7 +300,10 @@ std::variant<ComposedModel, ComposeFailure> compose_model(const FrontendConfig& 
                        .response_write_deadline = config.limits.http.response_write_deadline,
                        .stream_keepalive = config.limits.http.stream_keepalive,
                        .vision = nullptr,
-                       .monitor = nullptr};
+                       .monitor = nullptr,
+                       .restrict_tool_calls = config.listener.restrict_tool_calls,
+                       .tool_call_hosts = config.listener.tool_call_hosts,
+                       .embedded_template = std::move(embedded_template)};
   // the picture encoder when this model reads images (the gate above)
   std::optional<VisionPlan> vision;
   if (schema_limits.vision_capable && launch.vision_model.has_value()) {

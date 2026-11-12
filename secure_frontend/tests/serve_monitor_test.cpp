@@ -839,11 +839,41 @@ void conversation_cache_reaches_the_json() {
   const auto* supported = at(at(&gemma, "conversation_cache"), "supported");
   expect(supported != nullptr && supported->if_boolean() != nullptr && !*supported->if_boolean(), "an engine without the cache says so");
 }
+void calibration_snapshots_separate_prompt_work_ttft_and_host_freshness() {
+  Clocked c;
+  expect(!c.monitor.latest_generation_metrics() && !c.monitor.latest_host_sample(), "snapshots initially unavailable");
+  c.monitor.generation_started(100, 16, 8192);
+  c.now += 250ms;
+  c.monitor.on_token(1);
+  c.now += 100ms;
+  c.monitor.on_token(5);
+  c.monitor.on_done({.prompt_tokens = 100U, .prompt_ms = 100.0, .decode_ms = 100.0, .reused = 20U});
+  c.now += 50ms;
+  c.monitor.generation_ended("stop");
+  const auto metrics = c.monitor.latest_generation_metrics();
+  expect(metrics && metrics->sequence == 1U && metrics->prompt_tokens == 100U && metrics->generated_tokens == 5U,
+         "metrics identify exact completed generation");
+  expect(metrics && close_to(metrics->prompt_ms, 100) && close_to(metrics->prompt_tok_s, 800) &&
+             close_to(metrics->ttft_ms, 250) && close_to(metrics->decode_tok_s, 50) && std::abs(metrics->elapsed_ms - 400) < .01,
+         "engine prompt work excludes reuse, observed TTFT stays separate");
+  c.monitor.generation_started(10, 8, 8192);
+  c.now += 50ms; c.monitor.on_token(1); c.now += 10ms; c.monitor.generation_ended("stop");
+  const auto missing = c.monitor.latest_generation_metrics();
+  expect(missing && missing->sequence == 2U && !missing->prompt_ms && !missing->prompt_tok_s && close_to(missing->ttft_ms, 50),
+         "missing engine prompt timing never becomes TTFT-based throughput");
+  secure_frontend::HostSample host;
+  host.cpu_percent = 12.5; host.memory = secure_frontend::MemoryReading{200U, 1000U};
+  c.monitor.add_host_sample(host);
+  const auto snapshot = c.monitor.latest_host_sample();
+  expect(snapshot && snapshot->sampled_at == c.now && snapshot->sample.cpu_percent == host.cpu_percent &&
+             snapshot->sample.memory->used_bytes == 200U, "host readings expose timestamped snapshot");
+}
 }  // namespace
 
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"parses_nvidia_smi_lines", parses_nvidia_smi_lines},
+      {"calibration_snapshots_separate_prompt_work_ttft_and_host_freshness", calibration_snapshots_separate_prompt_work_ttft_and_host_freshness},
       {"the_live_speed_is_the_last_two_seconds", the_live_speed_is_the_last_two_seconds},
       {"engine_readings_reach_the_engine_block", engine_readings_reach_the_engine_block},
       {"engine_change_drops_the_old_engines_readings", engine_change_drops_the_old_engines_readings},

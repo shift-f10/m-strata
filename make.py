@@ -13,12 +13,17 @@ into a staging folder, checks that folder holds runtime files and nothing else, 
 config.example.json, moves it to --out and makes it owner-only. The first start of strata-unified-server creates its
 data/ folder there (docs/superpowers/specs/2026-10-27-gui-first-install-design.md).
 
+Every build includes accurate CUDA libraries in engine/ and a separate complete fast-math runtime in
+engine/fast-math/. The latter may reduce numerical accuracy and is selected per model card at model restart.
+engine/variants.json records the exact installed bytes and each compiler mode; --fast-math is retired.
+
 Standard library only. It never deletes: --out must not exist yet (or be an empty folder).
 """
 from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import importlib.util
 import json
 import os
@@ -26,7 +31,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PureWindowsPath
 
 ROOT = Path(__file__).resolve().parent
@@ -56,6 +61,7 @@ class Options:
     cmake: str
     plan: bool
     debugging: bool = False
+    fast_math: bool = False
 
 
 def host_platform() -> str:
@@ -153,10 +159,13 @@ def parse_args(argv: list[str], platform: str | None = None) -> Options:
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--cmake", default=os.environ.get("CMAKE", ""), help="the cmake executable (default: on PATH)")
     ap.add_argument("--plan", action="store_true", help="print the commands and stop")
+    ap.add_argument("--fast-math", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--debugging", action="store_true",
                     help="a server that logs verbosely, to find out why a model does not start or calibrate "
                          "(it says what that logs and what to take care of)")
     args = ap.parse_args(argv)
+    if args.fast_math:
+        raise SystemExit("make: --fast-math is retired: both compiler variants are now bundled; choose the fast-math card setting and restart the model")
     without = tuple(sorted({w.strip() for w in args.without.split(",") if w.strip()}))
     unknown = [w for w in without if w not in LEAVE_OUT]
     if unknown:
@@ -176,11 +185,19 @@ def parse_args(argv: list[str], platform: str | None = None) -> Options:
                    cuda_runtime=not args.no_cuda_runtime,
                    build_dir=build_dir,
                    engine_build_dir=(args.engine_build_dir or build_dir / "engine").absolute(), jobs=max(1, args.jobs),
-                   cmake=args.cmake, plan=args.plan, debugging=args.debugging)
+                   cmake=args.cmake, plan=args.plan, debugging=args.debugging, fast_math=args.fast_math)
 
 
 def _on_off(flag: bool) -> str:
     return "ON" if flag else "OFF"
+
+
+def engine_variants(opts: Options) -> tuple[Options, Options]:
+    accurate = replace(opts, fast_math=False)
+    fast = replace(opts, fast_math=True, engine_build_dir=opts.build_dir / "engine-fast-math")
+    if accurate.engine_build_dir.resolve() == fast.engine_build_dir.resolve():
+        raise SystemExit("make: accurate and fast-math variants require separate build directories")
+    return accurate, fast
 
 
 def engine_configure_args(opts: Options, platform: str) -> list[str]:
@@ -196,6 +213,7 @@ def engine_configure_args(opts: Options, platform: str) -> list[str]:
             "-DSTRATA_BUILD_RAON1=" + _on_off("raon1" not in opts.without),
             "-DSTRATA_GLM_WERROR=OFF",   # the vendored Maya/raon1 trees are built as their authors build them
             "-DMULTIENGINE_BUNDLE_CUBLAS=" + _on_off(opts.cuda_runtime),
+            "-DMULTIENGINE_FAST_MATH=" + _on_off(opts.fast_math),
             "-DSTRATA_GGML_DIR=" + opts.ggml_dir, "-DCUDAToolkit_ROOT=" + opts.cuda_root,
             *compiler, "-DCMAKE_CUDA_ARCHITECTURES=" + opts.cuda_arch]
 
@@ -261,11 +279,48 @@ def required_files(opts: Options, platform: str) -> list[str]:
     # the picture encoder beside the launcher, where the server looks for it (spec 2026-10-28)
     vision = [] if "vision" in opts.without else [f"engine/strata-vision{exe}"]
     # engine/build.json: the build record the server's About shows (build_record)
-    return ([f"strata-unified-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
+    files = ([f"strata-unified-server{exe}", f"strata{exe}", f"strata-template{exe}", "licenses/llama-jinja/LICENSE",
+             f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
              "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin", "engine/data/draft_vocab.bin",
              "engine/build.json",
              "README.txt", "config.example.json", "LICENSE", "NOTICE.md"] + search + window + vision + maya +
             ["engine/" + lib(n) for n in _families(opts)])
+    return files + ["engine/variants.json"] + ["engine/fast-math/" + name.removeprefix("engine/")
+            for name in files if name.startswith("engine/") and name != "engine/build.json"]
+
+
+def write_variant_manifest(stage: Path, opts: Options, platform: str) -> None:
+    variants = []
+    for variant, name, directory in zip(engine_variants(opts), ("accurate", "fast-math"), (".", "fast-math")):
+        caches = [variant.engine_build_dir / "CMakeCache.txt"]
+        if "maya" not in opts.without:
+            caches.append(variant.engine_build_dir / "maya" / "CMakeCache.txt")
+        expected = "MULTIENGINE_FAST_MATH:BOOL=" + _on_off(variant.fast_math)
+        for cache in caches:
+            if not cache.is_file() or expected not in cache.read_text(encoding="utf-8").splitlines():
+                raise SystemExit("make: compiler-math variant cache mismatch; configure and rebuild both variants")
+        root = stage / "engine" / directory
+        files = []
+        for path in sorted(root.rglob("*")):
+            relative = path.relative_to(root).as_posix()
+            if relative in ("build.json", "variants.json") or (directory == "." and relative.split("/")[0] == "fast-math"):
+                continue
+            if path.is_symlink():
+                raise SystemExit("make: variant manifests cannot contain symbolic links")
+            if not path.is_file():
+                continue
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1 << 20), b""):
+                    digest.update(chunk)
+            files.append({"path": relative, "bytes": path.stat().st_size, "sha256": digest.hexdigest()})
+        required = {f"multiengine{'.exe' if platform == 'windows' else ''}"}
+        if not required.issubset({row["path"] for row in files}):
+            raise SystemExit("make: the compiler-math variant launcher is missing")
+        variants.append({"name": name, "directory": directory, "fast_math": variant.fast_math,
+                         "executable": "multiengine" + (".exe" if platform == "windows" else ""), "files": files})
+    (stage / "engine" / "variants.json").write_text(
+        json.dumps({"schema_version": 1, "variants": variants}, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
 # ---- the build record (engine/build.json; owner 2026-10-27: the About lists the build of our engines) -------------
@@ -322,13 +377,14 @@ def build_record(opts: Options, platform: str, stage: Path, commit: str | None =
                         "bytes": path.stat().st_size if path.is_file() else 0})
     return {"schema_version": 1, "built": built, "commit": commit,
             "ggml": (_tree_text("engine/third_party/ggml/VERSION.txt").split() or ["?"])[0][:12],
-            "cuda_arch": opts.cuda_arch, "features": list(opts.with_features) + (["debugging"] if opts.debugging else []),
+            "cuda_arch": opts.cuda_arch, "features": list(opts.with_features) + (["debugging"] if opts.debugging else []) + ["dual-math"],
             "engines": engines}
 
 
 def _cuda_runtime_patterns(platform: str) -> list[str]:
-    return (["engine/cublas64_*.dll", "engine/cublasLt64_*.dll"] if platform == "windows"
+    patterns = (["engine/cublas64_*.dll", "engine/cublasLt64_*.dll"] if platform == "windows"
             else ["engine/libcublas.so.*", "engine/libcublasLt.so.*"])
+    return patterns + ["engine/fast-math/" + name.removeprefix("engine/") for name in patterns]
 
 
 # The MSVC runtime CMake's InstallRequiredSystemLibraries puts beside each program (Microsoft's app-local deployment).
@@ -364,7 +420,7 @@ def layout_problems(root: Path, opts: Options, platform: str) -> list[str]:
         if opts.cuda_runtime and any(fnmatch.fnmatch(name, pattern) for pattern in cuda):
             continue
         base = name.rsplit("/", 1)[-1].lower()
-        if platform == "windows" and name.count("/") <= 1 and any(fnmatch.fnmatch(base, p) for p in _MSVC_RUNTIME):
+        if platform == "windows" and name.rsplit("/", 1)[0] in (name, "engine", "engine/fast-math") and any(fnmatch.fnmatch(base, p) for p in _MSVC_RUNTIME):
             continue
         problems.append(f"{name}: not a runtime file")
     problems += _distribution_check().inspect(root, False)
@@ -418,6 +474,8 @@ Key:        {strata} --config data/config.json key show   (or key rotate)
 Contents:   strata-unified-server and strata, the frontend{search}{window_contents}
             engine/: multiengine (the launcher), one library per model family, strata-prepare{vision}, the expert
             profiles{templates}{cuda}
+            engine/fast-math/: the complete alternative CUDA compiler-math runtime
+            engine/variants.json: compiler modes and SHA-256 hashes of each runtime's files
             LICENSE and NOTICE.md
             Nothing else is needed; move or copy the whole folder.
 
@@ -437,11 +495,18 @@ DEBUGGING_NOTICE = """Debugging:  this is a debugging build (make --debugging): 
             the server and start it only when you accept (Yes in the window, y in the TUI)."""
 
 
+FAST_MATH_NOTICE = """Math:       both compiler variants are bundled. engine/ is accurate (the default); engine/fast-math/
+            retains upstream CUDA approximate-math flags. Fast math may improve speed and reduce numerical accuracy.
+            Choose the compiler-math card setting and restart the model to switch libraries. Each directory holds
+            its own dependencies. --fast-math is no longer a build option: every build includes both variants."""
+
+
 def announce(opts: Options) -> None:
     """What make says before it builds: the GPU targets, and what a debugging build means."""
     print(f"make: GPU targets {opts.cuda_arch}", flush=True)
     if opts.debugging:
         print(DEBUGGING_NOTICE, flush=True)
+    print(FAST_MATH_NOTICE, flush=True)
 
 
 NVIDIA_TEXT = """NVIDIA:     engine/{cublas}* are NVIDIA cuBLAS libraries, redistributed unmodified under the NVIDIA CUDA Toolkit
@@ -481,7 +546,8 @@ def readme_text(opts: Options, platform: str) -> str:
     return README_TEXT.format(server=server, shell=shell, strata=".\\strata.exe" if windows else "./strata", cuda=cuda,
                               search=search, settings=settings, templates=templates, minimax=minimax, nvidia=nvidia,
                               vision=vision, window=window, window_contents=window_contents) + \
-           ("\n" + DEBUGGING_NOTICE + "\n" if opts.debugging else "")
+           ("\n" + DEBUGGING_NOTICE + "\n" if opts.debugging else "") + \
+           "\n" + FAST_MATH_NOTICE + "\n"
 
 
 def owner_only_commands(path: Path, platform: str, user: str) -> list[list[str]]:
@@ -599,14 +665,24 @@ def main(argv: list[str] | None = None) -> int:
     jobs = ["-j", str(opts.jobs)]
     announce(opts)
 
-    run([cmake, *engine_configure_args(opts, platform), *make_program_args(opts.engine_build_dir, ninja)], env,
-        opts.plan)
-    run_cuda_build([cmake, "--build", str(opts.engine_build_dir), "--target", "multiengine", "strata_kq"], opts.jobs, env,
-                   opts.plan)
-    run([cmake, "--install", str(opts.engine_build_dir), "--prefix", str(stage), "--component", "runtime"], env, opts.plan)
-    if opts.cuda_runtime:
-        run([cmake, "--install", str(opts.engine_build_dir), "--prefix", str(stage), "--component", "cuda"], env,
-            opts.plan)
+    fast_prefix = stage / "fast-variant-install"
+    for variant in engine_variants(opts):
+        prefix = fast_prefix if variant.fast_math else stage
+        run([cmake, *engine_configure_args(variant, platform), *make_program_args(variant.engine_build_dir, ninja)], env, opts.plan)
+        run_cuda_build([cmake, "--build", str(variant.engine_build_dir), "--target", "multiengine", "strata_kq"], opts.jobs, env,
+                       opts.plan)
+        run([cmake, "--install", str(variant.engine_build_dir), "--prefix", str(prefix), "--component", "runtime"], env, opts.plan)
+        if opts.cuda_runtime:
+            run([cmake, "--install", str(variant.engine_build_dir), "--prefix", str(prefix), "--component", "cuda"], env, opts.plan)
+    print(f"+ move {fast_prefix / 'engine'} {stage / 'engine' / 'fast-math'}", flush=True)
+    if not opts.plan:
+        source, destination = fast_prefix / "engine", stage / "engine" / "fast-math"
+        if (not source.is_dir() or destination.exists() or source.is_symlink() or
+                not source.resolve().is_relative_to(stage.resolve()) or
+                not destination.resolve().is_relative_to(stage.resolve())):
+            raise SystemExit("make: invalid fast-math runtime staging layout")
+        shutil.move(str(source), str(destination))
+        fast_prefix.rmdir()  # must be empty: unexpected install files refuse packaging
     if "vision" not in opts.without:
         # upstream's picture encoder, into engine/ beside the launcher (it has no install rules: its one program is copied)
         run([cmake, *vision_configure_args(opts, platform), *make_program_args(opts.build_dir / "vision", ninja)], env,
@@ -617,6 +693,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"+ copy {opts.build_dir / 'vision' / 'bin' / program} {stage / 'engine' / program}", flush=True)
         if not opts.plan:
             shutil.copy2(opts.build_dir / "vision" / "bin" / program, stage / "engine" / program)
+            shutil.copy2(opts.build_dir / "vision" / "bin" / program, stage / "engine" / "fast-math" / program)
     run([cmake, *frontend_configure_args(opts, platform), *make_program_args(opts.build_dir / "frontend", ninja)],
         env, opts.plan)
     run([cmake, "--build", str(opts.build_dir / "frontend"), "--target", *frontend_build_targets(opts), *jobs], env,
@@ -633,6 +710,7 @@ def main(argv: list[str] | None = None) -> int:
         shutil.copyfile(ROOT / name, stage / name)
     (stage / "engine" / "build.json").write_text(json.dumps(build_record(opts, platform, stage), indent=2) + "\n",
                                                  encoding="utf-8", newline="\n")
+    write_variant_manifest(stage, opts, platform)
     problems = layout_problems(stage, opts, platform)
     if problems:
         print("make: the staged folder is not a clean runtime folder (" + str(stage) + "):", file=sys.stderr)

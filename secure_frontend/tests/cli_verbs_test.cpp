@@ -159,7 +159,14 @@ void cli_service_enable_status_disable_roundtrip() {
 }
 
 void cli_service_enable_without_user_manager() {
-  const Scene s(18444);
+  Scene s(18444);
+  // Model the missing manager explicitly; the host may have a running user
+  // manager, and this test must never operate on its real systemd instance.
+  const auto shim_dir = s.scratch / "no-manager";
+  std::filesystem::create_directory(shim_dir);
+  const auto shim = shim_dir / "systemctl";
+  write_file(shim, "#!/bin/sh\necho 'Failed to connect to bus: No such file or directory' >&2\nexit 1\n", 0700);
+  s.env = {{"HOME", s.home.string()}, {"XDG_CONFIG_HOME", s.xdg.string()}, {"PATH", shim_dir.string()}};
   const auto enable = s.run({"service", "enable"});
   expect(enable.exit_code != 0, "no reachable user manager is a non-zero exit");
   std::error_code ec;

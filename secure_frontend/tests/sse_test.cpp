@@ -73,6 +73,12 @@ bool single_line_event(const std::string& event) {
   return event.size() >= 2U && event.compare(event.size() - 2U, 2U, "\n\n") == 0 && event.find('\n') == event.size() - 2U;
 }
 
+void sse_tool_call_event_shape() {
+  const auto event = secure_frontend::render_tool_call_event(kIdentity, 0, "call_1", "weather", "{\"city\":\"Paris\"}");
+  expect(single_line_event(event) && event.find(R"("tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"weather","arguments":"{\"city\":\"Paris\"}"}}])") != std::string::npos,
+         "streamed call carries index, id, function and escaped arguments");
+}
+
 void sse_events_never_contain_raw_newline() {
   const std::string hostile = "a\nb\r\nc\x01\"\\\xE2\x80\xA8 end";
   const std::vector<std::string> events{
@@ -631,6 +637,7 @@ void stream_rounds_can_end_the_answer() {
 int main(int argc, char* argv[]) {
   return secure_frontend_test::run_cases(argc, argv,
                                          {
+                                             {"sse_tool_call_event_shape", sse_tool_call_event_shape},
                                              {"utf8_split_across_tokens_is_held_then_released", utf8_split_across_tokens_is_held_then_released},
                                              {"sse_reasoning_event_shape", sse_reasoning_event_shape},
                                              {"stream_sends_reasoning_deltas_before_the_answer", stream_sends_reasoning_deltas_before_the_answer},

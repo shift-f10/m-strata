@@ -2,6 +2,27 @@
 
 ## This repository's license
 
+### Native embedded-template interpreter (2026-11-11)
+
+`secure_frontend/third_party/llama_jinja` vendors the value-only Jinja interpreter and Unicode helpers
+from the existing pinned llama.cpp dependency, commit `3cf03257f219afbe7334045ff7c6a06ac68c627d`,
+under MIT. `SOURCE.md` in that directory lists local adaptations and `UPSTREAM.sha256` records original
+source hashes. The original license is installed as `licenses/llama-jinja/LICENSE`. No Python runtime,
+template filesystem loader or network-capable template API is added. The separate `strata-template`
+helper uses bounded JSON and marked input spans, with mandatory process resource limits. This is an
+owner-authorized opt-in feature, not a change to the default native frontend prompt renderer; see
+`security/threat-model.md` and `validation/2026-11-11-accuracy-audit.md`.
+
+The multiengine launcher applies our accuracy-first defaults and explicitly selected, bounded speed settings before loading any family library,
+and refuses unsupported direct top-k values. The copied engine/kernel sources and `upstream/` remain
+unchanged. The frontend uses the same closed settings channel when launching an external engine.
+Owned CMake overlays remove compiler-wide CUDA fast-math flags by default after target creation; an
+explicit `MULTIENGINE_FAST_MATH=ON` build retains upstream flags. Packaging builds both modes in separate
+trees and installs the fast variant under `engine/fast-math`, with its matching dependencies. The
+manifest records their file hashes after verifying both engine and Maya compiler-mode caches.
+Normal FMA and explicit source intrinsics
+remain unchanged, and neither the copied CUDA sources nor ggml checkout is edited.
+
 The repository's own code is under the GNU Affero General Public License version 3 only: `LICENSE` is the FSF's text,
 byte for byte (https://www.gnu.org/licenses/agpl-3.0.txt, fetched 2026-10-28, SHA-256
 `0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0`). `NOTICE.md` holds the copyright line, the MIT notice of Strata (whose code much of this derives from; MIT permits
@@ -386,6 +407,17 @@ covers the MiniMax model and Maya's MiniMax chat template and fixtures (`tools/m
 under Maya's MIT licence. The statements above that nothing was taken predate this.
 
 ## ggml / llama.cpp (bundled with upstream)
+
+The optional embedded-template renderer (2026-11-11) also vendors the native
+`common/jinja/` interpreter and `common/unicode.{cpp,h}` from the same pinned
+commit `3cf03257f219afbe7334045ff7c6a06ac68c627d`, under its MIT license, in
+`secure_frontend/third_party/llama_jinja/`. `SOURCE.md` there lists local input
+marking and dependency adaptations; `UPSTREAM.sha256` hashes the original git
+objects, checked directly at that commit. The separate `strata-template`
+helper imposes mandatory resource limits before parsing; Linux additionally
+uses a syscall allowlist. No Python or host-object access is registered. Its
+license is installed at `licenses/llama-jinja/LICENSE`. Windows Job Objects
+provide resource containment, not an AppContainer against native memory bugs.
 
 [ggml-org/llama.cpp][llamacpp] / ggml comes with the upstream baseline and is
 unchanged by us (it is inside the `upstream/` submodule). It is present in two

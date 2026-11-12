@@ -2,6 +2,7 @@
 
 #include "secure_frontend/config_defaults.hpp"
 #include "secure_frontend/engine_arguments.hpp"
+#include "secure_frontend/engine_accuracy_policy.hpp"
 #include "secure_frontend/http_policy.hpp"
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/model_inventory.hpp"
@@ -36,7 +37,7 @@ std::string decimal_text(const double value) {
   return ec == std::errc{} ? std::string{buffer, end} : std::string{"?"};
 }
 
-constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 + 1 + 2 + 1 + 1 + 2 + 4 + 5 + 1 + 1 /* roots.allow_untrusted_media */ + 1 /* glm.kv */ + 3 /* listener.login_link, models.default_engine, models.default_root */ + 8 /* alerts.email.* */ + 1 /* models.control_remote_networks */ + 5 /* search.* */ + 2 /* vision.mmproj, vision.gpu */ + 2 /* glm.pcie_share, glm.cpu_lane */ + 1 /* logging.engine_output */ + 1 /* roots.allow_network_shares */> kSchema{{
+constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 + 1 + 2 + 1 + 1 + 2 + 4 + 5 + 1 + 1 /* roots.allow_untrusted_media */ + 1 /* glm.kv */ + 3 /* listener.login_link, models.default_engine, models.default_root */ + 8 /* alerts.email.* */ + 1 /* models.control_remote_networks */ + 5 /* search.* */ + 2 /* vision.mmproj, vision.gpu */ + 2 /* glm.pcie_share, glm.cpu_lane */ + 1 /* logging.engine_output */ + 1 /* roots.allow_network_shares */+ 2 /* client tool access */ + 1 /* reviewed template */ + 2 /* explicit speed settings and compiler variant */> kSchema{{
     {"schema_version", T::integer, false, 1, 1, d::kSchemaVersion, false, "", "",
      "Config format version; must be 1. Required in a config file."},
     {"listener.host", T::string, false, 0, 0, 0, false, "127.0.0.1", "--host",
@@ -51,6 +52,10 @@ constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 
      "Exact browser origins allowed CORS: http:// or https://, a lower-case host, an optional port, no path; never * or null; at most 16."},
     {"listener.host_aliases", T::string_array, false, 0, 0, 0, false, "", "",
      "Extra exact Host values (host or host:port) clients use; required when the bind is a wildcard; at most 16."},
+    {"listener.restrict_tool_calls", T::boolean, false, 0, 0, 0, false, "", "",
+     "Limit client function tools to listed IP addresses. An empty list blocks client function tools when this is enabled."},
+    {"listener.tool_call_hosts", T::string_array, false, 0, 0, 0, false, "", "",
+     "Individual IPv4 or IPv6 addresses allowed to send client function tools. Enter a loopback address to allow local clients."},
     {"listener.web_ui", T::boolean, false, 0, 0, 0, false, "", "",
      "Serve the built-in chat page at / (bundled files only). The page asks for the API key and keeps it in that tab; every API route still needs the key."},
     {"listener.loopback_without_key", T::boolean, false, 0, 0, 0, false, "", "",
@@ -210,6 +215,12 @@ constexpr std::array<ConfigKey, 43 + 7 + 3 + 9 + 7 + 3 + 13 + 6 + 8 + 1 + 9 + 9 
      "Start with the engine unloaded; the first request loads it (the pin's lazy_load, text only)."},
     {"engine.idle_unload_s", T::integer, false, 0, 86400, 0, false, "", "",
      "Seconds without a request before the engine is unloaded (0: never, the pin default); cap added, C-1."},
+    {"engine.chat_template_sha256", T::string, false, 0, 0, 0, false, "", "",
+     "Empty: built-in frontend template. A reviewed template SHA-256 opts in to that exact embedded model template; changed bytes refuse model start."},
+    {"engine.speed_settings", T::string_array, false, 0, 0, 0, false, "", "",
+     "Explicit bounded NAME=value speed settings. Empty keeps accuracy-first defaults. These options can reduce accuracy; use the model card's Speed improvements controls."},
+    {"engine.fast_math", T::boolean, false, 0, 0, 0, false, "", "",
+     "Select the bundled CUDA fast-math engine at the next model start. May reduce numerical accuracy; false selects the accuracy build."},
     {"engine.mtp", T::boolean, false, 0, 0, 0, true, "", "",
      "Draft layer (MTP): on unless explicitly false; false drops --mtp/--spec-min-p/--batch-mtp at every start."},
     // SP5 M1 Task 7 (the VRAM / GPU / elastic family). Kinds and defaults verbatim from the
@@ -717,7 +728,12 @@ bool is_alert_event(const std::string_view text) noexcept {
 
 bool is_ip_network(const std::string_view text) noexcept { return parse_ip_network(text).has_value(); }
 
-constexpr std::array<ConfigKeyExtension, 10> kSchemaExtensions{{
+bool is_tool_call_host(const std::string_view text) noexcept {
+  return text.find('/') == std::string_view::npos && is_ip_network(text);
+}
+
+constexpr std::array<ConfigKeyExtension, 11> kSchemaExtensions{{
+    {"listener.tool_call_hosts", 16U, &is_tool_call_host, "each entry must be one IPv4 or IPv6 address", ""},
     {"models.cards", 16U, &is_absolute_card_file, "each entry must be an absolute path of a card file", ""},
     {"models.control_remote_networks", 16U, &is_ip_network,
      "each entry must be an IP address or a subnet such as 172.16.1.0/24 (no host bits set); names are never resolved", ""},
@@ -1040,6 +1056,11 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
   // SP3 §4.3/§4.4: a wildcard bind trusts only the configured Host aliases.
   std::vector<std::string> cors_origins = read_bounded_strings(read, errors, "listener.cors_origins");
   std::vector<std::string> host_aliases = read_bounded_strings(read, errors, "listener.host_aliases");
+  const bool restrict_tool_calls = read.boolean("listener.restrict_tool_calls");
+  std::vector<IpNetwork> tool_call_hosts;
+  for (const auto& text : read_bounded_strings(read, errors, "listener.tool_call_hosts")) {
+    if (const auto host_network = parse_ip_network(text)) tool_call_hosts.push_back(*host_network);
+  }
   if (host.has_value() && host->scope() == AddressScope::wildcard && host_aliases.empty() &&
       !has_issue_for(errors, "listener.host_aliases")) {
     add(errors, "listener.host_aliases", ConfigIssueCode::invalid_value,
@@ -1614,7 +1635,7 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
   const auto u32 = [](const std::int64_t v) { return static_cast<std::uint32_t>(v); };
   ListenerConfig listener{*host, static_cast<std::uint16_t>(port), allow_remote, allow_wildcard, u32(backlog),
                           std::move(cors_origins), std::move(host_aliases), web_ui, loopback_without_key, monitor,
-                          login_link};
+                          login_link, restrict_tool_calls, std::move(tool_call_hosts)};
   const Limits limits{
       HttpLimits{std::chrono::milliseconds(deadline_ms), u32(max_request), u32(max_header), u32(max_headers), u32(max_line),
                  std::chrono::milliseconds(header_deadline_ms), std::chrono::milliseconds(write_stall_ms),
@@ -1664,6 +1685,20 @@ ConfigValidationResult validate(const FrontendConfigDraft& draft) {
                                              : std::optional<std::size_t>{},
                       std::move(aliases),
                       std::move(served_name)};
+  engine.chat_template_sha256 = read.string("engine.chat_template_sha256").value_or("");
+  engine.speed_settings = read.strings("engine.speed_settings");
+  engine.fast_math = read.boolean("engine.fast_math");
+  std::vector<EngineSpeedValue> parsed_speed;
+  if (!parse_engine_speed_settings(engine.speed_settings, parsed_speed)) {
+    add(errors, "engine.speed_settings", ConfigIssueCode::invalid_value, "must contain unique supported speed settings within their bounds");
+  }
+  if (!engine.chat_template_sha256.empty() &&
+      (engine.chat_template_sha256.size() != 64U ||
+       !std::all_of(engine.chat_template_sha256.begin(), engine.chat_template_sha256.end(), [](char c) {
+         return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+       }))) {
+    add(errors, "engine.chat_template_sha256", ConfigIssueCode::invalid_value, "must be empty or a lowercase SHA-256 digest");
+  }
   AlertsConfig alerts_config = read_alerts(read, draft, errors);
   SearchConfig search_config = read_search(read, draft, errors);
   if (!errors.empty()) return errors;
@@ -1703,6 +1738,10 @@ std::string describe(const FrontendConfig& c) {
   };
   line("listener.cors_origins", list_text(c.listener.cors_origins));
   line("listener.host_aliases", list_text(c.listener.host_aliases));
+  line("listener.restrict_tool_calls", c.listener.restrict_tool_calls ? "true" : "false");
+  std::vector<std::string> tool_call_hosts;
+  for (const auto& host : c.listener.tool_call_hosts) tool_call_hosts.push_back(ip_network_text(host));
+  line("listener.tool_call_hosts", list_text(tool_call_hosts));
   line("listener.web_ui", c.listener.web_ui ? "true" : "false");
   line("listener.loopback_without_key", c.listener.loopback_without_key ? "true" : "false");
   line("listener.monitor", c.listener.monitor ? "true" : "false");
@@ -1880,6 +1919,9 @@ std::string describe(const FrontendConfig& c) {
   // SP5 M1 Task 6: the lifecycle family (runconfig.py:35-38).
   line("engine.lazy_load", c.engine.lazy_load ? "true" : "false");
   line("engine.idle_unload_s", std::to_string(c.engine.idle_unload.count()));
+  line("engine.chat_template_sha256", json_quoted(c.engine.chat_template_sha256));
+  line("engine.speed_settings", list_text(c.engine.speed_settings));
+  line("engine.fast_math", c.engine.fast_math ? "true" : "false");
   line("engine.mtp", c.engine.mtp ? "true" : "false");
   // SP5 M1 Task 7: the VRAM / GPU / elastic family.
   line("engine.vram_reserve_mib", integer_or_unset(c.engine.vram_reserve_mib));

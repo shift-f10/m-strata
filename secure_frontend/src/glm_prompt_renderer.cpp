@@ -181,7 +181,7 @@ std::optional<std::string> render_glm53_text_prompt(const std::vector<ChatMessag
 std::optional<std::vector<PromptPiece>> render_raon1_tool_prompt(const std::vector<ChatMessage>& messages,
                                                                  const std::span<const std::string> tools,
                                                                  const std::span<const ToolRound> rounds, const bool thinking) {
-  if (tools.empty() || !sayable(rounds)) return std::nullopt;
+  if ((tools.empty() && !has_tool_rounds(messages, rounds)) || !sayable(rounds)) return std::nullopt;
   // The conversation obeys every rule of the plain prompt (roles, order, markers, sizes); an earlier answer's
   // searches those of this turn's rounds (history_ok).
   if (!raon1_text_prompt(messages, thinking, true)) return std::nullopt;
@@ -200,17 +200,19 @@ std::optional<std::vector<PromptPiece>> render_raon1_tool_prompt(const std::vect
   PromptBuilder out;
   out.marker("<|im_start|>");
   out.text("system\n");
-  out.text(kQwenToolsOpen);
-  for (const auto& tool : tools) {
-    out.text("\n");
-    out.text(tool);
+  if (!tools.empty()) {
+    out.text(kQwenToolsOpen);
+    for (const auto& tool : tools) {
+      out.text("\n");
+      out.text(tool);
+    }
+    out.text(kQwenToolsClose);
+    out.templated(kQwenToolInstructions, kInstructionTags);
   }
-  out.text(kQwenToolsClose);
-  out.templated(kQwenToolInstructions, kInstructionTags);
   std::size_t index = 0U;
   if (messages.front().role == "system") {
     if (const std::string_view system = raon_trim(messages.front().content); !system.empty()) {
-      out.text("\n\n");
+      if (!tools.empty()) out.text("\n\n");
       out.text(system);
     }
     index = 1U;
@@ -307,20 +309,22 @@ constexpr std::array<std::string_view, 8U> kGlmToolTags{"<tool_call>", "</tool_c
 std::optional<std::vector<PromptPiece>> render_glm53_tool_prompt(const std::vector<ChatMessage>& messages,
                                                                  const std::span<const std::string> tools,
                                                                  const std::span<const ToolRound> rounds) {
-  if (tools.empty() || !sayable(rounds)) return std::nullopt;
+  if ((tools.empty() && !has_tool_rounds(messages, rounds)) || !sayable(rounds)) return std::nullopt;
   // The conversation obeys every rule of the fixed profile (roles, order, markers, sizes); an earlier answer's
   // searches those of this turn's rounds (history_ok).
   if (!glm53_text_prompt(messages, true)) return std::nullopt;
   PromptBuilder out;
   out.marker("[gMASK]");
   out.marker("<sop>");
-  out.marker("<|system|>");
-  out.text(kGlmToolsHead);
-  for (const auto& tool : tools) {
-    out.text("\n");
-    out.text(tool);
+  if (!tools.empty()) {
+    out.marker("<|system|>");
+    out.text(kGlmToolsHead);
+    for (const auto& tool : tools) {
+      out.text("\n");
+      out.text(tool);
+    }
+    out.templated(kGlmToolsTail, kGlmToolTags);
   }
-  out.templated(kGlmToolsTail, kGlmToolTags);
   std::size_t index = 0U;
   if (messages.front().role == "system") {
     out.marker("<|system|>");

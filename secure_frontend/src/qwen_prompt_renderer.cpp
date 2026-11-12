@@ -357,7 +357,7 @@ std::optional<std::vector<PromptPiece>> render_qwen_tool_prompt(const std::vecto
                                                                 const std::span<const std::string> tools,
                                                                 const std::span<const ToolRound> rounds, const QwenThinking thinking,
                                                                 const std::optional<QwenEffortPlacement> effort) {
-  if (thinking == QwenThinking::absent || tools.empty()) return std::nullopt;
+  if (thinking == QwenThinking::absent || (tools.empty() && !has_tool_rounds(messages, rounds))) return std::nullopt;
   for (const auto& message : messages) {
     if (!image_free_parts(message)) return std::nullopt;  // a request with images is served without search
     if (message.rounds.empty()) continue;
@@ -376,19 +376,22 @@ std::optional<std::vector<PromptPiece>> render_qwen_tool_prompt(const std::vecto
   // The system turn: the effort sentence, the tools, the instructions, then the system text.
   out.marker(kStartMarker);
   out.text("system\n");
-  if (const std::string_view sentence = top_effort_sentence(thinking, effort); !sentence.empty()) {
+  const std::string_view sentence = top_effort_sentence(thinking, effort);
+  if (!sentence.empty()) {
     out.text(sentence);
     out.text("\n\n");
   }
-  out.text(kToolsOpen);
-  for (const auto& tool : tools) {
-    out.text("\n");
-    out.text(tool);
+  if (!tools.empty()) {
+    out.text(kToolsOpen);
+    for (const auto& tool : tools) {
+      out.text("\n");
+      out.text(tool);
+    }
+    out.text(kToolsClose);
+    out.templated(kToolInstructions, kInstructionTags);
   }
-  out.text(kToolsClose);
-  out.templated(kToolInstructions, kInstructionTags);
   if (has_system) {
-    out.text("\n\n");
+    if (!tools.empty() || !sentence.empty()) out.text("\n\n");
     out.text(message_body(messages.front()));
   }
   out.marker(kEndMarker);

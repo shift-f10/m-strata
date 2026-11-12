@@ -1031,7 +1031,7 @@
     var card = runningCard();
     var from = cardSettings(card);
     var shown = function (value, cards) {
-      return s.tuned ? Number(value).toFixed(2) : cards !== null ? Number(cards).toFixed(2) + " (the card's)" : "model default";
+      return s.tuned ? String(Number(value)) : cards !== null ? String(Number(cards)) + " (the card's)" : "model default";
     };
     $("s-temp").value = s.temperature; $("o-temp").textContent = shown(s.temperature, from.temperature);
     $("s-topp").value = s.top_p; $("o-topp").textContent = shown(s.top_p, from.top_p);
@@ -1063,8 +1063,10 @@
     var topP = Number($("s-topp").value);
     var was = state.shown || { temperature: s.temperature, top_p: s.top_p };
     s.tuned = s.tuned || temperature !== was.temperature || topP !== was.top_p;
-    s.temperature = temperature;
-    s.top_p = topP;
+    // A browser rounds/clamps a slider's displayed position. Only a changed slider replaces
+    // its setting: applying another option must preserve the card's exact sampling values.
+    if (temperature !== was.temperature) { s.temperature = temperature; }
+    if (topP !== was.top_p) { s.top_p = topP; }
     s.max = $("s-max").value.trim();
     s.seed = $("s-seed").value.trim();
     s.show = $("s-show").getAttribute("aria-checked") === "true";
@@ -1267,23 +1269,54 @@
     if (hasMin) { input.min = String(option.min); }
     if (hasMax) { input.max = String(option.max); }
     input.placeholder = hasMin && hasMax ? num(option.min) + " to " + num(option.max) : "a number";
+    // Sliders make sampling decimals easy to adjust; the value box remains authoritative so
+    // loading or resetting a precise value never rounds it to the slider's hundredths.
+    var slider = null;
+    var syncSlider = function () {
+      if (!slider) { return; }
+      var n = Number(input.value);
+      if (input.value !== "" && isFinite(n)) { slider.value = String(n); }
+      slider.setAttribute("aria-valuetext", input.value || "No value");
+    };
+    if (!integral && hasMin && hasMax) {
+      wrap.className += " option-slider";
+      slider = el("input", "st-slider");
+      slider.type = "range";
+      slider.id = input.id;
+      slider.max = String(option.max);
+      slider.step = "0.01";
+      var span = option.max - option.min;
+      if (span > 0 && span < 0.01) { slider.step = String(span / 100 || span); }
+      slider.min = String(option.min > 0 && option.min < Number(slider.step) ? Math.min(Number(slider.step), option.max) : option.min);
+      input.id += "-value";
+      input.setAttribute("aria-label", name + " value");
+      slider.addEventListener("input", function () { input.value = slider.value; syncSlider(); });
+      input.addEventListener("input", syncSlider);
+    }
     var auto = null;
     if (withAuto) {
       var autoLabel = el("label", "option-auto");
       auto = el("input");
       auto.type = "checkbox";
       auto.setAttribute("aria-label", name + ": auto");
-      auto.addEventListener("change", function () { input.disabled = auto.checked; if (!auto.checked) { input.focus(); } });
+      auto.addEventListener("change", function () {
+        input.disabled = auto.checked;
+        if (slider) { slider.disabled = auto.checked; }
+        if (!auto.checked) { input.focus(); }
+      });
       autoLabel.appendChild(auto);
       autoLabel.appendChild(document.createTextNode("auto"));
       wrap.appendChild(autoLabel);
     }
+    if (slider) { wrap.appendChild(slider); }
     wrap.appendChild(input);
     var set = function (v) {
       var isAuto = withAuto && v === "auto";
       if (auto) { auto.checked = isAuto; }
       input.disabled = isAuto;
+      if (slider) { slider.disabled = isAuto; }
       input.value = typeof v === "number" && isFinite(v) ? String(v) : "";
+      syncSlider();
     };
     var read = function () {
       if (auto && auto.checked) { return { value: "auto" }; }
@@ -1381,20 +1414,96 @@
         return { node: el("code", "option-fixed", JSON.stringify(value)), read: function () { return { skip: true }; }, set: function () {} };
     }
   }
+  var CARD_TABS = ["generation", "memory", "speed", "template", "calibration", "files"];
+  function showCardTab(name, focus) {
+    if (CARD_TABS.indexOf(name) < 0) { name = "generation"; }
+    launcher.cardTab = name;
+    CARD_TABS.forEach(function (tab) {
+      var selected = tab === name;
+      var button = $("model-card-tab-" + tab);
+      button.setAttribute("aria-selected", selected ? "true" : "false");
+      button.tabIndex = selected ? 0 : -1;
+      $("model-card-panel-" + tab).hidden = !selected;
+    });
+    // The options wrapper must not leave a grid gap above the other panels.
+    $("model-options").hidden = ["generation", "memory", "speed"].indexOf(name) < 0;
+    if (name === "template" && !templateReview.attempted && !templateReview.busy) { inspectCardTemplate(); }
+    if (focus) { $("model-card-tab-" + name).focus(); }
+  }
+  function initCardTabs() {
+    CARD_TABS.forEach(function (name, index) {
+      var button = $("model-card-tab-" + name);
+      button.addEventListener("click", function () { showCardTab(name); });
+      button.addEventListener("keydown", function (event) {
+        var next = index;
+        if (event.key === "ArrowRight") { next = (index + 1) % CARD_TABS.length; }
+        else if (event.key === "ArrowLeft") { next = (index + CARD_TABS.length - 1) % CARD_TABS.length; }
+        else if (event.key === "Home") { next = 0; }
+        else if (event.key === "End") { next = CARD_TABS.length - 1; }
+        else { return; }
+        event.preventDefault();
+        showCardTab(CARD_TABS[next], true);
+      });
+    });
+  }
+  function cardOptionTab(option) {
+    if (option.accuracy_tradeoff === true || ["mtp", "spec", "spec_min_p"].indexOf(option.name) >= 0) { return "speed"; }
+    if (["max_context", "kv", "kv_resident", "kv_grow", "expert_cache", "expert_vram", "prefill", "chunk",
+         "low_ram", "vram_reserve", "ram_headroom", "gpus", "hot"].indexOf(option.name) >= 0) { return "memory"; }
+    // New server options remain available even before this page knows their category.
+    return "generation";
+  }
   function buildOptions(card) {
     var box = $("model-options");
     clear(box);
+    if (launcher.formFor !== card.name) { launcher.cardTab = "generation"; }
     launcher.formFor = card.name;
     launcher.controls = [];
     launcher.limits = [];
+    var panels = {};
+    ["generation", "memory", "speed"].forEach(function (name) {
+      var panel = el("section", "model-card-panel model-option-grid");
+      panel.id = "model-card-panel-" + name;
+      panel.setAttribute("role", "tabpanel");
+      panel.setAttribute("aria-labelledby", "model-card-tab-" + name);
+      panel.tabIndex = 0;
+      panels[name] = panel;
+      box.appendChild(panel);
+    });
+    var speedGroup = null;
+    var speedFields = null;
+    var speedStatus = null;
+    var updateTradeoffs = function () {
+      var active = 0;
+      var invalid = 0;
+      launcher.controls.forEach(function (c) {
+        if (!c.tradeoffStatus) { return; }
+        var result = c.read();
+        var changed = !result.error && !result.skip && result.value !== c.option.accuracy_default;
+        if (changed) { active += 1; }
+        if (result.error) { invalid += 1; }
+        c.tradeoffStatus.textContent = result.error ? "Check value" : changed ? "May reduce accuracy" : "Accuracy default";
+        c.field.classList.toggle("accuracy-tradeoff-active", changed);
+      });
+      if (speedStatus) {
+        speedStatus.textContent = active ? active + " active - May reduce accuracy" : invalid ? "Check values" : "Accuracy defaults";
+      }
+      var warning = $("model-tradeoff-warning");
+      warning.hidden = !active && !invalid;
+      warning.textContent = active ? active + " speed setting(s) may reduce accuracy. Review the Speed tab." :
+        invalid ? "Check the invalid settings in the Speed tab." : "";
+    };
+    launcher.updateTradeoffs = updateTradeoffs;
     var options = Array.isArray(card.options) ? card.options.filter(function (o) {
       // a Qwen3.6 file without its own draft layer: its MTP switch would switch nothing
       return o && typeof o.name === "string" &&
              !(o.name === "mtp" && card.draft && card.draft.kind === "inside" && card.draft.in_file === false);
     }) : [];
-    if (!options.length) { box.appendChild(el("p", "muted small", "This card has no options to set.")); }
     options.forEach(function (option) {
-      var control = optionControl(option, option.value === undefined || option.value === null ? option.default : option.value);
+      var tab = cardOptionTab(option);
+      var tradeoff = option.accuracy_tradeoff === true;
+      var fallback = tradeoff ? option.accuracy_default : option.default;
+      var control = optionControl(option, option.value === undefined || option.value === null ? fallback : option.value);
       var field = el("div", "st-field model-option");
       var label = el("label", "st-label");
       label.htmlFor = "opt-" + option.name;
@@ -1405,9 +1514,45 @@
       field.appendChild(control.node);
       if (option.help) { field.appendChild(el("span", "muted small", option.help)); }
       field.hidden = control.hidden === true;
-      box.appendChild(field);
-      launcher.controls.push({ option: option, read: control.read, set: control.set, field: field, limit: control.limit,
-                               element: control.element });
+      var tradeoffStatus = null;
+      if (tradeoff) {
+        if (!speedGroup) {
+          speedGroup = el("details", "model-speed-group");
+          var summary = el("summary", "model-speed-summary");
+          summary.appendChild(el("span", null, "Speed improvements"));
+          speedStatus = el("span", "model-speed-status small");
+          speedStatus.setAttribute("aria-live", "polite");
+          summary.appendChild(speedStatus);
+          speedGroup.appendChild(summary);
+          speedGroup.appendChild(el("p", "model-speed-warning small", "May reduce accuracy. These settings can change generated results. Accuracy defaults keep these tradeoffs off. Changes apply the next time this model starts."));
+          var resetSpeed = el("button", "st-btn st-btn--secondary st-btn--sm", "Reset speed settings to accuracy defaults");
+          resetSpeed.type = "button";
+          resetSpeed.addEventListener("click", function () {
+            launcher.controls.forEach(function (c) {
+              if (c.option.accuracy_tradeoff !== true) { return; }
+              c.field.classList.remove("invalid");
+              c.set(c.option.accuracy_default);
+            });
+            updateTradeoffs();
+          });
+          speedGroup.appendChild(resetSpeed);
+          speedFields = el("div", "model-speed-fields");
+          speedGroup.appendChild(speedFields);
+        }
+        tradeoffStatus = el("span", "model-speed-option-status small");
+        field.appendChild(tradeoffStatus);
+        ["input", "change", "click"].forEach(function (event) { field.addEventListener(event, updateTradeoffs); });
+        speedFields.appendChild(field);
+      } else { panels[tab].appendChild(field); }
+      launcher.controls.push({ option: option, read: control.read,
+                               set: function (value) { control.set(value); updateTradeoffs(); },
+                               field: field, tab: tab, limit: control.limit, element: control.element, tradeoffStatus: tradeoffStatus });
+    });
+    if (speedGroup) { panels.speed.appendChild(speedGroup); }
+    Object.keys(panels).forEach(function (name) {
+      if (!launcher.controls.some(function (c) { return c.tab === name && !c.field.hidden; })) {
+        panels[name].appendChild(el("p", "muted small", "This model has no settings in this section."));
+      }
     });
     // An option with at_most follows the other option's dropdown (KV streaming under the context).
     launcher.controls.forEach(function (c) {
@@ -1419,6 +1564,8 @@
       launcher.limits.push(apply);
       apply();
     });
+    updateTradeoffs();
+    showCardTab(launcher.cardTab);
   }
   function findControl(name) {
     for (var i = 0; i < launcher.controls.length; i += 1) { if (launcher.controls[i].option.name === name) { return launcher.controls[i]; } }
@@ -1427,19 +1574,167 @@
   function collectOptions() {
     var values = {};
     var errors = [];
+    var firstInvalid = null;
     launcher.controls.forEach(function (c) {
       c.field.classList.remove("invalid");
       var result = c.read();
-      if (result.error) { errors.push(result.error); c.field.classList.add("invalid"); return; }
+      if (result.error) { errors.push(result.error); c.field.classList.add("invalid"); firstInvalid = firstInvalid || c; return; }
       if (!result.skip) { values[c.option.name] = result.value; }
     });
+    if (firstInvalid) { revealModelOption(firstInvalid); }
     return { values: values, error: errors.join("; ") };
   }
+  function revealModelOption(control) {
+    showCardTab(control.tab);
+    // Accuracy tradeoffs live in a disclosure within the Speed tab.
+    if (control.tradeoffStatus) { control.field.parentNode.parentNode.open = true; }
+    control.field.tabIndex = -1;
+    control.field.focus();
+  }
   function resetOptions() {
-    launcher.controls.forEach(function (c) { c.field.classList.remove("invalid"); c.set(c.option.default); });
+    launcher.controls.forEach(function (c) {
+      c.field.classList.remove("invalid");
+      c.set(c.option.accuracy_tradeoff === true ? c.option.accuracy_default : c.option.default);
+    });
     launcher.limits.forEach(function (apply) { apply(); });
+    if (launcher.updateTradeoffs) { launcher.updateTradeoffs(); }
     showStartError("");
   }
+
+  // ---------------------------------------------------------------- template review
+  var templateReview = { name: "", data: null, busy: false, attempted: false, viewing: false, serial: 0 };
+  function templateError(message) {
+    $("model-template-error").textContent = message || "";
+    $("model-template-error").hidden = !message;
+  }
+  function templateChoiceSaved(data, mode) {
+    return !!data && data.mode === mode && (mode === "frontend" ||
+      (data.available === true && data.needs_review !== true && !data.error && /^[a-f0-9]{64}$/i.test(data.sha256 || "")));
+  }
+  function changeTemplateMode() {
+    if ($("model-template-mode").value !== "embedded") { templateReview.viewing = false; }
+    $("model-template-ack").checked = $("model-template-mode").value === "embedded" &&
+      templateChoiceSaved(templateReview.data, "embedded");
+    updateTemplateSave();
+  }
+  function updateTemplateSave() {
+    var d = templateReview.data;
+    var embedded = $("model-template-mode").value === "embedded";
+    var saved = templateChoiceSaved(d, embedded ? "embedded" : "frontend");
+    $("model-template-ack-row").hidden = !embedded;
+    $("model-template-inspect").hidden = !embedded;
+    $("model-template-source-review").hidden = !embedded || !templateReview.viewing;
+    $("model-template-ack").disabled = templateReview.busy || (!templateReview.viewing && !saved);
+    $("model-template-mode").disabled = templateReview.busy;
+    $("model-template-inspect").disabled = templateReview.busy;
+    $("model-template-frontend").disabled = templateReview.busy;
+    $("model-template-save").textContent = templateReview.busy ? "Working..." : saved ? "Saved" :
+      embedded ? "Save embedded template" : "Save frontend template";
+    $("model-template-save").disabled = templateReview.busy || saved || !d ||
+      (embedded && (d.available !== true || !/^[a-f0-9]{64}$/i.test(d.sha256 || "") || !templateReview.viewing || !$("model-template-ack").checked));
+  }
+  function resetTemplateReview(name) {
+    if (templateReview.name === name) { return; }
+    templateReview.name = name;
+    templateReview.data = null;
+    templateReview.busy = false;
+    templateReview.attempted = false;
+    templateReview.viewing = false;
+    templateReview.serial += 1;
+    $("model-template-review").hidden = true;
+    $("model-template-ack").checked = false;
+    $("model-template-status").textContent = "Loading saved template choice...";
+    clear($("model-template-source"));
+    clear($("model-template-risks"));
+    templateError("");
+    updateTemplateSave();
+  }
+  function renderTemplateReview(data) {
+    templateReview.data = data;
+    $("model-template-review").hidden = false;
+    $("model-template-mode").value = data.mode === "embedded" ? "embedded" : "frontend";
+    $("model-template-ack").checked = templateChoiceSaved(data, "embedded");
+    $("model-template-hash").textContent = typeof data.sha256 === "string" ? data.sha256 : "Not available";
+    $("model-template-status").textContent = "Saved choice: " + (data.mode === "embedded" ? "model's embedded template" : "frontend template") +
+      ". Used at the next model start; restart a running model to apply a new choice." +
+      (data.available === true ? "" : " No embedded template is available for this card.");
+    var source = typeof data.source === "string" ? data.source : "";
+    var lines = source.split(/\r?\n/);
+    var risks = Array.isArray(data.risks) ? data.risks : [];
+    var marked = {};
+    clear($("model-template-risks"));
+    risks.forEach(function (risk) {
+      var first = Math.max(1, Math.floor(Number(risk.line) || 1));
+      var last = Math.max(first, Math.floor(Number(risk.end_line) || first));
+      var location = first === last ? "Line " + first : "Lines " + first + "-" + last;
+      var message = location + ": " + (typeof risk.message === "string" ? risk.message : String(risk.code || "Review this construct"));
+      $("model-template-risks").appendChild(el("li", null, message));
+      for (var i = first; i <= Math.min(last, lines.length); i += 1) { marked[i] = true; }
+    });
+    if (!risks.length) { $("model-template-risks").appendChild(el("li", null, "No suspicious constructs reported. This is not a safety guarantee.")); }
+    clear($("model-template-source"));
+    lines.forEach(function (text, i) {
+      var row = el("div", "template-line" + (marked[i + 1] ? " template-line--risk" : ""));
+      row.appendChild(el("span", "template-line__number", String(i + 1)));
+      var visible = text.replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, function (c) {
+        return "[U+" + ("0000" + c.charCodeAt(0).toString(16).toUpperCase()).slice(-4) + "]";
+      });
+      row.appendChild(el("code", null, visible));
+      $("model-template-source").appendChild(row);
+    });
+    templateError(typeof data.error === "string" ? data.error : data.needs_review === true
+      ? "The selected template has changed. Review this source again before the next model start, or use the frontend template." : "");
+    updateTemplateSave();
+  }
+  async function inspectCardTemplate() {
+    var card = findCard(launcher.selected);
+    if (!card || templateReview.busy) { return; }
+    resetTemplateReview(card.name);
+    templateReview.attempted = true;
+    var serial = ++templateReview.serial;
+    templateReview.busy = true;
+    templateReview.data = null;
+    $("model-template-review").hidden = true;
+    $("model-template-ack").checked = false;
+    templateError("");
+    $("model-template-status").textContent = "Reading embedded template...";
+    updateTemplateSave();
+    var answer = await downloadsAnswer(api("/v1/strata/cards/template", jsonPost({ name: card.name })));
+    if (serial !== templateReview.serial) { return; }
+    templateReview.busy = false;
+    if (answer.signedOut) { updateTemplateSave(); return; }
+    if (answer.error || !answer.body) {
+      templateError(answer.error || "The template could not be read.");
+      $("model-template-status").textContent = "Template review unavailable.";
+      updateTemplateSave(); return;
+    }
+    renderTemplateReview(answer.body);
+  }
+  async function saveCardTemplate(modeOverride) {
+    updateTemplateSave();
+    var restore = modeOverride === "frontend";
+    if (templateReview.busy || (!restore && $("model-template-save").disabled)) { return; }
+    var name = templateReview.name;
+    if (name !== launcher.selected) { return; }
+    var mode = !restore && $("model-template-mode").value === "embedded" ? "embedded" : "frontend";
+    var payload = { name: name, mode: mode };
+    if (mode === "embedded") { payload.sha256 = templateReview.data.sha256; payload.acknowledge = true; }
+    var serial = ++templateReview.serial;
+    templateReview.busy = true;
+    templateError("");
+    updateTemplateSave();
+    var answer = await downloadsAnswer(api("/v1/strata/cards/template", jsonPost(payload)));
+    if (serial !== templateReview.serial) { return; }
+    templateReview.busy = false;
+    if (answer.signedOut) { updateTemplateSave(); return; }
+    if (answer.error) { templateError(answer.error); updateTemplateSave(); return; }
+    await inspectCardTemplate();
+    if (templateReview.name === name) {
+      $("model-template-status").textContent = "Saved: " + (mode === "embedded" ? "model's embedded template" : "frontend template") +
+        ". Applies at the next model start. Restart a running model to apply this change.";
+    }
+  }
+  // ---------------------------------------------------------------- model template review end
 
   function progressText(d) {
     var calibrating = cardsOf(d).filter(function (card) { return card.state === "calibrating"; });
@@ -1458,7 +1753,11 @@
   function renderDetail(card, rebuild) {
     var d = launcher.data;
     $("model-detail").hidden = !card || !d;
+    $("model-launch-controls").hidden = !card || !d;
     if (!card || !d) { return; }
+    $("model-launch-name").textContent = card.name;
+    $("model-stop").title = d.running ? "Stop " + d.running : "No model is running";
+    resetTemplateReview(card.name);
     $("model-detail-name").textContent = card.name;
     var badgeBox = $("model-detail-state");
     clear(badgeBox);
@@ -1513,9 +1812,189 @@
   // it runs - with Calibrate / Recalibrate, Cancel and the "Recalibrate when settings change" switch.
   var CAL_STATES = { missing: ["", "Not calibrated"], fresh: ["st-badge--generating", "Calibrated"],
                      stale: ["st-badge--error", "Out of date"], settings_changed: ["st-badge--queued", "Settings changed"] };
+  var calibrationManualFor = "";
+  var calibrationReportOpen = {};
+  function updateCalibrationControls() {
+    var card = findCard(launcher.selected);
+    var busy = launcher.acting || launcherStarting(launcher.data) || !!(card && card.calibration && card.calibration.running);
+    $("calibration-manual-enabled").disabled = busy;
+    $("calibration-manual-fields").disabled = busy || !$("calibration-manual-enabled").checked;
+    $("calibration-custom-field").hidden = $("calibration-workload").value !== "custom";
+  }
+  function readCalibrationBenchmark() {
+    if (!$("calibration-manual-enabled").checked) { return { value: null }; }
+    var mode = $("calibration-mode").value;
+    var workload = $("calibration-workload").value;
+    var minutes = Number($("calibration-budget").value);
+    var label = $("calibration-label").value.trim();
+    if (["quick", "thorough"].indexOf(mode) < 0 || ["chat", "long_context", "coding", "tools", "custom"].indexOf(workload) < 0) {
+      return { error: "Choose a benchmark mode and workload." };
+    }
+    if (!isFinite(minutes) || minutes < 1 || minutes > 1440) { return { error: "Time budget: enter 1 to 1440 minutes." }; }
+    if (label.length > 64 || /[^\x20-\x7e]/.test(label)) {
+      return { error: "Run label: use at most 64 printable ASCII characters." };
+    }
+    var value = { mode: mode, workload: workload, budget_seconds: Math.round(minutes * 60), resume: $("calibration-resume").checked,
+                  compare_speed: $("calibration-compare").checked, label: label, memory_probe: $("calibration-memory").checked };
+    if (workload === "custom") {
+      var prompt = $("calibration-custom").value;
+      if (!prompt.trim() || new TextEncoder().encode(prompt).length > 16384) {
+        return { error: "Custom workload: enter a prompt of 1 to 16384 UTF-8 bytes." };
+      }
+      value.custom_prompt = prompt;
+    }
+    return { value: value };
+  }
+  function calibrationMetric(value, unit) {
+    return typeof value === "number" && isFinite(value) ? fmt(value, 1) + (unit ? " " + unit : "") : "Unavailable";
+  }
+  function calibrationSettings(value) {
+    if (value === undefined || value === null) { return "Unavailable"; }
+    return Array.isArray(value) ? value.join("\n") : typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
+  }
+  function calibrationDetails(key, className, title) {
+    var details = el("details", className);
+    var name = calibrationManualFor;
+    details.open = calibrationReportOpen[key] === true;
+    details.appendChild(el("summary", null, title));
+    details.addEventListener("toggle", function () {
+      if (calibrationManualFor === name) { calibrationReportOpen[key] = details.open; }
+    });
+    return details;
+  }
+  function appendCalibrationSummary(parent, summary) {
+    var s = summary && typeof summary === "object" ? summary : {};
+    var list = el("dl", "calibration-metrics");
+    [["Decode", calibrationMetric(s.decode_tok_s, "tok/s")], ["Prompt processing", calibrationMetric(s.prompt_tok_s, "tok/s")],
+     ["Time to first token", calibrationMetric(s.ttft_ms, "ms")], ["Cold load", calibrationMetric(s.load_ms, "ms")],
+     ["Cold time to first token", calibrationMetric(s.cold_ttft_ms, "ms")],
+     ["Warm time to first token", calibrationMetric(s.warm_ttft_ms, "ms")],
+     ["Warm decode", calibrationMetric(s.warm_decode_tok_s, "tok/s")],
+     ["Sustained decode", calibrationMetric(s.sustained_decode_tok_s, "tok/s")],
+     ["Variation", calibrationMetric(s.variation_pct, "%")],
+     ["Workload acceptance", s.quality_pass === true ? "Passed" : s.quality_pass === false ? "Failed" : "Unavailable"]].forEach(function (row) {
+      list.appendChild(el("dt", null, row[0])); list.appendChild(el("dd", null, row[1]));
+    });
+    var m = s.memory && typeof s.memory === "object" ? s.memory : {};
+    [["Free RAM", calibrationMetric(typeof m.ram_free_bytes === "number" ? m.ram_free_bytes / 1048576 : null, "MiB")],
+     ["Free VRAM", calibrationMetric(typeof m.vram_free_bytes === "number" ? m.vram_free_bytes / 1048576 : null, "MiB")],
+     ["Tested context", calibrationMetric(m.context_tokens, "tokens")],
+     ["Target context", calibrationMetric(m.target_context_tokens, "tokens")],
+     ["Context coverage", m.coverage === undefined || m.coverage === null ? "Unavailable" : String(m.coverage)]].forEach(function (row) {
+      list.appendChild(el("dt", null, row[0])); list.appendChild(el("dd", null, row[1]));
+    });
+    parent.appendChild(list);
+  }
+  function appendCalibrationNotes(parent, notes) {
+    if (!Array.isArray(notes) || !notes.length) { return; }
+    var list = el("ul", "calibration-notes small");
+    notes.forEach(function (note) { list.appendChild(el("li", null, String(note))); });
+    parent.appendChild(list);
+  }
+  function appendCalibrationChange(parent, row, settings) {
+    parent.appendChild(el("p", "small", "Before: " + calibrationMetric(row.before, "tok/s") +
+        ". After: " + calibrationMetric(row.after, "tok/s") + "."));
+    if (settings !== undefined) { parent.appendChild(el("pre", "calibration-settings small", "Settings\n" + calibrationSettings(settings))); }
+  }
+  function renderCalibrationExperiment(card, experiment) {
+    var box = $("model-calibration-experiment");
+    clear(box);
+    box.hidden = !experiment || typeof experiment !== "object";
+    if (box.hidden) { return; }
+    var e = experiment;
+    var hasBenchmark = !!(e.mode || e.workload || e.summary || e.outcome || e.error);
+    box.appendChild(el("h4", null, hasBenchmark ? "Benchmark results" : "Saved calibration results"));
+    if (hasBenchmark) {
+      var outcomes = { applied: "Applied for the next start", paused: "Paused - prior calibration retained",
+                       comparison_complete: "Comparison complete - card unchanged", not_applied: "Not applied - prior calibration retained" };
+      box.appendChild(el("p", "small", (e.paused ? "Paused" : "Benchmark") + DOT + String(e.mode || "Unknown mode") + DOT + String(e.workload || "Unknown workload")));
+      if (e.outcome) { box.appendChild(el("p", "small", outcomes[e.outcome] || "Outcome: " + String(e.outcome))); }
+      if (e.error) { var error = el("p", "msg-error", String(e.error)); error.setAttribute("role", "alert"); box.appendChild(error); }
+      if (e.noisy === true) { box.appendChild(el("p", "small", "Noisy measurements: variation was too high for a stable conclusion.")); }
+      var progress = el("p", "small");
+      progress.setAttribute("aria-live", "polite");
+      progress.textContent = "Completed " + calibrationMetric(e.completed, "") + " of about " + calibrationMetric(e.estimated_trials, "") +
+          " trials. Elapsed: " + calibrationMetric(e.elapsed_s, "s") + ". Estimated remaining: " + calibrationMetric(e.remaining_s, "s") + ".";
+      box.appendChild(progress);
+      if (e.paused) { box.appendChild(el("p", "muted small", "Completed trials may be resumed only if their identity still matches. Re-enter the same custom prompt when resuming a custom workload.")); }
+      appendCalibrationNotes(box, e.notes);
+      if (e.outcome) {
+        appendCalibrationChange(box, e, e.settings);
+        box.appendChild(el("p", "small", "Result variation: " + calibrationMetric(e.variation_pct, "%")));
+      }
+      box.appendChild(el("h5", null, e.outcome === "applied" ? "Selected trial measurements" : "Trial measurements (not automatically applied)"));
+      appendCalibrationSummary(box, e.summary);
+      if (e.summary) { appendCalibrationNotes(box, e.summary.warnings); }
+      box.appendChild(el("p", "muted small", "Workload acceptance checks cover these benchmark cases; they do not prove general model accuracy. Missing measurements are unavailable, not zero."));
+    }
+    if (Array.isArray(e.skipped) && e.skipped.length) {
+      var skipped = calibrationDetails("skipped", "calibration-result", "Settings not tested");
+      e.skipped.forEach(function (row) { skipped.appendChild(el("p", "small", String(row.setting || "Setting") + ": " + String(row.reason || "No reason supplied"))); });
+      box.appendChild(skipped);
+    }
+    if (Array.isArray(e.trials) && e.trials.length) {
+      var trials = calibrationDetails("trials", "calibration-result", "Trial details (including failures and competing activity)");
+      e.trials.forEach(function (row) {
+        var trial = calibrationDetails("trial-" + String(row.number), "calibration-trial",
+            "Trial " + String(row.number) + DOT + String(row.stage || "") + DOT + String(row.status || "Unknown status"));
+        if (row.reason) { trial.appendChild(el("p", "small", String(row.reason))); }
+        appendCalibrationNotes(trial, row.warnings);
+        appendCalibrationSummary(trial, row);
+        trial.appendChild(el("pre", "calibration-settings small", calibrationSettings(row.settings)));
+        trials.appendChild(trial);
+      });
+      box.appendChild(trials);
+    }
+    if (Array.isArray(e.comparison) && e.comparison.length) {
+      var comparisons = calibrationDetails("comparison", "calibration-result", "Speed and accuracy comparisons");
+      comparisons.appendChild(el("p", "small", "Comparison settings may reduce accuracy. These results do not automatically change the card or select a winner."));
+      e.comparison.forEach(function (row) {
+        var comparison = el("section", "calibration-trial");
+        comparison.appendChild(el("h5", null, String(row.label || row.id || "Comparison") + DOT + String(row.status || "Result")));
+        if (row.reason) { comparison.appendChild(el("p", "small", String(row.reason))); }
+        appendCalibrationSummary(comparison, row.summary);
+        appendCalibrationChange(comparison, row, row.settings !== undefined ? row.settings : row.summary && row.summary.settings);
+        comparisons.appendChild(comparison);
+      });
+      box.appendChild(comparisons);
+    }
+    if (Array.isArray(e.history) && e.history.length) {
+      var history = calibrationDetails("history", "calibration-result", "Saved results and restore");
+      history.appendChild(el("p", "muted small", "Restore selects a prior calibration record. It does not restart a running model."));
+      e.history.forEach(function (row) {
+        var item = el("section", "calibration-trial");
+        item.appendChild(el("h5", null, String(row.label || row.id || "Saved result") + (row.date ? DOT + String(row.date) : "")));
+        appendCalibrationChange(item, row, row.settings);
+        if (row.reason) { item.appendChild(el("p", "small", String(row.reason))); }
+        var restore = el("button", "st-btn st-btn--secondary st-btn--sm", "Restore this record");
+        restore.type = "button";
+        restore.disabled = row.applicable !== true || !row.id || launcher.acting || launcherStarting(launcher.data);
+        restore.addEventListener("click", function () { return restoreCalibration(card.name, row.id); });
+        item.appendChild(restore); history.appendChild(item);
+      });
+      box.appendChild(history);
+    }
+  }
+  async function restoreCalibration(name, id) {
+    var card = findCard(name);
+    var experiment = card && card.calibration && card.calibration.experiment;
+    var row = experiment && Array.isArray(experiment.history) ? experiment.history.filter(function (h) { return h.id === id; })[0] : null;
+    if (launcher.selected !== name || launcher.acting || launcherStarting(launcher.data) || !row || row.applicable !== true) { return; }
+    launcher.acting = true;
+    renderDetail(card, false);
+    var answer = await downloadsAnswer(api("/v1/strata/models/calibrate", jsonPost({ name: name, restore: id })));
+    launcher.acting = false;
+    if (answer.signedOut) { return; }
+    if (answer.error) { showStartError(answer.error); }
+    else {
+      launcher.formFor = "";
+      toast("info", "Calibration record restored", "The running model was not restarted.");
+    }
+    await refreshLauncher();
+  }
   function calibrationText(card, cal) {
     if (cal.running && cal.running.stage === "prompt reading") {
-      return "Measuring how this PC reads prompts (one start of the engine, a few minutes); the chat is unavailable meanwhile.";
+      return "Measuring how this PC reads prompts; duration depends on the model and hardware. The chat is unavailable meanwhile.";
     }
     if (cal.running) {
       var run = cal.running;
@@ -1526,7 +2005,7 @@
     if (cal.error) { return "The last calibration did not finish: " + cal.error; }
     var found = typeof cal.before === "number" && typeof cal.after === "number"
       ? fmt(cal.before, 1) + " tok/s with the engine's defaults, " + fmt(cal.after, 1) + " tok/s " +
-        (Array.isArray(cal.args) && cal.args.length ? "with " + cal.args.join(" ") : "(the defaults were fastest)") : "";
+        (Array.isArray(cal.args) && cal.args.length ? "with " + cal.args.join(" ") : "(the defaults were retained)") : "";
     if (cal.state === "fresh") { return "Calibrated" + (cal.date ? " " + String(cal.date).slice(0, 10) : "") + ": " + found + "."; }
     if (cal.state === "stale") { return "This PC, the engine or the model changed since the calibration, so it is not used: calibrate again."; }
     if (cal.state === "settings_changed") {
@@ -1535,16 +2014,15 @@
     }
     // (the engines whose sweep is a few short starts calibrate before a page card's first start; a large model's when asked)
     if (card.page_card === true && cal.first_start === true) {
-      return "Not calibrated yet: the first start measures this PC's fastest engine settings first (a few minutes), then serves.";
+      return "Not calibrated yet: the first start compares engine settings, then serves. Duration depends on the model and hardware.";
     }
-    return "Not calibrated: Calibrate measures this PC's fastest engine settings for this model, each candidate one start of " +
-           "the engine (" + (cal.first_start === true ? "a few minutes" : "for a large model an hour or more") + ").";
+    return "Not calibrated: Calibrate compares candidate engine settings for this model. Each candidate starts the engine; large models can take an hour or more.";
   }
   // MiniMax: the prefill calibration (how this PC reads prompts), which the engine keeps in the model's pack
   function prefillText(card, p) {
     if (!p) {
       return card.page_card === true
-        ? "Prompt reading: the first start measures how this PC reads prompts first (a few minutes)."
+        ? "Prompt reading: the first start measures how this PC reads prompts; duration varies."
         : "Prompt reading: not measured yet; Calibrate measures it.";
     }
     if (p.state === "failed") {
@@ -1561,6 +2039,19 @@
     var cal = card.calibration && typeof card.calibration === "object" ? card.calibration : null;
     $("model-calibration").hidden = !cal;
     if (!cal) { return; }
+    if (calibrationManualFor !== card.name) {
+      calibrationManualFor = card.name;
+      calibrationReportOpen = {};
+      $("calibration-manual-enabled").checked = false;
+      $("calibration-mode").value = "quick";
+      $("calibration-workload").value = "chat";
+      $("calibration-budget").value = "30";
+      $("calibration-label").value = "";
+      $("calibration-custom").value = "";
+      $("calibration-resume").checked = false;
+      $("calibration-memory").checked = false;
+      $("calibration-compare").checked = false;
+    }
     var badge = CAL_STATES[cal.running ? "" : cal.state] || ["st-badge--reading", "Calibrating"];
     var box = $("model-calibration-state");
     clear(box);
@@ -1583,6 +2074,8 @@
     $("model-calibrate-cancel").hidden = !run;
     $("model-calibration-auto").checked = cal.auto === true;
     $("model-calibration-auto").disabled = launcher.acting;
+    updateCalibrationControls();
+    renderCalibrationExperiment(card, cal.experiment);
   }
   // Owner 2026-10-30: the selected card's calibration report, read from the server, to read, copy or save.
   async function showCalibrationReport() {
@@ -1621,12 +2114,16 @@
     showStartError("");
     var collected = collectOptions();
     if (collected.error) { showStartError(collected.error); return; }
+    var benchmark = start ? { value: null } : readCalibrationBenchmark();
+    if (benchmark.error) { showStartError(benchmark.error); return; }
     var running = d.running && d.state === "running" ? d.running : "";
-    if (!start && running && !window.confirm("Calibrating stops " + running + " for a few minutes (each trial is one start of the engine). Go on?")) { return; }
+    if (!start && running && !window.confirm("Calibrating stops " + running + " while candidate settings are measured. Duration depends on the model, hardware and selected budget. Go on?")) { return; }
     launcher.acting = true;
     renderDetail(card, false);
-    var answer = await downloadsAnswer(start ? api("/v1/strata/models/calibrate", jsonPost({ name: card.name, options: collected.values, then_start: true }))
-                                             : api("/v1/strata/models/calibrate", jsonPost({ name: card.name, options: collected.values })));
+    var request = { name: card.name, options: collected.values };
+    if (start) { request.then_start = true; }
+    if (benchmark.value) { request.benchmark = benchmark.value; }
+    var answer = await downloadsAnswer(api("/v1/strata/models/calibrate", jsonPost(request)));
     launcher.acting = false;
     if (answer.signedOut) { return; }
     if (answer.error) { showStartError(answer.error); await refreshLauncher(); return; }
@@ -1636,7 +2133,8 @@
     await pollLauncher();
   }
   // Owner 2026-10-29 ("during calibration, allow users to cancel calibration if they choose to"): Cancel stops it and
-  // keeps nothing; when it was the page's own "calibrate, then start", the start it was for is offered without it once the
+  // keeps any resumable completed-trial checkpoint, without replacing a valid result;
+  // when it was the page's own "calibrate, then start", the start is offered without it once the
   // calibration has ended (still on that card's page).
   async function cancelCalibration() {
     var thenStart = launcher.calibrateThenStart;
@@ -1644,7 +2142,7 @@
     if (answer.signedOut) { return; }
     if (answer.error) { showStartError(answer.error); await refreshLauncher(); return; }
     launcher.calibrateThenStart = "";
-    toast("info", "Calibration cancelled", "Nothing was kept.");
+    toast("info", "Calibration cancelled", "The prior calibration is unchanged. Completed benchmark trials may be available to resume.");
     await refreshLauncher();
     if (!thenStart) { return; }
     for (var i = 0; i < 120 && launcherStarting(launcher.data); i += 1) {
@@ -1652,7 +2150,7 @@
       await refreshLauncher();
     }
     if (launcher.selected !== thenStart || launcherStarting(launcher.data)) { return; }
-    if (window.confirm(thenStart + ": calibration cancelled, nothing was kept. Start it now without calibrating?")) {
+    if (window.confirm(thenStart + ": calibration cancelled. The prior calibration is unchanged; a completed-trial checkpoint may remain. Start it now without calibrating?")) {
       await startModel(true);
     }
   }
@@ -1664,8 +2162,7 @@
       var dialog = $("calibrate-first");
       $("calibrate-first-title").textContent = "Calibrate " + card.name + " first?";
       $("calibrate-first-text").textContent = card.name + " has not been calibrated on this PC. Calibrating first is " +
-        "recommended: it tries the engine's settings (each trial is one start of the model, a few minutes in all), then " +
-        "starts the model with the fastest. You can cancel it while it runs." +
+        "recommended: it compares candidate settings, then starts the model with the selected result. Duration depends on the model and hardware. You can cancel while it runs." +
         (running ? " " + running + " is stopped first." : "");
       var answered = false;
       var done = function (answer) {
@@ -1787,6 +2284,7 @@
     clear($("model-list"));
     $("models-empty").hidden = true;
     $("model-detail").hidden = true;
+    $("model-launch-controls").hidden = true;
     $("models-denied").hidden = false;
     $("local-models").hidden = true;
   }
@@ -1956,7 +2454,7 @@
     if (!response.ok) {
       var refused = refusal(response.status, text);
       var bad = refused.param ? findControl(refused.param) : null;
-      if (bad) { bad.field.classList.add("invalid"); }
+      if (bad) { bad.field.classList.add("invalid"); revealModelOption(bad); }
       showStartError(refused.text);
       await refreshLauncher();
       return;
@@ -3247,6 +3745,7 @@
   var CONFIG_GROUPS = {
     server: ["listener.host", "listener.port", "listener.allow_remote", "listener.allow_wildcard_bind", "listener.host_aliases",
              "models.control_remote", "models.control_remote_networks"],
+    "tool-calling": ["listener.restrict_tool_calls", "listener.tool_call_hosts"],
     limits: ["limits.engine.generation_timeout_s", "limits.engine.ready_timeout_s", "limits.chat.max_prompt_tokens",
              "limits.chat.max_completion_tokens", "pull.connections"],
     paths: ["models.downloads_root", "models.default_root"],
@@ -3261,6 +3760,8 @@
     "listener.host_aliases": "Names this server answers to (one per line)",
     "models.control_remote": "Let the PCs listed below manage models",
     "models.control_remote_networks": "PCs or subnets that may manage models (one per line)",
+    "listener.restrict_tool_calls": "Allow tool calling only from listed IP addresses",
+    "listener.tool_call_hosts": "Allowed tool-calling IP addresses",
     "limits.engine.generation_timeout_s": "Longest answer (seconds)",
     "limits.engine.ready_timeout_s": "Longest model start (seconds)",
     "limits.chat.max_prompt_tokens": "Largest prompt (tokens)",
@@ -3352,13 +3853,14 @@
     try { response = await api("/v1/strata/config", jsonPost({})); text = await response.text(); } catch (e) { return; }
     if (!response.ok) {
       serverConfig.built = false;
-      ["key-settings", "server-settings", "limits-settings", "paths-settings", "logs-settings", "boot-settings"].forEach(function (id) { $(id).hidden = true; });
+      ["key-settings", "server-settings", "tool-calling-settings", "limits-settings", "paths-settings", "logs-settings", "boot-settings"].forEach(function (id) { $(id).hidden = true; });
       showSettingsSubtab();
       return;
     }
     try { serverConfig.data = JSON.parse(text); } catch (e) { return; }
     serverConfig.built = true;
     ["key-settings", "server-settings", "limits-settings", "paths-settings"].forEach(function (id) { $(id).hidden = false; });
+    $("tool-calling-settings").hidden = !configSetting("listener.restrict_tool_calls");
     // Troubleshooting only in a make --debugging build (owner 2026-10-29), as the server says
     $("logs-settings").hidden = serverConfig.data.debugging !== true;
     renderServerConfig();
@@ -3957,6 +4459,7 @@
     $("tab-btn-chat").addEventListener("click", function () { showView("chat"); });
     $("tab-btn-models").addEventListener("click", function () { showView("models"); });
     $("models-subtab-start").addEventListener("click", function () { showModelsSubtab("start"); });
+    initCardTabs();
     $("models-subtab-download").addEventListener("click", function () { showModelsSubtab("download"); });
     $("models-subtab-compat").addEventListener("click", function () { showModelsSubtab("compat"); });
     $("compat-refresh").addEventListener("click", refreshCompat);
@@ -3985,6 +4488,11 @@
     $("model-start").addEventListener("click", startModel);
     $("model-stop").addEventListener("click", stopModel);
     $("model-defaults").addEventListener("click", resetOptions);
+    $("model-template-inspect").addEventListener("click", function () { templateReview.viewing = true; updateTemplateSave(); });
+    $("model-template-mode").addEventListener("change", changeTemplateMode);
+    $("model-template-ack").addEventListener("change", updateTemplateSave);
+    $("model-template-save").addEventListener("click", saveCardTemplate);
+    $("model-template-frontend").addEventListener("click", function () { saveCardTemplate("frontend"); });
     $("downloads-refresh").addEventListener("click", function () { refreshDownloads(); });
     $("downloads-dest-change").addEventListener("click", chooseDestination);
     $("downloads-dest-reset").addEventListener("click", useDefaultDestination);
@@ -3999,6 +4507,8 @@
     $("model-calibrate").addEventListener("click", calibrateModel);
     $("model-calibrate-cancel").addEventListener("click", cancelCalibration);
     $("model-calibration-auto").addEventListener("change", setAutoRecalibrate);
+    $("calibration-manual-enabled").addEventListener("change", updateCalibrationControls);
+    $("calibration-workload").addEventListener("change", updateCalibrationControls);
     $("model-calibration-report-show").addEventListener("click", showCalibrationReport);
     $("delete-next").addEventListener("click", deleteNext);
     $("delete-cancel").addEventListener("click", closeDelete);

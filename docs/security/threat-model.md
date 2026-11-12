@@ -37,6 +37,83 @@ Trust boundaries:
 
 ## Security contract
 
+### Explicit calibration benchmarks (2026-11-11)
+
+Manual benchmark and restore operations use the existing authenticated model-management routes
+and client policy. Only calibration accepts a larger (128 KiB) request body; schema limits keep
+custom prompts to 16 KiB, labels to 64 printable ASCII characters, and budgets to one day.
+Workloads use fixed local inference requests, disable server search, and never execute generated
+tool calls. Captured responses and synthetic context prompts are each bounded to 1 MiB.
+
+Local summaries, checkpoints and at most eight history entries per card are owner-private,
+atomically written and limited to 2 MiB each. They contain metrics, fixed diagnostics, option
+values and identity digests; they never contain custom prompt text, generated answers or real
+conversations. Resume requires matching recent identities. Restore revalidates saved options
+and identity, and only changes the next launch. Removing a card forgets these artifacts.
+
+Thermal/compute readings invoke the existing trusted system NVIDIA tool with fixed arguments,
+closed environment, no shell and bounded output/time. No process IDs are persisted. Host
+measurements do not stop other applications or alter power settings. Missing measurements do
+not constitute evidence of uncontaminated performance. Quality gates are task-specific checks;
+they do not prove general model accuracy. Comparison of accuracy tradeoffs is explicit and
+report-only, and failed/cancelled/noisy runs retain the prior accepted calibration.
+
+### Reviewed model templates (owner direction, 2026-11-11)
+
+The built-in frontend prompt renderer remains the default. A model manager may inspect the GGUF's
+`tokenizer.chat_template` (or the template exported into its tokenizer pack), see numbered source and
+heuristic risk highlights, and explicitly acknowledge the risks to select it. Warnings are advisory:
+they do not prohibit selecting a template, and an empty findings list is not a safety certificate.
+The card stores only the approved SHA-256. Every model start reads and hashes the source again;
+changed bytes refuse the start until reviewed again. Switching back to the frontend needs no template
+and no acknowledgment. Selection takes effect on the next model start.
+
+The source is untrusted data, at most 256 KiB and 10000 lines. Review is a keyed model-file operation
+with the existing local/explicitly-listed-client policy; an inference-only key cannot select templates.
+Source is shown as text, never HTML. The scanner flags introspection, imports/includes, external-access
+strings, loops/repetition, input transforms and control tokens, with line numbers. It cannot decide
+whether instructions are malicious or whether a template is correct for a model. Packed templates
+are labeled as exported sources; they are not represented as independently authenticated GGUF bytes.
+
+Opt-in rendering uses a separate native `strata-template` child, not Python Jinja or model-supplied
+code. Its language environment contains JSON values and fixed built-ins, with no filesystem loader,
+network client, shell, Python objects, imports or arbitrary callbacks. Unsupported operations fail;
+acknowledgment does not enable them. Hard input/output, process-time and memory limits bound rendering.
+Client message/tool strings retain input provenance through transformations and are tokenized as
+plain text; only template-origin spans may introduce control tokens. Render failure is explicit,
+without silent substitution of the frontend template or leakage of source/prompts in diagnostics.
+
+Residuals: an approved template can omit/change instructions, tools or roles and can damage model
+quality. A scan cannot prove semantic correctness. The native interpreter remains trusted code;
+resource limits do not constitute a VM or a Windows AppContainer. Model weights and quantization
+remain separate trust/accuracy concerns.
+
+### Inference accuracy policy (2026-11-11)
+
+M-Strata defaults output-changing expert shortcuts off before family-library loading and in the
+frontend's child environment. The owner subsequently requested that supported shortcuts remain
+available as explicit per-card speed/accuracy tradeoffs. The card now groups these controls with
+warnings and an accuracy reset. This covers expert skips, residency/prior routing, lossy GLM CPU
+deferral, draft pruning, weight requantization, sampled-draft approximations and bounded DeepSeek
+replay. Defaults retain all selected experts and exact target-verified MTP behavior.
+
+`engine.speed_settings` is a closed, bounded list, not arbitrary environment passthrough. The
+frontend validates it, renders canonical engine aliases plus `MSTRATA_SPEED_SETTINGS`, and the
+launcher validates that channel again before loading any family library. Unknown names, duplicate
+keys, malformed/nonfinite numbers and out-of-range values refuse launch. Unselected inherited
+STRATA/MAYA knobs cannot silently defeat the defaults. Performance tradeoffs are not host-security
+exceptions: authentication, template confinement, file boundaries and tool-host policy remain enforced.
+Existing INT8/Q8 KV defaults and explicitly selected model/cache quantization are retained by owner
+direction. This policy is not a claim of bit-exact floating-point or unquantized-model equivalence.
+Owned build overlays remove compiler-wide CUDA fast math in the default accuracy variant. Packaging
+also builds a separate fast-math variant retaining upstream flags. The card's `engine.fast_math`
+boolean selects it only at model start. The fixed alternate directory, executable trust checks and
+bounded variant manifest prevent arbitrary executable selection. Manifest SHA-256 and size checks
+detect damaged or mixed files before launch; they are not signatures and rely on the same trusted
+installation boundary as the configured engine. Missing or mismatched files refuse launch without
+fallback. The selected directory comes first in the child's library search path. Source-written
+intrinsics, FMA and selected quantized kernels remain, so GPU numerical acceptance is a separate step.
+
 ### Network and authentication
 
 - Default bind addresses are loopback only (`127.0.0.1` and `::1` where
@@ -884,9 +961,8 @@ asks quoted there.
 
 Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
 
-- **One tool, the server's own.** The model may call `web_search` and nothing else; the
-  tool is offered by the server, never by a request (client-sent `tools` stay refused), a
-  model, a manifest or a card. Calls are read only from qwen, glm53, raon1, flint, gemma4,
+- **One executable tool, the server's own.** Built-in web search offers `web_search` from server configuration.
+  Client function declarations use the separate request path below. Calls are read from qwen, glm53, raon1, flint, gemma4,
   deepseek and minimax replies (2026-10-28: raon1 in Qwen's form, flint in GLM's, Gemma 4 in its own
   `<|tool_call>call:NAME{...}<tool_call|>` read by llama.cpp's grammar, DeepSeek in its
   DSML blocks rewritten into GLM's form as Maya's `DsmlRewriter` does, MiniMax in its
@@ -906,11 +982,20 @@ Spec `docs/superpowers/specs/2026-10-27-web-search-design.md`.
 - **Earlier searches in the history (2026-10-29).** An assistant message may carry `strata_rounds` (the page sends
   an answer's searches back with the conversation, as upstream's page sends its tool calls and results): a closed
   vocabulary (per round its text, 1-16 calls of a name and an arguments object, one result text each; at most 64
-  rounds; JSON nesting at most 16), on assistant messages only. Client `tool` messages and `tools` stay refused. A
+  rounds; JSON nesting at most 16), on assistant messages only. A
   client can put any text there, as it can in any message of its own conversation; the server renders it as each
   family's template renders history calls and results, the results and the model's words as plain spans (their
   literals are text, never a token), and offers and runs no tool because of it. A search turn's system message also
   says today's date and to search for anything recent (the search service's fixed note).
+- **Client function calls.** The authenticated chat route accepts bounded function declarations and matches
+  each client-supplied result to a call ID in the preceding assistant turn. History uses fixed family templates
+  and encodes tool-result text as ordinary text. The server returns declared calls to the caller as data.
+  This path bypasses the search service and has no mechanism to execute a client function, start a child,
+  open an MCP connection or make an outbound request. The caller controls any external effects.
+- **Client tool access policy.** An optional listener policy compares the accepted socket's peer address with a
+  list of individual IP addresses before admitting a request with client tools or tool history. Localhost must
+  be listed if it should be allowed under the restriction. Only a loopback management session can change these
+  two Settings rows. Policy changes take effect at server restart.
 - **Fewer searches, never more (2026-10-28).** A card's Web search checkbox (`web_search`,
   on by default, shown only while the server's search is on) starts its model without the
   tool, and a request's `"strata_search": false` serves that chat without it. Neither can

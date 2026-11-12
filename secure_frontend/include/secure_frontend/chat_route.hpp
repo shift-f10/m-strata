@@ -24,6 +24,8 @@
 
 namespace secure_frontend {
 
+struct EmbeddedTemplateSelection;
+
 struct ChatRouteConfig final {
   ChatSchemaLimits schema;
   std::string model_id;
@@ -71,6 +73,9 @@ struct ChatRouteConfig final {
   // search service: a build with SECURE_FRONTEND_WEB_SEARCH and search.enabled); null: every chat is served without it.
   ToolRunner* tools{nullptr};
   std::size_t tool_rounds{8};  // search.max_rounds
+  bool restrict_tool_calls{false};
+  std::vector<IpNetwork> tool_call_hosts{};
+  std::shared_ptr<const EmbeddedTemplateSelection> embedded_template{};
 };
 
 // One chat with the server's tool: what the search loop's rounds render again (the request, the tool, the thinking).
@@ -82,6 +87,17 @@ struct SearchTurn final {
   ToolFormat format{ToolFormat::qwen};  // the profile's: qwen (upstream's template), glm53 (Maya's GLM-5.3 one)
   MinimaxThinking minimax{};            // the minimax profile's thinking (off, or its effort)
 };
+
+struct ClientToolTurn final {
+  ToolFormat format;
+  std::vector<ToolDeclaration> declarations;
+  bool parallel{true};
+  std::string prefix{};
+};
+
+[[nodiscard]] ChatGenerationPlanResult client_tool_plan(const ChatRouteConfig& config,
+    const ChatCompletionRequest& request, const TokenizerPack& tokenizer, const ClientToolTurn& turn,
+    bool thinking, QwenEffortPlacement effort, const MinimaxThinking& minimax);
 
 // The route's values a later round's prompt and budget need (chat_search_route.cpp); copied into a stream's closure.
 struct SearchLimits final {
@@ -95,6 +111,7 @@ struct SearchLimits final {
   ToolRunner* tools;
   std::size_t rounds;
   ServeMonitor* monitor;
+  std::shared_ptr<const EmbeddedTemplateSelection> embedded_template{};
 };
 [[nodiscard]] SearchLimits search_limits(const ChatRouteConfig& config);
 // The first round's plan: the conversation with the server's tool (make_qwen_tool_generation_plan).
@@ -104,12 +121,14 @@ struct SearchLimits final {
 [[nodiscard]] std::optional<ToolFormat> search_tool_format(NativeChatProfile profile);
 class StreamRounds;  // chat_stream.hpp
 struct SseIdentity;  // sse_encoder.hpp
+[[nodiscard]] std::unique_ptr<StreamRounds> make_client_tool_stream(ClientToolTurn turn, const SseIdentity& identity);
 // The stream's rounds for a chat with the server's tool: the first generation is already begun on `chat`.
 [[nodiscard]] std::unique_ptr<StreamRounds> make_search_stream_rounds(SearchLimits limits, std::shared_ptr<const SearchTurn> turn,
                                                                       const TokenizerPack& tokenizer, ChatExecutionService& chat,
                                                                       const SseIdentity& identity);
 
 [[nodiscard]] std::optional<std::string> make_completion_id();
+[[nodiscard]] std::string make_tool_call_id(std::string_view completion_id, std::size_t index);
 
 // Gemma 4 plan 1 Task 10 (spec §6.6, D10): a gemma4 request thinks when its reasoning_effort
 // is low, medium or high, not when it is none; a request that names none takes the server's
@@ -131,7 +150,8 @@ struct SseIdentity;  // sse_encoder.hpp
                                                                    const TokenizerPack& tokenizer, std::size_t maximum_prompt_tokens,
                                                                    const SamplingDefaults& defaults,
                                                                    std::span<const std::size_t> image_token_counts, bool thinking,
-                                                                   QwenEffortPlacement qwen_effort, const MinimaxThinking& minimax = {});
+                                                                   QwenEffortPlacement qwen_effort, const MinimaxThinking& minimax = {},
+                                                                   const EmbeddedTemplateSelection* embedded = nullptr);
 
 // POST /v1/chat/completions, non-streaming (spec §2.2 P4-P6, §2.5, §3.1, §3.5).
 class ChatRoute final {
@@ -151,7 +171,11 @@ class ChatRoute final {
                                             std::size_t max_tokens, const ChatGenerationPlan& plan, bool include_usage,
                                             const RequestContext& context, std::string embeddings = {},
                                             std::optional<std::filesystem::path> combined_file = std::nullopt,
-                                            std::shared_ptr<const SearchTurn> search = nullptr);
+                                            std::shared_ptr<const SearchTurn> search = nullptr,
+                                            std::optional<ClientToolTurn> client_tools = std::nullopt);
+  [[nodiscard]] GenerationOutcome run_client_tools(Lease& lease, const ClientToolTurn& turn, const ChatGenerationPlan& plan,
+      const std::vector<std::uint32_t>& prompt_ids, std::size_t max_tokens, const RequestContext& context,
+      std::vector<ToolCall>& calls);
   // Web search: the complete answer of a chat with the server's tool - the rounds inside the lease, each round's text
   // through the call parser; the reply's text and reasoning are every round's, its usage the last round's prompt and
   // every round's tokens. `events` gets the loop's events (message.strata_search).

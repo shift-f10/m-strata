@@ -10,6 +10,7 @@
 #include "secure_frontend/local_folders.hpp"
 #include "secure_frontend/model_cards.hpp"
 #include "secure_frontend/token_store.hpp"
+#include "secure_frontend/template_review.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -139,6 +140,7 @@ HttpResponse CardRoutes::answer(const RouteId route, const std::string_view body
     case RouteId::strata_card_add: return add(body);
     case RouteId::strata_card_folder: return repoint(body);
     case RouteId::strata_card_mtp: return point_draft(body);
+    case RouteId::strata_card_template: return chat_template(body);
     case RouteId::strata_card_delete_begin: return delete_begin(body);
     case RouteId::strata_card_delete: return delete_confirm(body);
     case RouteId::strata_card_remove: return remove(body);
@@ -623,6 +625,75 @@ HttpResponse CardRoutes::point_draft(const std::string_view body) {
   }
   log("[strata] models: card " + *name + " now drafts with the MTP draft layer in " + path_to_utf8(draft));
   return json_answer(200, "{\"name\":" + json_string(*name) + ",\"draft\":" + json_string(path_to_utf8(draft)) + "}\n");
+}
+
+HttpResponse CardRoutes::chat_template(const std::string_view body) {
+  const auto read = read_body(body, {"name", "mode", "sha256", "acknowledge"});
+  if (!read || read->text.contains("acknowledge") ||
+      std::any_of(read->flags.begin(), read->flags.end(), [](const auto& field) { return field.first != "acknowledge"; }))
+    return make_error_response(ApiError::invalid_request);
+  const auto* name = read ? read->get("name") : nullptr;
+  const auto* mode = read ? read->get("mode") : nullptr;
+  if (name == nullptr || name->empty() || (mode != nullptr && *mode != "frontend" && *mode != "embedded"))
+    return make_error_response(ApiError::invalid_request);
+  const std::scoped_lock lock(files_);
+  const auto held = launcher_.card(*name);
+  if (!held) return make_error_response(ApiError::model_not_found);
+  const auto* selected = text_row(held->card, "engine.chat_template_sha256");
+  std::string digest;
+  // Restoring the frontend must work even if a template was removed or changed.
+  if (mode == nullptr || *mode == "embedded") {
+    auto config_result = card_config(settings_.main, held->card, default_option_values(held->card));
+    const auto* valid = std::get_if<ValidatedConfig>(&config_result);
+    if (valid == nullptr) return refused(ApiError::card_refused, "the card configuration is invalid");
+    const auto& config = valid->get();
+    auto launch = compose_engine_launch(config, true);
+    const auto* composed = std::get_if<ComposedLaunch>(&launch);
+    if (composed == nullptr) return refused(ApiError::card_refused, "the model source could not be located");
+    auto loaded = read_embedded_chat_template(config.roots.models, *composed);
+    const auto* review = std::get_if<EmbeddedChatTemplate>(&loaded);
+    if (review == nullptr) {
+      if (mode != nullptr) return refused(ApiError::card_refused, std::get<std::string>(loaded));
+      return json_answer(200, "{\"available\":false,\"mode\":" + json_string(selected != nullptr && !selected->empty() ? "embedded" : "frontend") +
+          ",\"needs_review\":" + (selected != nullptr && !selected->empty() ? "true" : "false") +
+          ",\"error\":" + json_string(std::get<std::string>(loaded)) + "}");
+    }
+    if (mode == nullptr) {
+      auto json = template_review_json(*review, selected != nullptr && !selected->empty());
+      json.pop_back();
+      json += std::string{",\"needs_review\":"} +
+          (selected != nullptr && !selected->empty() && *selected != review->sha256 ? "true" : "false") + "}";
+      auto answer = json_answer(200, std::move(json));
+      answer.headers.emplace_back("Cache-Control", "no-store");
+      return answer;
+    }
+    const auto* requested = read->get("sha256");
+    const auto ack = read->flags.find("acknowledge");
+    if (requested == nullptr || *requested != review->sha256 || ack == read->flags.end() || !ack->second)
+      return refused(ApiError::card_refused, "review the current template and acknowledge its risks before selecting it");
+    digest = review->sha256;
+  }
+  if (!held->page_card) return make_error_response(ApiError::card_read_only);
+  if (held->state == CardState::starting) return make_error_response(ApiError::card_in_use);
+  const auto path = card_file(settings_.cards_dir, *name);
+  if (!path) return refused(ApiError::card_refused, "the card's file is not in the server's cards folder");
+  const auto old = read_trusted_config_text(*path);
+  if (!std::holds_alternative<TrustedConfigText>(old)) return refused(ApiError::card_refused, "the card's file could not be read");
+  const auto& before = std::get<TrustedConfigText>(old).text;
+  const auto rewritten = card_with_template_digest(before, digest);
+  if (const auto* error = std::get_if<std::string_view>(&rewritten)) return refused(ApiError::card_refused, *error);
+  auto card = validated_card(std::get<std::string>(rewritten), settings_.main, settings_.cards_dir,
+                            [this](std::string_view line) { log(line); });
+  if (auto* answer = std::get_if<HttpResponse>(&card)) return std::move(*answer);
+  const auto file_name = path_to_utf8(path->filename());
+  if (const auto failure = write_card(settings_.cards_dir, file_name, std::get<std::string>(rewritten), TokenStoreMode::replace, nullptr))
+    return refused(ApiError::card_refused, *failure);
+  const auto changed = launcher_.replace_card(std::get<ModelCard>(std::move(card)));
+  if (changed != CardChange::done) {
+    (void)write_card(settings_.cards_dir, file_name, before, TokenStoreMode::replace, nullptr);
+    return make_error_response(ApiError::card_in_use);
+  }
+  return json_answer(200, "{\"saved\":true,\"restart_model_needed\":true,\"mode\":" + json_string(*mode) + "}");
 }
 
 HttpResponse CardRoutes::delete_begin(const std::string_view body) {

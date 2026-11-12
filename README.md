@@ -543,6 +543,21 @@ flags, `--expert`, `--models-root`, `--engine`, `--model-id`, is the older bring
 
 ### Add a model
 
+The card's decimal controls have sliders and exact numeric entry for fine tuning. INT8/Q8 cache
+defaults are retained; sampling defaults follow the model. The card's **Speed improvements** section
+offers supported expert-skipping, routing and draft shortcuts with accuracy warnings. They start at
+accuracy-first defaults and change only when you explicitly select them. Resetting this section restores
+accuracy defaults without changing sampling or cache precision. Speed gains depend on the model and hardware.
+Both CUDA math variants are bundled. The card's **CUDA fast math** switch selects the matching
+executable and libraries on the next model start, with a numerical-accuracy warning. It defaults off.
+
+The card's **Chat template** section can inspect its embedded GGUF Jinja (or exported pack template),
+show the source and highlight potential risks. The frontend renderer is the default. After reviewing
+and acknowledging the source, you can select the embedded template despite warnings, or return to
+the frontend at any time. The choice applies on the next model start and is bound to the reviewed
+source's hash. The native renderer has resource limits and exposes no file, network or command
+functions. Warnings cannot certify a template's correctness; unsupported operations fail explicitly.
+
 On the page, open **Models**:
 
 - **Add a model** uses files already on this PC: pick the folder and the model's `.gguf` (a split model: its first
@@ -843,9 +858,10 @@ for chunk in stream:
   `reasoning_effort`; `{"type": "text"}` changes nothing; a `json_schema` is refused (`unsupported_parameter`).
 - With web search on, the model searches by itself when it needs to. Ask for current facts, or say "search the web";
   give it room (`max_tokens` 8192 or more), since each search round has its own budget. The searches it made come
-  back as `strata_search` events; `"strata_search": false` answers that request without searching. Do not send
-  `tools`: the server refuses it. Details:
+  back as `strata_search` events; `"strata_search": false` answers that request without searching.
   [`secure_frontend/README.md`, "Web search from the API"](secure_frontend/README.md#web-search-from-the-api).
+- **Client function tools:** send `tools` on `/v1/chat/completions` to receive calls the client can execute.
+  Send the result back with its `tool_call_id`. See [Client function tools](secure_frontend/README.md#client-function-tools).
 - **Pictures:** while the running card's Pictures option is on, a user message's `content` may be a list of parts:
   `{"type": "text", "text": "..."}` and `{"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}`
   (PNG, JPEG or WebP; up to `vision.max_n` per request, each side up to `vision.max_side`). An `http(s)` picture

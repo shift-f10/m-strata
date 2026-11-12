@@ -7,6 +7,9 @@
 #include "secure_frontend/first_start.hpp"
 #include "secure_frontend/json.hpp"
 #include "secure_frontend/model_cards.hpp"
+#include "secure_frontend/sha256.hpp"
+#include "secure_frontend/template_review.hpp"
+#include "secure_frontend/launch_composition.hpp"
 #include "support/gguf_builder.hpp"
 #include "support/test_paths.hpp"
 #include "support/test_support.hpp"
@@ -154,6 +157,112 @@ void card_routes_answer_loopback_clients_only() {
     const auto answer = f.post(entry.id, "{}", false);
     expect(answer.status == 403 && has(answer, "\"code\":\"control_not_allowed\""), std::string{entry.path} + " refuses a remote client");
   }
+}
+
+void embedded_template_review_requires_acknowledgment_and_current_hash() {
+  using secure_frontend::RouteId;
+  Fixture f;
+  const std::string source = "{{ bos_token }}\n{% for m in messages %}{{ m.content }}{% endfor %}\n{{ cycler.__init__ }}";
+  const auto write_template = [&](const std::string& text) {
+    secure_frontend_test::write_file(f.models / kModelFile,
+        test_support::gguf_with_tokenizer(test_support::spm_tokenizer(), "gemma4", "gemma4")
+            .str("tokenizer.chat_template", text).u32("gemma4.context_length", 32768U).bytes());
+  };
+  write_template(source);
+  expect(f.add(f.models, kModelFile).status == 201, "card added");
+  const std::string name = "tiny-gemma-Q8_0";
+  const std::string base = "{\"name\":" + json_text(name);
+  const auto review = f.post(RouteId::strata_card_template, base + "}");
+  expect(review.status == 200 && has(review, "\"mode\":\"frontend\"") && has(review, "\"available\":true") &&
+             has(review, "object_access") && has(review, "\"line\":3") && has(review, "resource_use"),
+         "source and line-specific risks are reviewed before opt-in: " + shown(review));
+  const auto digest = secure_frontend::to_hex(secure_frontend::sha256(source));
+  const std::string choose = base + ",\"mode\":\"embedded\",\"sha256\":" + json_text(digest);
+  expect(f.post(RouteId::strata_card_template, choose + "}").status == 422, "explicit risk acknowledgment required");
+  expect(f.post(RouteId::strata_card_template, choose + ",\"acknowledge\":false}").status == 422, "false is not consent");
+  expect(f.post(RouteId::strata_card_template, choose + ",\"acknowledge\":true}", false).status == 403,
+         "an unlisted remote cannot opt in");
+  const auto saved = f.post(RouteId::strata_card_template, choose + ",\"acknowledge\":true}");
+  expect(saved.status == 200, "warnings may be acknowledged and the template selected: " + shown(saved));
+  const auto card_text = secure_frontend_test::read_file(f.data.state / "cards" / (name + ".json"));
+  expect(card_text.find(digest) != std::string::npos && card_text.find("cycler") == std::string::npos,
+         "only the approved hash is persisted, not executable source");
+  expect(has(f.post(RouteId::strata_card_template, base + "}"), "\"mode\":\"embedded\""), "selection reads back");
+  for (const std::string fields : {",\"mode\":true", ",\"mode\":false", ",\"mode\":null",
+                                   ",\"sha256\":true", ",\"acknowledge\":\"true\"",
+                                   ",\"unknown\":true", ",\"mode\":\"frontend\",\"mode\":\"embedded\"",
+                                   ",\"mode\":\"frontend\",\"acknowledge\":\"false\"",
+                                   ",\"mode\":\"frontend\",\"sha256\":false"}) {
+    expect(f.post(RouteId::strata_card_template, base + fields + "}").status == 400,
+           "malformed template request fields are rejected");
+    expect(secure_frontend_test::read_file(f.data.state / "cards" / (name + ".json")) == card_text,
+           "malformed template request cannot change approved digest");
+  }
+  write_template(source + " changed");
+  expect(has(f.post(RouteId::strata_card_template, base + "}"), "\"needs_review\":true"), "changed bytes visibly need review");
+  expect(f.post(RouteId::strata_card_template, choose + ",\"acknowledge\":true}").status == 422,
+         "changed source requires a fresh review and hash");
+  expect(f.post(RouteId::strata_card_template, base + ",\"mode\":\"frontend\"}").status == 200,
+         "frontend can be restored even after the model template changed");
+  expect(has(f.post(RouteId::strata_card_template, base + "}"), "\"mode\":\"frontend\""), "frontend restored");
+}
+
+void embedded_template_extraction_obeys_bounds_and_refuses_links() {
+  using namespace secure_frontend;
+  Fixture f;
+  auto opened = open_root(f.models, RootPolicy::model_folder);
+  expect(std::holds_alternative<CanonicalRoot>(opened), "open private model root");
+  if (!std::holds_alternative<CanonicalRoot>(opened)) return;
+  auto& root = std::get<CanonicalRoot>(opened);
+  ComposedLaunch gguf{};
+  gguf.tokenizer_gguf = std::get<RelativePath>(parse_relative_path(kModelFile));
+  ComposedLaunch pack{};
+  pack.tokenizer_root = root;
+  const auto check = [&](const std::string& source, const bool allowed) {
+    secure_frontend_test::write_file(f.models / kModelFile,
+        test_support::gguf_with_tokenizer(test_support::spm_tokenizer(), "gemma4", "gemma4")
+            .str("tokenizer.chat_template", source).bytes());
+    secure_frontend_test::write_file(f.models / "chat_template.jinja", source);
+    for (const auto* launch : {&gguf, &pack}) {
+      const auto result = read_embedded_chat_template(root, *launch);
+      expect(std::holds_alternative<EmbeddedChatTemplate>(result) == allowed,
+             "GGUF and extracted pack enforce template bounds equally");
+      if (const auto* review = std::get_if<EmbeddedChatTemplate>(&result))
+        expect(review->source == source && review->sha256 == to_hex(sha256(source)), "review binds exact bytes");
+    }
+  };
+  check(std::string(kMaxEmbeddedTemplateBytes, 'x'), true);
+  check(std::string(9999U, '\n') + "x", true);
+  check("", false);
+  check(std::string(kMaxEmbeddedTemplateBytes + 1U, 'x'), false);
+  check(std::string("x\0y", 3U), false);
+  check(std::string("\xFF", 1U), false);
+  check(std::string(10000U, '\n') + "x", false);
+  const auto target = f.root / "outside";
+  secure_frontend_test::make_private_directory(target);
+  secure_frontend_test::write_file(target / kModelFile,
+      test_support::gguf_with_tokenizer(test_support::spm_tokenizer(), "gemma4", "gemma4")
+          .str("tokenizer.chat_template", "outside template").bytes());
+  const auto link = f.models / "linked";
+#if defined(_WIN32)
+  const bool linked = secure_frontend_test::create_junction(link, target);
+#else
+  std::error_code ec;
+  std::filesystem::create_directory_symlink(target, link, ec);
+  const bool linked = !ec;
+#endif
+  expect(linked, "create link fixture");
+  if (!linked) return;
+  gguf.tokenizer_gguf = std::get<RelativePath>(parse_relative_path("linked/" + kModelFile));
+  expect(std::holds_alternative<std::string>(read_embedded_chat_template(root, gguf)),
+         "template extraction refuses directory symlink or junction traversal");
+#if !defined(_WIN32)
+  secure_frontend_test::write_file(target / "chat_template.jinja", "outside template");
+  std::filesystem::remove(f.models / "chat_template.jinja", ec);
+  std::filesystem::create_symlink(target / "chat_template.jinja", f.models / "chat_template.jinja", ec);
+  expect(!ec && std::holds_alternative<std::string>(read_embedded_chat_template(root, pack)),
+         "extracted template file symlinks are refused");
+#endif
 }
 
 void folders_list_the_drives_and_one_folder() {
@@ -1008,6 +1117,8 @@ int main(int argc, char** argv) {
       {"a_shared_folder_is_used_as_it_is_when_the_owner_allows_it", a_shared_folder_is_used_as_it_is_when_the_owner_allows_it},
       {"the_shared_folders_setting_is_read_and_saved", the_shared_folders_setting_is_read_and_saved},
       {"card_routes_answer_loopback_clients_only", card_routes_answer_loopback_clients_only},
+      {"embedded_template_review_requires_acknowledgment_and_current_hash", embedded_template_review_requires_acknowledgment_and_current_hash},
+      {"embedded_template_extraction_obeys_bounds_and_refuses_links", embedded_template_extraction_obeys_bounds_and_refuses_links},
       {"folders_list_the_drives_and_one_folder", folders_list_the_drives_and_one_folder},
       {"a_card_is_added_from_a_folder", a_card_is_added_from_a_folder},
       {"a_qwen_model_beside_its_encoder_reads_pictures", a_qwen_model_beside_its_encoder_reads_pictures},

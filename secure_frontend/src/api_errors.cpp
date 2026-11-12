@@ -9,14 +9,15 @@
 namespace secure_frontend {
 namespace {
 
-constexpr std::array<ApiErrorRow, 45> kTable{{
+constexpr std::array<ApiErrorRow, 46> kTable{{
     {ApiError::invalid_request, 400, "invalid_request_error", "invalid_request", "The request is malformed or not supported."},
     {ApiError::invalid_json, 400, "invalid_request_error", "invalid_json", "The request body is not valid JSON within the allowed limits."},
     {ApiError::unsupported_parameter, 400, "invalid_request_error", "unsupported_parameter", "This parameter is not supported by this server."},
-    {ApiError::extension_disabled, 400, "invalid_request_error", "extension_disabled", "Tools, functions and extensions are disabled on this server."},
+    {ApiError::extension_disabled, 400, "invalid_request_error", "extension_disabled", "This extension is disabled on this server."},
     {ApiError::context_length_exceeded, 400, "invalid_request_error", "context_length_exceeded", "The prompt exceeds the model context or the configured prompt limit."},
     {ApiError::invalid_api_key, 401, "authentication_error", "invalid_api_key", "Missing or invalid API key."},
     {ApiError::forbidden, 403, "permission_error", "forbidden", "The request origin or host is not allowed."},
+    {ApiError::tool_call_not_allowed, 403, "permission_error", "tool_call_not_allowed", "Client function tools are not allowed from this IP address."},
     {ApiError::not_found, 404, "invalid_request_error", "not_found", "Not found."},
     {ApiError::model_not_found, 404, "invalid_request_error", "model_not_found", "The requested model is not served here."},
     {ApiError::method_not_allowed, 405, "invalid_request_error", "method_not_allowed", "Method not allowed."},

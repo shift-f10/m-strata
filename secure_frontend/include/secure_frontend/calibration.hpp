@@ -94,6 +94,8 @@ struct CalibrationKey final {
   std::string engine;       // file_fact of the engine
   std::string model;        // file_fact of the model file
   std::string options;      // options_fact of the start's option values
+  std::string runtime{};    // bounded digest of selected engine libraries/profile metadata; absent in legacy records
+  std::string configuration{};  // fixed card/main engine configuration digest; absent legacy identity is unverified
 };
 enum class CalibrationState { missing, fresh, stale, settings_changed };
 // stale: the CPU, RAM, engine or model changed, or the GPU did (both known); settings_changed: only the options did.
@@ -134,6 +136,19 @@ struct PrefillRecord final {
 
 // "<size>:<modification time>" of a file; empty when it cannot be read.
 [[nodiscard]] std::string file_fact(const std::filesystem::path& file);
+// Configured accurate executable, or an already selected fast-math executable.
+// Metadata only, with bounded trusted enumeration; empty means unavailable.
+[[nodiscard]] std::string engine_runtime_fact(const std::filesystem::path& executable, bool fast_math);
+[[nodiscard]] std::string engine_runtime_fact(const std::filesystem::path& executable, bool fast_math,
+    const std::vector<std::filesystem::path>& library_directories);
+[[nodiscard]] std::string calibration_configuration_fact(const FrontendConfigDraft& draft);
+// Metadata for one selected file (including its numbered GGUF shards), or an
+// explicitly selected pack/tokenizer directory. Never scans a broad model root.
+[[nodiscard]] std::string calibration_artifact_fact(const std::filesystem::path& artifact);
+// In-memory compatibility migration. Never edits the saved result. A legacy
+// result is adopted only when its executable matches and every runtime file
+// predates its saved UTC second; otherwise it is explicitly marked unverified.
+void adopt_legacy_runtime_identity(CalibrationResult& result, const std::filesystem::path& executable, bool fast_math);
 // The CPU's name and its logical threads ("<name>, <n> threads").
 [[nodiscard]] std::string cpu_fact();
 // The option values that change the decode speed, "name=value" by name joined with ';' (thinking, the sampling

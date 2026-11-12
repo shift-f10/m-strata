@@ -3,6 +3,7 @@
 // whose first reply calls web_search and whose second answers - for a complete and a streamed chat. Built only with
 // SECURE_FRONTEND_WEB_SEARCH.
 #include "secure_frontend/crt_environment.hpp"
+#include "secure_frontend/sha256.hpp"
 #include "support/fake_searxng.hpp"
 #include "support/server_harness.hpp"
 #include "support/stream_client.hpp"
@@ -86,6 +87,104 @@ std::vector<std::string> gen_lines(const std::filesystem::path& record) {
   }
   return lines;
 }
+
+void tool_call_hosts_restrict_only_client_tools() {
+  test_support::ServerOptions options;
+  options.tool_tokenizer = true;
+  options.engine_args = {"--token-ids=" + csv(answering_reply())};
+  options.config_literals = {{"listener.restrict_tool_calls", "true"},
+                             {"listener.tool_call_hosts", "[\"192.0.2.7\"]"}};
+  auto server = test_support::ServerProcess::start(options);
+  const bool ready = server != nullptr && server->wait_for_health(test_support::kHealthReady, 20s);
+  expect(ready, "the server starts with a tool host restriction");
+  if (!ready) return;
+  const auto blocked = test_support::chat(*server, test_support::chat_body(
+      R"("stream":true,"tools":[{"type":"function","function":{"name":"web_search"}}])"), {.timeout = 20s});
+  expect(blocked.head.status == 403 && !blocked.streamed && blocked.body.find("tool_call_not_allowed") != std::string::npos,
+         "a peer outside the allowlist gets a tool-specific 403 before streaming");
+  const auto plain = test_support::chat(*server, test_support::chat_body(R"("max_tokens":512)"), {.timeout = 20s});
+  expect(plain.head.status == 200 && plain.body.find("Rust 1.90.0 is out.") != std::string::npos,
+         "the same peer can still send ordinary chats");
+}
+
+void run_client_tool_calls_round_trip(const bool embedded) {
+  test_support::FakeSearxng searxng;
+  test_support::ServerOptions options;
+  options.tool_tokenizer = true;
+  const auto record = test_support::make_temp_dir("client-tools") / "record.txt";
+  auto forced_reply = std::vector<std::size_t>{};
+  append_bytes(forced_reply, "<parameter=query>\nrust 1.90\n</parameter>\n</function>\n");
+  forced_reply.push_back(test_support::kToolPackCallClose);
+  forced_reply.push_back(kImEnd);
+  options.engine_args = {"--token-ids=" + csv(calling_reply()), "--token-ids-next=" + csv(answering_reply()),
+                         "--token-ids-next=" + csv(calling_reply()), "--token-ids-next=" + csv(forced_reply),
+                         "--token-ids-next=" + csv(forced_reply), "--token-ids-next=" + csv(answering_reply()),
+                         "--record-file=" + test_support::utf8_path(record)};
+  options.config_literals = {{"search.enabled", "true"},
+                             {"search.url", "\"http://127.0.0.1:" + std::to_string(searxng.port()) + "\""},
+                             {"listener.restrict_tool_calls", "true"}, {"listener.tool_call_hosts", "[\"127.0.0.1\"]"}};
+  if (embedded) {
+    options.embedded_template_source = secure_frontend_test::read_file(STRATA_QWEN_TEMPLATE_PATH);
+    expect(!options.embedded_template_source->empty(), "upstream template fixture exists");
+    options.config_literals["engine.chat_template_sha256"] = "\"" +
+        secure_frontend::to_hex(secure_frontend::sha256(*options.embedded_template_source)) + "\"";
+  }
+  auto server = test_support::ServerProcess::start(options);
+  const bool ready = server != nullptr && server->wait_for_health(test_support::kHealthReady, 20s);
+  expect(ready, "the tool-capable server is ready");
+  if (!ready) return;
+  const std::string tools = R"("tools":[{"type":"function","function":{"name":"web_search","parameters":{"type":"object","properties":{"query":{"type":"string"}}}}}],"max_tokens":512)";
+  const auto call = test_support::chat(*server, test_support::chat_body(tools), {.timeout = 20s});
+  expect(call.head.status == 200 && call.body.find(R"("finish_reason":"tool_calls")") != std::string::npos &&
+             call.body.find(R"("name":"web_search")") != std::string::npos,
+         "complete response returns a client function call: " + call.body);
+  const auto id_start = call.body.find(R"("id":"call_)");
+  expect(id_start != std::string::npos, "the client call has an ID");
+  if (id_start == std::string::npos) return;
+  const auto id = call.body.substr(id_start + 6U, call.body.find('"', id_start + 6U) - id_start - 6U);
+  const std::string history =
+      R"({"model":"fake-model","messages":[{"role":"user","content":"Search Rust"},{"role":"assistant","content":null,"tool_calls":[{"id":")" +
+      id + R"(","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"rust 1.90\"}"}}]},{"role":"tool","tool_call_id":")";
+  const std::string result = R"(","content":[{"type":"text","text":"Rust 1.90.0 is out."}]}],"max_tokens":512})";
+  const auto orphan = test_support::chat(*server, history + "call_unknown" + result, {.timeout = 20s});
+  expect(orphan.head.status == 400, "an unmatched result is rejected before generation");
+  const auto follow = test_support::chat(*server, history + id + result, {.timeout = 20s});
+  expect(follow.head.status == 200 && follow.body.find("Rust 1.90.0 is out.") != std::string::npos,
+         "the client can send the result by call ID: " + follow.body);
+  const auto streamed = test_support::chat(*server, test_support::chat_body(tools + R"(,"stream":true)"), {.timeout = 20s});
+  expect(streamed.done_seen && test_support::stream_finish(streamed) == "tool_calls", "stream ends with tool_calls");
+  bool delta = false;
+  bool args = false;
+  for (const auto& item : streamed.items) {
+    if (item.text.find(R"("tool_calls":[{"index":0,"id":"call_)") != std::string::npos) delta = true;
+    if (item.text.find(R"("arguments":"{\"query\": \"rust 1.90\"}")") != std::string::npos) args = true;
+    expect(item.text.find("<tool_call>") == std::string::npos, "call markup stays off the wire");
+  }
+  expect(delta, "stream contains an indexed tool call");
+  expect(args, "stream contains the tool arguments");
+  const auto forced = test_support::chat(*server, test_support::chat_body(
+      tools + R"(,"tool_choice":{"type":"function","function":{"name":"web_search"}})"), {.timeout = 20s});
+  expect(forced.head.status == 200 && forced.body.find(R"("finish_reason":"tool_calls")") != std::string::npos,
+         "the parser consumes the same forced opening that was put in the prompt: " + forced.body);
+  const auto required = test_support::chat(*server, test_support::chat_body(tools + R"(,"tool_choice":"required")"), {.timeout = 20s});
+  expect(required.head.status == 200 && required.body.find(R"("finish_reason":"tool_calls")") != std::string::npos,
+         "required with one declaration forces that function");
+  const auto none = test_support::chat(*server, test_support::chat_body(tools + R"(,"tool_choice":"none")"), {.timeout = 20s});
+  expect(none.head.status == 200 && none.body.find(R"("tool_calls")") == std::string::npos,
+         "none returns an ordinary completion even with declarations present");
+  const auto gens = gen_lines(record);
+  expect(gens.size() == 6U, "only valid requests generate, once each");
+  expect(searxng.requests().empty(), "client web_search calls never execute against the built-in search instance");
+  if (gens.size() == 6U) {
+    expect(prompt_of(gens[1]).find("<tool_response>\nRust 1.90.0 is out.") != std::string::npos,
+           "the tool result reaches the next model prompt");
+    expect(prompt_of(gens[3]).ends_with("<tool_call>\n<function=web_search>\n"), "the forced opening is in the prompt");
+    expect(prompt_of(gens[5]).find("<tools>") == std::string::npos, "none suppresses the declarations in the prompt");
+  }
+}
+
+void client_tool_calls_round_trip() { run_client_tool_calls_round_trip(false); }
+void embedded_template_client_tool_calls_round_trip() { run_client_tool_calls_round_trip(true); }
 
 void a_chat_searches_through_strata_search_and_answers() {
   test_support::FakeSearxng searxng;
@@ -202,7 +301,8 @@ void a_started_card_searches_too() {
                                  "--record-file=" + test_support::utf8_path(record)};
   options.config_literals = {{"models.control", "true"},
                              {"search.enabled", "true"},
-                             {"search.url", "\"http://127.0.0.1:" + std::to_string(searxng.port()) + "\""}};
+                             {"search.url", "\"http://127.0.0.1:" + std::to_string(searxng.port()) + "\""},
+                             {"listener.restrict_tool_calls", "true"}};
   auto server = test_support::ServerProcess::start(options);
   const bool listening = server != nullptr && server->wait_until_listening(20s);
   expect(listening, "the launcher boots with search on" + (server ? ": " + server->stderr_text() : std::string{}));
@@ -217,6 +317,10 @@ void a_started_card_searches_too() {
   }
   expect(running, "the card runs: " + server->stderr_text());
   if (!running) return;
+  const auto denied = test_support::chat(*server,
+      R"({"model":"Qwen","messages":[{"role":"user","content":"Hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}]})");
+  expect(denied.head.status == 403 && denied.body.find("tool_call_not_allowed") != std::string::npos,
+         "the started card uses the server's tool policy, including an empty allowlist");
   const std::string body = R"({"model":"Qwen","messages":[{"role":"user","content":"What is new in Rust?"}],"max_tokens":512})";
   const auto answered = test_support::chat(*server, body, {.timeout = 60s});
   expect(answered.head.status == 200 && answered.body.find(R"("content":"Rust 1.90.0 is out.")") != std::string::npos &&
@@ -311,6 +415,9 @@ int main(int argc, char** argv) {
 #endif
   return secure_frontend_test::run_cases(argc, argv, {
       {"a_chat_searches_through_strata_search_and_answers", a_chat_searches_through_strata_search_and_answers},
+      {"client_tool_calls_round_trip", client_tool_calls_round_trip},
+      {"embedded_template_client_tool_calls_round_trip", embedded_template_client_tool_calls_round_trip},
+      {"tool_call_hosts_restrict_only_client_tools", tool_call_hosts_restrict_only_client_tools},
       {"a_chat_can_turn_search_off", a_chat_can_turn_search_off},
       {"a_model_that_cannot_carry_the_tool_says_so", a_model_that_cannot_carry_the_tool_says_so},
       {"a_started_card_searches_too", a_started_card_searches_too},

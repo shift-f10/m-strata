@@ -106,6 +106,7 @@ struct ServerOptions final {
   std::vector<CardOptions> model_cards{};
   // Web search: the expert launch's pack is the byte pack with Qwen's reasoning and tool tags (tool_byte_tokenizer).
   bool tool_tokenizer{false};
+  std::optional<std::string> embedded_template_source{};
 };
 
 // strata-unified-server as a test child: fixture models (fake-model.gguf, 0600)

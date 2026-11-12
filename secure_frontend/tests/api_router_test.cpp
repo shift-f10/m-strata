@@ -461,7 +461,11 @@ void the_chat_settings_follow_the_running_card() {
   expect(js.find("followCard(true);   // a start this page saw") != std::string::npos, "a start the page saw resets the settings");
   expect(js.find("state.settings = card ? settingsFrom(card, Object.assign({}, DEFAULTS)) : Object.assign({}, DEFAULTS);") != std::string::npos,
          "Reset gives the running card's settings");
-  expect(js.find("Number(cards).toFixed(2) + \" (the card's)\"") != std::string::npos, "untuned, the drawer shows the card's values");
+  expect(js.find("String(Number(cards)) + \" (the card's)\"") != std::string::npos,
+         "untuned, the drawer shows the card's values without rounding away precision");
+  expect(html.find("id=\"s-temp\" min=\"0\" max=\"2\" step=\"0.01\"") != std::string::npos &&
+             html.find("id=\"s-topp\" min=\"0.01\" max=\"1\" step=\"0.01\"") != std::string::npos,
+         "the sampling drawer offers hundredths and the full temperature range");
   expect(html.find("<button type=\"button\" role=\"radio\" data-v=\"auto\" id=\"s-thinking-auto\" hidden>Auto</button>") != std::string::npos &&
              html.find("<span class=\"muted small\" id=\"s-card-note\" hidden></span>") != std::string::npos,
          "the drawer has Auto (shown for a card that offers it) and the card's other sampling");
@@ -546,6 +550,14 @@ void web_ui_models_tab_starts_stops_and_polls() {
          "a switch, a choice list, an auto box and number inputs with integer or decimal steps");
   expect(js.find("input.min = String(option.min)") != std::string::npos && js.find("input.max = String(option.max)") != std::string::npos,
          "number inputs carry the card's bounds");
+  expect(js.find("slider.type = \"range\"") != std::string::npos &&
+             js.find("slider.step = \"0.01\"") != std::string::npos &&
+             js.find("if (!integral && hasMin && hasMax)") != std::string::npos &&
+             js.find("input.setAttribute(\"aria-label\", name + \" value\")") != std::string::npos,
+         "bounded decimals offer sliders with a labelled exact value field");
+  expect(js.find("slider.addEventListener(\"input\", function () { input.value = slider.value; syncSlider(); });") != std::string::npos &&
+             js.find("input.addEventListener(\"input\", syncSlider)") != std::string::npos,
+         "slider and decimal value entry stay synchronized");
   expect(js.find("window.confirm(") != std::string::npos && js.find("if (running && !window.confirm(") != std::string::npos,
          "Start asks before a running model is stopped");
   // The owner (2026-10-29): "starting an uncalibrated server recommend calibrating first and when answered yes, it will
@@ -560,7 +572,9 @@ void web_ui_models_tab_starts_stops_and_polls() {
          "the question and its three answers");
   expect(js.find("cal.state === \"missing\"") != std::string::npos && js.find("var choice = await askCalibrateFirst(card, running);") != std::string::npos &&
              js.find("options: collected.values, calibrate: false") != std::string::npos &&
-             js.find("options: collected.values, then_start: true") != std::string::npos,
+             js.find("var request = { name: card.name, options: collected.values };") != std::string::npos &&
+             js.find("if (start) { request.then_start = true; }") != std::string::npos &&
+             js.find("var benchmark = start ? { value: null } : readCalibrationBenchmark();") != std::string::npos,
          "a card never calibrated is asked about; the answers post calibrate false or then_start true");
   // owner 2026-10-29: while a calibration runs, the Monitor names it (its trials are what fill the GPU)
   expect(html.find("<span class=\"st-badge st-badge--reading\" data-s=\"calibrating\">Calibrating</span>") != std::string::npos &&
@@ -575,6 +589,17 @@ void web_ui_models_tab_starts_stops_and_polls() {
              js.find("function launcherStarting(") != std::string::npos,
          "the page asks again every 2 s while a card is starting");
   expect(js.find("$(\"model-progress\").textContent") != std::string::npos, "a progress line while a card loads");
+  expect(html.find("id=\"model-template-inspect\"") != std::string::npos &&
+             html.find("id=\"model-template-source\"") != std::string::npos &&
+             html.find("id=\"model-template-mode\"") != std::string::npos &&
+             html.find("id=\"model-template-ack\"") != std::string::npos &&
+             html.find("cannot guarantee that a template is safe or correct") != std::string::npos,
+         "each card offers source review, a mode choice and explicit informed approval");
+  expect(js.find("api(\"/v1/strata/cards/template\", jsonPost(payload))") != std::string::npos &&
+             js.find("payload.sha256 = templateReview.data.sha256; payload.acknowledge = true;") != std::string::npos &&
+             js.find("row.appendChild(el(\"code\", null, visible))") != std::string::npos &&
+             js.find("template-line--risk") != std::string::npos,
+         "template approval binds the reviewed hash; source lines are literal text with highlighted findings");
 }
 
 // GUI-first start-up (spec 2026-10-27 §4.2-§4.5): the Models tab adds a model from files already on this PC (the
@@ -696,7 +721,11 @@ void web_ui_models_tab_calibrates() {
     expect(at != std::string::npos && at > html.find("id=\"model-detail\"") && at < html.find("id=\"models-pane-download\""),
            std::string{"the model detail has "} + id);
   }
-  expect(js.find("api(\"/v1/strata/models/calibrate\", jsonPost({ name: card.name, options: collected.values }))") != std::string::npos &&
+  // The optional manual experiment extends the same request; its behavioral contract is exercised by
+  // tools/secure/test_calibration_ui.py, including the unchanged ordinary and calibrate-then-start requests.
+  expect(js.find("var request = { name: card.name, options: collected.values };") != std::string::npos &&
+             js.find("if (benchmark.value) { request.benchmark = benchmark.value; }") != std::string::npos &&
+             js.find("api(\"/v1/strata/models/calibrate\", jsonPost(request))") != std::string::npos &&
              js.find("api(\"/v1/strata/models/calibrate/cancel\", jsonPost({}))") != std::string::npos &&
              js.find("api(\"/v1/strata/models/calibrate/auto\", jsonPost({ name: card.name, on: on }))") != std::string::npos,
          "Calibrate posts the card and its options; Cancel and the switch have their routes");
@@ -755,7 +784,8 @@ void web_ui_has_server_settings() {
   }
   for (const char* id : {"id=\"key-settings\"", "id=\"key-value\"", "id=\"key-show\"", "id=\"key-copy\"", "id=\"key-rotate-confirm\"",
                          "id=\"key-rotate\"", "id=\"key-new\"", "id=\"server-settings\"", "id=\"limits-settings\"",
-                         "id=\"paths-settings\"", "id=\"logs-settings\"", "id=\"settings-restart-note\""}) {
+                         "id=\"paths-settings\"", "id=\"logs-settings\"", "id=\"settings-restart-note\"",
+                         "id=\"tool-calling-settings\"", "data-save=\"tool-calling\""}) {
     expect(html.find(id) != std::string::npos, std::string{"the Settings tab has "} + id);
   }
   expect(js.find("api(\"/v1/strata/config\", jsonPost({}))") != std::string::npos &&
@@ -768,7 +798,10 @@ void web_ui_has_server_settings() {
          "rotation is typed ROTATE first");
   expect(js.find("\"listener.port\"") != std::string::npos && js.find("\"limits.engine.generation_timeout_s\"") != std::string::npos &&
              js.find("\"models.downloads_root\"") != std::string::npos && js.find("logs: [\"logging.engine_output\"]") != std::string::npos,
-         "the four groups name their settings");
+         "the existing groups name their settings");
+  expect(js.find("\"tool-calling\": [\"listener.restrict_tool_calls\", \"listener.tool_call_hosts\"]") != std::string::npos &&
+             js.find("$(\"tool-calling-settings\").hidden = !configSetting(\"listener.restrict_tool_calls\");") != std::string::npos,
+         "the Tool calling card has its own controls and appears only when the server exposes them");
   // the owner (2026-10-29): a build without make --debugging hides the Troubleshooting section (the server says which)
   expect(js.find("$(\"logs-settings\").hidden = serverConfig.data.debugging !== true;") != std::string::npos &&
              js.find("[\"key-settings\", \"server-settings\", \"limits-settings\", \"paths-settings\"].forEach(function (id) { $(id).hidden = false; });") !=
@@ -1363,6 +1396,8 @@ void web_ui_header_fits_a_phone() {
   const auto phone = css.find("@media (max-width: 640px) {");
   expect(phone != std::string::npos, "a phone-width block");
   const std::string block = phone == std::string::npos ? std::string{} : css.substr(phone, css.find("\n}", phone) - phone);
+  expect(block.find(".calibration-manual-fields { grid-template-columns: 1fr; }") != std::string::npos,
+         "manual calibration controls stack with the other phone-width rules");
   expect(block.find(".st-header { flex-wrap: wrap; height: auto; padding: var(--st-s-2) var(--st-s-3); gap: var(--st-s-2); }") !=
              std::string::npos,
          "the header wraps onto a second row");
@@ -2065,7 +2100,10 @@ void calibration_routes_need_their_handlers_and_the_key() {
            target + " reaches its handler with the body");
     expect(request(router, "GET", target).status == 405, target + " is POST only");
     expect(request(router, "POST", target, "{}", true, true, "text/plain").status == 415, target + " takes JSON");
-    expect(request(router, "POST", target, std::string(5000, ' ')).status == 413, target + " takes a small body");
+    const auto limit=what=="calibrate" ? secure_frontend::kCalibrationBodyLimit : secure_frontend::kModelControlBodyLimit;
+    expect(request(router, "POST", target, std::string(limit+1U, ' ')).status == 413, target + " enforces its bounded body");
+    if(what=="calibrate")expect(request(router,"POST",target,std::string(5000,' ')).status==202,
+        "only calibration admits the explicitly bounded larger custom-workload body");
   }
   expect(request(router, "POST", "/v1/strata/models/calibrate", "{}", true, false).status == 202 && calls.back().ends_with(" remote"),
          "the handler learns the client's class");
@@ -2083,6 +2121,7 @@ void model_card_routes_need_the_switch_and_the_key() {
       {"/v1/strata/cards/add", RouteId::strata_card_add},
       {"/v1/strata/cards/folder", RouteId::strata_card_folder},
       {"/v1/strata/cards/mtp", RouteId::strata_card_mtp},
+      {"/v1/strata/cards/template", RouteId::strata_card_template},
       {"/v1/strata/cards/delete/begin", RouteId::strata_card_delete_begin},
       {"/v1/strata/cards/delete", RouteId::strata_card_delete},
       {"/v1/strata/cards/remove", RouteId::strata_card_remove}};

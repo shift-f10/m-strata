@@ -26,7 +26,7 @@ enum class ModelOptionKind { boolean, integer, decimal, choice, integer_or_auto,
 
 // One option of an engine profile with the engine's hard bounds.
 struct ModelOptionSpec final {
-  std::string_view name;   // the card key and the API name: [a-z_]+
+  std::string_view name;   // the card key and the API name: [a-z0-9_]+
   ModelOptionKind kind;
   std::string_view label;  // the page's label
   std::string_view help;   // one fixed sentence for the page
@@ -40,6 +40,8 @@ struct ModelOptionSpec final {
   std::span<const std::int64_t> values{};
   std::string_view zero_label{};  // the label of 0 among `values` ("Off"); empty: "0"
   std::string_view at_most{};     // another option this one may not exceed (KV streaming: the context)
+  bool accuracy_tradeoff{false};
+  std::string_view accuracy_default{};  // fixed JSON scalar for restoring the accuracy baseline
 };
 
 // The profile's options in display order (qwen and gemma4; glm53 has none in v1, D10).
@@ -63,6 +65,8 @@ using ModelOptionValues = std::map<std::string, ModelOptionValue, std::less<>>;
 // 1.0 / 0.95 / 20; GLM-5.3 and MiniMax 1.0 / 0.95). A card whose file does not list one of these options offers it
 // with this default (the model launcher), so a start with the card's defaults samples as the model's card says.
 [[nodiscard]] ModelOptionValues recommended_sampling(EngineProfile profile);
+// Accuracy defaults, or the card's explicit engine.speed_settings / engine.fast_math values when present.
+[[nodiscard]] ModelOptionValues accuracy_option_defaults(EngineProfile profile, const FrontendConfigDraft& draft);
 
 // A card's view of one option: its default and the card's own bounds inside the spec's.
 struct ModelOptionLimits final {

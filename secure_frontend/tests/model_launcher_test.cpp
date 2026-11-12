@@ -15,6 +15,7 @@
 #include "secure_frontend/model_launcher.hpp"
 #include "secure_frontend/model_runtime.hpp"
 #include "secure_frontend/serve_monitor.hpp"
+#include "secure_frontend/sha256.hpp"
 #include "secure_frontend/tool_runner.hpp"
 #include "support/config_json.hpp"
 #include "support/fake_engine_dump.hpp"
@@ -491,6 +492,50 @@ void options_are_remembered() {
   expect(server->wait_exit(std::chrono::seconds(20)) == std::optional<int>{0}, "a clean exit");
 }
 
+void card_speed_options_reach_child_and_are_remembered() {
+  const auto state = test_support::make_temp_dir("speed-options") / "state";
+  secure_frontend_test::make_owner_private_directory(state);
+  const auto dump = state / "engine" / "alpha.dump";
+  auto options = two_cards({"--dump-file=alpha.dump"});
+  options.state_dir = state;
+  options.model_cards.front().config_literals["engine.speed_settings"] = R"(["ROUTE_PRIOR=0.4"])";
+  for (const int pass : {0, 1, 2, 3}) {
+    auto server = ServerProcess::start(options);
+    expect(server && server->wait_until_listening(std::chrono::seconds(20)), "speed-option launcher boots");
+    if (!server) return;
+    const auto listed = call(*server, "GET", "/v1/strata/models");
+    expect(listed && listed->body.find(R"("accuracy_tradeoff":true,"accuracy_default":0)") != std::string::npos,
+           "auto-offered controls advertise the accuracy baseline");
+    const auto bad = call(*server, "POST", "/v1/strata/models/start",
+                          R"({"name":"Alpha","options":{"speed_route_resident":1.1}})");
+    expect(bad && bad->status == 400, "out-of-range margin refuses before spawn");
+    const auto body = pass == 0 ? R"({"name":"Alpha","options":{"speed_route_resident":0.25,"speed_hc_req8":true,"speed_route_tail_skip":7}})" :
+                      pass == 2 ? R"({"name":"Alpha","options":{"speed_route_resident":0,"speed_hc_req8":false,"speed_route_tail_skip":0,"speed_route_prior":0}})" :
+                                  R"({"name":"Alpha"})";
+    const auto started = call(*server, "POST", "/v1/strata/models/start", body);
+    expect(started && started->status == 202 && wait_for_card(*server, "Alpha", "running"),
+           "selected and remembered speed options start the model: " + server->stderr_text());
+    const auto captured = test_support::read_dump_file(dump, std::chrono::seconds(5));
+    expect(captured.has_value(), "child environment is captured");
+    if (captured) {
+      const std::vector<std::string> expected = pass < 2 ?
+          std::vector<std::string>{"STRATA_ROUTE_RESIDENT=0.25", "MAYA_ROUTE_RESIDENT=0.25", "STRATA_HC_REQ8=1",
+                                   "STRATA_ROUTE_TAIL_SKIP=7", "STRATA_ROUTE_PRIOR=0.4", "STRATA_SPEC_PROB=0"} :
+          std::vector<std::string>{"STRATA_ROUTE_RESIDENT=0", "MAYA_ROUTE_RESIDENT=0", "STRATA_HC_REQ8=0",
+                                   "STRATA_ROUTE_TAIL_SKIP=0", "STRATA_ROUTE_PRIOR=0", "STRATA_SPEC_PROB=0"};
+      for (const auto& value : expected)
+        expect(std::find(captured->env.begin(), captured->env.end(), value) != captured->env.end(),
+               "child sees selected values and other accuracy defaults: " + value);
+      expect(std::any_of(captured->env.begin(), captured->env.end(), [pass](const auto& value) {
+        return value.starts_with("MSTRATA_SPEED_SETTINGS=") && value.find(pass < 2 ? "ROUTE_RESIDENT=0.25" : "ROUTE_RESIDENT=0;") != std::string::npos;
+      }), "wrapper receives the validated explicit speed channel");
+    }
+    server->stop(ServerProcess::Stop::ctrl_break);
+    expect(server->wait_exit(std::chrono::seconds(20)) == std::optional<int>{0}, "speed-option server exits cleanly");
+    std::filesystem::remove(dump);
+  }
+}
+
 // D5 and the control switch: models.start starts a card at boot; with models.control off the
 // control routes are no routes and the model still serves.
 void models_start_and_control_off() {
@@ -848,6 +893,75 @@ void a_gguf_card_reads_its_tokenizer_from_the_gguf() {
   expect(std::holds_alternative<secure_frontend::ComposeFailure>(compose("wrong-Q8_0.gguf")), "a tokenizer not the profile's is refused");
 }
 
+void fast_math_variant_is_selected_before_engine_start() {
+  const auto root = secure_frontend_test::make_scratch_directory();
+  const auto models = root / "models", bin = root / "engine", fast_dir = bin / "fast-math";
+  secure_frontend_test::make_private_directory(models);
+  secure_frontend_test::make_private_directory(bin);
+  const std::filesystem::path fake{STRATA_FAKE_ENGINE_PATH};
+  const auto accurate = bin / fake.filename(), fast = fast_dir / fake.filename();
+  std::error_code copy_error;
+  std::filesystem::copy_file(fake, accurate, copy_error);
+  expect(!copy_error, "accurate fixture executable copied");
+  const auto gguf = test_support::gguf_with_tokenizer(test_support::byte_tokenizer(), "gpt2", "qwen35moe")
+                        .u32("qwen35moe.context_length", 262144U).bytes();
+  secure_frontend_test::write_file(models / "variant-Q8_0.gguf", gguf);
+  const auto data = secure_frontend::data_folder_layout(root / "data");
+  expect(std::holds_alternative<secure_frontend::FirstStartResult>(secure_frontend::ensure_data_folder(data, accurate)),
+         "variant fixture data folder created");
+  const auto main = secure_frontend::parse_config_text(secure_frontend_test::read_file(data.config_file), data.root);
+  if (!std::holds_alternative<secure_frontend::FrontendConfigDraft>(main)) return;
+  const auto header = secure_frontend::parse_gguf_metadata(gguf);
+  const auto made = secure_frontend::card_for_gguf(std::get<secure_frontend::GgufMetadata>(header),
+      {.folder = models, .file = "variant-Q8_0.gguf", .engine = accurate, .source = "folder"});
+  const auto parsed = secure_frontend::parse_model_card(std::get<secure_frontend::CardText>(made).json, data.root);
+  auto card = std::get<secure_frontend::ModelCard>(parsed);
+  card.config.entries["engine.lib_dirs"] = {std::vector<std::string>{secure_frontend::path_to_utf8(bin)}, secure_frontend::ConfigSource::file};
+  const auto compose = [&](const bool enabled) -> std::variant<secure_frontend::ComposedModel, secure_frontend::ComposeFailure> {
+    card.config.entries["engine.fast_math"] = {enabled, secure_frontend::ConfigSource::file};
+    const auto validated = secure_frontend::card_config(std::get<secure_frontend::FrontendConfigDraft>(main), card,
+                                                       secure_frontend::default_option_values(card));
+    if (const auto* issues = std::get_if<secure_frontend::ConfigErrors>(&validated)) {
+      std::string why;
+      for (const auto& issue : *issues) why += secure_frontend::format_issue(issue) + "; ";
+      expect(false, "variant card config validates: " + why);
+      return secure_frontend::ComposeFailure{{why}, "invalid fixture", 1};
+    }
+    return secure_frontend::compose_model(*std::get<secure_frontend::ValidatedConfig>(validated).shared(), true);
+  };
+  const auto check_path = [&](const bool enabled, const std::filesystem::path& expected) {
+    const auto result = compose(enabled);
+    const auto* model = std::get_if<secure_frontend::ComposedModel>(&result);
+    std::string why;
+    if (const auto* error = std::get_if<secure_frontend::ComposeFailure>(&result))
+      for (const auto& message : error->messages) why += message;
+    expect(model != nullptr, "selected variant composes: " + why);
+    if (!model) return;
+    expect(model->plan.command.executable == expected, "the child launches the selected variant executable");
+    expect(model->plan.environment && !model->plan.environment->lib_dirs.empty() &&
+           model->plan.environment->lib_dirs.front() == expected.parent_path(),
+           "selected variant libraries precede the explicitly configured original folder");
+    expect(model->tokenizer.tokens_by_id == test_support::byte_tokenizer().tokens_by_id, "variant selection preserves model tokenizer");
+  };
+  check_path(false, accurate);
+  const auto missing = compose(true);
+  const auto* refused = std::get_if<secure_frontend::ComposeFailure>(&missing);
+  expect(refused && refused->exit_code != 0 && std::string(refused->reason).find("fast") != std::string::npos,
+         "a missing fast variant refuses clearly without falling back");
+  secure_frontend_test::make_private_directory(fast_dir);
+  std::filesystem::copy_file(fake, fast, copy_error);
+  expect(!copy_error, "fast fixture executable copied");
+  const auto bytes = secure_frontend_test::read_file(fast);
+  const auto filename = secure_frontend_test::json_literal(secure_frontend::path_to_utf8(fake.filename()));
+  const auto files = "[{\"path\":" + filename + ",\"bytes\":" + std::to_string(bytes.size()) +
+      ",\"sha256\":\"" + secure_frontend::to_hex(secure_frontend::sha256(bytes)) + "\"}]";
+  secure_frontend_test::write_file(bin / "variants.json", "{\"schema_version\":1,\"variants\":[" +
+      std::string{"{\"name\":\"accurate\",\"directory\":\".\",\"fast_math\":false,\"executable\":"} + filename + ",\"files\":" + files + "}," +
+      "{\"name\":\"fast-math\",\"directory\":\"fast-math\",\"fast_math\":true,\"executable\":" + filename + ",\"files\":" + files + "}]}", 0600);
+  check_path(true, fast);
+  check_path(false, accurate);
+}
+
 // Owner 2026-10-27 ("Qwen 3.6 from the GGUF first"): a Qwen3.6 card built from its GGUF starts with no tokenizer pack -
 // the byte-level tokenizer is the GGUF's, in Qwen's mode - and upstream's engine gets the file itself (--native) and
 // the draft layer (--mtp 2).
@@ -956,6 +1070,7 @@ struct CalibrationFixture final {
     secure_frontend::LauncherSettings settings{.main = main, .cards = operator_cards ? cards : std::vector<secure_frontend::ModelCard>{},
                                                .operator_cards = operator_cards ? cards.size() : 0U, .memory_file = {}, .gate = {}};
     settings.calibration_dir = data.state / "calibration";
+    settings.benchmark_gpu = [](std::span<const unsigned>) { return secure_frontend::CalibrationGpuSignals{false,0U,{}}; };
     // a calibration's report for a bug report (owner 2026-10-30), with this fixed hardware
     settings.report_dir = report_dir();
     settings.report_machine = [] {
@@ -1042,6 +1157,164 @@ void calibration_finds_the_win_and_starts_with_it() {
 }
 
 // §5.2: a card the page made that was never calibrated calibrates on its first start, then serves with the result.
+void calibration_keeps_the_options_it_measured() {
+  CalibrationFixture f;
+  const std::string name = "tiny-gemma-Q8_0";
+  const auto selected = json_of(R"({"max_context":8192})");
+  expect(!f.launcher->calibrate(name, &selected, false, std::nullopt, false), "explicit calibration accepted");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(120)), "explicit calibration finishes");
+  const auto listed = f.launcher->list_json();
+  expect(listed.find("\"calibration\":{\"state\":\"fresh\"") != std::string::npos,
+         "completed calibration is fresh at the values just measured");
+  expect(!f.launcher->start(name, nullptr, false), "start with remembered calibrated values accepted");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(60)), "start settles");
+  expect(has_pair(dumped_argv(f.dump), "--max-context", "8192"), "the calibrated context is remembered");
+  expect(has_pair(dumped_argv(f.dump), "--cpu-threads", f.winner), "fresh tuning is reused");
+}
+
+void benchmark_quality_failure_preserves_previous_calibration() {
+  CalibrationFixture f;
+  const std::string name="tiny-gemma-Q8_0";
+  expect(!f.launcher->calibrate(name,nullptr,false,std::nullopt,false),"baseline calibration accepted");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(120)),"baseline finishes");
+  const auto original=secure_frontend_test::read_file(f.result_file(name));
+  secure_frontend::BenchmarkOptions benchmark;
+  expect(!f.launcher->calibrate(name,nullptr,false,std::nullopt,false,benchmark),"benchmark accepted");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(120)),"benchmark finishes");
+  expect(secure_frontend_test::read_file(f.result_file(name))==original,"failed known-answer check does not replace prior result");
+  const auto listed=f.launcher->list_json();
+  expect(listed.find("quality_failed")!=std::string::npos&&listed.find("not_applied")!=std::string::npos,"quality failure is visible");
+  expect(listed.find("history")!=std::string::npos,"previous result remains in history");
+}
+
+void benchmark_resume_refuses_unmatched_checkpoint_and_restore_is_bounded() {
+  CalibrationFixture f;
+  const std::string name="tiny-gemma-Q8_0";
+  secure_frontend::BenchmarkOptions benchmark;benchmark.resume=true;
+  expect(!f.launcher->calibrate(name,nullptr,false,std::nullopt,false,benchmark),"resume request accepted for checking");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(60)),"resume refusal settles");
+  expect(!std::filesystem::exists(f.result_file(name)),"unmatched resume saves no tuning");
+  expect(f.launcher->list_json().find("Resume refused")!=std::string::npos,"resume mismatch explained");
+  expect(f.launcher->restore_calibration(name,"../escape").has_value(),"restore rejects traversal");
+  expect(f.launcher->restore_calibration(name,std::string(24,'a')).has_value(),"restore rejects unknown history id");
+}
+
+void benchmark_success_preserves_private_input_and_restores_history() {
+  CalibrationFixture f;
+  const std::string name="tiny-gemma-Q8_0";
+  const auto selected=json_of(R"({"max_context":8192})");
+  secure_frontend::BenchmarkOptions benchmark;
+  benchmark.workload=secure_frontend::BenchmarkWorkload::custom;
+  benchmark.custom_prompt="Private benchmark input must never be persisted 73931";
+  benchmark.label="Verified fixture";
+  expect(!f.launcher->calibrate(name,&selected,false,std::nullopt,false,benchmark),"custom benchmark accepted");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(120)),"custom benchmark finishes");
+  const auto original=secure_frontend_test::read_file(f.result_file(name));
+  const auto result=secure_frontend::parse_calibration(original);
+  expect(result.has_value(),"successful measured workload saves calibration");
+  const auto listed=f.launcher->list_json();
+  expect(listed.find("\"outcome\": \"applied\"")!=std::string::npos,"result is explicitly applied");
+  expect(listed.find("semantic accuracy is not established")!=std::string::npos,"custom result never claims semantic accuracy");
+  const auto id=secure_frontend::to_hex(secure_frontend::sha256(original)).substr(0,24);
+  const auto changed=json_of(R"({"max_context":4096})");
+  expect(!f.launcher->start(name,&changed,false,false),"different context starts without recalibration");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(60)),"changed start settles");
+  expect(!f.launcher->stop(false) && f.launcher->wait_until_settled(std::chrono::seconds(60)),"changed model stops");
+  expect(!f.launcher->restore_calibration(name,id),"verified prior calibration restores");
+  expect(f.launcher->list_json().find("\"calibration\":{\"state\":\"fresh\"")!=std::string::npos,"restored options are fresh");
+  expect(!f.launcher->start(name,nullptr,false,false) && f.launcher->wait_until_settled(std::chrono::seconds(60)),"restored model starts");
+  expect(has_pair(dumped_argv(f.dump),"--max-context","8192"),"restore reinstates the measured context");
+  for(const auto& file:std::filesystem::directory_iterator(f.data.state/"calibration")){
+    if(file.is_regular_file())expect(secure_frontend_test::read_file(file.path()).find(benchmark.custom_prompt)==std::string::npos,"no custom prompt in calibration artifacts");
+  }
+  expect(!f.launcher->stop(false) && f.launcher->wait_until_settled(std::chrono::seconds(60)),"model stops before comparison");
+  benchmark.compare_speed=true;
+  expect(!f.launcher->calibrate(name,nullptr,false,std::nullopt,false,benchmark),"explicit comparison accepted");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(120)),"comparison completes");
+  expect(secure_frontend_test::read_file(f.result_file(name))==original,"comparison never replaces accepted calibration");
+  const auto comparison=f.launcher->list_json();
+  expect(comparison.find("comparison_complete")!=std::string::npos,"comparison completion is visible");
+  expect(comparison.find("fast-math runtime is unavailable")!=std::string::npos,"missing fast runtime is explained and skipped");
+}
+
+void benchmark_cancel_resume_is_bound_to_all_options() {
+  CalibrationFixture f({"--ready-delay-ms=250"});
+  const std::string name="tiny-gemma-Q8_0";
+  secure_frontend::BenchmarkOptions benchmark;
+  benchmark.workload=secure_frontend::BenchmarkWorkload::custom;
+  benchmark.custom_prompt="Resume fixture";
+  expect(!f.launcher->calibrate(name,nullptr,false,std::nullopt,false,benchmark),"benchmark starts");
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(30);
+  while(std::chrono::steady_clock::now()<deadline && f.launcher->list_json().find("\"trials\": [{")==std::string::npos)
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  expect(f.launcher->list_json().find("\"trials\": [{")!=std::string::npos,"at least one measured trial finishes before cancelling");
+  expect(!f.launcher->cancel_calibration(),"cancel accepted");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(60)),"cancellation settles");
+  expect(f.launcher->list_json().find("\"paused\": true")!=std::string::npos,"cancel leaves resumable checkpoint");
+  expect(!std::filesystem::exists(f.result_file(name)),"cancel does not apply unfinished tuning");
+  benchmark.resume=true;
+  const auto changed=json_of(R"({"temperature":0.5})");
+  expect(!f.launcher->calibrate(name,&changed,false,std::nullopt,false,benchmark),"changed-options resume checked");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(60)),"changed-options refusal settles");
+  expect(f.launcher->list_json().find("Resume refused")!=std::string::npos,"even neutral option changes bind the checkpoint");
+  expect(!f.launcher->calibrate(name,nullptr,false,std::nullopt,false,benchmark),"matching resume accepted");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(120)),"resumed benchmark completes");
+  const auto listed=f.launcher->list_json();
+  expect(listed.find("\"reused\": true")!=std::string::npos,"matching completed trial is reused");
+  expect(listed.find("\"outcome\": \"applied\"")!=std::string::npos,"resumed completed result applies");
+
+}
+
+void benchmark_route_accepts_bounded_custom_input_and_rejects_mixed_actions() {
+  auto server=ServerProcess::start(two_cards());
+  expect(server && server->wait_until_listening(std::chrono::seconds(20)),"benchmark route server starts");
+  if(!server)return;
+  for(const std::string body:{
+      R"({"name":"Alpha","benchmark":{"workload":"custom"}})",
+      R"({"name":"Alpha","benchmark":{"compare_speed":true},"then_start":true})",
+      R"({"name":"Alpha","restore":"aaaaaaaaaaaaaaaaaaaaaaaa","benchmark":{}})",
+      R"({"name":"Alpha","benchmark":{"unsupported":true}})"}){
+    const auto answer=call(*server,"POST","/v1/strata/models/calibrate",body);
+    expect(answer && answer->status==400,"invalid benchmark action rejected: "+shown(answer));
+  }
+  const std::string prompt(5000,'a');
+  const auto accepted=call(*server,"POST","/v1/strata/models/calibrate",
+      "{\"name\":\"Alpha\",\"benchmark\":{\"workload\":\"custom\",\"resume\":true,\"custom_prompt\":\""+prompt+"\"}}");
+  expect(accepted && accepted->status==202,"bounded custom input above old 4KiB limit reaches resume validation: "+shown(accepted));
+  expect(wait_for_card(*server,"Alpha","stopped"),"invalid resume settles without engine work");
+  const auto oversized=call(*server,"POST","/v1/strata/models/calibrate",
+      "{\"name\":\"Alpha\",\"benchmark\":{\"workload\":\"custom\",\"custom_prompt\":\""+std::string(16385,'a')+"\"}}");
+  expect(oversized && oversized->status==400,"custom input above field bound rejected: "+shown(oversized));
+  const auto ordinary=call(*server,"POST","/v1/strata/models/start","{\"name\":\""+prompt+"\"}");
+  expect(ordinary && ordinary->status==413,"other management routes keep their small input bound: "+shown(ordinary));
+  server->stop(ServerProcess::Stop::ctrl_break);
+  expect(server->wait_exit(std::chrono::seconds(20))==std::optional<int>{0},"route fixture exits cleanly");
+}
+
+void benchmark_rejects_runtime_changes_during_trials() {
+  for(const bool comparison:{false,true}){
+    const auto changed=std::make_shared<bool>(false);
+    CalibrationFixture f({},false,[changed](secure_frontend::EngineLaunchPlan plan){
+      if(!*changed){
+        *changed=true;
+        secure_frontend_test::write_file(plan.command.executable.parent_path()/"updated-runtime.dll","changed library fixture");
+      }
+      return secure_frontend::make_stdio_process_factory(std::move(plan));
+    });
+    const std::string name="tiny-gemma-Q8_0";
+    secure_frontend::BenchmarkOptions benchmark;
+    benchmark.workload=secure_frontend::BenchmarkWorkload::custom;
+    benchmark.custom_prompt="Runtime identity fixture";
+    benchmark.compare_speed=comparison;
+    expect(!f.launcher->calibrate(name,nullptr,false,std::nullopt,false,benchmark),"runtime-change benchmark accepted");
+    expect(f.launcher->wait_until_settled(std::chrono::seconds(120)),"runtime-change benchmark finishes");
+    const auto listed=f.launcher->list_json();
+    expect(!std::filesystem::exists(f.result_file(name)),"measurements spanning different runtimes are never applied");
+    expect(listed.find("changed during the benchmark")!=std::string::npos,"identity change is explained");
+    expect(listed.find("comparison_complete")==std::string::npos,"invalidated comparison never claims successful completion");
+  }
+}
+
 void a_first_start_calibrates_first() {
   CalibrationFixture f;
   const std::string name = "other-gemma-Q8_0";
@@ -1651,9 +1924,12 @@ void removing_a_card_removes_its_calibration() {
              f.launcher->wait_until_settled(std::chrono::seconds(120)) && std::filesystem::exists(f.result_file(name)),
          "the card is calibrated");
   expect(!f.launcher->set_auto_recalibrate(name, true).has_value(), "its switch is on");
+  const auto history=f.data.state/"calibration"/("benchmark-"+secure_frontend::to_hex(secure_frontend::sha256(name)).substr(0,24)+".history.json");
+  expect(std::filesystem::exists(history),"calibrated card has restorable history");
   const auto held = f.launcher->card(name);
   expect(held.has_value() && f.launcher->remove_card(name) == secure_frontend::CardChange::done, "the card is removed");
   expect(!std::filesystem::exists(f.result_file(name)), "and its calibration with it");
+  expect(!std::filesystem::exists(history),"removal also forgets benchmark history");
   expect(held.has_value() && f.launcher->add_card(held->card), "the name is added again");
   const std::string listed = f.launcher->list_json();
   expect(listed.find("\"calibration\":{\"state\":\"missing\",") != std::string::npos &&
@@ -1836,6 +2112,11 @@ void cards_offer_their_models_recommended_sampling() {
   rows.config.entries["defaults.sampling.top_k"] = {std::int64_t{40}, secure_frontend::ConfigSource::file};
   rows.config.entries["defaults.sampling.temperature"] = {0.8, secure_frontend::ConfigSource::file};
   settings.cards.push_back(rows);
+  secure_frontend::ModelCard fast;
+  fast.name = "Fast";
+  fast.profile = secure_frontend::EngineProfile::minimax;
+  fast.config.entries["engine.fast_math"] = {true, secure_frontend::ConfigSource::file};
+  settings.cards.push_back(fast);
   settings.log = [](std::string_view) {};
   secure_frontend::ModelLauncher launcher(std::move(settings));
   const std::string listed = launcher.list_json();
@@ -1855,19 +2136,25 @@ void cards_offer_their_models_recommended_sampling() {
     return out;
   };
   // (a Qwen card without --pack runs a GGUF on the Qwen3.6 engine: it offers VRAM kept free, Off - owner 2026-11-01)
-  expect(defaults_of("Q") == "vram_reserve=0 temperature=1 top_p=0.95 top_k=20 answer_minutes=30 hot=false gpus=\"auto\"",
+  const std::string qspeed = " speed_route_tail_skip=0 speed_route_resident=0 speed_route_prior=0 speed_route_resident_mtp=false speed_hc_req8=false speed_spec_prob=false speed_fast_math=false";
+  const std::string glmspeed = " speed_glm_trunk_keep=8 speed_glm_disk_skip_from=8 speed_glm_disk_skip_w=0 speed_glm_miss_skip_w=0 speed_glm_mtp_keep=8 speed_glm_defer_cpu=false speed_fast_math=false";
+  const std::string tailspeed = " speed_route_tail_skip=0 speed_fast_math=false";
+  const std::string dsspeed = " speed_ds4_disk_skip_w=0 speed_ds4_ram_skip_w=0 speed_ds4_dspark_sample=false speed_ds4_yoco=1 speed_ds4_yoco_keep=0 speed_fast_math=false";
+  expect(defaults_of("Q") == "vram_reserve=0 temperature=1 top_p=0.95 top_k=20 answer_minutes=30 hot=false gpus=\"auto\"" + qspeed,
          "Qwen3.6 (upstream's card): " + defaults_of("Q"));
-  expect(defaults_of("G") == "ram_headroom=16 temperature=1 top_p=0.95 answer_minutes=30 hot=false gpus=\"auto\"", "GLM-5.3 (Maya's): " + defaults_of("G"));
-  expect(defaults_of("R") == "ram_headroom=16 temperature=1 top_p=0.95 top_k=20 answer_minutes=30 hot=false gpus=\"auto\"", "raon1 (KRAFTON's): " + defaults_of("R"));
-  expect(defaults_of("F") == "temperature=1 top_p=0.95 top_k=20 answer_minutes=30 hot=false gpus=\"auto\"", "flint (its card's): " + defaults_of("F"));
-  expect(defaults_of("E") == "temperature=1 top_p=0.95 top_k=64 min_p=0.05 answer_minutes=30 hot=false gpus=\"auto\"", "Gemma 4 (Google's): " + defaults_of("E"));
-  expect(defaults_of("D") == "temperature=1 top_p=1 answer_minutes=30 hot=false gpus=\"auto\"", "DeepSeek-V4.1 (upstream's card): " + defaults_of("D"));
-  expect(defaults_of("M") == "temperature=1 top_p=0.95 answer_minutes=30 hot=false gpus=\"auto\"", "MiniMax (its card's): " + defaults_of("M"));
+  expect(defaults_of("G") == "ram_headroom=16 temperature=1 top_p=0.95 answer_minutes=30 hot=false gpus=\"auto\"" + glmspeed, "GLM-5.3 (Maya's): " + defaults_of("G"));
+  expect(defaults_of("R") == "ram_headroom=16 temperature=1 top_p=0.95 top_k=20 answer_minutes=30 hot=false gpus=\"auto\"" + glmspeed, "raon1 (KRAFTON's): " + defaults_of("R"));
+  expect(defaults_of("F") == "temperature=1 top_p=0.95 top_k=20 answer_minutes=30 hot=false gpus=\"auto\"" + tailspeed, "flint (its card's): " + defaults_of("F"));
+  expect(defaults_of("E") == "temperature=1 top_p=0.95 top_k=64 min_p=0.05 answer_minutes=30 hot=false gpus=\"auto\"" + tailspeed, "Gemma 4 (Google's): " + defaults_of("E"));
+  expect(defaults_of("D") == "temperature=1 top_p=1 answer_minutes=30 hot=false gpus=\"auto\"" + dsspeed, "DeepSeek-V4.1 (upstream's card): " + defaults_of("D"));
+  expect(defaults_of("M") == "temperature=1 top_p=0.95 answer_minutes=30 hot=false gpus=\"auto\" speed_fast_math=false", "MiniMax (its card's): " + defaults_of("M"));
   expect(defaults_of("Own") ==
-             "vram_reserve=0 thinking=\"high\" temperature=0.6 top_p=0.95 top_k=20 vision=\"gpu\" answer_minutes=30 hot=false gpus=\"auto\"",
+             "vram_reserve=0 thinking=\"high\" temperature=0.6 top_p=0.95 top_k=20 vision=\"gpu\" answer_minutes=30 hot=false gpus=\"auto\"" + qspeed,
          "a card's own temperature stays, the rest in the profile's order: " + defaults_of("Own"));
-  expect(defaults_of("Rows") == "ram_headroom=16 temperature=0.8 top_p=0.95 top_k=40 answer_minutes=30 hot=false gpus=\"auto\"",
+  expect(defaults_of("Rows") == "ram_headroom=16 temperature=0.8 top_p=0.95 top_k=40 answer_minutes=30 hot=false gpus=\"auto\"" + glmspeed,
          "a card's own defaults.sampling rows are its defaults: " + defaults_of("Rows"));
+  expect(defaults_of("Fast") == "temperature=1 top_p=0.95 answer_minutes=30 hot=false gpus=\"auto\" speed_fast_math=true",
+         "a card's explicit compiled variant remains its visible default: " + defaults_of("Fast"));
 }
 
 // Owner 2026-10-29 ("make it an option in the card setting"): every GLM-engine card (glm53, raon1) offers the RAM its
@@ -1974,7 +2261,9 @@ void a_card_without_sampling_starts_with_the_recommended() {
   if (generations.size() != 2U) return;
   expect(generations[0].find(" temperature=1 top_p=0.95 top_k=20") != std::string::npos,
          "the recommended sampling reached the engine: " + generations[0]);
-  expect(generations[1].find("temperature=") == std::string::npos && generations[1].find(" top_p=0.95 top_k=20") != std::string::npos,
+  // Explicit zero must reach Maya as well: omission plus other sampler keys can
+  // activate temperature-one sampling. Require the exact greedy wire value.
+  expect(generations[1].find(" temperature=0 top_p=0.95 top_k=20") != std::string::npos,
          "the chat's temperature 0 wins (greedy), the card's others stay: " + generations[1]);
 }
 
@@ -2071,6 +2360,8 @@ int main(int argc, char** argv) {
       {"a_start_says_its_phase_and_time_and_a_failure_its_code", a_start_says_its_phase_and_time_and_a_failure_its_code},
       {"the_settings_say_the_running_models_values", the_settings_say_the_running_models_values},
       {"options_are_remembered", options_are_remembered},
+      {"fast_math_variant_is_selected_before_engine_start", fast_math_variant_is_selected_before_engine_start},
+      {"card_speed_options_reach_child_and_are_remembered", card_speed_options_reach_child_and_are_remembered},
       {"models_start_and_control_off", models_start_and_control_off},
       {"experts_show_as_soon_as_a_model_runs", experts_show_as_soon_as_a_model_runs},
       {"downloads_serve_the_catalog_and_load_download_cards", downloads_serve_the_catalog_and_load_download_cards},
@@ -2089,6 +2380,13 @@ int main(int argc, char** argv) {
       {"a_gguf_card_reads_its_tokenizer_from_the_gguf", a_gguf_card_reads_its_tokenizer_from_the_gguf},
       {"a_qwen36_card_reads_its_tokenizer_from_the_gguf", a_qwen36_card_reads_its_tokenizer_from_the_gguf},
       {"calibration_finds_the_win_and_starts_with_it", calibration_finds_the_win_and_starts_with_it},
+      {"calibration_keeps_the_options_it_measured", calibration_keeps_the_options_it_measured},
+      {"benchmark_quality_failure_preserves_previous_calibration", benchmark_quality_failure_preserves_previous_calibration},
+      {"benchmark_resume_refuses_unmatched_checkpoint_and_restore_is_bounded", benchmark_resume_refuses_unmatched_checkpoint_and_restore_is_bounded},
+      {"benchmark_success_preserves_private_input_and_restores_history", benchmark_success_preserves_private_input_and_restores_history},
+      {"benchmark_cancel_resume_is_bound_to_all_options", benchmark_cancel_resume_is_bound_to_all_options},
+      {"benchmark_route_accepts_bounded_custom_input_and_rejects_mixed_actions", benchmark_route_accepts_bounded_custom_input_and_rejects_mixed_actions},
+      {"benchmark_rejects_runtime_changes_during_trials", benchmark_rejects_runtime_changes_during_trials},
       {"a_first_start_calibrates_first", a_first_start_calibrates_first},
       {"a_start_without_calibrating_starts_at_once", a_start_without_calibrating_starts_at_once},
       {"a_card_kept_loaded_is_warmed_at_its_start_and_while_idle", a_card_kept_loaded_is_warmed_at_its_start_and_while_idle},

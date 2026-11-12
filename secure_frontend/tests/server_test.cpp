@@ -533,24 +533,15 @@ void ext01_extension_fields_spawn_nothing() {
   if (!server) return;
   test_support::SocketScan scan(server->pid(), server->port());
   const auto processes_before = server->active_processes();
-  // Spec §6.4 (SP3 Task 9): each extension is refused with the fixed
-  // extension_disabled body naming its key; "stream" is a feature, not an
-  // extension. Every body below is within kChatMaxJsonDepth (4), so the
-  // schema's extension pre-pass answers it. Pre-flight ruling (EXT-01 under
-  // the depth limit): an over-depth extension body answers 400 invalid_json
-  // instead; the binding property there is "400 and nothing spawned".
+  // The disabled extensions still fail before generation. Client tools use
+  // the chat route now, and malformed declarations still fail before GEN.
   const std::string hi = R"({"model":"fake-model","messages":[{"role":"user","content":"Hi"}],)";
   const std::vector<std::pair<std::string, std::string>> bodies{
-      {hi + R"("tools":[]})", "tools"},
-      {hi + R"("tools":[{"type":"function","function":{"name":"x"}}]})", "tools"},
-      {hi + R"("tool_choice":"auto"})", "tool_choice"},
       {hi + R"("functions":[]})", "functions"},
       {hi + R"("functions":[{"name":"x"}]})", "functions"},
       {hi + R"("function_call":"auto"})", "function_call"},
-      {hi + R"("parallel_tool_calls":true})", "parallel_tool_calls"},
       {hi + R"("mcp_servers":[]})", "mcp_servers"},
       {hi + R"("mcp_servers":[{"url":"mcp://x"}]})", "mcp_servers"},
-      {R"({"model":"fake-model","messages":[{"role":"tool","content":"run"}]})", "role"},
       {R"({"model":"fake-model","messages":[{"role":"function","content":"run"}]})", "role"}};
   for (const auto& [body, key] : bodies) {
     const auto response = server->post_chat(body);
@@ -558,9 +549,12 @@ void ext01_extension_fields_spawn_nothing() {
                response->body == secure_frontend::render_error_body(secure_frontend::ApiError::extension_disabled, key),
            "refused with the fixed extension_disabled body naming " + key + ": " + describe(response));
   }
-  // Depth 5 (over kChatMaxJsonDepth): refused before the extension pre-pass.
-  const auto over_depth = server->post_chat(hi + R"("tools":[{"function":{"parameters":{}}}]})");
-  expect(over_depth && over_depth->status == 400, "an over-depth extension body is refused with 400: " + describe(over_depth));
+  const auto malformed_tool = server->post_chat(hi + R"("tools":[{"function":{"parameters":{}}}]})");
+  expect(malformed_tool && malformed_tool->status == 400, "a malformed tool declaration is refused: " + describe(malformed_tool));
+  const auto over_depth = server->post_chat(hi + R"("tools":)" + std::string(32U, '[') + "null" + std::string(32U, ']') + "}");
+  expect(over_depth && over_depth->status == 400 &&
+             over_depth->body == secure_frontend::render_error_body(secure_frontend::ApiError::invalid_json),
+         "an over-depth tools value is rejected by the JSON reader");
   const auto recorded_text = [&record] {
     std::ifstream recorded(record);
     expect(recorded.is_open(), "the engine's record file exists (the fake truncates it at startup)");

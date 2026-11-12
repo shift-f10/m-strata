@@ -390,6 +390,116 @@ void the_key_reads_files_and_options() {
   expect(!secure_frontend::cpu_fact().empty(), "the CPU is named: " + secure_frontend::cpu_fact());
 }
 
+void runtime_identity_tracks_selected_libraries() {
+  using namespace secure_frontend;
+  const auto dir = secure_frontend_test::make_scratch_directory();
+  const auto exe = dir / "multiengine.exe";
+  secure_frontend_test::write_file(exe, "test engine");
+  secure_frontend_test::write_file(dir / "engine.dll", "version one");
+  secure_frontend_test::write_file(dir / "variants.json", "manifest one");
+  std::filesystem::create_directory(dir / "profiles");
+  secure_frontend_test::write_file(dir / "profiles" / "expert-profile.bin", "profile one");
+  const auto first = engine_runtime_fact(exe, false);
+  expect(first.size() == 64U && first == engine_runtime_fact(exe, false), "runtime metadata has a stable bounded digest");
+  secure_frontend_test::write_file(dir / "unrelated.gguf", "model is not hashed");
+  expect(first == engine_runtime_fact(exe, false), "weights and unrelated files are excluded");
+  secure_frontend_test::write_file(dir / "engine.dll", "a replaced engine library");
+  const auto replaced = engine_runtime_fact(exe, false);
+  expect(!replaced.empty() && first != replaced, "replacing only a runtime library invalidates identity");
+  auto prior = key(), now = key(); prior.runtime = first; now.runtime = replaced;
+  expect(compare_key(prior, now) == CalibrationState::stale, "runtime replacement makes calibration stale");
+  const CalibrationResult record{"test", {}, 10, 10, "2026-11-11T00:00:00Z", false, prior};
+  const auto roundtrip = parse_calibration(render_calibration(record));
+  expect(roundtrip && roundtrip->key.runtime == first, "runtime identity survives saved result roundtrip");
+  auto legacy_record = record; legacy_record.key.runtime.clear();
+  const auto legacy_text = render_calibration(legacy_record);
+  const auto legacy_roundtrip = parse_calibration(legacy_text);
+  expect(legacy_text.find("\"runtime\"") == std::string::npos && legacy_roundtrip && legacy_roundtrip->key.runtime.empty(),
+         "legacy schema-one results without runtime remain readable");
+  std::filesystem::create_directory(dir / "fast-math");
+  secure_frontend_test::write_file(dir / "fast-math" / "multiengine.exe", "fast engine");
+  secure_frontend_test::write_file(dir / "fast-math" / "engine.dll", "fast library");
+  const auto fast = engine_runtime_fact(exe, true);
+  expect(fast.size() == 64U && fast != replaced && fast == engine_runtime_fact(dir / "fast-math" / "multiengine.exe", true),
+         "selected fast runtime is fingerprinted consistently");
+  secure_frontend_test::write_file(dir / "fast-math" / "engine.dll", "changed fast library");
+  expect(fast != engine_runtime_fact(exe, true) && replaced == engine_runtime_fact(exe, false), "unused fast libraries do not invalidate accurate runtime");
+  secure_frontend_test::write_file(dir / "profiles" / "expert-profile.bin", "changed routing profile");
+  expect(replaced != engine_runtime_fact(exe, false), "routing profile replacement invalidates identity");
+  expect(engine_runtime_fact(dir / "missing.exe", false).empty(), "missing runtime has no trustworthy fingerprint");
+  const auto external = secure_frontend_test::make_scratch_directory();
+  secure_frontend_test::write_file(external / "external.dll", "external runtime");
+  const auto external_first = engine_runtime_fact(exe, false, {external});
+  secure_frontend_test::write_file(external / "external.dll", "replacement external runtime");
+  expect(!external_first.empty() && external_first != engine_runtime_fact(exe, false, {external}), "external library replacement invalidates runtime identity");
+  expect(engine_runtime_fact(exe, false, {dir}) == engine_runtime_fact(exe, false), "default executable directory is not counted twice");
+  const auto external_second = secure_frontend_test::make_scratch_directory();
+  secure_frontend_test::write_file(external_second / "external.dll", "another runtime");
+  expect(engine_runtime_fact(exe, false, {external, external_second}) != engine_runtime_fact(exe, false, {external_second, external}),
+         "library search order is material to identity");
+  FrontendConfigDraft fixed;
+  fixed.entries["engine.args"] = {std::vector<std::string>{"--cpu-threads", "4"}, ConfigSource::file};
+  const auto configuration = calibration_configuration_fact(fixed);
+  expect(configuration.size() == 64U, "fixed configuration is represented only by a bounded digest");
+  fixed.entries["server.api_key"] = {std::string{"not relevant to inference"}, ConfigSource::file};
+  expect(configuration == calibration_configuration_fact(fixed), "secrets and serving authorization are excluded from inference identity");
+  fixed.entries["engine.args"] = {std::vector<std::string>{"--cpu-threads", "8"}, ConfigSource::file};
+  expect(configuration != calibration_configuration_fact(fixed), "changed fixed engine flags invalidate configuration identity");
+  prior.configuration = configuration;
+  const auto saved_configuration = parse_calibration(render_calibration(CalibrationResult{"test", {}, 10, 10, "2026-11-11T00:00:00Z", false, prior}));
+  expect(saved_configuration && saved_configuration->key.configuration == configuration, "configuration digest survives record roundtrip");
+  auto unknown = prior; unknown.configuration.clear();
+  expect(compare_key(unknown, prior) == CalibrationState::stale, "unknown historical fixed configuration cannot silently match");
+  const auto pack = secure_frontend_test::make_scratch_directory();
+  secure_frontend_test::write_file(pack / "marker.gguf", "GGUF-pack-marker");
+  secure_frontend_test::write_file(pack / "experts.bin", "model experts");
+  std::filesystem::create_directory(pack / "tokenizer");
+  secure_frontend_test::write_file(pack / "tokenizer" / "tokenizer.json", "tokenizer metadata");
+  const auto pack_before = calibration_artifact_fact(pack);
+  const auto tokenizer_before = calibration_artifact_fact(pack / "tokenizer");
+  expect(pack_before.size() == 64U && tokenizer_before.size() == 64U, "selected pack and tokenizer metadata are fingerprinted");
+  secure_frontend_test::write_file(pack / "experts.bin", "different model experts");
+  expect(pack_before != calibration_artifact_fact(pack), "in-place pack weight replacement invalidates the marker-only identity");
+  secure_frontend_test::write_file(pack / "tokenizer" / "tokenizer.json", "replacement tokenizer metadata");
+  expect(tokenizer_before != calibration_artifact_fact(pack / "tokenizer"), "same-path tokenizer replacement invalidates identity");
+  secure_frontend_test::write_file(pack / "split-00001-of-00002.gguf", "first shard");
+  secure_frontend_test::write_file(pack / "split-00002-of-00002.gguf", "second shard");
+  const auto shards_before = calibration_artifact_fact(pack / "split-00001-of-00002.gguf");
+  secure_frontend_test::write_file(pack / "unrelated.gguf", "unrelated model");
+  expect(shards_before.size() == 64U && shards_before == calibration_artifact_fact(pack / "split-00001-of-00002.gguf"), "direct split model excludes unrelated models");
+  secure_frontend_test::write_file(pack / "split-00002-of-00002.gguf", "replacement second shard");
+  expect(shards_before != calibration_artifact_fact(pack / "split-00001-of-00002.gguf"), "later GGUF shard changes invalidate identity");
+  secure_frontend_test::write_file(pack / "missing-00001-of-00002.gguf", "first only");
+  expect(calibration_artifact_fact(pack / "missing-00001-of-00002.gguf").empty(), "incomplete shard set has no usable identity");
+}
+
+void legacy_runtime_identity_is_adopted_only_for_unchanged_files() {
+  using namespace secure_frontend;
+  const auto dir = secure_frontend_test::make_scratch_directory();
+  const auto exe = dir / "multiengine.exe", library = dir / "engine.dll";
+  secure_frontend_test::write_file(exe, "engine");
+  secure_frontend_test::write_file(library, "runtime");
+  const auto old = std::filesystem::file_time_type::clock::now() - std::chrono::hours(48);
+  std::filesystem::last_write_time(exe, old);
+  std::filesystem::last_write_time(library, old);
+  auto legacy_key = key(); legacy_key.engine = file_fact(exe);
+  const CalibrationResult legacy{"test", {}, 10, 10, utc_now(), false, legacy_key};
+  auto adopted = legacy;
+  adopt_legacy_runtime_identity(adopted, exe, false);
+  expect(adopted.key.runtime.size() == 64U && adopted.key.runtime == engine_runtime_fact(exe, false), "unchanged pre-calibration libraries preserve legacy calibration");
+  std::filesystem::last_write_time(library, std::filesystem::file_time_type::clock::now() + std::chrono::hours(1));
+  auto changed = legacy;
+  adopt_legacy_runtime_identity(changed, exe, false);
+  auto current = legacy_key; current.runtime = engine_runtime_fact(exe, false);
+  expect(!changed.key.runtime.empty() && compare_key(changed.key, current) == CalibrationState::stale, "newer library prevents legacy identity adoption");
+  auto invalid_date = legacy; invalid_date.date = "invalid";
+  adopt_legacy_runtime_identity(invalid_date, exe, false);
+  expect(compare_key(invalid_date.key, current) == CalibrationState::stale, "invalid saved date cannot authorize migration");
+  const auto preserved = adopted.key.runtime;
+  adopt_legacy_runtime_identity(adopted, exe, false);
+  expect(adopted.key.runtime == preserved, "existing runtime identity is never overwritten");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -406,5 +516,7 @@ int main(int argc, char** argv) {
       {"results_round_trip_and_keys_compare", results_round_trip_and_keys_compare},
       {"the_key_reads_files_and_options", the_key_reads_files_and_options},
       {"physical_cores_count_every_core", physical_cores_count_every_core},
+      {"runtime_identity_tracks_selected_libraries", runtime_identity_tracks_selected_libraries},
+      {"legacy_runtime_identity_is_adopted_only_for_unchanged_files", legacy_runtime_identity_is_adopted_only_for_unchanged_files},
   }, failures);
 }

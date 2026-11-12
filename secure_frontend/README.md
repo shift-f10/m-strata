@@ -230,8 +230,7 @@ A chat with an image is served without it, and so is a model whose card's **Web 
 - What the model searches for comes from the conversation and goes to the instance (`search.url`), which passes it on
   to the search engines it uses.
 
-**Do not send** `tools`, `tool_choice`, `functions`, `function_call`, `parallel_tool_calls` or `mcp_servers`: the server
-refuses them (`extension_disabled`). `"strata_search": false` serves that one request without the tool (any profile;
+`"strata_search": false` serves that one request without web search (any profile;
 `true` or leaving it out keeps the server's and the card's choice; anything else is a 400 naming it); it cannot turn
 search on. `search.enabled` turns it off for all.
 
@@ -256,6 +255,25 @@ curl -s http://127.0.0.1:8080/v1/chat/completions \
 
 `model` is the model card's name. A search usually adds a few seconds; an answer that needs several searches and long
 reasoning can take a minute or two, so give the client a long enough read timeout.
+
+### Client function tools
+
+On `/v1/chat/completions`, send an OpenAI-style `tools` array of function declarations. The server returns calls
+for the client to execute. A complete response includes `message.tool_calls`, and a stream includes indexed
+`delta.tool_calls` events with the call ID, name and JSON-string arguments. A natural stop with calls returns
+`finish_reason: "tool_calls"`. Append the assistant message and one `role: "tool"` message per result, using
+the corresponding `tool_call_id`, to continue the conversation.
+
+The default choice is `auto`. Use `tool_choice: "none"` to suppress tools or `parallel_tool_calls: false` to
+return at most one call. Qwen, Raon1 and DeepSeek support forced `required` and named function choices. The other
+profiles use automatic choice. Client tool requests use text prompts and take precedence over built-in web search.
+Legacy `functions`, `function_call` and client-supplied `mcp_servers` return `extension_disabled`.
+
+To limit client function tools, open **Settings → Tool calling** from localhost. Turn on the restriction, list
+individual IPv4 or IPv6 addresses, save, and restart. This uses the client's socket address. Add `127.0.0.1` or
+`::1` if local clients should have tool access. An enabled restriction with an empty list denies all client
+function tools. The corresponding configuration keys are `listener.restrict_tool_calls` and
+`listener.tool_call_hosts`. Unlisted clients receive HTTP 403 for requests with tool declarations or tool history.
 
 ## Install: one folder, then the page (GUI-first start-up, 2026-10-27)
 
@@ -536,6 +554,52 @@ own `strata-search` for it, the one MCP server and tool there is).
 
 ## Configuration
 
+Each model card offers its supported **Speed improvements** in a separate section. The controls
+warn when routing, expert skipping, draft approximations or bounded replay may change results.
+Defaults favor accuracy, retaining the existing INT8/Q8 cache defaults. Choices are remembered
+per card and apply on the next model start. **Reset speed settings to accuracy defaults** restores
+only this group. Speed gains are workload-dependent; some controls require a particular router,
+draft model or CPU/GPU arrangement, as their help text explains.
+
+Advanced card files can use `engine.speed_settings`, an array of bounded entries such as
+`["ROUTE_TAIL_SKIP=7", "ROUTE_RESIDENT=0.125"]`. These explicit choices appear in the card controls;
+unknown names or invalid values are refused. They do not authorize arbitrary environment variables.
+The package builds both CUDA math variants. Each card's **CUDA fast math** switch selects the
+fast-math executable and its matching libraries on the next model start; it defaults off.
+This can change numerical results and does not change weight quantization or INT8/Q8 cache defaults.
+Advanced card files use the boolean `engine.fast_math`. A missing or damaged fast-math installation
+refuses the start; it never silently falls back. Direct CMake builds still use
+`MULTIENGINE_FAST_MATH=ON` for the fast variant and `OFF` for the accuracy variant.
+
+Model cards offer decimal sliders and exact numeric entry for Temperature, Top-p, Min-p and
+Draft confidence. Slider movement normally uses 0.01 steps; saved and typed finer values are
+preserved. Temperature covers 0–2. INT8/Q8 cache defaults and model-specific sampling defaults
+are retained. Expert dropping, residency-biased routing, lossy CPU deferral and the audited biased
+speculative-sampling paths default off; explicit Speed improvements choices may enable them.
+Verified drafting remains available independently.
+Explicit `temperature=0` and `top_p=1` reach the engine unchanged.
+
+Each page-managed card has a **Chat template** review section. **Inspect template** reads the
+GGUF's embedded Jinja (or its exported tokenizer-pack template), displays numbered source and
+highlights potentially risky sections. Choose **Frontend** to keep the built-in format, or
+acknowledge the review and choose **Embedded**. Warnings are advisory and do not prevent approval.
+The scan cannot certify safety or model quality. Saving binds approval to that source's SHA-256
+and applies on the next model start; changed source requires review again. Frontend can be restored
+even when an embedded source is missing or unreadable.
+
+Selected templates render in the bounded native `strata-template` helper, with no Python, imports,
+file/network/command functions or host objects exposed. Approval never enables those capabilities.
+Unsupported syntax, resource limits or rendering errors fail explicitly, without silent fallback.
+Embedded rendering currently supports text conversations and client/built-in tools; image requests
+must use the frontend renderer. The selected model profile still determines output/tool-call parsing.
+For a packed model, the UI identifies the exported template source: preparation may have supplied
+a family template instead of the original GGUF text.
+
+The keyed model-file route `POST /v1/strata/cards/template` accepts `{"name":"card"}` to inspect,
+`{"name":"card","mode":"embedded","sha256":"<reviewed digest>","acknowledge":true}` to select,
+or `{"name":"card","mode":"frontend"}` to restore the frontend. The usual local/explicitly-listed
+model-file management clients may use it; inference-only keys may not.
+
 `strata-unified-server` reads one strict JSON file (`--config FILE`) and the
 command-line options; an option wins over the file, and `--check` reports every
 key where that happened. Built-in defaults fill the rest. The file is UTF-8
@@ -582,6 +646,8 @@ Every key (generated from the schema; `readme_config_table_matches_schema` keeps
 | `listener.backlog` | integer | `16` | 1-4096 | - | listen() backlog. |
 | `listener.cors_origins` | string array | `[]` | - | - | Exact browser origins allowed CORS: http:// or https://, a lower-case host, an optional port, no path; never * or null; at most 16. |
 | `listener.host_aliases` | string array | `[]` | - | - | Extra exact Host values (host or host:port) clients use; required when the bind is a wildcard; at most 16. |
+| `listener.restrict_tool_calls` | boolean | `false` | - | - | Limit client function tools to listed IP addresses. An empty list blocks client function tools when this is enabled. |
+| `listener.tool_call_hosts` | string array | `[]` | - | - | Individual IPv4 or IPv6 addresses allowed to send client function tools. Enter a loopback address to allow local clients. |
 | `listener.web_ui` | boolean | `false` | - | - | Serve the built-in chat page at / (bundled files only). The page asks for the API key and keeps it in that tab; every API route still needs the key. |
 | `listener.loopback_without_key` | boolean | `false` | - | - | Answer the API and the page without the API key: only with a loopback listener.host, and with no token.source; Host and Origin checks still apply. |
 | `listener.login_link` | boolean | `false` | - | - | Print a one-time login link at every start (GUI-first start-up): opened from this PC (loopback only, within 10 minutes, once), it hands the page the API key. Needs listener.web_ui and a token.source. |
@@ -654,6 +720,9 @@ Every key (generated from the schema; `readme_config_table_matches_schema` keeps
 | `engine.fit_max_tokens` | boolean | `true` | - | - | Fit an over-room max_tokens to the context room (true, the pin default); false answers the §7.2 400 instead. |
 | `engine.lazy_load` | boolean | `false` | - | - | Start with the engine unloaded; the first request loads it (the pin's lazy_load, text only). |
 | `engine.idle_unload_s` | integer | `0` | 0-86400 | - | Seconds without a request before the engine is unloaded (0: never, the pin default); cap added, C-1. |
+| `engine.chat_template_sha256` | string | unset | - | - | Empty: built-in frontend template. A reviewed template SHA-256 opts in to that exact embedded model template; changed bytes refuse model start. |
+| `engine.speed_settings` | string array | `[]` | - | - | Explicit bounded NAME=value speed settings. Empty keeps accuracy-first defaults. These options can reduce accuracy; use the model card's Speed improvements controls. |
+| `engine.fast_math` | boolean | `false` | - | - | Select the bundled CUDA fast-math engine at the next model start. May reduce numerical accuracy; false selects the accuracy build. |
 | `engine.mtp` | boolean | `true` | - | - | Draft layer (MTP): on unless explicitly false; false drops --mtp/--spec-min-p/--batch-mtp at every start. |
 | `engine.vram_reserve_mib` | integer | unset | 0-1048576 | - | VRAM MiB the engine leaves free (renders --vram-reserve-mib; unset: the engine's own 700). |
 | `engine.min_free_vram_mib` | integer | `0` | 0-1048576 | - | Refuse to load when free VRAM is below this (0: never; the driver check runs on the owner's GPU box). |
@@ -2170,6 +2239,45 @@ One model runs at a time.
 - **Not with cards:** `vision.*`, `engine.lazy_load`, `engine.idle_unload_s` (refused by name);
   the `strata` CLI's verbs read a single-model config only, except the store verbs below.
 
+### Manual calibration benchmarks
+
+On a model card, enable manual benchmark controls to choose Quick or Thorough, a workload,
+a time budget and an optional result name. Chat and coding use longer performance answers
+plus separate known-answer probes. Long context fills the selected context with synthetic data.
+Tools checks two function calls in both JSON and streamed responses; no tool is executed.
+Custom prompts are explicit, kept in memory only, and receive structural checks rather than
+semantic accuracy certification. Ordinary automatic calibration remains compatible.
+
+Results separate prompt tokens/second, decode tokens/second and time to first token, with
+startup, warm and (Thorough) sustained measurements. Repeated/interleaved trials report
+variation; unstable, contaminated, failed or incomplete runs retain the prior result.
+The optional context probe must cover at least 95% of the requested input budget to pass;
+frontend prompt limits or the bounded synthetic prompt may prevent full coverage.
+Telemetry is best effort: missing readings and unsupported thermal flags are shown as such.
+Snapshots cannot rule out activity or throttling between measurements.
+
+Speed comparison explicitly tests supported accuracy tradeoffs against their accuracy defaults,
+including the bundled fast-math variant. It never applies a winner or changes card options.
+Inactive sampled-only controls are skipped for these greedy workloads. INT8/Q8 stays selected.
+Quality gates cover the chosen tasks, not general answer quality or numerical equivalence.
+
+Cancel or budget expiry keeps completed trials for Resume for up to 24 hours. Hardware, runtime,
+model, every selected option and workload must match. Eight named results are retained locally;
+Restore restores a compatible result and its options for the next start, without restarting.
+Older records without the new runtime/configuration evidence become stale after this upgrade,
+but remain saved. Engine or library updates require recalibration.
+
+The existing `POST /v1/strata/models/calibrate` accepts an optional `benchmark` object:
+
+```json
+{"name":"Example","benchmark":{"mode":"quick","workload":"tools","budget_seconds":1800,"label":"Tool checks","memory_probe":false,"compare_speed":false,"resume":false}}
+```
+
+`mode` is `quick` or `thorough`; `workload` is `chat`, `long_context`, `coding`, `tools` or
+`custom`. Custom alone requires `custom_prompt` (1-16384 UTF-8 bytes). Budget is 30-86400 seconds,
+label is up to 64 printable ASCII characters. To restore, send only `name` and `restore` with
+the history entry ID. These operations use the existing model-management authorization policy.
+
 ### Model downloads: GGUF models from Hugging Face on the Models tab (models.downloads)
 
 Owner requests 2026-10-23 (O1-O4: a card per model Strata and Project Maya support with its
@@ -2292,7 +2400,7 @@ literal, `param` names at most a fixed-list key, never request bytes:
 | 400 | `invalid_request` | The request is malformed or not supported. |
 | 400 | `invalid_json` | The request body is not valid JSON within the allowed limits. |
 | 400 | `unsupported_parameter` | This parameter is not supported by this server. |
-| 400 | `extension_disabled` | Tools, functions and extensions are disabled on this server. |
+| 400 | `extension_disabled` | This extension is disabled on this server. |
 | 400 | `context_length_exceeded` | The prompt exceeds the model context or the configured prompt limit. |
 | 401 | `invalid_api_key` | Missing or invalid API key. (`WWW-Authenticate: Bearer`) |
 | 403 | `forbidden` | The request origin or host is not allowed. |

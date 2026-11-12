@@ -69,6 +69,7 @@ void the_settings_are_listed_with_their_rules() {
   const auto listed = f.post(secure_frontend::RouteId::strata_config, "{}");
   expect(listed.status == 200 && has(listed, "\"editable\":true"), "the settings are read: " + shown(listed));
   for (const char* key : {"listener.host", "listener.port", "listener.allow_remote", "listener.allow_wildcard_bind",
+                          "listener.restrict_tool_calls", "listener.tool_call_hosts",
                           "listener.host_aliases", "models.control_remote", "models.control_remote_networks",
                           "limits.engine.generation_timeout_s", "limits.engine.ready_timeout_s", "limits.chat.max_prompt_tokens",
                           "limits.chat.max_completion_tokens", "pull.connections", "models.downloads_root", "models.default_root"}) {
@@ -175,16 +176,31 @@ void a_save_is_held_to_the_start_up_rules() {
   expect(typed.status == 422 && has(typed, "listener.port"), "a value of the wrong type: refused: " + shown(typed));
   const auto other = f.post(secure_frontend::RouteId::strata_config_settings, R"({"values":{"engine.executable":"C:\\x.exe"}})");
   expect(other.status == 422 && has(other, "engine.executable"), "a row the tab does not manage: refused: " + shown(other));
+  const auto subnet = f.post(secure_frontend::RouteId::strata_config_settings,
+                             R"({"values":{"listener.tool_call_hosts":["192.0.2.0/24"]}})");
+  expect(subnet.status == 422 && has(subnet, "listener.tool_call_hosts"), "subnets cannot widen the tool allowlist");
+  secure_frontend::ConfigRouteSettings remote_settings{.config_file = f.data.config_file};
+  remote_settings.client_allowed = [](const auto&) { return true; };
+  secure_frontend::ConfigRoutes remote_routes(std::move(remote_settings));
+  const secure_frontend::RequestContext remote{.client_gone = {}, .loopback_peer = false};
+  expect(!has(remote_routes.answer(secure_frontend::RouteId::strata_config, "{}", remote), "listener.tool_call_hosts"),
+         "remote model managers do not see the local tool access controls");
+  const auto remote_save = remote_routes.answer(secure_frontend::RouteId::strata_config_settings,
+      R"({"values":{"listener.restrict_tool_calls":false}})", remote);
+  expect(remote_save.status == 403, "remote model managers cannot change tool access");
   expect(f.file() == before, "nothing was written");
   const auto saved = f.post(secure_frontend::RouteId::strata_config_settings,
                             R"({"values":{"limits.engine.generation_timeout_s":1800,"pull.connections":8,"listener.port":9090,)"
-                            R"("listener.host_aliases":["127.0.0.1:9090","localhost:9090"]}})");
+                            R"("listener.host_aliases":["127.0.0.1:9090","localhost:9090"],)"
+                            R"("listener.restrict_tool_calls":true,"listener.tool_call_hosts":["127.0.0.1","192.0.2.7"]}})");
   expect(saved.status == 200 && has(saved, "\"saved\":true") && has(saved, "\"restart_needed\":true"), "saved: " + shown(saved));
   const auto reread = secure_frontend::parse_config_text(f.file(), f.data.root);
   const auto* draft = std::get_if<secure_frontend::FrontendConfigDraft>(&reread);
   expect(draft != nullptr && std::get<std::int64_t>(draft->entries.at("limits.engine.generation_timeout_s").value) == 1800 &&
              std::get<std::int64_t>(draft->entries.at("pull.connections").value) == 8 &&
              std::get<std::int64_t>(draft->entries.at("listener.port").value) == 9090 &&
+             draft->entries.contains("listener.tool_call_hosts") &&
+             std::get<bool>(draft->entries.at("listener.restrict_tool_calls").value) &&
              draft->entries.contains("models.default_engine"),
          "written, and the rest of the file kept");
   const auto reset = f.post(secure_frontend::RouteId::strata_config_settings, R"({"values":{"pull.connections":null}})");

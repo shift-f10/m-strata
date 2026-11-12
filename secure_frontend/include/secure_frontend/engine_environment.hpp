@@ -49,6 +49,7 @@ struct EngineEnvironment final {
   // :4026) reaches the engine only with a turn configured; without one the render
   // suppresses it even if the knob channel carries it (fail closed).
   bool glm_vision_turn{false};
+  std::vector<std::string> speed_settings{};  // validated, explicit per-card accuracy tradeoffs
 };
 
 // Windows values from GetSystemWindowsDirectoryW / GetSystemInfo, never from the environment.
@@ -153,7 +154,9 @@ inline constexpr std::array<std::string_view, 4> kFamilySuppressibleEnvironment{
 // refused (the caller must not spawn; never an empty or partial environment).
 [[nodiscard]] std::optional<EnvironmentBlock> apply_family_environment(EnvironmentBlock generic, const EngineEnvironment& environment,
                                                                        FamilyEnvironmentHook hook = family_environment_rows);
-// The native generic rendering followed by the family step: what the engine is spawned with.
+// The native generic rendering followed by the family step and the mandatory
+// engine_accuracy_policy constants: what the engine is spawned with. Accuracy
+// constants are fixed, never part of the configurable family allowlist.
 [[nodiscard]] std::optional<EnvironmentBlock> render_family_environment(const EngineEnvironment& environment,
                                                                         FamilyEnvironmentHook hook = family_environment_rows);
 

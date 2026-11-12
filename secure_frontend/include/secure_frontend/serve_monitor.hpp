@@ -67,6 +67,24 @@ struct EngineMemoryView final {
 // stop | length | cancel | disconnect | error.
 [[nodiscard]] std::string_view monitor_finish(RunEnd end, RunCancel cancel) noexcept;
 
+struct MonitorGenerationMetrics final {
+  std::size_t sequence{0};
+  std::size_t prompt_tokens{0};
+  std::size_t generated_tokens{0};
+  std::optional<std::size_t> reused_tokens;
+  std::optional<double> prompt_ms;       // engine timing only; never TTFT substituted
+  std::optional<double> prompt_tok_s;    // excludes reported reused tokens
+  std::optional<double> ttft_ms;         // observed GEN to first token
+  std::optional<double> decode_ms;
+  std::optional<double> decode_tok_s;
+  double elapsed_ms{0.0};
+  std::string finish;
+};
+struct MonitorHostSnapshot final {
+  HostSample sample;
+  std::chrono::steady_clock::time_point sampled_at;
+};
+
 class ServeMonitor final : public GenerationMeter {
  public:
   using SteadyNow = std::function<std::chrono::steady_clock::time_point()>;
@@ -96,6 +114,8 @@ class ServeMonitor final : public GenerationMeter {
   // GUI-first start-up (calibration): the newest finished generation's decode tok/s (the engine's own DONE timing,
   // else the token arrival times); nullopt before one finished.
   [[nodiscard]] std::optional<double> last_decode_tok_s() const;
+  [[nodiscard]] std::optional<MonitorGenerationMetrics> latest_generation_metrics() const;
+  [[nodiscard]] std::optional<MonitorHostSnapshot> latest_host_sample() const;
   // The GPU's name and memory from the newest host reading ("<name>, <MiB> MiB"); empty without one.
   [[nodiscard]] std::string gpu_fact() const;
 
@@ -122,6 +142,8 @@ class ServeMonitor final : public GenerationMeter {
     std::optional<double> prompt_ms{};
     std::optional<double> decode_ms{};
     std::optional<double> decode_tok_s{};
+    std::optional<double> engine_prompt_ms{};
+    std::optional<double> ttft_ms{};
     double duration_s{0.0};
   };
   struct Series final {
@@ -159,6 +181,7 @@ class ServeMonitor final : public GenerationMeter {
   double total_decode_ms_{0.0};
   // The newest host reading and its history.
   HostSample host_{};
+  std::optional<std::chrono::steady_clock::time_point> host_sampled_at_{};
   std::string gpu_name_;  // the last GPU name seen
   Series tok_s_, gpu_util_, gpu_mem_used_, gpu_temp_, gpu_power_, cpu_, disk_read_;
 };

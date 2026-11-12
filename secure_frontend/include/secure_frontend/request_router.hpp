@@ -36,6 +36,7 @@ enum class RouteId {
   strata_card_remove,
   strata_folder_sharing,
   strata_card_mtp,
+  strata_card_template,
   strata_about,
 };
 
@@ -88,7 +89,7 @@ inline constexpr std::array<RouteEntry, 5> kModelDownloadRoutes{{
 // delete), and a card removed with its files kept (owner 2026-10-28). Served only with models.control, keyed like
 // kRouteTable; each a POST of a small JSON body. Owner 2026-10-27:
 // the Model folders setting (model folders used as they are, other users' access included).
-inline constexpr std::array<RouteEntry, 10> kModelCardRoutes{{
+inline constexpr std::array<RouteEntry, 11> kModelCardRoutes{{
     {"POST", "/v1/strata/folders", false, RouteId::strata_folders},
     {"POST", "/v1/strata/folders/private", false, RouteId::strata_folder_private},
     {"POST", "/v1/strata/folders/new", false, RouteId::strata_folder_new},
@@ -96,6 +97,7 @@ inline constexpr std::array<RouteEntry, 10> kModelCardRoutes{{
     {"POST", "/v1/strata/cards/add", false, RouteId::strata_card_add},
     {"POST", "/v1/strata/cards/folder", false, RouteId::strata_card_folder},
     {"POST", "/v1/strata/cards/mtp", false, RouteId::strata_card_mtp},
+    {"POST", "/v1/strata/cards/template", false, RouteId::strata_card_template},
     {"POST", "/v1/strata/cards/delete/begin", false, RouteId::strata_card_delete_begin},
     {"POST", "/v1/strata/cards/delete", false, RouteId::strata_card_delete},
     {"POST", "/v1/strata/cards/remove", false, RouteId::strata_card_remove},
@@ -128,6 +130,7 @@ inline constexpr std::array<RouteEntry, 5> kConfigRoutes{{
 }};
 // The largest start or stop body the control routes read (and the download and card routes').
 inline constexpr std::size_t kModelControlBodyLimit = 4096;
+inline constexpr std::size_t kCalibrationBodyLimit = 128U * 1024U;  // bounded explicit custom workload
 // GUI-first start-up (spec 2026-10-27 §3, D1): the one-time login link, POST {"code": "..."} without the key.
 inline constexpr std::string_view kLoginLinkPath = "/v1/strata/login-link";
 inline constexpr std::size_t kLoginLinkBodyLimit = 512;
