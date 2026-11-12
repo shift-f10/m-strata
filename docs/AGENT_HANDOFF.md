@@ -298,6 +298,10 @@ The preceding build's successful --help launch does not establish permission for
 binary. The previous working installed server was immediately restored and hash verified.
 The functional/count corrections remain saved in source; they are NOT active in the installed
 app. No security policy was bypassed and no calibration is running from this verification.
+Subsequently, the owner explicitly requested copying the corrected server without launching it.
+The final rebuilt server is now copied into the installation and its hash matches the archived
+build. The previous version remains backed up. No launch was attempted after this copy; the
+owner will launch it. End-to-end verification of the final installed runtime remains pending.
 
 ### Manual calibration functional corrections (2026-11-12)
 
