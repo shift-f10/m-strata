@@ -11,7 +11,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_manual_calibration_controls_preserve_legacy_requests_and_report_results():
+def test_calibration_defaults_to_quick_and_preserves_explicit_and_automatic_requests():
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node is needed for the DOM event harness")
@@ -47,11 +47,11 @@ const toast = (...args) => notices.push(args.join(" "));
 const startModel = () => { throw new Error("restore must not restart model"); };
 (async function () {
   renderCalibration(card, false);
-  assert.equal(readCalibrationBenchmark().value, null, "manual controls are explicit opt-in");
+  const quickDefault = {mode: "quick", workload: "chat", budget_seconds: 1800};
+  assert.deepEqual(readCalibrationBenchmark().value, quickDefault, "Calibrate defaults to Quick without opening options");
   assert.equal($("calibration-manual-fields").disabled, true);
   await calibrateModel(false);
-  assert.deepEqual(calls.at(-1), {path: "/v1/strata/models/calibrate", body: {name: card.name, options: {temperature: .375}}});
-  assert.ok(!("benchmark" in calls.at(-1).body), "ordinary manual calibration retains legacy request until explicitly enabled");
+  assert.deepEqual(calls.at(-1), {path: "/v1/strata/models/calibrate", body: {name: card.name, options: {temperature: .375}, benchmark: quickDefault}});
   $("calibration-manual-enabled").checked = true;
   $("calibration-mode").value = "thorough";
   $("calibration-workload").value = "custom";

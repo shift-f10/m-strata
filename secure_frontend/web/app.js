@@ -1822,7 +1822,9 @@
     $("calibration-custom-field").hidden = $("calibration-workload").value !== "custom";
   }
   function readCalibrationBenchmark() {
-    if (!$("calibration-manual-enabled").checked) { return { value: null }; }
+    if (!$("calibration-manual-enabled").checked) {
+      return { value: { mode: "quick", workload: "chat", budget_seconds: 1800 } };
+    }
     var mode = $("calibration-mode").value;
     var workload = $("calibration-workload").value;
     var minutes = Number($("calibration-budget").value);

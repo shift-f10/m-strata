@@ -293,10 +293,13 @@
             <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-calibration-report-show">Show the report</button>
           </p>
           <div class="st-progress" id="model-calibration-progress" hidden><div class="st-progress__bar" id="model-calibration-bar"></div></div>
+          <p class="muted small" id="model-calibration-default-note"><strong>Calibrate uses Quick by default</strong>: short chat checks with one model load.
+            For startup-setting tuning, open <strong>Calibration options</strong>, enable <strong>Customize calibration settings</strong>,
+            and choose <strong>Thorough</strong>, which can restart the model and take longer. Automatic calibration keeps its existing hardware sweep.</p>
           <details class="calibration-manual">
-            <summary>Manual benchmark options</summary>
-            <p class="muted small">Choose a synthetic workload and time budget. No conversation history is collected. These options apply only to the Calibrate button below; automatic calibration keeps its existing behavior.</p>
-            <label class="model-calibration__auto"><input type="checkbox" id="calibration-manual-enabled"> Use these options for a manual benchmark</label>
+            <summary>Calibration options</summary>
+            <p class="muted small">The button defaults to Quick, Short chat and a 30-minute maximum budget, with memory probing, resume and accuracy-tradeoff comparisons off. Enable customization to change these options. No conversation history is collected. Automatic calibration keeps its existing behavior.</p>
+            <label class="model-calibration__auto"><input type="checkbox" id="calibration-manual-enabled"> Customize calibration settings</label>
             <fieldset id="calibration-manual-fields" class="calibration-manual-fields" disabled>
               <legend class="st-label">Manual benchmark settings</legend>
               <div class="st-field"><label class="st-label" for="calibration-mode">Mode</label>
@@ -319,7 +322,7 @@
           </details>
           <div class="model-actions">
             <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-calibrate"
-                    title="Compare candidate engine settings for this model at these options">Calibrate</button>
+                    aria-describedby="model-calibration-default-note" title="Compare candidate engine settings for this model at these options">Calibrate</button>
             <button type="button" class="st-btn st-btn--secondary st-btn--sm" id="model-calibrate-cancel" hidden>Cancel</button>
             <label class="model-calibration__auto"><input type="checkbox" id="model-calibration-auto">
               Recalibrate when settings change</label>

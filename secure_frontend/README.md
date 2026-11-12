@@ -2241,8 +2241,10 @@ One model runs at a time.
 
 ### Manual calibration benchmarks
 
-On a model card, enable manual benchmark controls to choose Quick or Thorough, a workload,
-a time budget and an optional result name. Chat and coding use longer performance answers
+On a model card, Calibrate defaults to Quick, Short chat and a 30-minute maximum budget,
+with optional probes, resume and accuracy comparisons off. Expand Calibration options and
+enable customization to choose Thorough, a different workload, budget or result name.
+Chat and coding use longer performance answers
 plus separate known-answer probes. Long context fills the selected context with synthetic data.
 Tools checks two function calls in both JSON and streamed responses; no tool is executed.
 Custom prompts are explicit, kept in memory only, and receive structural checks rather than

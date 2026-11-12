@@ -281,6 +281,21 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Quick default and visible calibration explanation (2026-11-12)
+
+Owner first requested a visible note, then directed Quick to be the default when the extra
+Thorough cost is not justified. Clicking Calibrate without customization now explicitly sends
+Quick, Short chat and a 30-minute maximum budget; optional probes, resume and comparisons stay
+off. The visible note outside Calibration options states this default and explains how to
+select Thorough. The button references it with aria-describedby. Automatic/calibrate-then-start
+requests and API callers omitting benchmark retain their prior behavior. No claim is made that
+Thorough has no benefit: it still explores startup-only settings and combinations.
+The former legacy-default UI expectation is superseded by this owner instruction; automatic
+and explicit custom-request assertions remain. RED confirms the prior default returned no
+benchmark; both calibration UI checks pass after the change. Native Release rebuild passes
+warnings-as-errors. The two changed frontend executables are backed up, copied into the closed
+installation and SHA-256 verified; the configuration hash is unchanged. Nothing was launched.
+
 ### Quick calibration uses one loaded engine (2026-11-12)
 
 Owner rejected the roughly hour-long Quick path. The pinned upstream calibration measures
