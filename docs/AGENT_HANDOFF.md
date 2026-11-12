@@ -281,6 +281,17 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### 2026-11-11 z101 (Windows box; owner-directed)
+
+z100's gap closed: the owner PC's guard (local, `.git/hooks/identifying_guard.py`; the copy before it kept beside it,
+`.before-20261111`) now refuses a commit whose message has a `Co-Authored-By:` trailer or a "Generated with ... Claude"
+line, as well as a `Claude-Session:` line. The section "The pre-push guard on every system" says so, with the two
+patterns for a copy set up before.
+- **Proof:** RED - three unreferenced commits under the noreply author, messages with a `Co-Authored-By: Claude ...`
+  trailer, a "Generated with [Claude Code]" line and a lower-case `co-authored-by:` line, all passed (exit 0). GREEN -
+  each refused with its kind and no value (exit 1); a plain commit passed; the whole pushed history passed, origin/main
+  (75 commits) and origin/plugins (108).
+
 ### 2026-11-11 z100 (Windows box; owner-directed)
 
 The owner: "add in the handoff instructions for agents working in different systems to be able to establish the same
@@ -7159,13 +7170,14 @@ the first commit or push from such a system:
   engines' `*-secret/token`) are refused by value - read at push time, never written down; the development key
   `strata-secret-key-dev-placeholder` is allowed.
 - **The pattern kinds:** the owner's e-mail address and its domain, personal mail providers' addresses, the owner's
-  handle, the Windows user name, the PC's name, a LAN address, a session link or id, a private key, an access token, and
-  in a message a `Claude-Session:` line.
+  handle, the Windows user name, the PC's name, a LAN address, a session link or id, a private key, an access token; and
+  in a message any agent credit (the hard requirement of 2026-10-31): a `Co-Authored-By:` trailer (any case, any
+  co-author), a "Generated with ... Claude" line, a `Claude-Session:` line. Files may name these (the rules themselves
+  do); only messages are refused for them.
 - **Output:** on any hit it refuses (exit 1), naming the commit, the file and the kind - never the value.
-- **A gap in the reference copy:** it refuses a `Claude-Session:` line but not a `Co-Authored-By:` or "Generated with"
-  line, which the hard requirement of 2026-10-31 forbids too. A guard written anew refuses those as well; until the
-  reference copy does, check before each push that `git log --format=%B <range> | grep -ci "co-authored\|generated
-  with"` prints 0.
+- **Agent credit (2026-11-11):** the reference copy refused only a `Claude-Session:` line until the owner had the
+  other two added ("Yes, add it"). A copy taken from a system set up before then lacks them: take the owner PC's, or
+  add them - `(?im)^[ \t]*co-authored-by[ \t]*:` and `(?i)generated with[ \t]*\[?[ \t]*claude` against the message.
 
 ## Collaboration and change rules
 
