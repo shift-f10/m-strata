@@ -1,5 +1,15 @@
 # Provenance
 
+### Calibration measurement groups (2026-11-12)
+
+The owned chat/coding benchmark follows the pinned Strata calibration's median-of-three
+performance group and two-group session warm-up (`upstream/tools/calibrate.py`,
+`Session.rate` and `Session.warm_up`). Its Qwen baseline follows the startup-reported
+control defaults used by reference `measure`, through the existing bounded INFO capture
+and internal GEN controls. Explicit selected fractions retain precedence. The frontend's
+independent known-answer checks and confirmation noise gates remain in place. No upstream
+file is modified and no new dependency is introduced.
+
 ### Thorough trial schedule (2026-11-12)
 
 The owned Thorough planner uses the existing mapped candidate lists with reference

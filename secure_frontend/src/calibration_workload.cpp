@@ -185,11 +185,15 @@ CalibrationCases build_calibration_workload(const CalibrationWorkloadRequest& r,
   switch (r.workload) {
     case BenchmarkWorkload::chat:
       add("chat-explanation", "Write a detailed practical explanation of how to organize a community library, covering cataloging, lending, accessibility, staffing and maintenance. Use at least 400 words. Do not use tools.", CalibrationAcceptance::performance_text, "");
+      add("chat-process", "Explain in two paragraphs how a refrigerator moves heat from inside to outside. Do not use tools.", CalibrationAcceptance::performance_text, "");
+      add("chat-list", "List twelve common kitchen tools with a sentence about a practical use for each. Do not use tools.", CalibrationAcceptance::performance_text, "");
       add("chat-arithmetic", "Calculate (17 * 3) + 8. Reply only with the integer answer, without explanations.", CalibrationAcceptance::exact_text, "59");
       add("chat-facts", "Facts: The parcel is blue, its code is LIME-482, and it contains 6 books. Return only JSON with keys color, code, count in that order.", CalibrationAcceptance::json_value, R"({"color":"blue","code":"LIME-482","count":6})");
       break;
     case BenchmarkWorkload::coding:
       add("coding-explanation", "Explain a robust implementation of a bounded LRU cache, including data structures, lookup, insertion, eviction, concurrency and testing. Include pseudocode and discuss edge cases. Use at least 400 words. Do not execute code or use tools.", CalibrationAcceptance::performance_text, "");
+      add("coding-merge", "Write a Python function that merges two sorted lists into one sorted list, with a docstring and two tests. Do not run the code or use tools.", CalibrationAcceptance::performance_text, "");
+      add("coding-queue", "Explain a bounded producer-consumer queue, its synchronization, shutdown behavior and failure handling. Include pseudocode. Do not execute code or use tools.", CalibrationAcceptance::performance_text, "");
       add("coding-trace", "Trace this Python function without running tools:\ndef count_even(xs):\n    return sum(1 for x in xs if x % 2 == 0)\nFor inputs [1,2,3,4], [], and [0,-2,8,9], return only JSON {\"result\":[the three integer outputs]}.", CalibrationAcceptance::json_value, R"({"result":[2,0,3]})");
       add("coding-index", "Trace JavaScript: const a=[3,5,8]; const b=a.map((x,i)=>x-i); Return only JSON {\"result\":b} with the actual integer array. Do not execute code or call tools.", CalibrationAcceptance::json_value, R"({"result":[3,4,6]})");
       break;

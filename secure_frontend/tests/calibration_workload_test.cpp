@@ -44,6 +44,11 @@ void fixed_workloads_have_known_answers_and_real_token_counts() {
     }
     if (kind == BenchmarkWorkload::tools) expect(cases->size() == 2U && !cases->front().stream && cases->back().stream, "tools cover both modes");
     else expect(performance && known_answer, "standard workloads separate representative performance from known-answer quality");
+    if (kind == BenchmarkWorkload::chat || kind == BenchmarkWorkload::coding) {
+      std::size_t performance_samples = 0;
+      for (const auto& test : *cases) if (test.acceptance == CalibrationAcceptance::performance_text && test.measured) ++performance_samples;
+      expect(performance_samples == 3U, "chat and coding measure three representative answers per trial, like upstream rate groups");
+    }
     input.disable_thinking = true;
     const auto direct = build_calibration_workload(input, counter);
     const auto* direct_cases = std::get_if<std::vector<CalibrationCase>>(&direct);

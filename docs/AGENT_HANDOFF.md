@@ -281,6 +281,26 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Repeatable baseline controls and grouped performance samples (2026-11-12)
+
+The latest Quick run rejected an unstable baseline even though the candidate was steady.
+Qwen benchmarks now pin missing per-request controls to the engine's bounded startup INFO
+fractions, restoring those controls for baseline confirmations after candidate tuning.
+Explicit selected settings still take precedence; absent or invalid INFO is never guessed.
+Unavailable baseline PCIe control produces a repeatability warning. Chat and coding trials
+now take the median of three performance answers alongside their separate known-answer
+checks. New engine sessions receive two unmeasured performance warm-up groups. Trial counts,
+time-budget settings, answer checks and the 5% confirmation threshold are unchanged.
+Duplicate telemetry notes are removed; resume identity is bumped to exclude older measurements.
+
+RED: baseline request-pinning and three-performance-case assertions fail before the fix.
+GREEN: all 22 targeted native workload, experiment and launcher checks pass, including
+unstable-baseline rejection, quality failure, cancellation and one-engine reuse. Native
+Release frontend executables rebuild with warnings as errors. Real-model stability still
+requires a new owner-run calibration; historical failed results are not rewritten.
+The two changed frontend executables were backed up, copied into the closed installation
+and SHA-256 verified. Configuration is unchanged, and the installed app was not launched.
+
 ### Thorough uses reference trial counts; Maximum keeps exhaustive search (2026-11-12)
 
 Owner: the previous Thorough bound is unrealistic; retain it as Maximum, reduce Thorough's

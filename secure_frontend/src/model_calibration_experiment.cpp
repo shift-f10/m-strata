@@ -493,7 +493,6 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
     std::lock_guard lock(mutex_);
     measuring_ = runtime;
   }
-  if (!runtime->chat().set_calibration_tuning(tune_pcie, tune_min_p)) return fail("Live tuning is unsupported for this profile");
   if (!reused && !runtime->supervisor().start()) return fail("Engine did not start");
   for (;;) {
     if (stopped()) return fail("Cancelled or time budget exhausted");
@@ -507,6 +506,24 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
                                                 std::chrono::milliseconds(100));
   }
   if (runtime->supervisor().generations_started() != 1U) return fail("Engine restarted during the benchmark");
+  if (card.profile == EngineProfile::qwen) {
+    const auto readings = runtime->supervisor().ready_readings();
+    const auto reported = [&](std::string_view key) -> std::optional<double> {
+      const auto it = readings.find(std::string{key});
+      if (it == readings.end()) return std::nullopt;
+      const auto value = parse(it->second);
+      const auto* d = value.if_decimal();
+      const auto* n = value.if_integer();
+      if (!d && !n) return std::nullopt;
+      const double fraction = d ? *d : static_cast<double>(*n);
+      return std::isfinite(fraction) && fraction >= 0.0 && fraction <= 1.0 ? std::optional<double>{fraction} : std::nullopt;
+    };
+    if (!tune_pcie) tune_pcie = reported("pcie_frac");
+    if (!tune_min_p) tune_min_p = reported("spec_min_p");
+  }
+  if (!runtime->chat().set_calibration_tuning(tune_pcie, tune_min_p)) return fail("Live tuning is unsupported for this profile");
+  set(detail, "request_pcie_frac", optional_number(tune_pcie));
+  set(detail, "request_spec_min_p", optional_number(tune_min_p));
   const auto load_ms = std::chrono::duration<double, std::milli>(
                            std::chrono::steady_clock::now() - started)
                            .count();
@@ -561,8 +578,15 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
     }
     return true;
   };
-  if (cases->empty() || (!reused && !run_case(cases->front(), false)))
-    return fail("Warm-up did not complete");
+  if (cases->empty()) return fail("Warm-up did not complete");
+  if (!reused) for (unsigned round = 0; round < 2U; ++round) {
+    bool warmed = false;
+    for (const auto& c : *cases) if (c.measured) {
+      if (!run_case(c, false)) return fail("Warm-up did not complete");
+      warmed = true;
+    }
+    if (!warmed && !run_case(cases->front(), false)) return fail("Warm-up did not complete");
+  }
   for (const auto& c : *cases)
     if (!run_case(c, true)) return fail("Workload generation did not complete");
   // Repeat the full workload in thorough mode to expose sustained and cache
@@ -586,6 +610,8 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
                   gpu_before.notes.end());
   warnings.insert(warnings.end(), gpu_after.notes.begin(),
                   gpu_after.notes.end());
+  if (card.profile == EngineProfile::qwen && !tune_pcie)
+    warnings.push_back("Baseline PCIe control unavailable; automatic tuning could affect repeatability");
   if (gpu_before.compute_processes.value_or(0) > (reused ? 1U : 0U)) {
     diagnostics.contaminated = true;
     warnings.push_back(
@@ -636,7 +662,10 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
              : diagnostics.contaminated ? "contaminated"
                                         : "passed"));
   set(detail, "reason", string(quality_reason));
-  set(detail, "warnings", strings(warnings));
+  std::vector<std::string> unique_warnings;
+  for (const auto& warning : warnings)
+    if (std::find(unique_warnings.begin(), unique_warnings.end(), warning) == unique_warnings.end()) unique_warnings.push_back(warning);
+  set(detail, "warnings", strings(unique_warnings));
   if (after && after->sample.memory) {
     auto mem = get(detail, "memory") ? *get(detail, "memory") : J{};
     if(after->sample.memory->used_bytes<=after->sample.memory->total_bytes)set(mem, "ram_free_bytes",
@@ -718,7 +747,7 @@ bool ModelLauncher::run_benchmark(const Job& job) {
       ? calibration_key(card,fast_values).runtime : std::string{};
   CalibrationResult identity_record{card.name, {}, 0, 0, "", false, base_key};
   const auto identity = to_hex(
-      sha256("benchmark-workload-v4-reference-schedule\n" + render_calibration(identity_record) +
+      sha256("benchmark-workload-v5-fixed-baseline-groups\n" + render_calibration(identity_record) +
              render_remembered_options({{card.name, base_values}}) +
              python_json_text(strings(baseline_args)) +
              workload_name(options.workload) +

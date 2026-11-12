@@ -1205,7 +1205,7 @@ void quick_benchmark_reuses_one_engine_for_confirmations() {
 void quick_qwen_tunes_requests_without_reloading() {
   const auto record = secure_frontend_test::make_scratch_directory() / "requests.txt";
   auto starts = std::make_shared<std::atomic<unsigned>>(0U);
-  CalibrationFixture f({"--record-file=" + secure_frontend::path_to_utf8(record)}, false,
+  CalibrationFixture f({"--record-file=" + secure_frontend::path_to_utf8(record), "--ready-info=pcie_frac=0.37,spec_min_p=0.5"}, false,
       [starts](secure_frontend::EngineLaunchPlan plan) {
         ++*starts; return secure_frontend::make_stdio_process_factory(std::move(plan));
       }, {}, {}, true);
@@ -1218,6 +1218,10 @@ void quick_qwen_tunes_requests_without_reloading() {
   const auto wire = secure_frontend_test::read_file(record);
   expect(wire.find(" pcie_frac=0 ") != std::string::npos && wire.find(" pcie_frac=1 ") != std::string::npos,
          "Qwen candidates reach GEN as per-request tuning values");
+  expect(wire.find(" pcie_frac=0.37 spec_min_p=0.5 ") != std::string::npos,
+         "baseline requests explicitly freeze the engine-reported controls rather than retuning automatically");
+  expect(wire.rfind(" pcie_frac=0.37 spec_min_p=0.5 ") > wire.rfind(" pcie_frac=1 "),
+         "baseline confirmations restore the reported controls after the candidate sweep");
   expect(f.launcher->list_json().find("\"outcome\": \"applied\"") != std::string::npos, "live-tuned run retains acceptance checks");
 }
 
