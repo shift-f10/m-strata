@@ -305,8 +305,10 @@ Integration covers live Qwen GEN tuning, one engine across baseline/candidates/c
 retained prior startup tuning, failed quality, cancellation/resume, comparison non-application
 and runtime changes. Fixture setup now reports its prior ignored DPAPI failure explicitly;
 native integration tests run outside the sandbox for Windows DPAPI support. The native Release
-build passes warnings-as-errors. No full real-model duration is claimed. Installation pending
-owner closure of the app; the owner launches the installed runtime.
+build passes warnings-as-errors. No full real-model duration is claimed. After the owner closed
+the app, all 14 staged frontend runtime files were backed up, copied into the installation and
+SHA-256 verified. The configuration hash is unchanged. No installed program was launched;
+the owner launches the installed runtime. Private staging/backup: quick-calibration-20261112.
 
 ### Fresh frontend package rebuild, owner launches (2026-11-12)
 
