@@ -120,7 +120,8 @@ without asking the owner.
    (`pytest upstream/tools` with its recorded exclusions, `pytest
    upstream/serve`) run explicitly after each submodule bump; the exact
    commands are in [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline".
-8. **Pre-push hook.** The owner's pre-push hook runs `pytest -q`. With
+8. **Pre-push hook.** (Since 2026-10-27 the pre-push hook is the identifying guard: "The pre-push guard on every
+   system", below.) The owner's pre-push hook ran `pytest -q`. With
    `pytest.ini` it collects `tools/secure/` only (13 tests). `conftest.py`
    stops the run with "run `git submodule update --init`" when `upstream/` is
    not checked out.
@@ -279,6 +280,18 @@ Ninja && cmake --build out/root && ctest --test-dir out/root`.
 Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy of the runbook: gates at the old pin, bump, gates, pin sites, one commit).
 
 ## What has changed
+
+### 2026-11-11 z100 (Windows box; owner-directed)
+
+The owner: "add in the handoff instructions for agents working in different systems to be able to establish the same
+hooks so protection is there no matter what development system I am in" (and of the two old branches the guard does not
+name: "just leave them"). A new section, **The pre-push guard on every system** (before "Collaboration and change
+rules"): why the guard stays local (its patterns are the identifying text), how an agent on another system gets it in
+place, how to prove it refuses and passes without a push, and what it checks, for a system where it must be written
+anew - with the reference copy's one gap (it does not refuse a `Co-Authored-By:` or "Generated with" line). CLAUDE.md,
+AGENTS.md and the resume document's rule 5 point to it; the stale "pre-push hook runs pytest" note says what runs now.
+- **Proof:** the section's two checks on this PC: a clean pushed range exits 0; an unreferenced commit with an address
+  that is not the noreply one is refused (exit 1, the kind named, no value); `core.hooksPath` unset.
 
 ### 2026-11-01 z99 (the owner's Azure VM; owner-directed)
 
@@ -8093,6 +8106,59 @@ D4) and the stale "MSVC/Windows runtime coverage" CMake comment (Task 18).
     guard (`cfg01_invalid_config_fails_before_listener_and_child`) is
     `windows-runtime` and passed in `windows-msys2-clang` (CI run
     `38540719307`; GREEN only, its RED was never shown on Windows).
+
+## The pre-push guard on every system
+
+The owner (2026-11-11): the protection must be there "no matter what development system I am in". The guard is local:
+`.git/hooks/pre-push` runs `.git/hooks/identifying_guard.py` before every push. git never tracks, pushes or clones
+anything in `.git`, and this guard stays out of the repository on purpose: its patterns spell out the identifying text
+it blocks (the owner's addresses, handle, user and PC names, his LAN ranges), so a tracked copy would publish exactly
+that. A new clone, PC, WSL distribution, VM or cloud checkout therefore has no guard until an agent sets it up. Before
+the first commit or push from such a system:
+
+1. **Get the guard from a system that has it.** The owner's Windows PC holds the reference copy: `pre-push` and
+   `identifying_guard.py` in its checkout's `.git/hooks/`. Copy both over a private channel the owner approves (scp
+   into the new checkout, a private file share) - never through the repository, an issue, a gist, a paste, an artifact
+   or a log. When no system with it is reachable, write it from the specification below and ask the owner for the
+   identifying values; never guess them, and never take them from the repository or its history.
+2. **Put them in place:** `<checkout>/.git/hooks/pre-push` and `<checkout>/.git/hooks/identifying_guard.py`, executable
+   (`chmod 0755` on Linux), readable only by the owner's account where the system allows. Worktrees share their clone's
+   `.git` (`git rev-parse --git-common-dir`), so one copy covers every worktree of a clone; a separate clone needs its
+   own. `git config core.hooksPath` must print nothing: a hooks path set elsewhere skips the guard.
+3. **Python:** the hook runs the checkout's `.venv-dev` Python first, then `python3` or `python`, and refuses the push
+   when it finds none. The guard uses the standard library only.
+4. **Prove it before trusting it** (no push, no branch made):
+   - a clean range passes: `printf 'refs/heads/main %s refs/heads/main %s\n' "$(git rev-parse origin/main)"
+     "$(git rev-parse origin/main~3)" | sh .git/hooks/pre-push origin https://github.com/x/y.git; echo $?` prints 0;
+   - a hit is refused: make a commit object no branch holds, with an address that is not the noreply one -
+     `t=$(GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=someone@example.invalid GIT_COMMITTER_NAME=test
+     GIT_COMMITTER_EMAIL=someone@example.invalid git commit-tree "$(git rev-parse HEAD^{tree})" -p HEAD -m "guard
+     self-test")` - and feed `refs/heads/guard-test $t refs/heads/guard-test $(git rev-parse HEAD)` the same way: it
+     prints "the push is refused" with the commit, `<author>` and the kind (never the value) and exits 1. The commit
+     object is unreferenced; git's housekeeping removes it.
+   On the owner's PC both held on 2026-11-11.
+5. **Never bypass it** (`--no-verify` is forbidden) **and never weaken it** to let a push through: fix the content.
+
+**What it does** (the specification, for a system where it is written anew):
+- **Input:** the remote's name and URL as arguments; on stdin one line per ref, `<local ref> <local sha> <remote ref>
+  <remote sha>`. A deletion (a local sha of zeros) passes.
+- **Refused by name:** `refs/heads/history-before-2026-10-27` and `refs/heads/sp6-plan1-eval-kit` (old history). The
+  other old local branches are left as they are (the owner, 2026-11-11); they are never pushed either.
+- **The commits:** `git rev-list <remote sha>..<local sha>`; for a branch the remote does not have, `git rev-list <local
+  sha> --not --remotes=<remote name>`; a root commit with all its files.
+- **Per commit:** the author's and committer's addresses must be the noreply address (or noreply@github.com); the
+  message and every added line of every file are matched against the patterns; a path under `secret/`, an `out/` or
+  `data/` config, or a log is refused; the API tokens this system holds (each install's `data/secret/token`, the
+  engines' `*-secret/token`) are refused by value - read at push time, never written down; the development key
+  `strata-secret-key-dev-placeholder` is allowed.
+- **The pattern kinds:** the owner's e-mail address and its domain, personal mail providers' addresses, the owner's
+  handle, the Windows user name, the PC's name, a LAN address, a session link or id, a private key, an access token, and
+  in a message a `Claude-Session:` line.
+- **Output:** on any hit it refuses (exit 1), naming the commit, the file and the kind - never the value.
+- **A gap in the reference copy:** it refuses a `Claude-Session:` line but not a `Co-Authored-By:` or "Generated with"
+  line, which the hard requirement of 2026-10-31 forbids too. A guard written anew refuses those as well; until the
+  reference copy does, check before each push that `git log --format=%B <range> | grep -ci "co-authored\|generated
+  with"` prints 0.
 
 ## Collaboration and change rules
 
