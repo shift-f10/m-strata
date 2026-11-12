@@ -90,5 +90,6 @@ struct CalibrationHostDiagnostics final {
 [[nodiscard]] CalibrationHostDiagnostics calibration_host_diagnostics(
     const std::optional<MonitorHostSnapshot>& before, const std::optional<MonitorHostSnapshot>& after,
     std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now(),
-    std::optional<std::chrono::steady_clock::time_point> trial_started = std::nullopt);
+    std::optional<std::chrono::steady_clock::time_point> trial_started = std::nullopt,
+    bool calibration_model_loaded = false);
 } // namespace secure_frontend

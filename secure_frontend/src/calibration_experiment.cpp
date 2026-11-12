@@ -141,6 +141,11 @@ ExperimentPlan make_experiment_plan(const EngineProfile profile, const SweepMach
       plan.skipped.push_back({step.flag, "long adaptive-tier experiments require thorough mode"});
       continue;
     }
+    if (options.mode == BenchmarkMode::quick &&
+        !(profile == EngineProfile::qwen && (step.flag == "--pcie-frac" || step.flag == "--spec-min-p"))) {
+      plan.skipped.push_back({step.flag, "Requires an engine restart; use Thorough to tune this setting"});
+      continue;
+    }
     if (options.mode == BenchmarkMode::quick && step.values.size() > 3U)
       step.values = {step.values.front(), step.values[step.values.size() / 2U], step.values.back()};
     std::vector<std::string> unique;
@@ -156,7 +161,7 @@ ExperimentPlan make_experiment_plan(const EngineProfile profile, const SweepMach
 std::size_t experiment_trial_upper_bound(const ExperimentPlan& plan) {
   const unsigned repeats = plan.mode == BenchmarkMode::thorough ? 3U : 2U;
   const unsigned initial = plan.mode == BenchmarkMode::thorough ? 3U : 1U;
-  std::size_t count = initial + 2U * repeats;
+  std::size_t count = initial + (plan.steps.empty() ? repeats : 2U * repeats);
   for (const auto& step : plan.steps)
     count += (step.values.size() + 2U) * repeats * (plan.mode == BenchmarkMode::thorough ? 2U : 1U);
   return std::min(count, kMaximumTrials);

@@ -42,6 +42,10 @@ void experiment_plan_explains_fixed_and_inactive_settings() {
   const auto full = make_experiment_plan(EngineProfile::qwen, machine, thorough, {}, true);
   const auto count = [](const auto& plan) { std::size_t n = 0; for (const auto& step : plan.steps) n += step.values.size(); return n; };
   expect(count(quick_plan) < count(full) && count(quick_plan) > 0, "quick plan has fewer meaningful candidates");
+  for (const auto& step : quick_plan.steps)
+    expect(step.flag == "--pcie-frac" || step.flag == "--spec-min-p", "Quick only tunes controls that can change within one loaded engine");
+  expect(make_experiment_plan(EngineProfile::gemma4, machine, quick, {}, true).steps.empty(),
+         "Quick does not silently restart other engine families to tune startup settings");
   FrontendConfigDraft fixed;
   fixed.entries["engine.args"] = {std::vector<std::string>{"--pcie-frac=0.25", "--adapt-swaps", "80"}, ConfigSource::file};
   const auto filtered = make_experiment_plan(EngineProfile::qwen, machine, thorough, fixed, false);

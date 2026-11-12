@@ -1,5 +1,14 @@
 # Provenance
 
+### Calibration engine reuse (2026-11-12)
+
+The owned frontend's Quick benchmark follows the pinned upstream calibration's
+single-engine request-tuning approach (`upstream/tools/calibrate.py`, `Session.rate`
+and `measure`). The bounded Qwen GEN keys `pcie_frac` and `spec_min_p` are supported
+by both the pinned upstream and the copied engine's request parser. Startup settings
+still require a fresh engine; the upstream submodule and copied engine sources are
+unchanged. No Python service or new client-controlled tuning API is introduced.
+
 ## This repository's license
 
 ### Native embedded-template interpreter (2026-11-11)

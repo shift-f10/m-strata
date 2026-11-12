@@ -1034,12 +1034,13 @@ struct CalibrationFixture final {
   // how the engine processes are made (unset: the fake engine's real process)
   explicit CalibrationFixture(const std::vector<std::string>& extra_fake_options = {}, const bool operator_cards = false,
                               std::function<secure_frontend::ProcessFactory(secure_frontend::EngineLaunchPlan)> factory = {},
-                              const std::chrono::milliseconds warm_every = {}, const std::chrono::milliseconds restart_after = {}) {
+                              const std::chrono::milliseconds warm_every = {}, const std::chrono::milliseconds restart_after = {},
+                              const bool qwen = false) {
     secure_frontend_test::make_private_directory(models);
-    const auto vocabulary = test_support::spm_tokenizer();
+    const auto vocabulary = qwen ? test_support::byte_tokenizer() : test_support::spm_tokenizer();
     for (const char* name : {"tiny-gemma-Q8_0.gguf", "other-gemma-Q8_0.gguf"}) {
-      secure_frontend_test::write_file(models / name, test_support::gguf_with_tokenizer(vocabulary, "gemma4", "gemma4")
-                                                          .u32("gemma4.context_length", 32768U)
+      secure_frontend_test::write_file(models / name, test_support::gguf_with_tokenizer(vocabulary, qwen ? "gpt2" : "gemma4", qwen ? "qwen35moe" : "gemma4")
+                                                          .u32(qwen ? "qwen35moe.context_length" : "gemma4.context_length", 32768U)
                                                           .bytes());
     }
     const auto bin = root / "bin";
@@ -1056,15 +1057,21 @@ struct CalibrationFixture final {
                                secure_frontend::path_to_utf8(dump) + "\n";
     for (const auto& option : extra_fake_options) fake_options += option + "\n";
     secure_frontend_test::write_file(bin / "fake-engine.options", fake_options);
-    (void)secure_frontend::ensure_data_folder(data, engine);
-    const auto main = std::get<secure_frontend::FrontendConfigDraft>(
-        secure_frontend::parse_config_text(secure_frontend_test::read_file(data.config_file), data.root));
+    const auto ensured = secure_frontend::ensure_data_folder(data, engine);
+    if (const auto* error = std::get_if<secure_frontend::FirstStartError>(&ensured))
+      throw std::runtime_error("calibration fixture setup: " + error->message);
+    const auto main_parsed = secure_frontend::parse_config_text(secure_frontend_test::read_file(data.config_file), data.root);
+    if (!std::holds_alternative<secure_frontend::FrontendConfigDraft>(main_parsed))
+      throw std::runtime_error("calibration fixture main configuration rejected");
+    const auto main = std::get<secure_frontend::FrontendConfigDraft>(main_parsed);
     std::vector<secure_frontend::ModelCard> cards;
     for (const char* file : {"tiny-gemma-Q8_0.gguf", "other-gemma-Q8_0.gguf"}) {
       const auto header = secure_frontend::parse_gguf_metadata(secure_frontend_test::read_file(models / file));
       const auto made = secure_frontend::card_for_gguf(std::get<secure_frontend::GgufMetadata>(header),
                                                        {.folder = models, .file = file, .engine = engine, .source = "folder"});
+      if (!std::holds_alternative<secure_frontend::CardText>(made)) throw std::runtime_error("calibration fixture card construction rejected");
       auto parsed = secure_frontend::parse_model_card(std::get<secure_frontend::CardText>(made).json, data.root);
+      if (!std::holds_alternative<secure_frontend::ModelCard>(parsed)) throw std::runtime_error("calibration fixture card parsing rejected");
       cards.push_back(std::get<secure_frontend::ModelCard>(std::move(parsed)));
     }
     secure_frontend::LauncherSettings settings{.main = main, .cards = operator_cards ? cards : std::vector<secure_frontend::ModelCard>{},
@@ -1170,6 +1177,48 @@ void calibration_keeps_the_options_it_measured() {
   expect(f.launcher->wait_until_settled(std::chrono::seconds(60)), "start settles");
   expect(has_pair(dumped_argv(f.dump), "--max-context", "8192"), "the calibrated context is remembered");
   expect(has_pair(dumped_argv(f.dump), "--cpu-threads", f.winner), "fresh tuning is reused");
+}
+
+void quick_benchmark_reuses_one_engine_for_confirmations() {
+  auto starts = std::make_shared<std::atomic<unsigned>>(0U);
+  CalibrationFixture f({}, false, [starts](secure_frontend::EngineLaunchPlan plan) {
+    ++*starts;
+    return secure_frontend::make_stdio_process_factory(std::move(plan));
+  });
+  secure_frontend::BenchmarkOptions options;
+  options.workload = secure_frontend::BenchmarkWorkload::custom;
+  options.custom_prompt = "Explain a synthetic fixture";
+  expect(!f.launcher->calibrate("tiny-gemma-Q8_0", nullptr, false, std::nullopt, false), "establish a verified startup-setting calibration");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(120)), "previous calibration completes");
+  const auto prior = secure_frontend::parse_calibration(secure_frontend_test::read_file(f.result_file("tiny-gemma-Q8_0")));
+  starts->store(0U);
+  expect(!f.launcher->calibrate("tiny-gemma-Q8_0", nullptr, false, std::nullopt, false, options), "quick benchmark accepted");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(120)), "quick benchmark finishes");
+  expect(starts->load() == 1U, "baseline and all confirmations share one engine load");
+  const auto listed = f.launcher->list_json();
+  expect(listed.find("\"outcome\": \"applied\"") != std::string::npos, "quality-checked current settings can be accepted");
+  expect(listed.find("\"engine_reused\": true") != std::string::npos, "reused measurements are reported");
+  const auto after = secure_frontend::parse_calibration(secure_frontend_test::read_file(f.result_file("tiny-gemma-Q8_0")));
+  expect(prior && after && prior->args == after->args, "Quick retains verified startup tuning that it does not sweep");
+}
+
+void quick_qwen_tunes_requests_without_reloading() {
+  const auto record = secure_frontend_test::make_scratch_directory() / "requests.txt";
+  auto starts = std::make_shared<std::atomic<unsigned>>(0U);
+  CalibrationFixture f({"--record-file=" + secure_frontend::path_to_utf8(record)}, false,
+      [starts](secure_frontend::EngineLaunchPlan plan) {
+        ++*starts; return secure_frontend::make_stdio_process_factory(std::move(plan));
+      }, {}, {}, true);
+  secure_frontend::BenchmarkOptions options;
+  options.workload = secure_frontend::BenchmarkWorkload::custom;
+  options.custom_prompt = "Synthetic performance fixture";
+  expect(!f.launcher->calibrate("tiny-gemma-Q8_0", nullptr, false, std::nullopt, false, options), "quick Qwen benchmark accepted");
+  expect(f.launcher->wait_until_settled(std::chrono::seconds(120)), "quick Qwen benchmark finishes");
+  expect(starts->load() == 1U, "all live-tuned candidates and confirmations share one engine");
+  const auto wire = secure_frontend_test::read_file(record);
+  expect(wire.find(" pcie_frac=0 ") != std::string::npos && wire.find(" pcie_frac=1 ") != std::string::npos,
+         "Qwen candidates reach GEN as per-request tuning values");
+  expect(f.launcher->list_json().find("\"outcome\": \"applied\"") != std::string::npos, "live-tuned run retains acceptance checks");
 }
 
 void benchmark_quality_failure_preserves_previous_calibration() {
@@ -2382,6 +2431,8 @@ int main(int argc, char** argv) {
       {"calibration_finds_the_win_and_starts_with_it", calibration_finds_the_win_and_starts_with_it},
       {"calibration_keeps_the_options_it_measured", calibration_keeps_the_options_it_measured},
       {"benchmark_quality_failure_preserves_previous_calibration", benchmark_quality_failure_preserves_previous_calibration},
+      {"quick_benchmark_reuses_one_engine_for_confirmations", quick_benchmark_reuses_one_engine_for_confirmations},
+      {"quick_qwen_tunes_requests_without_reloading", quick_qwen_tunes_requests_without_reloading},
       {"benchmark_resume_refuses_unmatched_checkpoint_and_restore_is_bounded", benchmark_resume_refuses_unmatched_checkpoint_and_restore_is_bounded},
       {"benchmark_success_preserves_private_input_and_restores_history", benchmark_success_preserves_private_input_and_restores_history},
       {"benchmark_cancel_resume_is_bound_to_all_options", benchmark_cancel_resume_is_bound_to_all_options},

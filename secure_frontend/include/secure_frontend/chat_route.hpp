@@ -158,6 +158,8 @@ class ChatRoute final {
  public:
   ChatRoute(ChatRouteConfig config, SupervisorPort& port, GenerationGate& gate, const TokenizerPack& tokenizer);
   [[nodiscard]] RouteResult handle(std::string_view body, const RequestContext& context);
+  // Only the private, single-threaded calibration runtime calls this; not a route.
+  [[nodiscard]] bool set_calibration_tuning(std::optional<double> pcie, std::optional<double> min_p);
 
  private:
   [[nodiscard]] HttpResponse refusal(GateRefusal refusal);
@@ -183,6 +185,7 @@ class ChatRoute final {
                                                     std::vector<std::uint32_t> prompt_ids, std::size_t max_tokens,
                                                     const RequestContext& context, std::vector<std::string>& events);
   ChatRouteConfig config_;
+  std::optional<double> calibration_pcie_, calibration_min_p_;
   SupervisorPort& port_;
   GenerationGate& gate_;
   const TokenizerPack& tokenizer_;

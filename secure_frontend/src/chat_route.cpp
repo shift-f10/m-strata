@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cmath>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -19,6 +20,14 @@
 #include <vector>
 
 namespace secure_frontend {
+bool ChatRoute::set_calibration_tuning(std::optional<double> pcie, std::optional<double> min_p) {
+  const auto valid = [](const auto& value) { return !value || (std::isfinite(*value) && *value >= 0.0 && *value <= 1.0); };
+  if ((pcie || min_p) && config_.profile != NativeChatProfile::qwen) return false;
+  if (!valid(pcie) || !valid(min_p)) return false;
+  calibration_pcie_ = pcie;
+  calibration_min_p_ = min_p;
+  return true;
+}
 namespace {
 
 // The Monitor's name for how a non-streamed generation ended (monitor_finish's literals).
@@ -344,6 +353,8 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
                                                                                                    : ApiError::invalid_request);
     }
     plan = std::get<ChatGenerationPlan>(std::move(plan_result));
+    plan->sampling.calibration_pcie_frac = calibration_pcie_;
+    plan->sampling.calibration_spec_min_p = calibration_min_p_;
     prompt_ids.reserve(plan->prompt_token_ids.size());
     for (const std::size_t id : plan->prompt_token_ids) {
       if (id > std::numeric_limits<std::uint32_t>::max()) return make_error_response(ApiError::invalid_request);

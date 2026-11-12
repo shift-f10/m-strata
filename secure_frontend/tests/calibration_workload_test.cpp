@@ -127,6 +127,9 @@ void host_diagnostics_distinguish_busy_baseline_and_thermal_evidence() {
   expect(!calibration_host_diagnostics(before, after, now).contaminated, "model-owned VRAM allocation alone is not competing activity");
   before.sample.gpu = after.sample.gpu;
   expect(calibration_host_diagnostics(before, after, now).contaminated, "pre-existing GPU memory pressure remains contamination");
+  before.sample.gpu->util_percent = 0.0;
+  expect(!calibration_host_diagnostics(before, after, now, std::nullopt, true).contaminated,
+         "a reused benchmark's own loaded model is not external memory pressure");
   before.sample.gpu.reset();
   before.sample.cpu_percent = 80.0;
   after.sampled_at = now + std::chrono::minutes(2);

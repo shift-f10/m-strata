@@ -1866,7 +1866,7 @@
     var s = summary && typeof summary === "object" ? summary : {};
     var list = el("dl", "calibration-metrics");
     [["Decode", calibrationMetric(s.decode_tok_s, "tok/s")], ["Prompt processing", calibrationMetric(s.prompt_tok_s, "tok/s")],
-     ["Time to first token", calibrationMetric(s.ttft_ms, "ms")], ["Cold load", calibrationMetric(s.load_ms, "ms")],
+     ["Time to first token", calibrationMetric(s.ttft_ms, "ms")], ["Cold load", s.engine_reused === true ? "Not repeated (engine reused)" : calibrationMetric(s.load_ms, "ms")],
      ["Cold time to first token", calibrationMetric(s.cold_ttft_ms, "ms")],
      ["Warm time to first token", calibrationMetric(s.warm_ttft_ms, "ms")],
      ["Warm decode", calibrationMetric(s.warm_decode_tok_s, "tok/s")],
@@ -1884,6 +1884,7 @@
       list.appendChild(el("dt", null, row[0])); list.appendChild(el("dd", null, row[1]));
     });
     parent.appendChild(list);
+    if (s.engine_reused === true) { parent.appendChild(el("p", "muted small", "Engine reused; this measurement did not reload the model.")); }
   }
   function appendCalibrationNotes(parent, notes) {
     if (!Array.isArray(notes) || !notes.length) { return; }
@@ -2003,7 +2004,7 @@
       var run = cal.running;
       return "Measuring the engine's settings: " + (run.trials > 0 ? "trial " + run.trial + " of up to " + run.trials : "preparing calibration") + (run.stage ? " (" + run.stage + ")" : "") +
              (typeof run.best_tok_s === "number" ? DOT + "best so far " + fmt(run.best_tok_s, 1) + " tok/s" : "") +
-             ". Each trial is one start of the engine; the chat is unavailable meanwhile.";
+             ". The chat is unavailable while calibration runs.";
     }
     if (cal.error) { return "The last calibration did not finish: " + cal.error; }
     var found = typeof cal.before === "number" && typeof cal.after === "number"

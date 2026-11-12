@@ -22,6 +22,15 @@ J strings(const std::vector<std::string>& values) {
   for (const auto& s : values) a.push_back(string(s));
   return J::make_array(std::move(a));
 }
+std::vector<std::string> overlay_args(std::vector<std::string> base, const std::vector<std::string>& overrides) {
+  for (std::size_t i = 0; i + 1U < overrides.size(); i += 2U) {
+    bool replaced = false;
+    for (std::size_t j = 0; j + 1U < base.size(); j += 2U)
+      if (base[j] == overrides[i]) { base[j + 1U] = overrides[i + 1U]; replaced = true; break; }
+    if (!replaced) { base.push_back(overrides[i]); base.push_back(overrides[i + 1U]); }
+  }
+  return base;
+}
 const J* get(const J& j, std::string_view key) {
   if (const auto* o = j.if_object())
     for (const auto& m : *o)
@@ -268,7 +277,8 @@ std::optional<ModelLauncher::Refusal> ModelLauncher::restore_calibration(
 std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
     const ModelCard& card, const ModelOptionValues& values,
     const ExperimentTrial& trial, const BenchmarkOptions& options,
-    const std::function<bool()>& stopped, J& detail) {
+    const std::function<bool()>& stopped, J& detail,
+    std::shared_ptr<ModelRuntime>& session, std::shared_ptr<ServeMonitor>& session_meter, std::string& session_signature) {
   detail =
       J::make_object({{"settings", strings(trial.args)},
                       {"stage", string(trial.stage)},
@@ -279,15 +289,9 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
     set(detail, "reason", string(reason));
     return std::nullopt;
   };
-  const auto before =
-      settings_.monitor
-          ? await_calibration_baseline(
-                [&] { return settings_.monitor->latest_host_sample(); },
-                stopped)
-          : std::nullopt;
-  const auto started = std::chrono::steady_clock::now();
   if (stopped()) return fail("Cancelled or time budget exhausted");
   auto selected = values;
+  std::optional<double> tune_pcie, tune_min_p;
   std::vector<std::string> hardware_args;
   for (std::size_t i = 0; i + 1 < trial.args.size(); i += 2) {
     if (trial.args[i].starts_with("option:")) {
@@ -304,6 +308,15 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
         selected[name] = *d;
       else
         return fail("Invalid comparison value");
+    } else if (card.profile == EngineProfile::qwen &&
+               (trial.args[i] == "--pcie-frac" || trial.args[i] == "--spec-min-p")) {
+      const auto parsed = parse(trial.args[i + 1]);
+      const auto* d = parsed.if_decimal();
+      const auto* n = parsed.if_integer();
+      if (!d && !n) return fail("Invalid live tuning value");
+      const double value = d ? *d : static_cast<double>(*n);
+      if (!std::isfinite(value) || value < 0.0 || value > 1.0) return fail("Invalid live tuning bound");
+      (trial.args[i] == "--pcie-frac" ? tune_pcie : tune_min_p) = value;
     } else {
       hardware_args.push_back(trial.args[i]);
       hardware_args.push_back(trial.args[i + 1]);
@@ -316,6 +329,17 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
   if (!std::holds_alternative<ModelOptionValues>(validated))
     return fail("Comparison value is outside this card's bounds");
   selected = std::get<ModelOptionValues>(validated);
+  const auto signature = render_remembered_options({{card.name, selected}}) + python_json_text(strings(hardware_args));
+  const bool reused = session && session_signature == signature;
+  if (session && !reused) {
+    session->supervisor().stop_engine();
+    if (session->supervisor().engine_left_unreaped()) return fail("Previous benchmark engine could not be stopped");
+    session.reset(); session_meter.reset();
+  }
+  const auto before = settings_.monitor
+      ? await_calibration_baseline([&] { return settings_.monitor->latest_host_sample(); }, stopped)
+      : std::nullopt;
+  const auto started = std::chrono::steady_clock::now();
   auto config = config_with(card, selected, hardware_args);
   if (!config) return fail("Trial settings could not be validated");
   const auto& gpus =
@@ -326,7 +350,7 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
   auto composed = compose_model(*config, true);
   auto* model = std::get_if<ComposedModel>(&composed);
   if (!model) return fail("Trial model could not be composed");
-  if (!prepare_state_dir(*config->roots.state, *model->plan.environment))
+  if (!reused && !prepare_state_dir(*config->roots.state, *model->plan.environment))
     return fail("Trial state folder unavailable");
   std::size_t context = static_cast<std::size_t>(config->glm.max_context);
   if (const auto it = values.find("max_context"); it != values.end())
@@ -448,22 +472,21 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
     else
       return fail("The requested context probe could not be constructed");
   }
-  ServeMonitor meter;
-  auto plan = std::move(model->plan);
-  auto runtime = std::make_shared<ModelRuntime>(
-      std::move(*model), settings_.factory(std::move(plan)), settings_.gate,
-      &meter);
+  if (!reused) {
+    session_meter = std::make_shared<ServeMonitor>();
+    auto plan = std::move(model->plan);
+    session = std::make_shared<ModelRuntime>(std::move(*model), settings_.factory(std::move(plan)), settings_.gate,
+                                             session_meter.get());
+    session_signature = signature;
+  }
+  auto runtime = session;
+  auto& meter = *session_meter;
   {
     std::lock_guard lock(mutex_);
     measuring_ = runtime;
   }
-  Finally cleanup{[this, &runtime] {
-    runtime->supervisor().stop_engine();
-    std::lock_guard lock(mutex_);
-    measuring_.reset();
-    if (runtime->supervisor().engine_left_unreaped()) unreaped_ = true;
-  }};
-  if (!runtime->supervisor().start()) return fail("Engine did not start");
+  if (!runtime->chat().set_calibration_tuning(tune_pcie, tune_min_p)) return fail("Live tuning is unsupported for this profile");
+  if (!reused && !runtime->supervisor().start()) return fail("Engine did not start");
   for (;;) {
     if (stopped()) return fail("Cancelled or time budget exhausted");
     const auto state = runtime->supervisor().snapshot().state;
@@ -475,10 +498,12 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
     (void)runtime->supervisor().wait_for_change(SupervisorState::starting,
                                                 std::chrono::milliseconds(100));
   }
+  if (runtime->supervisor().generations_started() != 1U) return fail("Engine restarted during the benchmark");
   const auto load_ms = std::chrono::duration<double, std::milli>(
                            std::chrono::steady_clock::now() - started)
                            .count();
-  set(detail, "load_ms", number(load_ms));
+  set(detail, "load_ms", number(reused ? 0.0 : load_ms));
+  set(detail, "engine_reused", boolean(reused));
   std::vector<double> speeds, prompt_speeds, ttfts, elapsed, sustained_speeds;
   std::vector<std::string> warnings;
   bool accepted = true;
@@ -507,7 +532,7 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
     }
     const auto m = meter.latest_generation_metrics();
     if (!m) return !quality.accepted;
-    if (!cold_ttft)
+    if (!reused && !cold_ttft)
       cold_ttft = m->ttft_ms;
     else if (!warm_ttft)
       warm_ttft = m->ttft_ms;
@@ -528,7 +553,7 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
     }
     return true;
   };
-  if (cases->empty() || !run_case(cases->front(), false))
+  if (cases->empty() || (!reused && !run_case(cases->front(), false)))
     return fail("Warm-up did not complete");
   for (const auto& c : *cases)
     if (!run_case(c, true)) return fail("Workload generation did not complete");
@@ -545,7 +570,7 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
   const auto after = settings_.monitor ? settings_.monitor->latest_host_sample()
                                        : std::nullopt;
   auto diagnostics = calibration_host_diagnostics(
-      before, after, std::chrono::steady_clock::now(), started);
+      before, after, std::chrono::steady_clock::now(), started, reused);
   warnings = diagnostics.flags;
   const auto gpu_after = settings_.benchmark_gpu ? settings_.benchmark_gpu(gpus)
                                                  : sample_calibration_gpu(gpus);
@@ -553,7 +578,7 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
                   gpu_before.notes.end());
   warnings.insert(warnings.end(), gpu_after.notes.begin(),
                   gpu_after.notes.end());
-  if (gpu_before.compute_processes.value_or(0) > 0) {
+  if (gpu_before.compute_processes.value_or(0) > (reused ? 1U : 0U)) {
     diagnostics.contaminated = true;
     warnings.push_back(
         "Other GPU compute processes were present before this trial started");
@@ -675,14 +700,19 @@ bool ModelLauncher::run_benchmark(const Job& job) {
         "preparing", 1U, experiment_trial_upper_bound(preparing_plan), std::nullopt};
   }
   const auto base_key = calibration_key(card, base_values);
+  std::vector<std::string> baseline_args;
+  if (options.mode == BenchmarkMode::quick && !options.compare_speed)
+    if (const auto previous = read_calibration(card.name);
+        previous && compare_key(previous->key, base_key) == CalibrationState::fresh) baseline_args = previous->args;
   auto fast_values=base_values;
   fast_values["speed_fast_math"]=true;
   const auto comparison_runtime=options.compare_speed
       ? calibration_key(card,fast_values).runtime : std::string{};
   CalibrationResult identity_record{card.name, {}, 0, 0, "", false, base_key};
   const auto identity = to_hex(
-      sha256("benchmark-workload-v2-direct-answers\n" + render_calibration(identity_record) +
+      sha256("benchmark-workload-v3-warm-session\n" + render_calibration(identity_record) +
              render_remembered_options({{card.name, base_values}}) +
+             python_json_text(strings(baseline_args)) +
              workload_name(options.workload) +
              (options.mode == BenchmarkMode::thorough ? "thorough" : "quick") +
              (options.memory_probe ? "memory" : "") +
@@ -698,6 +728,7 @@ bool ModelLauncher::run_benchmark(const Job& job) {
         strings({"Quality gates check these tasks only; they do not certify "
                  "general answer accuracy.",
                  "Synthetic requests disable optional thinking when the selected model supports it, so the answer budget measures visible output.",
+                 "Quick keeps one engine loaded and tunes only supported live controls. Thorough and explicit accuracy-tradeoff comparisons may restart the engine.",
                  "No conversation text or generated answers are saved."})}});
   const auto summary_file = artifact(card.name, "summary"),
              checkpoint_file = artifact(card.name, "checkpoint");
@@ -742,9 +773,20 @@ bool ModelLauncher::run_benchmark(const Job& job) {
                         {"created", number(now)},
                         {"entries", J::make_array(std::move(entries))}}));
   };
+  std::shared_ptr<ModelRuntime> benchmark_session;
+  std::shared_ptr<ServeMonitor> benchmark_meter;
+  std::string benchmark_signature;
+  Finally cleanup_session{[&] {
+    if (benchmark_session) benchmark_session->supervisor().stop_engine();
+    std::lock_guard lock(mutex_);
+    if (benchmark_session && benchmark_session->supervisor().engine_left_unreaped()) unreaped_ = true;
+    measuring_.reset();
+  }};
   const auto measure =
       [&](const ExperimentTrial& trial) -> std::optional<ExperimentSample> {
-    const auto key = trial_key(trial);
+    auto effective_trial = trial;
+    effective_trial.args = overlay_args(baseline_args, trial.args);
+    const auto key = trial_key(effective_trial);
     J detail;
     std::optional<ExperimentSample> sample;
     if (const auto it = cache.find(key);
@@ -756,7 +798,8 @@ bool ModelLauncher::run_benchmark(const Job& job) {
       set(detail, "reused", boolean(true));
     } else {
       sample =
-          measure_benchmark(card, base_values, trial, options, stopped, detail);
+          measure_benchmark(card, base_values, effective_trial, options, stopped, detail,
+                            benchmark_session, benchmark_meter, benchmark_signature);
       if (sample)
         cache[key] =
             J::make_object({{"key", string(key)},
@@ -860,6 +903,7 @@ bool ModelLauncher::run_benchmark(const Job& job) {
         [&] { return cancelled() || !error.empty(); }, elapsed);
   else
     outcome.end = ExperimentOutcome::End::failed;
+  if (outcome.end == ExperimentOutcome::End::done) outcome.args = overlay_args(baseline_args, outcome.args);
   bool kept = false;
   if (compare_key(base_key, calibration_key(card, base_values)) !=
       CalibrationState::fresh ||

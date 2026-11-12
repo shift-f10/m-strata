@@ -2018,6 +2018,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         a_qwen36_card_reads_its_tokenizer_from_the_gguf
         calibration_finds_the_win_and_starts_with_it calibration_keeps_the_options_it_measured a_first_start_calibrates_first a_start_without_calibrating_starts_at_once
         benchmark_quality_failure_preserves_previous_calibration benchmark_resume_refuses_unmatched_checkpoint_and_restore_is_bounded
+        quick_benchmark_reuses_one_engine_for_confirmations quick_qwen_tunes_requests_without_reloading
         benchmark_success_preserves_private_input_and_restores_history benchmark_cancel_resume_is_bound_to_all_options
         benchmark_route_accepts_bounded_custom_input_and_rejects_mixed_actions
         benchmark_rejects_runtime_changes_during_trials
@@ -2115,7 +2116,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_cases(secure_frontend_calibration_experiment_tests
         benchmark_options_are_strict_and_bounded experiment_plan_explains_fixed_and_inactive_settings
         thorough_revisits_combinations_and_confirms budgets_and_cancellation_never_expose_partial_winners
-        quality_contamination_noise_and_comparison_gate_application)
+        quality_contamination_noise_and_comparison_gate_application progress_is_available_before_measurement_and_after_failure)
     secure_frontend_add_test_executable(secure_frontend_engine_variant_tests tests/engine_variant_test.cpp secure_frontend_engine_variant)
     secure_frontend_add_cases(secure_frontend_engine_variant_tests
         default_needs_no_variant_installation missing_or_wrong_mode_is_refused valid_fast_variant_verifies_every_file

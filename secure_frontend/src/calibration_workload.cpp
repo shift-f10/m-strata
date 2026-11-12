@@ -329,7 +329,7 @@ std::optional<MonitorHostSnapshot> await_calibration_baseline(
 
 CalibrationHostDiagnostics calibration_host_diagnostics(const std::optional<MonitorHostSnapshot>& before,
     const std::optional<MonitorHostSnapshot>& after, std::chrono::steady_clock::time_point now,
-    std::optional<std::chrono::steady_clock::time_point> trial_started) {
+    std::optional<std::chrono::steady_clock::time_point> trial_started, bool calibration_model_loaded) {
   CalibrationHostDiagnostics out;
   const auto flag = [&](const char* reason, bool contaminated) {
     if (std::find(out.flags.begin(), out.flags.end(), reason) == out.flags.end()) out.flags.emplace_back(reason);
@@ -351,14 +351,14 @@ CalibrationHostDiagnostics calibration_host_diagnostics(const std::optional<Moni
     if (s.memory && s.memory->total_bytes > 0U && s.memory->used_bytes <= s.memory->total_bytes) {
       const double free = 100.0 * static_cast<double>(s.memory->total_bytes - s.memory->used_bytes) / static_cast<double>(s.memory->total_bytes);
       out.ram_headroom_percent = out.ram_headroom_percent ? std::min(*out.ram_headroom_percent, free) : free;
-      if (free < 5.0) flag("ram_pressure", snapshot == &before);
+      if (free < 5.0) flag("ram_pressure", snapshot == &before && !calibration_model_loaded);
     }
     if (s.gpu) {
       const auto& g = *s.gpu;
       if (g.mem_total_bytes && g.mem_used_bytes && *g.mem_total_bytes > 0U && *g.mem_used_bytes <= *g.mem_total_bytes) {
         const double free = 100.0 * static_cast<double>(*g.mem_total_bytes - *g.mem_used_bytes) / static_cast<double>(*g.mem_total_bytes);
         out.gpu_headroom_percent = out.gpu_headroom_percent ? std::min(*out.gpu_headroom_percent, free) : free;
-        if (free < 5.0) flag("gpu_memory_pressure", snapshot == &before);
+        if (free < 5.0) flag("gpu_memory_pressure", snapshot == &before && !calibration_model_loaded);
       }
       if (g.temp_c && std::isfinite(*g.temp_c) && *g.temp_c >= 85.0) flag("high_gpu_temperature_throttling_unconfirmed", false);
     }

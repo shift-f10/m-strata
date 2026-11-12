@@ -426,6 +426,13 @@ void sampling_defaults_reach_gen_request() {
   secure_frontend::EngineReady ready{};
   expect(!client.await_ready(std::chrono::seconds(1), ready).has_value(), "ready");
   secure_frontend::SamplingParams p;
+  secure_frontend::SamplingParams tuning;
+  tuning.calibration_pcie_frac = 0.25;
+  tuning.calibration_spec_min_p = 0.6;
+  expect(secure_frontend::render_sampling_keys(tuning) == " pcie_frac=0.25 spec_min_p=0.6", "internal tuning uses supported GEN keys");
+  expect(secure_frontend::render_sampling_keys(tuning, true).empty(), "Qwen calibration tuning never reaches Maya");
+  tuning.calibration_pcie_frac = -1.0; tuning.calibration_spec_min_p = 2.0;
+  expect(secure_frontend::render_sampling_keys(tuning).empty(), "out-of-range tuning cannot reach the wire");
   p.temperature = 0.0;   // must remain greedy even alongside other sampler keys
   p.top_p = 1.0;         // explicitly disable nucleus truncation
   p.top_k = 10;

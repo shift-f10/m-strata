@@ -257,7 +257,8 @@ class ModelLauncher final {
   [[nodiscard]] bool run_benchmark(const Job& job);
   [[nodiscard]] std::optional<ExperimentSample> measure_benchmark(const ModelCard& card,
       const ModelOptionValues& values, const ExperimentTrial& trial, const BenchmarkOptions& options,
-      const std::function<bool()>& stopped, JsonValue& detail);
+      const std::function<bool()>& stopped, JsonValue& detail,
+      std::shared_ptr<ModelRuntime>& session, std::shared_ptr<ServeMonitor>& meter, std::string& signature);
   [[nodiscard]] std::string benchmark_json(const ModelCard& card, const ModelOptionValues& values) const;
   void archive_calibration(const CalibrationResult& result, const ModelOptionValues& values, std::string_view label);
   std::map<std::string, std::string, std::less<>> benchmark_status_;

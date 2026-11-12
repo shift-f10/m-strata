@@ -153,6 +153,12 @@ std::string render_sampling_keys(const SamplingParams& sampling, const bool zero
     }
   }
   if (sampling.seed.has_value() && *sampling.seed > 0U) out += " seed=" + std::to_string(*sampling.seed);
+  if (!zero_window_disables) {
+    if (sampling.calibration_pcie_frac && *sampling.calibration_pcie_frac >= 0.0 && *sampling.calibration_pcie_frac <= 1.0)
+      number("pcie_frac", *sampling.calibration_pcie_frac);
+    if (sampling.calibration_spec_min_p && *sampling.calibration_spec_min_p >= 0.0 && *sampling.calibration_spec_min_p <= 1.0)
+      number("spec_min_p", *sampling.calibration_spec_min_p);
+  }
   return out;
 }
 

@@ -39,6 +39,14 @@ Trust boundaries:
 
 ### Explicit calibration benchmarks (2026-11-11)
 
+Quick benchmarks reuse a private calibration runtime. Only Qwen's bounded per-request
+pcie_frac and spec_min_p wire controls are set internally, after profile and fraction
+validation; neither is accepted from client chat JSON. Changing startup settings or
+comparison options retires the old engine before starting another. The runtime is
+stopped on cancellation, failure and completion. A reused runtime's own memory and
+single GPU process are not classified as external interference; host activity,
+thermal flags, additional compute processes, answer checks and noise gates remain.
+
 Manual synthetic workloads disable optional thinking only on profiles accepting per-request
 reasoning control, keeping their bounded output allowance available for the answer. WDDM process
 presence is not treated as evidence of competing compute because its NVIDIA process list includes

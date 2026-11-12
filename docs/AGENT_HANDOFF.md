@@ -281,6 +281,33 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Quick calibration uses one loaded engine (2026-11-12)
+
+Owner rejected the roughly hour-long Quick path. The pinned upstream calibration measures
+PCIe share and draft confidence through one engine, whereas our manual benchmark restarted
+for every measurement. Ordinary Quick now reuses a private runtime and only sweeps Qwen's
+supported bounded per-request controls. Startup-only sweeps are reserved for Thorough; other
+families' Quick runs verify and measure current settings. Previously fresh verified startup
+tuning is retained. Explicit accuracy-tradeoff comparisons can still require restarts in
+either mode, disclosed in the page. Automatic legacy calibration is unchanged.
+
+Same-startup measurements and repetitions reuse the engine in Thorough too; changing startup
+settings or comparison options stops the prior runtime before replacement. Each request resets
+its internal tune values to the current candidate or baseline, and no tuning field is accepted
+from client chat JSON. Answer, variation, confirmation, cancellation, budget, identity and
+thermal checks remain. The reused runtime's own allocation and GPU process are accounted for;
+additional compute processes and host activity remain interference signals. Resume identity
+is versioned. Reused measurements are marked and do not claim repeated cold loads.
+
+RED: disabling reuse produced three engine starts and failed the new single-load assertions.
+GREEN: 8 calibration integration cases, 42 planner/workload/protocol cases and 4 UI checks pass.
+Integration covers live Qwen GEN tuning, one engine across baseline/candidates/confirmation,
+retained prior startup tuning, failed quality, cancellation/resume, comparison non-application
+and runtime changes. Fixture setup now reports its prior ignored DPAPI failure explicitly;
+native integration tests run outside the sandbox for Windows DPAPI support. The native Release
+build passes warnings-as-errors. No full real-model duration is claimed. Installation pending
+owner closure of the app; the owner launches the installed runtime.
+
 ### Fresh frontend package rebuild, owner launches (2026-11-12)
 
 Owner reported the desktop window's generic server-start failure and requested a fresh compile

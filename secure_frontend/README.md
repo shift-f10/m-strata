@@ -2248,6 +2248,15 @@ Tools checks two function calls in both JSON and streamed responses; no tool is 
 Custom prompts are explicit, kept in memory only, and receive structural checks rather than
 semantic accuracy certification. Ordinary automatic calibration remains compatible.
 
+Ordinary Quick benchmarks load one engine and reuse it for every measurement and
+confirmation. Qwen's PCIe share and draft-confidence candidates use the engine's
+per-request controls; settings requiring an engine restart are listed as skipped.
+For other families, Quick verifies and measures the current settings. Thorough
+includes startup-setting sweeps, reusing the engine while startup settings remain
+the same. Explicit accuracy-tradeoff comparisons can require restarts in either mode.
+The displayed trials count measurements, rather than model loads. Quick still runs
+answer checks and repeated confirmation; its duration includes the initial model load.
+
 Results separate prompt tokens/second, decode tokens/second and time to first token, with
 startup, warm and (Thorough) sustained measurements. Repeated/interleaved trials report
 variation; unstable, contaminated, failed or incomplete runs retain the prior result.
