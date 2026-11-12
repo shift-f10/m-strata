@@ -81,6 +81,7 @@ using SweepMeasure = std::function<std::optional<double>(const std::vector<std::
 // candidate below that share of the step's best. A winner other than the defaults is then measured against them in
 // `confirm_rounds` interleaved rounds (defaults, winner, ...; answers as long as its steps' longest) and kept only when
 // its median stays more than `keep_margin` ahead. `cancelled` is asked before every trial.
+[[nodiscard]] std::size_t sweep_trial_upper_bound(const std::vector<SweepStep>& plan, unsigned confirm_rounds = 2U);
 [[nodiscard]] SweepOutcome run_sweep(const std::vector<SweepStep>& plan, const SweepMeasure& measure,
                                      const std::function<void(const SweepProgress&)>& progress,
                                      const std::function<bool()>& cancelled, double keep_margin = 0.03,

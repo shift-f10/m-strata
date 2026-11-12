@@ -23,6 +23,7 @@ struct Fixture {
     std::filesystem::permissions(tool, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
     write(root / "thermal.csv", "0, Not Active, Not Active\n1, Active, Not Active\n");
     write(root / "compute.csv", "12\n34\n");
+    write(root / "driver.csv", "0, TCC\n1, TCC\n");
   }
   CalibrationGpuSignals sample(std::vector<unsigned> gpus = {0}, int milliseconds = 2000) const {
     return sample_calibration_gpu_with_tool(tool, gpus, std::chrono::milliseconds{milliseconds});
@@ -40,6 +41,12 @@ void thermal_flags_and_selected_devices() {
   expect(f.sample().thermal_throttled == true, "hardware thermal Active is detected");
   write(f.root / "compute.csv", "");
   expect(f.sample().compute_processes == 0U, "successful empty compute query means no active processes");
+#if defined(_WIN32)
+  write(f.root / "driver.csv", "0, WDDM\n1, TCC\n");
+  write(f.root / "compute.csv", "12\n34\n");
+  expect(!f.sample().compute_processes, "WDDM desktop process presence does not prove competing compute");
+  expect(f.sample({1}).compute_processes == 2U, "selected TCC GPU retains reliable compute checks");
+#endif
 }
 void unavailable_and_malformed_fields() {
   Fixture f;
@@ -81,10 +88,11 @@ int fake_tool(int argc, char** argv) {
   if (argc < 3 || argc > 4 || std::string_view{argv[2]} != "--format=csv,noheader,nounits") return 9;
   const std::string_view query{argv[1]};
   const bool thermal = query == "--query-gpu=index,clocks_event_reasons.sw_thermal_slowdown,clocks_event_reasons.hw_thermal_slowdown";
-  if (!thermal && query != "--query-compute-apps=pid") return 9;
+  const bool driver = query == "--query-gpu=index,driver_model.current";
+  if (!thermal && !driver && query != "--query-compute-apps=pid") return 9;
   if (argc == 4 && (thermal || (std::string_view{argv[3]} != "--id=0" && std::string_view{argv[3]} != "--id=1"))) return 9;
   const auto mode = read("mode");
-  std::cout << read(thermal ? "thermal.csv" : "compute.csv") << std::flush;
+  std::cout << read(thermal ? "thermal.csv" : driver ? "driver.csv" : "compute.csv") << std::flush;
   if (mode == "hang") std::this_thread::sleep_for(std::chrono::seconds(10));
   return mode == "fail" ? 7 : 0;
 }

@@ -281,6 +281,50 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Calibration trial counts from startup (2026-11-12)
+
+Manual quick/thorough benchmarks now publish their planned upper bound before expensive identity
+checks and publish the current trial before model loading/measurement. Completion counts are
+published even when the first trial fails. Legacy sweeps initialize counts before preparation;
+MiniMax includes its prompt-reading calibration as the first counted operation. Adaptive counts
+are labelled "up to" because later candidates may be skipped. Regression coverage checks quick
+and thorough counts from inside the first measurement and after first-trial failure. Final
+experiment suite and both calibration UI checks pass. RED runtime attempt was blocked by Windows
+Application Control; no policy was bypassed. Native Release build passes warnings-as-errors.
+The new server's --help launch succeeds; the workload test executable remains OS-blocked.
+Installation is pending app closure; the running calibration has not been interrupted.
+
+### Manual calibration functional corrections (2026-11-12)
+
+The owner's manual chat benchmark stopped after one trial, before inference. Its private
+summary reports workload rendering/prompt-limit rejection, not measured quality or speed.
+The UI now displays a failed summary's reason immediately; request-schema and generation-plan
+rejections retain their bounded diagnostic instead of collapsing to the generic workload message.
+The exact original three-second rendering rejection was not reproduced with copied card state:
+both native and embedded selections reached engine startup in an isolated development-key server.
+Real-model testing exposed two additional blockers. With optional thinking enabled, the short
+answer budget was consumed by reasoning and the performance workload returned no visible content.
+Synthetic requests now explicitly disable optional thinking only when the selected profile's
+schema supports that request field; incompatible profiles receive no override. Real embedded-
+template trial acceptance changed from quality_failed to quality_pass=true. Resume identity is
+versioned so old workload checkpoints cannot be reused with these changed requests.
+
+Ruling: memory consumed after the benchmark loads its own model is not proof of external
+interference. Low post-load headroom remains reported; pre-existing memory pressure still
+contaminates. Existing tests retain their assertions and add both cases. Windows WDDM's
+compute-process list includes ordinary desktop graphics processes; counts are now accepted only
+for selected TCC devices. WDDM/unknown mode reports compute-interference telemetry unavailable,
+with no claim that interference is absent. Host activity and actual thermal flags remain checked.
+
+Proof: UI RED against prior source, both UI checks GREEN. Initial direct-answer workload regression
+executable passed. Later workload executable and the final server were blocked by Windows
+Application Control, including an elevated launch; no policy was bypassed. Final native server
+and affected tests compile with warnings-as-errors. Thermal regression suite initially had two
+timeout-sensitive failures; isolated case and the unchanged full suite then passed. The final
+functional runtime is NOT installed or represented as end-to-end validated. The prior installation
+remains intact. Diagnostic servers and their model children were stopped. Full stable calibration
+acceptance with both templates remains to be verified after the OS permits the rebuilt executable.
+
 ### 2026-11-11 z101 (Windows box; owner-directed)
 
 z100's gap closed: the owner PC's guard (local, `.git/hooks/identifying_guard.py`; the copy before it kept beside it,

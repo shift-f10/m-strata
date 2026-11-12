@@ -1740,7 +1740,7 @@
     var calibrating = cardsOf(d).filter(function (card) { return card.state === "calibrating"; });
     if (calibrating.length) {
       var run = calibrating[0].calibration && calibrating[0].calibration.running;
-      return "Calibrating " + calibrating[0].name + (run && run.trials ? DOT + "trial " + run.trial + " of " + run.trials : "");
+      return "Calibrating " + calibrating[0].name + (run && run.trials ? DOT + "trial " + run.trial + " of up to " + run.trials : "");
     }
     if (launcherStarting(d)) {
       var seconds = launcher.startedAt ? Math.max(0, Math.round((Date.now() - launcher.startedAt) / 1000)) : 0;
@@ -1910,6 +1910,9 @@
       box.appendChild(el("p", "small", (e.paused ? "Paused" : "Benchmark") + DOT + String(e.mode || "Unknown mode") + DOT + String(e.workload || "Unknown workload")));
       if (e.outcome) { box.appendChild(el("p", "small", outcomes[e.outcome] || "Outcome: " + String(e.outcome))); }
       if (e.error) { var error = el("p", "msg-error", String(e.error)); error.setAttribute("role", "alert"); box.appendChild(error); }
+      if (e.summary && e.summary.reason && e.summary.status !== "passed") {
+        box.appendChild(el("p", "msg-error", "Trial stopped: " + String(e.summary.reason)));
+      }
       if (e.noisy === true) { box.appendChild(el("p", "small", "Noisy measurements: variation was too high for a stable conclusion.")); }
       var progress = el("p", "small");
       progress.setAttribute("aria-live", "polite");
@@ -1998,7 +2001,7 @@
     }
     if (cal.running) {
       var run = cal.running;
-      return "Measuring the engine's settings: trial " + run.trial + " of " + run.trials + (run.stage ? " (" + run.stage + ")" : "") +
+      return "Measuring the engine's settings: " + (run.trials > 0 ? "trial " + run.trial + " of up to " + run.trials : "preparing calibration") + (run.stage ? " (" + run.stage + ")" : "") +
              (typeof run.best_tok_s === "number" ? DOT + "best so far " + fmt(run.best_tok_s, 1) + " tok/s" : "") +
              ". Each trial is one start of the engine; the chat is unavailable meanwhile.";
     }

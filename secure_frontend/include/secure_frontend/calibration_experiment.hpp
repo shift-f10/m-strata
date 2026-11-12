@@ -46,6 +46,7 @@ struct ExperimentTrial final {
   unsigned replicate{0U};
   std::size_t ordinal{0U};
 };
+[[nodiscard]] std::size_t experiment_trial_upper_bound(const ExperimentPlan& plan);
 struct ExperimentSample final {
   double tok_s{0.0};
   bool quality_ok{true};

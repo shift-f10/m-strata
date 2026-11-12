@@ -335,11 +335,17 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
   // Replace measure_benchmark's counter lambda with this. Mirrors ChatRoute's
   // reasoning resolution and required/named client-tool prefill. The generated
   // workload is text-only, contains no history, and disables server search.
+  std::string workload_error;
   const auto counter =
       [&](std::string_view body) -> std::optional<std::size_t> {
     const auto parsed = parse_chat_request(body, model->chat.schema);
     const auto* request = std::get_if<ChatCompletionRequest>(&parsed);
-    if (!request) return std::nullopt;
+    if (!request) {
+      const auto& rejected = std::get<ChatRequestError>(parsed);
+      workload_error = "Benchmark request rejected";
+      if (!rejected.param.empty()) workload_error += ": " + std::string{rejected.param};
+      return std::nullopt;
+    }
     const auto& chat = model->chat;
     const std::optional<std::string> effort_word =
         request->reasoning_effort || !request->json_object ||
@@ -416,6 +422,7 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
           chat.embedded_template.get());
     }
     const auto* selected = std::get_if<ChatGenerationPlan>(&plan);
+    if (!selected) workload_error = std::get<ChatGenerationPlanError>(plan).message;
     return selected
                ? std::optional<std::size_t>{selected->prompt_token_ids.size()}
                : std::nullopt;
@@ -428,12 +435,12 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
       model->chat.max_prompt_tokens,
       std::min<std::size_t>(trial.max_tokens,
                             model->chat.max_completion_tokens),
-      options.custom_prompt};
+      options.custom_prompt,
+      model->chat.schema.per_request_reasoning_effort};
   auto made = build_calibration_workload(request, counter);
   auto* cases = std::get_if<std::vector<CalibrationCase>>(&made);
   if (!cases)
-    return fail(
-        "The workload does not fit this model's prompt limits or template");
+    return fail(workload_error.empty() ? std::get<std::string>(made) : workload_error);
   if (options.memory_probe) {
     auto probe = build_calibration_memory_probe(request, counter);
     if (auto* c = std::get_if<CalibrationCase>(&probe))
@@ -652,6 +659,21 @@ bool ModelLauncher::run_benchmark(const Job& job) {
         else if (const auto* d = v.if_decimal())
           base_values[std::string{spec.name}] = *d;
       }
+  bool preparing_mtp = true;
+  if (const auto it = base_values.find("mtp"); it != base_values.end())
+    if (const auto* b = std::get_if<bool>(&it->second)) preparing_mtp = *b;
+  auto preparing_plan = make_experiment_plan(card.profile, machine_, options,
+      card_draft(settings_.main, card, base_values), preparing_mtp);
+  if (options.compare_speed) {
+    preparing_plan.steps.clear();
+    for (const auto& spec : model_options_for(card.profile))
+      if (spec.accuracy_tradeoff) preparing_plan.steps.push_back({std::string{spec.name}, {"candidate"}, {}, 128, 0});
+  }
+  {
+    std::lock_guard lock(mutex_);
+    if (calibrating_) calibrating_->progress = SweepProgress{
+        "preparing", 1U, experiment_trial_upper_bound(preparing_plan), std::nullopt};
+  }
   const auto base_key = calibration_key(card, base_values);
   auto fast_values=base_values;
   fast_values["speed_fast_math"]=true;
@@ -659,7 +681,7 @@ bool ModelLauncher::run_benchmark(const Job& job) {
       ? calibration_key(card,fast_values).runtime : std::string{};
   CalibrationResult identity_record{card.name, {}, 0, 0, "", false, base_key};
   const auto identity = to_hex(
-      sha256(render_calibration(identity_record) +
+      sha256("benchmark-workload-v2-direct-answers\n" + render_calibration(identity_record) +
              render_remembered_options({{card.name, base_values}}) +
              workload_name(options.workload) +
              (options.mode == BenchmarkMode::thorough ? "thorough" : "quick") +
@@ -675,6 +697,7 @@ bool ModelLauncher::run_benchmark(const Job& job) {
        {"notes",
         strings({"Quality gates check these tasks only; they do not certify "
                  "general answer accuracy.",
+                 "Synthetic requests disable optional thinking when the selected model supports it, so the answer budget measures visible output.",
                  "No conversation text or generated answers are saved."})}});
   const auto summary_file = artifact(card.name, "summary"),
              checkpoint_file = artifact(card.name, "checkpoint");
@@ -828,7 +851,7 @@ bool ModelLauncher::run_benchmark(const Job& job) {
     std::lock_guard lock(mutex_);
     if (calibrating_)
       calibrating_->progress = SweepProgress{
-          p.stage, p.completed + 1, p.trials_upper_bound, p.best_tok_s};
+          p.stage, std::min(p.completed + 1, p.trials_upper_bound), p.trials_upper_bound, p.best_tok_s};
   };
   ExperimentOutcome outcome;
   if (error.empty())

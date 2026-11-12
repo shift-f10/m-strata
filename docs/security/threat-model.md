@@ -39,6 +39,13 @@ Trust boundaries:
 
 ### Explicit calibration benchmarks (2026-11-11)
 
+Manual synthetic workloads disable optional thinking only on profiles accepting per-request
+reasoning control, keeping their bounded output allowance available for the answer. WDDM process
+presence is not treated as evidence of competing compute because its NVIDIA process list includes
+desktop graphics contexts; this signal is explicitly unavailable on WDDM or unknown driver mode.
+Post-load memory pressure is reported, while pre-existing pressure still invalidates a trial.
+The benchmark's own model allocation does not by itself establish external interference.
+
 Manual benchmark and restore operations use the existing authenticated model-management routes
 and client policy. Only calibration accepts a larger (128 KiB) request body; schema limits keep
 custom prompts to 16 KiB, labels to 64 printable ASCII characters, and budgets to one day.

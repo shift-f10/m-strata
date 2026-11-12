@@ -153,6 +153,15 @@ ExperimentPlan make_experiment_plan(const EngineProfile profile, const SweepMach
   return plan;
 }
 
+std::size_t experiment_trial_upper_bound(const ExperimentPlan& plan) {
+  const unsigned repeats = plan.mode == BenchmarkMode::thorough ? 3U : 2U;
+  const unsigned initial = plan.mode == BenchmarkMode::thorough ? 3U : 1U;
+  std::size_t count = initial + 2U * repeats;
+  for (const auto& step : plan.steps)
+    count += (step.values.size() + 2U) * repeats * (plan.mode == BenchmarkMode::thorough ? 2U : 1U);
+  return std::min(count, kMaximumTrials);
+}
+
 ExperimentOutcome run_experiment(const ExperimentPlan& plan, const BenchmarkOptions& options, const ExperimentMeasure& measure,
     const std::function<void(const ExperimentProgress&)>& progress, const std::function<bool()>& cancelled,
     const std::function<double()>& elapsed_seconds) {
@@ -168,10 +177,7 @@ ExperimentOutcome run_experiment(const ExperimentPlan& plan, const BenchmarkOpti
   };
   const unsigned repeats = options.mode == BenchmarkMode::thorough ? 3U : 2U;
   const unsigned initial_repeats = options.mode == BenchmarkMode::thorough ? 3U : 1U;
-  std::size_t upper_bound = initial_repeats + 2U * repeats;
-  for (const auto& step : plan.steps)
-    upper_bound += (step.values.size() + 2U) * repeats * (options.mode == BenchmarkMode::thorough ? 2U : 1U);
-  upper_bound = std::min(upper_bound, kMaximumTrials);
+  const auto upper_bound = experiment_trial_upper_bound(plan);
   const auto stopped = [&] {
     if (out.end != End::done) return true;
     if (cancelled && cancelled()) out.end = End::cancelled;
@@ -187,6 +193,12 @@ ExperimentOutcome run_experiment(const ExperimentPlan& plan, const BenchmarkOpti
     if (stopped()) return {};
     if (out.records.size() >= kMaximumTrials) { out.end = End::failed; return {}; }
     ExperimentTrial trial{arguments(plan, chosen), tokens, stage, replicate, out.records.size() + 1U};
+    if (progress) {
+      try { progress({stage, out.records.size(), upper_bound,
+                      out.best_tok_s > 0.0 ? std::optional<double>{out.best_tok_s} : std::nullopt,
+                      elapsed(), 0.0}); }
+      catch (...) { out.end = End::failed; return {}; }
+    }
     std::optional<ExperimentSample> sample;
     try { sample = measure(trial); }
     catch (...) { out.end = End::failed; }
@@ -197,7 +209,6 @@ ExperimentOutcome run_experiment(const ExperimentPlan& plan, const BenchmarkOpti
       else sample.reset();
     }
     out.records.push_back({trial, sample});
-    if (stopped()) return {};
     if (progress) {
       const double seconds = elapsed();
       const auto remaining = upper_bound > out.records.size() ? upper_bound - out.records.size() : 0U;

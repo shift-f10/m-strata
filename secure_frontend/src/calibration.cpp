@@ -290,9 +290,7 @@ bool apply_calibration(FrontendConfigDraft& draft, const std::vector<std::string
   return true;
 }
 
-SweepOutcome run_sweep(const std::vector<SweepStep>& plan, const SweepMeasure& measure,
-                       const std::function<void(const SweepProgress&)>& progress, const std::function<bool()>& cancelled,
-                       const double keep_margin, const unsigned confirm_rounds) {
+std::size_t sweep_trial_upper_bound(const std::vector<SweepStep>& plan, const unsigned confirm_rounds) {
   constexpr unsigned kDefaultTokens = 128U;
   // every candidate, plus a measurement of the best so far wherever a step's answers are of another length
   std::size_t trials = 1U + 2U * confirm_rounds;
@@ -301,6 +299,14 @@ SweepOutcome run_sweep(const std::vector<SweepStep>& plan, const SweepMeasure& m
     trials += step.values.size() + (step.max_tokens != tokens_seen ? 1U : 0U);
     tokens_seen = step.max_tokens;
   }
+  return trials;
+}
+
+SweepOutcome run_sweep(const std::vector<SweepStep>& plan, const SweepMeasure& measure,
+                       const std::function<void(const SweepProgress&)>& progress, const std::function<bool()>& cancelled,
+                       const double keep_margin, const unsigned confirm_rounds) {
+  constexpr unsigned kDefaultTokens = 128U;
+  auto trials = sweep_trial_upper_bound(plan, confirm_rounds);
   std::size_t trial = 0;
   std::optional<double> best_seen;
   // One trial: asked to stop first; nullopt for a cancel (the outcome says so) or a failed start.

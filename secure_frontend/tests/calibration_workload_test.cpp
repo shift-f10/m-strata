@@ -44,6 +44,14 @@ void fixed_workloads_have_known_answers_and_real_token_counts() {
     }
     if (kind == BenchmarkWorkload::tools) expect(cases->size() == 2U && !cases->front().stream && cases->back().stream, "tools cover both modes");
     else expect(performance && known_answer, "standard workloads separate representative performance from known-answer quality");
+    input.disable_thinking = true;
+    const auto direct = build_calibration_workload(input, counter);
+    const auto* direct_cases = std::get_if<std::vector<CalibrationCase>>(&direct);
+    expect(direct_cases != nullptr, "thinking-controllable profiles build workloads");
+    if (direct_cases) for (const auto& test : *direct_cases)
+      expect(test.request_body.find("\"reasoning_effort\":\"none\"") != std::string::npos,
+             "benchmark answer budget cannot be consumed by optional thinking");
+    input.disable_thinking = false;
   }
 }
 void memory_probe_reports_partial_coverage_and_honors_limits() {
@@ -115,6 +123,11 @@ void host_diagnostics_distinguish_busy_baseline_and_thermal_evidence() {
   expect(result.contaminated && !result.flags.empty(), "pretrial CPU activity and RAM pressure flagged");
   before.sample.cpu_percent = 0.0; after.sample.memory = MemoryReading{50, 100};
   expect(!calibration_host_diagnostics(before, after, now).contaminated, "busy measured GPU and high temperature alone do not prove competing activity or throttling");
+  after.sample.gpu->mem_used_bytes = 99U;
+  expect(!calibration_host_diagnostics(before, after, now).contaminated, "model-owned VRAM allocation alone is not competing activity");
+  before.sample.gpu = after.sample.gpu;
+  expect(calibration_host_diagnostics(before, after, now).contaminated, "pre-existing GPU memory pressure remains contamination");
+  before.sample.gpu.reset();
   before.sample.cpu_percent = 80.0;
   after.sampled_at = now + std::chrono::minutes(2);
   expect(calibration_host_diagnostics(before, after, after.sampled_at, now).contaminated,

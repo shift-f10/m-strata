@@ -144,6 +144,10 @@ const startModel = () => { throw new Error("restore must not restart model"); };
   card.calibration.experiment = {history: card.calibration.experiment.history};
   renderCalibration(card, false);
   assert.doesNotMatch(text(report), /Unknown mode/, "legacy history alone is not presented as an unavailable benchmark");
+  renderCalibrationExperiment(card, {outcome: "not_applied", mode: "quick", workload: "chat",
+    summary: {status: "failed", reason: "Benchmark request rejected: max_tokens"}});
+  assert.ok(report.children.some(n => n.textContent === "Trial stopped: Benchmark request rejected: max_tokens"),
+    "the failure reason is visible without expanding trial details");
   renderCalibration({name: "another", calibration: {state: "missing"}}, false);
   assert.equal($("calibration-custom").value, "", "switching card clears custom input");
   assert.equal($("calibration-manual-enabled").checked, false);

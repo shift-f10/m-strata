@@ -38,10 +38,10 @@ void experiment_plan_explains_fixed_and_inactive_settings() {
   BenchmarkOptions quick;
   auto thorough = quick; thorough.mode = BenchmarkMode::thorough;
   const SweepMachine machine{24U, 12U};
-  const auto small = make_experiment_plan(EngineProfile::qwen, machine, quick, {}, true);
+  const auto quick_plan = make_experiment_plan(EngineProfile::qwen, machine, quick, {}, true);
   const auto full = make_experiment_plan(EngineProfile::qwen, machine, thorough, {}, true);
   const auto count = [](const auto& plan) { std::size_t n = 0; for (const auto& step : plan.steps) n += step.values.size(); return n; };
-  expect(count(small) < count(full) && count(small) > 0, "quick plan has fewer meaningful candidates");
+  expect(count(quick_plan) < count(full) && count(quick_plan) > 0, "quick plan has fewer meaningful candidates");
   FrontendConfigDraft fixed;
   fixed.entries["engine.args"] = {std::vector<std::string>{"--pcie-frac=0.25", "--adapt-swaps", "80"}, ConfigSource::file};
   const auto filtered = make_experiment_plan(EngineProfile::qwen, machine, thorough, fixed, false);
@@ -124,10 +124,28 @@ void quality_contamination_noise_and_comparison_gate_application() {
          typed_comparison.args == std::vector<std::string>{"option:speed_fast_math", "true"},
          "typed controller comparison plans report options without applying them");
 }
+void progress_is_available_before_measurement_and_after_failure() {
+  for (const auto mode : {BenchmarkMode::quick, BenchmarkMode::thorough}) {
+    BenchmarkOptions options; options.mode = mode;
+    ExperimentPlan plan; plan.mode = mode;
+    std::optional<ExperimentProgress> latest;
+    const auto outcome = run_experiment(plan, options,
+        [&](const ExperimentTrial& trial) -> std::optional<ExperimentSample> {
+          expect(latest && latest->completed + 1U == trial.ordinal,
+                 "trial count published before loading or measurement begins");
+          expect(latest && latest->trials_upper_bound == experiment_trial_upper_bound(plan) && latest->trials_upper_bound > 0U,
+                 "quick and thorough publish their planned count before the first trial");
+          return std::nullopt;
+        }, [&](const ExperimentProgress& progress) { latest = progress; });
+    expect(outcome.end == ExperimentOutcome::End::failed, "failed measurement remains failed");
+    expect(latest && latest->completed == 1U, "failed first trial still reports its completed count");
+  }
+}
 }  // namespace
 
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
+      {"progress_is_available_before_measurement_and_after_failure", progress_is_available_before_measurement_and_after_failure},
       {"benchmark_options_are_strict_and_bounded", benchmark_options_are_strict_and_bounded},
       {"experiment_plan_explains_fixed_and_inactive_settings", experiment_plan_explains_fixed_and_inactive_settings},
       {"thorough_revisits_combinations_and_confirms", thorough_revisits_combinations_and_confirms},

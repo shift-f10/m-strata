@@ -132,6 +132,27 @@ CalibrationGpuSignals sample_calibration_gpu_with_tool(const std::filesystem::pa
   const auto deadline = Clock::now() + std::min(timeout, std::chrono::milliseconds{10000});
   if (const auto lines = query(*tool, kThermalQuery, std::nullopt, deadline)) result.thermal_throttled = thermal_reading(*lines, selected);
   if (!result.thermal_throttled) result.notes.emplace_back("Thermal slowdown telemetry unavailable; temperature alone is not evidence of throttling.");
+#if defined(_WIN32)
+  // WDDM's compute-apps list also includes desktop graphics contexts. Presence
+  // in that list alone cannot establish competing computation.
+  const auto models = query(*tool, "--query-gpu=index,driver_model.current", std::nullopt, deadline);
+  std::set<unsigned> seen_models;
+  bool compute_reliable = models.has_value();
+  if (models) for (const auto& line : *models) {
+    const auto row = fields(line);
+    unsigned index = 0;
+    if (row.size() != 2U || !unsigned_number(row[0], index) || index > 255U || !seen_models.insert(index).second) {
+      compute_reliable = false; break;
+    }
+    if ((selected.empty() || indices.contains(index)) && row[1] != "TCC") compute_reliable = false;
+  }
+  if (seen_models.empty()) compute_reliable = false;
+  for (const auto index : selected) if (!seen_models.contains(index)) compute_reliable = false;
+  if (!compute_reliable) {
+    result.notes.emplace_back("Competing GPU computation unavailable: Windows graphics contexts cannot be distinguished reliably from compute processes.");
+    return result;
+  }
+#endif
   std::set<std::uint32_t> processes;
   bool compute_valid = true;
   if (selected.empty()) {

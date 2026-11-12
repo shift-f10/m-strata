@@ -58,7 +58,7 @@ bool valid(const CalibrationWorkloadRequest& r, const CalibrationTokenCounter& c
 std::string body(const CalibrationWorkloadRequest& r, std::string_view prompt, bool stream, bool tools = false) {
   return "{\"model\":" + quote(r.model) + ",\"messages\":[{\"role\":\"user\",\"content\":" + quote(prompt) +
       "}],\"strata_search\":false,\"temperature\":0,\"max_tokens\":" + std::to_string(r.max_completion_tokens) + ",\"stream\":" +
-      (stream ? "true" : "false") + (tools ? ",\"tools\":" + std::string(kTools) +
+      (stream ? "true" : "false") + (r.disable_thinking ? ",\"reasoning_effort\":\"none\"" : "") + (tools ? ",\"tools\":" + std::string(kTools) +
       ",\"tool_choice\":\"required\",\"parallel_tool_calls\":true" : "") + "}";
 }
 bool measure(CalibrationCase& test, const CalibrationWorkloadRequest& r, const CalibrationTokenCounter& count) {
@@ -351,14 +351,14 @@ CalibrationHostDiagnostics calibration_host_diagnostics(const std::optional<Moni
     if (s.memory && s.memory->total_bytes > 0U && s.memory->used_bytes <= s.memory->total_bytes) {
       const double free = 100.0 * static_cast<double>(s.memory->total_bytes - s.memory->used_bytes) / static_cast<double>(s.memory->total_bytes);
       out.ram_headroom_percent = out.ram_headroom_percent ? std::min(*out.ram_headroom_percent, free) : free;
-      if (free < 5.0) flag("ram_pressure", true);
+      if (free < 5.0) flag("ram_pressure", snapshot == &before);
     }
     if (s.gpu) {
       const auto& g = *s.gpu;
       if (g.mem_total_bytes && g.mem_used_bytes && *g.mem_total_bytes > 0U && *g.mem_used_bytes <= *g.mem_total_bytes) {
         const double free = 100.0 * static_cast<double>(*g.mem_total_bytes - *g.mem_used_bytes) / static_cast<double>(*g.mem_total_bytes);
         out.gpu_headroom_percent = out.gpu_headroom_percent ? std::min(*out.gpu_headroom_percent, free) : free;
-        if (free < 5.0) flag("gpu_memory_pressure", true);
+        if (free < 5.0) flag("gpu_memory_pressure", snapshot == &before);
       }
       if (g.temp_c && std::isfinite(*g.temp_c) && *g.temp_c >= 85.0) flag("high_gpu_temperature_throttling_unconfirmed", false);
     }

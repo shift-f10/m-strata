@@ -21,6 +21,7 @@ struct CalibrationWorkloadRequest final {
   std::size_t max_prompt_tokens{8192U};
   std::size_t max_completion_tokens{256U};
   std::string custom_prompt;
+  bool disable_thinking{false}; // Only when the selected profile accepts per-request reasoning.
 };
 struct CalibrationCase final {
   std::string id;

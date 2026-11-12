@@ -1478,14 +1478,15 @@ bool ModelLauncher::run_calibration(const Job& job) {
       return false;
     }
     status_[job.card] = CardStatus{CardState::calibrating, {}};
-    calibrating_ = CalibrationRun{job.card, {}};
+    calibrating_ = CalibrationRun{job.card, SweepProgress{"preparing", 1U,
+        sweep_trial_upper_bound(sweep_plan(card.profile, machine_)) + (card.profile == EngineProfile::minimax ? 1U : 0U), std::nullopt}};
     calibration_errors_.erase(card.name);
   }
   // MiniMax: Maya's --calibrate measures its prompt reading first (the engine keeps it in the pack; the sweep's starts read it)
   if (card.profile == EngineProfile::minimax) {
     {
       std::lock_guard lock(mutex_);
-      calibrating_->progress = SweepProgress{"prompt reading", 0U, 0U, std::nullopt};
+      calibrating_->progress.stage = "prompt reading";
     }
     (void)run_prefill_calibration(job);
   }
@@ -1512,7 +1513,13 @@ bool ModelLauncher::run_calibration(const Job& job) {
       [this, &card](const SweepProgress& progress) {
         {
           std::lock_guard lock(mutex_);
-          if (calibrating_.has_value()) calibrating_->progress = progress;
+          if (calibrating_.has_value()) {
+            calibrating_->progress = progress;
+            if (card.profile == EngineProfile::minimax) {
+              ++calibrating_->progress.trial;
+              ++calibrating_->progress.trials;
+            }
+          }
         }
         log("[strata] models: " + card.name + ": calibration trial " + std::to_string(progress.trial) + "/" +
             std::to_string(progress.trials) + " (" + progress.stage + ")");
