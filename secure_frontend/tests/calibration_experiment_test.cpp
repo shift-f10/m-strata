@@ -57,9 +57,54 @@ void experiment_plan_explains_fixed_and_inactive_settings() {
   expect(std::none_of(glm.steps.begin(), glm.steps.end(), [](const auto& step) { return step.flag == "glm.pcie_share"; }), "fixed environment-backed row skipped");
 }
 
-void thorough_revisits_combinations_and_confirms() {
-  const ExperimentPlan plan{{{"--cpu-threads", {"2", "4"}}, {"--pcie-frac", {"0.25", "0.5"}}}, {}, BenchmarkMode::thorough, 0.03};
+void thorough_work_is_bounded_by_reference_calibrators() {
   BenchmarkOptions options; options.mode = BenchmarkMode::thorough;
+  const SweepMachine machine{24U, 12U};
+  FrontendConfigDraft fixed;
+  fixed.entries["engine.args"] = {std::vector<std::string>{"--spec-min-p", "0.5"}, ConfigSource::file};
+  const auto qwen = make_experiment_plan(EngineProfile::qwen, machine, options, fixed, true);
+  // Strata: seven PCIe values x3, four worker configurations x2,
+  // three adaptive configurations x2, and six live confirmations.
+  expect(experiment_trial_upper_bound(qwen) <= 41U, "Thorough does not multiply Strata's measurement schedule");
+  const auto screened = run_experiment(qwen, options, [](const ExperimentTrial&) -> std::optional<ExperimentSample> {
+    return ExperimentSample{100.0};
+  });
+  expect(screened.end == ExperimentOutcome::End::done && screened.records.size() <= experiment_trial_upper_bound(qwen),
+         "the executed search respects its reference-sized bound");
+  expect(std::none_of(screened.records.begin(), screened.records.end(), [](const auto& r) { return r.trial.stage.starts_with("refining"); }),
+         "Thorough does not run the extra combination-refinement pass");
+  expect(std::count_if(screened.records.begin(), screened.records.end(), [](const auto& r) { return r.trial.stage == "--pcie-frac"; }) == 21,
+         "Strata live candidates receive their three reference rounds");
+  expect(std::count_if(screened.records.begin(), screened.records.end(), [](const auto& r) { return r.trial.stage == "--pool-workers"; }) == 6,
+         "Strata restart candidates receive two reference measurement groups");
+  const auto glm = make_experiment_plan(EngineProfile::glm53, machine, options, {}, true);
+  // Maya GLM: own baseline, five shares, five thread settings, six confirmations.
+  expect(experiment_trial_upper_bound(glm) <= 17U, "Thorough respects Maya GLM's mapped-control schedule");
+  const auto startup = make_experiment_plan(EngineProfile::gemma4, machine, options, {}, true);
+  const auto confirmed = run_experiment(startup, options, [](const ExperimentTrial& trial) -> std::optional<ExperimentSample> {
+    return ExperimentSample{trial.args.empty() ? 100.0 : 120.0};
+  });
+  std::string previous;
+  unsigned blocks = 0, baseline_samples = 0, winner_samples = 0;
+  for (const auto& record : confirmed.records) if (record.trial.stage.starts_with("confirming-")) {
+    if (record.trial.stage != previous) { ++blocks; previous = record.trial.stage; }
+    if (record.trial.stage == "confirming-baseline") ++baseline_samples; else ++winner_samples;
+  }
+  expect(blocks == 3U && baseline_samples == 3U && winner_samples == 3U && confirmed.apply_allowed,
+         "startup confirmations retain all samples with three engine-setting blocks instead of six");
+  const auto maximum = parse_benchmark_options(json(R"({"mode":"maximum","budget_seconds":6000})"));
+  const auto* max_options = std::get_if<BenchmarkOptions>(&maximum);
+  expect(max_options != nullptr, "the exhaustive search is available explicitly as Maximum");
+  if (max_options) {
+    expect(max_options->budget_seconds == 6000U, "mode does not impose a new time cap");
+    const auto exhaustive = make_experiment_plan(EngineProfile::qwen, machine, *max_options, fixed, true);
+    expect(experiment_trial_upper_bound(exhaustive) > experiment_trial_upper_bound(qwen), "Maximum preserves the extra search work");
+  }
+}
+
+void maximum_revisits_combinations_and_confirms() {
+  const ExperimentPlan plan{{{"--cpu-threads", {"2", "4"}}, {"--pcie-frac", {"0.25", "0.5"}}}, {}, BenchmarkMode::maximum, 0.03};
+  BenchmarkOptions options; options.mode = BenchmarkMode::maximum;
   std::size_t refined = 0;
   const auto result = run_experiment(plan, options, [&](const ExperimentTrial& trial) -> std::optional<ExperimentSample> {
     if (trial.stage.starts_with("refining")) ++refined;
@@ -68,7 +113,7 @@ void thorough_revisits_combinations_and_confirms() {
                          threads == "4" ? 95 : share == "0.25" ? 110 : share == "0.5" ? 105 : threads == "2" ? 101 : 100;
     return ExperimentSample{score};
   });
-  expect(result.end == ExperimentOutcome::End::done && result.apply_allowed && !result.noisy && refined > 0U, "thorough refinement completes safely");
+  expect(result.end == ExperimentOutcome::End::done && result.apply_allowed && !result.noisy && refined > 0U, "maximum refinement completes safely");
   expect(result.args == std::vector<std::string>{"--cpu-threads", "2", "--pcie-frac", "0.25"} && result.best_tok_s == 140 &&
          result.baseline_tok_s == 100, "second pass discovers the interaction missed by one sequential sweep");
   expect(std::count_if(result.records.begin(), result.records.end(), [](const auto& record) { return record.trial.stage == "confirming-winner"; }) == 3,
@@ -156,7 +201,7 @@ void stable_baseline_survives_a_noisy_candidate() {
 }
 
 void progress_is_available_before_measurement_and_after_failure() {
-  for (const auto mode : {BenchmarkMode::quick, BenchmarkMode::thorough}) {
+  for (const auto mode : {BenchmarkMode::quick, BenchmarkMode::thorough, BenchmarkMode::maximum}) {
     BenchmarkOptions options; options.mode = mode;
     ExperimentPlan plan; plan.mode = mode;
     std::optional<ExperimentProgress> latest;
@@ -180,7 +225,8 @@ int main(int argc, char** argv) {
       {"stable_baseline_survives_a_noisy_candidate", stable_baseline_survives_a_noisy_candidate},
       {"benchmark_options_are_strict_and_bounded", benchmark_options_are_strict_and_bounded},
       {"experiment_plan_explains_fixed_and_inactive_settings", experiment_plan_explains_fixed_and_inactive_settings},
-      {"thorough_revisits_combinations_and_confirms", thorough_revisits_combinations_and_confirms},
+      {"thorough_work_is_bounded_by_reference_calibrators", thorough_work_is_bounded_by_reference_calibrators},
+      {"maximum_revisits_combinations_and_confirms", maximum_revisits_combinations_and_confirms},
       {"budgets_and_cancellation_never_expose_partial_winners", budgets_and_cancellation_never_expose_partial_winners},
       {"quality_contamination_noise_and_comparison_gate_application", quality_contamination_noise_and_comparison_gate_application}}, failures);
 }

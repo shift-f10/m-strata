@@ -303,8 +303,8 @@
             <fieldset id="calibration-manual-fields" class="calibration-manual-fields" disabled>
               <legend class="st-label">Manual benchmark settings</legend>
               <div class="st-field"><label class="st-label" for="calibration-mode">Mode</label>
-                <select id="calibration-mode" class="st-input"><option value="quick">Quick</option><option value="thorough">Thorough</option></select></div>
-              <p class="muted small calibration-wide">Quick loads the model once, verifies current settings and tunes supported live controls. Thorough also explores settings that require model restarts. Explicit accuracy-tradeoff comparisons can require restarts in either mode.</p>
+                <select id="calibration-mode" class="st-input"><option value="quick">Quick</option><option value="thorough">Thorough</option><option value="maximum">Maximum (exhaustive)</option></select></div>
+              <p class="muted small calibration-wide">Quick loads the model once and tunes supported live controls. Thorough uses upstream-sized candidate sweeps, including startup settings. Maximum adds the exhaustive combination-refinement search and can take much longer. Explicit accuracy-tradeoff comparisons can require restarts in any mode. Your time budget is unchanged.</p>
               <div class="st-field"><label class="st-label" for="calibration-workload">Workload</label>
                 <select id="calibration-workload" class="st-input"><option value="chat">Short chat</option><option value="long_context">Long context</option><option value="coding">Coding</option><option value="tools">Tool calling</option><option value="custom">Custom prompt</option></select></div>
               <div class="st-field"><label class="st-label" for="calibration-budget">Time budget (minutes)</label>

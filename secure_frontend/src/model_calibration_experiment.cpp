@@ -13,6 +13,14 @@
 namespace secure_frontend {
 namespace {
 using J = JsonValue;
+std::string_view benchmark_mode_name(BenchmarkMode mode) {
+  switch (mode) {
+    case BenchmarkMode::quick: return "quick";
+    case BenchmarkMode::thorough: return "thorough";
+    case BenchmarkMode::maximum: return "maximum";
+  }
+  return "quick";
+}
 J string(std::string_view s) { return J::make_string(std::string{s}); }
 J number(double n) { return std::isfinite(n) ? J::make_decimal(n) : J{}; }
 J optional_number(std::optional<double> n) { return n ? number(*n) : J{}; }
@@ -561,7 +569,7 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
   // behavior.
   const auto warm_speed = median_or_null(speeds);
   const auto warm_count = speeds.size();
-  if (options.mode == BenchmarkMode::thorough)
+  if (options.mode != BenchmarkMode::quick)
     for (const auto& c : *cases)
       if (!run_case(c, true))
         return fail("Sustained workload did not complete");
@@ -710,25 +718,25 @@ bool ModelLauncher::run_benchmark(const Job& job) {
       ? calibration_key(card,fast_values).runtime : std::string{};
   CalibrationResult identity_record{card.name, {}, 0, 0, "", false, base_key};
   const auto identity = to_hex(
-      sha256("benchmark-workload-v3-warm-session\n" + render_calibration(identity_record) +
+      sha256("benchmark-workload-v4-reference-schedule\n" + render_calibration(identity_record) +
              render_remembered_options({{card.name, base_values}}) +
              python_json_text(strings(baseline_args)) +
              workload_name(options.workload) +
-             (options.mode == BenchmarkMode::thorough ? "thorough" : "quick") +
+             std::string{benchmark_mode_name(options.mode)} +
              (options.memory_probe ? "memory" : "") +
              (options.compare_speed ? "comparison" : "") +
              comparison_runtime +
              to_hex(sha256(options.custom_prompt))));
   J status = J::make_object(
       {{"mode",
-        string(options.mode == BenchmarkMode::thorough ? "thorough" : "quick")},
+        string(benchmark_mode_name(options.mode))},
        {"workload", string(workload_name(options.workload))},
        {"paused", boolean(false)},
        {"notes",
         strings({"Quality gates check these tasks only; they do not certify "
                  "general answer accuracy.",
                  "Synthetic requests disable optional thinking when the selected model supports it, so the answer budget measures visible output.",
-                 "Quick keeps one engine loaded and tunes only supported live controls. Thorough and explicit accuracy-tradeoff comparisons may restart the engine.",
+                 "Quick keeps one engine loaded and tunes only supported live controls. Thorough, Maximum and explicit accuracy-tradeoff comparisons may restart the engine.",
                  "No conversation text or generated answers are saved."})}});
   const auto summary_file = artifact(card.name, "summary"),
              checkpoint_file = artifact(card.name, "checkpoint");

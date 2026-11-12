@@ -6,6 +6,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <utility>
 
 namespace secure_frontend {
 namespace {
@@ -70,6 +71,15 @@ bool valid_plan(const ExperimentPlan& plan) {
   }
   return true;
 }
+unsigned candidate_repeats(const ExperimentPlan& plan, const SweepStep& step) {
+  if (plan.mode == BenchmarkMode::quick) return 2U;
+  if (plan.mode == BenchmarkMode::maximum || !plan.reference_profile) return 3U;
+  // Strata's live sweeps use three rounds; its restart candidates use two
+  // measured groups. Maya's mapped GLM/CPU candidates screen once, then confirm.
+  if (*plan.reference_profile == EngineProfile::qwen)
+    return step.flag == "--pcie-frac" || step.flag == "--spec-min-p" ? 3U : 2U;
+  return 1U;
+}
 }  // namespace
 
 std::variant<BenchmarkOptions, std::string> parse_benchmark_options(const JsonValue& object) {
@@ -82,8 +92,8 @@ std::variant<BenchmarkOptions, std::string> parse_benchmark_options(const JsonVa
     if (!seen.insert(field.key).second) return std::string{"benchmark contains a repeated field"};
     if (field.key == "mode") {
       const auto* mode = field.value.if_string();
-      if (!mode || (*mode != "quick" && *mode != "thorough")) return std::string{"benchmark.mode must be quick or thorough"};
-      options.mode = *mode == "quick" ? BenchmarkMode::quick : BenchmarkMode::thorough;
+      if (!mode || (*mode != "quick" && *mode != "thorough" && *mode != "maximum")) return std::string{"benchmark.mode must be quick, thorough or maximum"};
+      options.mode = *mode == "quick" ? BenchmarkMode::quick : *mode == "thorough" ? BenchmarkMode::thorough : BenchmarkMode::maximum;
     } else if (field.key == "workload") {
       const auto* workload = field.value.if_string();
       if (!workload) return std::string{"benchmark.workload must name a supported workload"};
@@ -125,6 +135,7 @@ ExperimentPlan make_experiment_plan(const EngineProfile profile, const SweepMach
                                    const FrontendConfigDraft& explicit_config, const bool mtp_available) {
   ExperimentPlan plan;
   plan.mode = options.mode;
+  plan.reference_profile = profile;
   plan.keep_margin = sweep_keep_margin(profile);
   const SweepMachine bounded{std::clamp(machine.logical_cores, 1U, 256U), std::clamp(machine.physical_cores, 1U, 256U)};
   for (auto step : sweep_plan(profile, bounded)) {
@@ -159,11 +170,18 @@ ExperimentPlan make_experiment_plan(const EngineProfile profile, const SweepMach
 }
 
 std::size_t experiment_trial_upper_bound(const ExperimentPlan& plan) {
-  const unsigned repeats = plan.mode == BenchmarkMode::thorough ? 3U : 2U;
-  const unsigned initial = plan.mode == BenchmarkMode::thorough ? 3U : 1U;
+  const unsigned repeats = plan.mode == BenchmarkMode::quick ? 2U : 3U;
+  const unsigned initial = plan.mode == BenchmarkMode::maximum ? 3U : 1U;
   std::size_t count = initial + (plan.steps.empty() ? repeats : 2U * repeats);
-  for (const auto& step : plan.steps)
-    count += (step.values.size() + 2U) * repeats * (plan.mode == BenchmarkMode::thorough ? 2U : 1U);
+  unsigned tokens = 128U;
+  for (const auto& step : plan.steps) {
+    if (plan.mode == BenchmarkMode::maximum) count += (step.values.size() + 2U) * repeats * 2U;
+    else {
+      if (tokens != step.max_tokens) count += initial;
+      count += step.values.size() * candidate_repeats(plan, step);
+    }
+    tokens = step.max_tokens;
+  }
   return std::min(count, kMaximumTrials);
 }
 
@@ -180,8 +198,8 @@ ExperimentOutcome run_experiment(const ExperimentPlan& plan, const BenchmarkOpti
   const auto elapsed = [&] {
     return elapsed_seconds ? elapsed_seconds() : std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
   };
-  const unsigned repeats = options.mode == BenchmarkMode::thorough ? 3U : 2U;
-  const unsigned initial_repeats = options.mode == BenchmarkMode::thorough ? 3U : 1U;
+  const unsigned repeats = options.mode == BenchmarkMode::quick ? 2U : 3U;
+  const unsigned initial_repeats = options.mode == BenchmarkMode::maximum ? 3U : 1U;
   const auto upper_bound = experiment_trial_upper_bound(plan);
   const auto stopped = [&] {
     if (out.end != End::done) return true;
@@ -275,15 +293,16 @@ ExperimentOutcome run_experiment(const ExperimentPlan& plan, const BenchmarkOpti
         if (out.end != End::done) return;
         if (!first) continue;
         double score = *first;
-        if (score > current * (1.0 + plan.keep_margin)) {
+        if (score > current * (1.0 + plan.keep_margin) || options.mode == BenchmarkMode::thorough) {
+          const auto screen_repeats = candidate_repeats(plan, step);
           std::vector<double> scores{score};
-          for (unsigned replicate = 1U; replicate < repeats; ++replicate) {
+          for (unsigned replicate = 1U; replicate < screen_repeats; ++replicate) {
             const auto repeated = run(candidate, step.max_tokens, stage, replicate);
             if (!repeated) break;
             scores.push_back(*repeated);
           }
           if (out.end != End::done) return;
-          if (scores.size() != repeats) continue;
+          if (scores.size() != screen_repeats) continue;
           score = median(scores);
           if (score > current * (1.0 + plan.keep_margin)) {
             chosen = std::move(candidate);
@@ -300,24 +319,33 @@ ExperimentOutcome run_experiment(const ExperimentPlan& plan, const BenchmarkOpti
     }
   };
   sweep(false);
-  if (out.end == End::done && options.mode == BenchmarkMode::thorough) sweep(true);
+  if (out.end == End::done && options.mode == BenchmarkMode::maximum) sweep(true);
   if (stopped()) return out;
   unsigned confirmation_tokens = 128U;
   for (const auto& step : plan.steps) if (chosen.contains(step.flag)) confirmation_tokens = std::max(confirmation_tokens, step.max_tokens);
   // Interleave the baseline and winner to expose drift rather than comparing
   // one cold baseline with a much later candidate. All repetitions are distinct.
   std::vector<double> defaults, winner;
-  for (unsigned replicate = 0; replicate < repeats; ++replicate) {
-    const auto base = run({}, confirmation_tokens, "confirming-baseline", replicate);
+  bool startup_winner = false;
+  for (const auto& [flag, value] : chosen) {
+    (void)value;
+    if (!(plan.reference_profile == EngineProfile::qwen && (flag == "--pcie-frac" || flag == "--spec-min-p"))) startup_winner = true;
+  }
+  std::vector<std::pair<bool, unsigned>> confirmation;
+  if (options.mode == BenchmarkMode::thorough && startup_winner) {
+    // Same three samples per side, with the baseline bracketing the winner.
+    // Avoid six cold starts solely to alternate startup-only settings.
+    confirmation = {{false, 0U}, {false, 1U}, {true, 0U}, {true, 1U}, {true, 2U}, {false, 2U}};
+  } else for (unsigned replicate = 0; replicate < repeats; ++replicate) {
+    confirmation.emplace_back(false, replicate);
+    if (!chosen.empty()) confirmation.emplace_back(true, replicate);
+  }
+  for (const auto& [selected, replicate] : confirmation) {
+    const auto score = run(selected ? chosen : Choices{}, confirmation_tokens,
+                           selected ? "confirming-winner" : "confirming-baseline", replicate);
     if (out.end != End::done) return out;
-    if (!base) { out.end = End::failed; return out; }
-    defaults.push_back(*base);
-    if (!chosen.empty()) {
-      const auto selected = run(chosen, confirmation_tokens, "confirming-winner", replicate);
-      if (out.end != End::done) return out;
-      if (!selected) { out.end = End::failed; return out; }
-      winner.push_back(*selected);
-    }
+    if (!score) { out.end = End::failed; return out; }
+    (selected ? winner : defaults).push_back(*score);
   }
   if (stopped()) return out;
   if (chosen.empty()) winner = defaults;

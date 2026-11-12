@@ -1829,7 +1829,7 @@
     var workload = $("calibration-workload").value;
     var minutes = Number($("calibration-budget").value);
     var label = $("calibration-label").value.trim();
-    if (["quick", "thorough"].indexOf(mode) < 0 || ["chat", "long_context", "coding", "tools", "custom"].indexOf(workload) < 0) {
+    if (["quick", "thorough", "maximum"].indexOf(mode) < 0 || ["chat", "long_context", "coding", "tools", "custom"].indexOf(workload) < 0) {
       return { error: "Choose a benchmark mode and workload." };
     }
     if (!isFinite(minutes) || minutes < 1 || minutes > 1440) { return { error: "Time budget: enter 1 to 1440 minutes." }; }

@@ -11,7 +11,7 @@
 
 namespace secure_frontend {
 
-enum class BenchmarkMode { quick, thorough };
+enum class BenchmarkMode { quick, thorough, maximum };
 enum class BenchmarkWorkload { chat, long_context, coding, tools, custom };
 struct BenchmarkOptions final {
   BenchmarkMode mode{BenchmarkMode::quick};
@@ -33,6 +33,7 @@ struct ExperimentPlan final {
   std::vector<ExperimentSkip> skipped{};
   BenchmarkMode mode{BenchmarkMode::quick};
   double keep_margin{0.03};
+  std::optional<EngineProfile> reference_profile{};
 };
 // Only explicitly configured rows/flags belong in explicit_config. A joint
 // step is fixed if any member is fixed. This never modifies run_sweep's plan.

@@ -281,6 +281,33 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Thorough uses reference trial counts; Maximum keeps exhaustive search (2026-11-12)
+
+Owner: the previous Thorough bound is unrealistic; retain it as Maximum, reduce Thorough's
+trials to upstream amounts, and do not impose a time cap. Thorough now runs one sweep over
+the existing mapped reference candidates: Strata live controls receive three screening rounds,
+its restart candidates two groups, and mapped Maya-family candidates one screening trial with
+sustained requests. No second combination refinement runs in Thorough. The prior exhaustive
+search and extra refinement remain in explicit Maximum mode; Quick stays the button default.
+For the fixed-draft-floor Qwen test plan, the bound changes from 117 to 39 measurements;
+the corresponding Strata reference work bound is 41. Mapped Maya GLM stays within its 17-group
+reference bound. These count limits cover exposed controls, not all upstream calibration features.
+
+Thorough retains three baseline and three winner confirmations. Startup-only confirmations
+use two baseline samples, three winner samples, then one baseline sample, bracketing the
+winner while avoiding six alternating cold starts. Live-only confirmation remains interleaved;
+Maximum preserves the former exhaustive behavior. Noise, answer and interference gates stay.
+No time-budget defaults, range or user selections are changed. Resume identity is versioned.
+
+The prior refinement regression is renamed for Maximum with all assertions intact, reflecting
+the owner's explicit mode split. New tests assert actual screening counts, no extra Thorough
+refinement, reference work bounds, all six confirmation samples, and unchanged custom budgets.
+RED: old Thorough violates reference bounds and rejects Maximum. GREEN: 16 native
+planner/integration cases and both calibration UI checks pass. Native Release rebuild passes
+warnings-as-errors. Two changed frontend executables were backed up, copied into the closed
+installation and SHA-256 verified; the configuration hash is unchanged. The installed app
+was not launched. No full real-model duration or parity with unexposed upstream controls is claimed.
+
 ### Stable baseline retained when a candidate is noisy (2026-11-12)
 
 The owner's Quick run completed in about three minutes with passing answer checks, but the

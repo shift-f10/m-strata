@@ -2243,7 +2243,7 @@ One model runs at a time.
 
 On a model card, Calibrate defaults to Quick, Short chat and a 30-minute maximum budget,
 with optional probes, resume and accuracy comparisons off. Expand Calibration options and
-enable customization to choose Thorough, a different workload, budget or result name.
+enable customization to choose Thorough or Maximum, a different workload, budget or result name.
 Chat and coding use longer performance answers
 plus separate known-answer probes. Long context fills the selected context with synthetic data.
 Tools checks two function calls in both JSON and streamed responses; no tool is executed.
@@ -2254,13 +2254,17 @@ Ordinary Quick benchmarks load one engine and reuse it for every measurement and
 confirmation. Qwen's PCIe share and draft-confidence candidates use the engine's
 per-request controls; settings requiring an engine restart are listed as skipped.
 For other families, Quick verifies and measures the current settings. Thorough
-includes startup-setting sweeps, reusing the engine while startup settings remain
-the same. Explicit accuracy-tradeoff comparisons can require restarts in either mode.
+uses the mapped upstream candidate and repeat schedules, including startup settings,
+without a second combination-refinement pass. Maximum retains that exhaustive pass
+and its extra repeats. Both reuse the engine while startup settings remain the same.
+Startup confirmations in Thorough bracket the winner with baseline measurements,
+keeping three samples per side without alternating cold starts six times.
+Explicit accuracy-tradeoff comparisons can require restarts in any mode.
 The displayed trials count measurements, rather than model loads. Quick still runs
 answer checks and repeated confirmation; its duration includes the initial model load.
 
 Results separate prompt tokens/second, decode tokens/second and time to first token, with
-startup, warm and (Thorough) sustained measurements. Repeated/interleaved trials report
+startup, warm and (Thorough/Maximum) sustained measurements. Repeated confirmation trials report
 variation; unstable, contaminated, failed or incomplete runs retain the prior result.
 When only a proposed candidate is noisy and the current settings have independently
 passed stable, quality-checked confirmations, calibration verifies and retains the
@@ -2287,7 +2291,7 @@ The existing `POST /v1/strata/models/calibrate` accepts an optional `benchmark` 
 {"name":"Example","benchmark":{"mode":"quick","workload":"tools","budget_seconds":1800,"label":"Tool checks","memory_probe":false,"compare_speed":false,"resume":false}}
 ```
 
-`mode` is `quick` or `thorough`; `workload` is `chat`, `long_context`, `coding`, `tools` or
+`mode` is `quick`, `thorough` or `maximum`; `workload` is `chat`, `long_context`, `coding`, `tools` or
 `custom`. Custom alone requires `custom_prompt` (1-16384 UTF-8 bytes). Budget is 30-86400 seconds,
 label is up to 64 printable ASCII characters. To restore, send only `name` and `restore` with
 the history entry ID. These operations use the existing model-management authorization policy.

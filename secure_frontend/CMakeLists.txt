@@ -2115,9 +2115,9 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         captures_are_bounded_and_custom_quality_is_not_claimed host_diagnostics_distinguish_busy_baseline_and_thermal_evidence)
     secure_frontend_add_cases(secure_frontend_calibration_experiment_tests
         benchmark_options_are_strict_and_bounded experiment_plan_explains_fixed_and_inactive_settings
-        thorough_revisits_combinations_and_confirms budgets_and_cancellation_never_expose_partial_winners
+        maximum_revisits_combinations_and_confirms budgets_and_cancellation_never_expose_partial_winners
         quality_contamination_noise_and_comparison_gate_application progress_is_available_before_measurement_and_after_failure
-        stable_baseline_survives_a_noisy_candidate)
+        stable_baseline_survives_a_noisy_candidate thorough_work_is_bounded_by_reference_calibrators)
     secure_frontend_add_test_executable(secure_frontend_engine_variant_tests tests/engine_variant_test.cpp secure_frontend_engine_variant)
     secure_frontend_add_cases(secure_frontend_engine_variant_tests
         default_needs_no_variant_installation missing_or_wrong_mode_is_refused valid_fast_variant_verifies_every_file

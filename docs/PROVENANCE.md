@@ -1,5 +1,17 @@
 # Provenance
 
+### Thorough trial schedule (2026-11-12)
+
+The owned Thorough planner uses the existing mapped candidate lists with reference
+repeat counts: pinned Strata `tools/calibrate.py` (`SWEEP_ROUNDS=3` for live controls,
+two measured groups per restart candidate), and pinned Maya `tools/calibrate_glm.py`
+(one screening group per mapped candidate before confirmation). DeepSeek/MiniMax
+screening uses the existing startup candidates, with sustained requests within each
+trial. This is a limit on the exposed controls' work, not a claim of full upstream
+calibration-feature parity. Maximum retains the prior extra refinement search.
+The reference files in the sparse Maya checkout were read from its pinned Git tree.
+Neither reference tree was modified; time-budget settings are unchanged.
+
 ### Calibration engine reuse (2026-11-12)
 
 The owned frontend's Quick benchmark follows the pinned upstream calibration's
