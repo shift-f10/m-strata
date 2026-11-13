@@ -179,6 +179,7 @@ main { flex: 1; min-height: 0; display: flex; }
 .model-row__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .model-row__name { font-weight: var(--st-fw-bold); overflow-wrap: anywhere; }
 .model-row .st-badge { flex: none; }
+.model-row__badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--st-s-2); }
 .model-options { min-width: 0; }
 .model-option-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--st-s-4) var(--st-s-5); }
 .model-settings-head { display: flex; justify-content: space-between; align-items: center; gap: var(--st-s-3); }

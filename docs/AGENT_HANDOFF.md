@@ -281,6 +281,17 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Calibration tag in the model list (2026-11-12)
+
+Model rows now show a green Calibrated badge beside the lifecycle badge when the server
+reports a fresh saved calibration. Missing, stale and settings-changed records never receive
+the tag; normal list refresh removes it when freshness changes. Badge groups wrap on narrow
+rows. No calibration decisions or service inputs change.
+
+RED: the DOM regression fails because the fresh model has no visible tag. GREEN: all three
+calibration UI checks pass, covering freshness changes, uncalibrated cards and preserved
+running-model ordering. Native Release frontend rebuild passes with warnings as errors.
+
 ### Repeatable baseline controls and grouped performance samples (2026-11-12)
 
 The latest Quick run rejected an unstable baseline even though the candidate was steady.

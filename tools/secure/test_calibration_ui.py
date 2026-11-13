@@ -11,6 +11,44 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_model_list_shows_saved_calibration_without_opening_card():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is needed for the DOM event harness")
+    source = (ROOT / "secure_frontend/web/app.js").read_text(encoding="utf-8")
+    states = source[source.index("  var CAL_STATES ="):source.index("  var calibrationManualFor")]
+    render = source[source.index("  function renderModels("):source.index("  function renderStartup()")]
+    harness = r'''
+const assert = require("node:assert/strict");
+function el(tag, className, text) { return {tag, className, textContent: text || "", children: [], appendChild(n) {this.children.push(n);}, setAttribute() {}, addEventListener() {}}; }
+const nodes = {};
+const $ = id => nodes[id] || (nodes[id] = el("div"));
+const clear = n => {n.children = [];};
+const cards = [{name:"fresh", state:"stopped", calibration:{state:"fresh"}},
+  {name:"stale", state:"running", calibration:{state:"stale"}},
+  {name:"changed", state:"stopped", calibration:{state:"settings_changed"}},
+  {name:"missing", state:"stopped", calibration:{state:"missing"}},
+  {name:"legacy", state:"stopped"}];
+const launcher = {data:{running:"stale"}, selected:"fresh", formFor:"fresh"};
+const cardsOf = () => cards, findCard = () => cards[0], profileText = () => "Engine";
+const stateBadge = s => el("span", "st-badge", s);
+const renderDetail = () => {}, renderStartup = () => {};
+function text(n) { return [n.textContent, ...n.children.map(text)].join(" "); }
+renderModels(false);
+let rows = $("model-list").children;
+assert.match(text(rows[0]), /running/);
+assert.match(text(rows.find(r => text(r).includes("fresh"))), /Calibrated/);
+for (const name of ["stale", "changed", "missing", "legacy"]) {
+  assert.doesNotMatch(text(rows.find(r => text(r).includes(name))), /\bCalibrated\b/, name + " must not claim a current calibration");
+}
+cards[0].calibration.state = "stale";
+renderModels(false);
+assert.doesNotMatch(text($("model-list")), /\bCalibrated\b/, "poll removes outdated calibrated tag");
+'''
+    result = subprocess.run([node, "-e", states + render + harness], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_calibration_defaults_to_quick_and_preserves_explicit_and_automatic_requests():
     node = shutil.which("node")
     if node is None:

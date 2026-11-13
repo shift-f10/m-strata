@@ -2213,7 +2213,13 @@
       text.appendChild(el("span", "model-row__name", card.name));
       text.appendChild(el("span", "muted small", profileText(card.profile) + (card.pinned === true ? " \u00b7 starts with the server" : "")));
       row.appendChild(text);
-      row.appendChild(stateBadge(card.state));
+      var badges = el("span", "model-row__badges");
+      badges.appendChild(stateBadge(card.state));
+      var cal = card.calibration;
+      if (cal && cal.state === "fresh") {
+        badges.appendChild(el("span", "st-badge " + CAL_STATES.fresh[0], "Calibrated"));
+      }
+      row.appendChild(badges);
       row.addEventListener("click", function () {
         var changed = launcher.selected !== card.name;
         if (changed) { showStartError(""); }
