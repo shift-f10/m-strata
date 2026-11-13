@@ -1906,10 +1906,12 @@
     if (box.hidden) { return; }
     var e = experiment;
     var hasBenchmark = !!(e.mode || e.workload || e.summary || e.outcome || e.error);
-    box.appendChild(el("h4", null, hasBenchmark ? "Benchmark results" : "Saved calibration results"));
+    box.appendChild(el("h4", null, hasBenchmark ? "Latest calibration attempt" : "Saved calibration results"));
     if (hasBenchmark) {
-      var outcomes = { applied: "Applied for the next start", paused: "Paused - prior calibration retained",
-                       comparison_complete: "Comparison complete - card unchanged", not_applied: "Not applied - prior calibration retained" };
+      var hasCurrent = card.calibration && card.calibration.state === "fresh";
+      var outcomes = { applied: "Applied for the next start", paused: "Paused - saved records unchanged",
+                       comparison_complete: "Comparison complete - card unchanged",
+                       not_applied: hasCurrent ? "Not applied - saved calibration remains in use" : "Not applied - no current calibration was replaced" };
       box.appendChild(el("p", "small", (e.paused ? "Paused" : "Benchmark") + DOT + String(e.mode || "Unknown mode") + DOT + String(e.workload || "Unknown workload")));
       if (e.outcome) { box.appendChild(el("p", "small", outcomes[e.outcome] || "Outcome: " + String(e.outcome))); }
       if (e.error) { var error = el("p", "msg-error", String(e.error)); error.setAttribute("role", "alert"); box.appendChild(error); }
@@ -2011,21 +2013,31 @@
              (typeof run.best_tok_s === "number" ? DOT + "best so far " + fmt(run.best_tok_s, 1) + " tok/s" : "") +
              ". The chat is unavailable while calibration runs.";
     }
-    if (cal.error) { return "The last calibration did not finish: " + cal.error; }
     var found = typeof cal.before === "number" && typeof cal.after === "number"
       ? fmt(cal.before, 1) + " tok/s with the engine's defaults, " + fmt(cal.after, 1) + " tok/s " +
         (Array.isArray(cal.args) && cal.args.length ? "with " + cal.args.join(" ") : "(the defaults were retained)") : "";
-    if (cal.state === "fresh") { return "Calibrated" + (cal.date ? " " + String(cal.date).slice(0, 10) : "") + ": " + found + "."; }
-    if (cal.state === "stale") { return "This PC, the engine or the model changed since the calibration, so it is not used: calibrate again."; }
-    if (cal.state === "settings_changed") {
-      return "These options differ from the ones it was calibrated at, so it is not used at them: recalibrate" +
+    var status;
+    if (cal.state === "fresh") {
+      status = "Saved calibration is current" + (cal.date ? " (" + String(cal.date).slice(0, 10) + ")" : "") + (found ? ": " + found : "") + ".";
+    } else if (cal.state === "stale") {
+      status = "This PC, the engine or the model changed since the calibration, so it is not used: calibrate again.";
+    } else if (cal.state === "settings_changed") {
+      status = "These options differ from the ones it was calibrated at, so it is not used at them: recalibrate" +
              (found ? " (it found " + found + ")" : "") + ".";
-    }
     // (the engines whose sweep is a few short starts calibrate before a page card's first start; a large model's when asked)
-    if (card.page_card === true && cal.first_start === true) {
-      return "Not calibrated yet: the first start compares engine settings, then serves. Duration depends on the model and hardware.";
+    } else if (card.page_card === true && cal.first_start === true) {
+      status = "Not calibrated yet: the first start compares engine settings, then serves. Duration depends on the model and hardware.";
+    } else {
+      status = "Not calibrated: Calibrate defaults to Quick, which loads the model once and checks current settings and supported live controls.";
     }
-    return "Not calibrated: Calibrate compares candidate engine settings for this model. Each candidate starts the engine; large models can take an hour or more.";
+    var attempt = cal.experiment;
+    if (attempt && attempt.outcome === "not_applied" && attempt.noisy === true) {
+      return status + " The latest recalibration completed, but its speed measurements varied too much to accept a new result." +
+          (cal.state === "fresh" ? " Your saved calibration remains in use." : "");
+    }
+    if (attempt && attempt.paused) { return status + " The latest calibration attempt was paused; saved records are unchanged."; }
+    if (cal.error) { return status + " The latest calibration attempt was not applied: " + cal.error; }
+    return status;
   }
   // MiniMax: the prefill calibration (how this PC reads prompts), which the engine keeps in the model's pack
   function prefillText(card, p) {

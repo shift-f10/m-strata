@@ -281,6 +281,23 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Saved calibration and latest attempt are displayed separately (2026-11-12)
+
+A valid saved calibration can coexist with a newer rejected recalibration. The UI previously
+let the latest error replace the saved result's explanation and called a completed noisy run
+unfinished. The card now describes the saved record's actual freshness first, then the latest
+attempt. Completed noisy attempts explicitly retain a fresh saved calibration in use; stale,
+settings-changed and missing records never receive that claim. Paused and failed attempts
+retain their separate explanations. The report is titled Latest calibration attempt and its
+retention label depends on whether a current saved calibration exists. The uncalibrated
+description now accurately describes default Quick behavior. Acceptance gates are unchanged.
+
+RED: the new text regression reproduces the contradictory unfinished message. GREEN: all
+four calibration UI checks pass, covering fresh, missing, stale, paused, failed and running
+states as well as default requests and visible list tags. Native Release frontends rebuild
+with warnings as errors. Both executables were backed up, copied into the closed installation
+and SHA-256 verified; configuration is unchanged. No installed executable was launched.
+
 ### Gemma calibration accepts a correct JSON value in one code fence (2026-11-12)
 
 Owner-box synthetic probes reproduced Gemma returning the exact expected facts inside

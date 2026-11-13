@@ -11,6 +11,45 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_saved_calibration_and_latest_attempt_are_distinct():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is needed for the calibration text harness")
+    source = (ROOT / "secure_frontend/web/app.js").read_text(encoding="utf-8")
+    control = source[source.index("  function calibrationText("):source.index("  // MiniMax: the prefill calibration")]
+    harness = r'''
+const assert = require("node:assert/strict"), fmt = String, DOT = " / ";
+const card = {};
+const saved = {state:"fresh", before:180, after:185, args:[], error:"No stable result accepted",
+  experiment:{outcome:"not_applied", noisy:true, before:117, after:117}};
+let text = calibrationText(card, saved);
+assert.match(text, /Saved calibration is current/);
+assert.match(text, /185/);
+assert.match(text, /completed.*varied too much/);
+assert.match(text, /remains in use/);
+assert.doesNotMatch(text, /did not finish|117/);
+text = calibrationText(card, {...saved, state:"missing"});
+assert.match(text, /Not calibrated/);
+assert.match(text, /completed/);
+assert.doesNotMatch(text, /remains in use/);
+text = calibrationText(card, {...saved, state:"stale"});
+assert.match(text, /changed.*not used/);
+assert.doesNotMatch(text, /remains in use/);
+text = calibrationText(card, {...saved, experiment:{outcome:"paused", paused:true}, error:"Cancelled"});
+assert.match(text, /paused/i);
+assert.match(text, /Saved calibration is current/);
+text = calibrationText(card, {...saved, experiment:undefined, error:"Engine did not start"});
+assert.match(text, /not applied.*Engine did not start/);
+assert.match(text, /Saved calibration is current/);
+text = calibrationText(card, {...saved, running:{trial:2,trials:3,stage:"confirmation"}});
+assert.match(text, /trial 2 of up to 3/);
+assert.doesNotMatch(text, /Latest recalibration/);
+assert.match(calibrationText(card, {state:"missing"}), /Quick/);
+'''
+    result = subprocess.run([node], input=control + harness, capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_model_list_shows_saved_calibration_without_opening_card():
     node = shutil.which("node")
     if node is None:
