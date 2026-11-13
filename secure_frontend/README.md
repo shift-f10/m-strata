@@ -2245,8 +2245,8 @@ On a model card, Calibrate defaults to Quick, Short chat and a 30-minute maximum
 with optional probes, resume and accuracy comparisons off. Expand Calibration options and
 enable customization to choose Thorough or Maximum, a different workload, budget or result name.
 Chat and coding take the median of three performance answers per trial, plus separate
-known-answer probes. Each new engine session receives two unmeasured performance warm-up
-groups. Qwen baseline requests pin startup-reported tuning controls when available;
+known-answer probes. Each new engine session and supported live-control change receives
+two unmeasured performance warm-up groups. Qwen baseline requests pin startup-reported tuning controls when available;
 missing control telemetry is reported rather than guessed. These requests do not add trials.
 Long context fills the selected context with synthetic data.
 Tools checks two function calls in both JSON and streamed responses; no tool is executed.

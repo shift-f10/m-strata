@@ -1222,6 +1222,9 @@ void quick_qwen_tunes_requests_without_reloading() {
          "baseline requests explicitly freeze the engine-reported controls rather than retuning automatically");
   expect(wire.rfind(" pcie_frac=0.37 spec_min_p=0.5 ") > wire.rfind(" pcie_frac=1 "),
          "baseline confirmations restore the reported controls after the candidate sweep");
+  std::size_t warm_requests = 0U, offset = 0U;
+  while ((offset = wire.find(" pcie_frac=1 ", offset)) != std::string::npos) { ++warm_requests; ++offset; }
+  expect(warm_requests >= 3U, "a changed live control gets two unmeasured warm-up groups before its measurement");
   expect(f.launcher->list_json().find("\"outcome\": \"applied\"") != std::string::npos, "live-tuned run retains acceptance checks");
 }
 

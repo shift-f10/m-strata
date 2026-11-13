@@ -20,10 +20,11 @@
 #include <vector>
 
 namespace secure_frontend {
-bool ChatRoute::set_calibration_tuning(std::optional<double> pcie, std::optional<double> min_p) {
+bool ChatRoute::set_calibration_tuning(std::optional<double> pcie, std::optional<double> min_p, bool* changed) {
   const auto valid = [](const auto& value) { return !value || (std::isfinite(*value) && *value >= 0.0 && *value <= 1.0); };
   if ((pcie || min_p) && config_.profile != NativeChatProfile::qwen) return false;
   if (!valid(pcie) || !valid(min_p)) return false;
+  if (changed) *changed = calibration_pcie_ != pcie || calibration_min_p_ != min_p;
   calibration_pcie_ = pcie;
   calibration_min_p_ = min_p;
   return true;

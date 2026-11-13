@@ -521,7 +521,9 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
     if (!tune_pcie) tune_pcie = reported("pcie_frac");
     if (!tune_min_p) tune_min_p = reported("spec_min_p");
   }
-  if (!runtime->chat().set_calibration_tuning(tune_pcie, tune_min_p)) return fail("Live tuning is unsupported for this profile");
+  bool tuning_changed = false;
+  if (!runtime->chat().set_calibration_tuning(tune_pcie, tune_min_p, &tuning_changed)) return fail("Live tuning is unsupported for this profile");
+  set(detail, "live_tuning_warmup", boolean(reused && tuning_changed));
   set(detail, "request_pcie_frac", optional_number(tune_pcie));
   set(detail, "request_spec_min_p", optional_number(tune_min_p));
   const auto load_ms = std::chrono::duration<double, std::milli>(
@@ -579,7 +581,7 @@ std::optional<ExperimentSample> ModelLauncher::measure_benchmark(
     return true;
   };
   if (cases->empty()) return fail("Warm-up did not complete");
-  if (!reused) for (unsigned round = 0; round < 2U; ++round) {
+  if (!reused || tuning_changed) for (unsigned round = 0; round < 2U; ++round) {
     bool warmed = false;
     for (const auto& c : *cases) if (c.measured) {
       if (!run_case(c, false)) return fail("Warm-up did not complete");
@@ -747,7 +749,7 @@ bool ModelLauncher::run_benchmark(const Job& job) {
       ? calibration_key(card,fast_values).runtime : std::string{};
   CalibrationResult identity_record{card.name, {}, 0, 0, "", false, base_key};
   const auto identity = to_hex(
-      sha256("benchmark-workload-v6-json-arithmetic\n" + render_calibration(identity_record) +
+      sha256("benchmark-workload-v7-live-control-warmup\n" + render_calibration(identity_record) +
              render_remembered_options({{card.name, base_values}}) +
              python_json_text(strings(baseline_args)) +
              workload_name(options.workload) +

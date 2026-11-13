@@ -281,6 +281,30 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Warm live controls before timing them (2026-11-13)
+
+Qwen benchmarks reused one engine but warmed only at initial load, timing a changed PCIe
+share or draft floor immediately, including restoration of the baseline controls. Internal
+tuning now reports whether its effective values changed, and the benchmark performs the
+same two unmeasured workload groups after a change as after initial startup. Unchanged
+controls do not add warm-up requests. Profiles without live tuning keep their existing
+startup-only warm-up. Model-load and trial counts, budgets and acceptance gates are unchanged;
+resume identity is bumped for the new measurement policy.
+
+RED: the recorded fake-engine GEN stream lacks warm-up requests after a candidate control
+change. GREEN: the strengthened integration test passes while still asserting one engine
+load and restored baseline controls. The expanded 60-test frontend selection has zero
+failures and one real-pack fixture skip. Native Release builds with warnings as errors.
+Both installed Qwen variants passed real-model comparisons with the new warm-up at their
+saved 256K contexts and tested per-card memory budgets. Both frontend executables were
+backed up, installed and hash-verified. Only the tested memory-budget arguments changed in
+the Qwen cards; context, precision and other settings were preserved. Their accepted history
+records were imported unchanged and the application's existing Restore route validated
+hardware, runtime, model and selected options before writing the current records. A final
+headless server restart verified all five installed cards fresh and stopped. No app window
+was launched and no diagnostic process remains. This does not guarantee stable measurements
+under every workload or competing system activity.
+
 ### Cross-family calibration regression gate (2026-11-13)
 
 Owner: calibration must work across model types; fixing one family must not break another.
@@ -294,10 +318,13 @@ No existing assertion is removed and no acceptance threshold changes.
 The expanded frontend selection runs 60 tests with zero failures and one CTest real-pack
 fixture skip; profile/template and tool-prompt suites are included. These are contract and
 synthetic-tokenizer checks, not real-weight inference proof for absent model families.
-Owner-box real-model regression currently confirms Flint, Gemma 4 with 256K context and
-Raon. Qwen memory comparisons at the saved 256K contexts remain in progress; rejected
-unstable results are not presented as successful calibrations. Private card configuration
-and hardware measurements remain local. The app window stays closed during diagnostics.
+Owner-box real-model regression confirms Flint, Gemma 4 with 256K context, Raon and both
+installed Qwen variants at their saved 256K contexts. The Qwen comparisons also refined
+their per-card memory budgets for those contexts; rejected unstable results were not
+presented as successful calibrations. A restart verifies all five installed models retain
+fresh saved records. GLM, DeepSeek and MiniMax have contract/template regression coverage
+but no real-weight inference validation in this session. Private card configuration and
+hardware measurements remain local. The app window stayed closed during diagnostics.
 
 ### Flint starts when host pin capacity is exhausted (2026-11-13)
 
@@ -330,8 +357,9 @@ An independent full-model logit comparison was not run; the historical reference
 is unavailable. Both frontend executables and both Flint math-variant libraries were backed
 up, installed and hash-verified. The variant manifest and build record were updated, while
 the main configuration was preserved. Real Flint Quick calibration then passed in normal
-installed state. Previously current records are being refreshed after the shared-runtime
-fingerprint change. Private logs, responses and machine measurements remain excluded from Git.
+installed state. Previously current records were refreshed after the shared-runtime
+fingerprint change; all five installed cards are fresh at final restart verification.
+Private logs, responses and machine measurements remain excluded from Git.
 
 ### Saved calibration and latest attempt are displayed separately (2026-11-12)
 

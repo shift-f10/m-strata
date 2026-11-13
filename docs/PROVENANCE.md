@@ -1,5 +1,12 @@
 # Provenance
 
+### Live-control measurement settling (2026-11-13)
+
+The owned benchmark now reuses its existing two-group startup warm-up after effective
+internal request controls change. This is an owned measurement-policy correction, not an
+upstream import. No new inference kernel, numerical setting or dependency is introduced.
+The Qwen per-request control grammar and all pinned reference trees remain unchanged.
+
 ### Flint host-memory recovery (2026-11-13)
 
 The owned Flint engine now recovers from CUDA host-pin capacity exhaustion through its

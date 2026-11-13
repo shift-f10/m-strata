@@ -159,7 +159,7 @@ class ChatRoute final {
   ChatRoute(ChatRouteConfig config, SupervisorPort& port, GenerationGate& gate, const TokenizerPack& tokenizer);
   [[nodiscard]] RouteResult handle(std::string_view body, const RequestContext& context);
   // Only the private, single-threaded calibration runtime calls this; not a route.
-  [[nodiscard]] bool set_calibration_tuning(std::optional<double> pcie, std::optional<double> min_p);
+  [[nodiscard]] bool set_calibration_tuning(std::optional<double> pcie, std::optional<double> min_p, bool* changed = nullptr);
 
  private:
   [[nodiscard]] HttpResponse refusal(GateRefusal refusal);
