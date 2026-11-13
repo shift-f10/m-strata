@@ -291,6 +291,8 @@ rows. No calibration decisions or service inputs change.
 RED: the DOM regression fails because the fresh model has no visible tag. GREEN: all three
 calibration UI checks pass, covering freshness changes, uncalibrated cards and preserved
 running-model ordering. Native Release frontend rebuild passes with warnings as errors.
+Both rebuilt frontend executables were backed up and copied into the closed installation;
+SHA-256 checks match, configuration is unchanged, and no installed executable was launched.
 
 ### Repeatable baseline controls and grouped performance samples (2026-11-12)
 
