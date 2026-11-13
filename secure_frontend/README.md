@@ -2272,6 +2272,10 @@ variation; unstable, contaminated, failed or incomplete runs retain the prior re
 When only a proposed candidate is noisy and the current settings have independently
 passed stable, quality-checked confirmations, calibration verifies and retains the
 current settings. Candidate noise is reported separately and never accepted as a win.
+Structured known-answer probes compare complete JSON values. A single standalone JSON
+code fence is allowed around the answer; wrong values, missing fields, extra prose,
+multiple answers and incomplete responses still fail. These checks do not certify strict
+unwrapped JSON-format compliance. Tool arguments remain strict JSON.
 The optional context probe must cover at least 95% of the requested input budget to pass;
 frontend prompt limits or the bounded synthetic prompt may prevent full coverage.
 Telemetry is best effort: missing readings and unsupported thermal flags are shown as such.

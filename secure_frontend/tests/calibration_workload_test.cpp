@@ -81,6 +81,24 @@ void quality_rejects_wrong_answers_truncation_and_incomplete_tool_arguments() {
   text.acceptance = CalibrationAcceptance::json_value; text.expected = R"({"result":[2,0,3]})";
   expect(validate_calibration_response(text, 200, reply(text.expected)).accepted, "known coding output accepted without executing code");
   expect(!validate_calibration_response(text, 200, reply(R"({"result":[2,0,4]})")).accepted, "incorrect code trace rejected");
+  CalibrationCase facts; facts.acceptance = CalibrationAcceptance::json_value;
+  facts.expected = R"({"color":"blue","code":"LIME-482","count":6})";
+  const std::string fenced = "```json\n" + facts.expected + "\n```";
+  expect(validate_calibration_response(facts, 200, reply(fenced)).accepted,
+         "Gemma's complete JSON code block preserves the exact known answer");
+  expect(validate_calibration_response(facts, 200, reply(" \r\n```\r\n" + facts.expected + "\r\n```\r\n")).accepted,
+         "a single unlabelled JSON fence permits surrounding whitespace");
+  for (const auto& invalid : {"```json\n{\"color\":\"blue\",\"code\":\"LIME-482\",\"count\":7}\n```",
+       "```json\n{\"color\":\"blue\"}\n```", "```json\n{\"count\":6}\n",
+       "Here is the answer:\n```json\n{\"count\":6}\n```"})
+    expect(!validate_calibration_response(facts, 200, reply(invalid)).accepted, "wrong or incomplete fenced answers remain rejected");
+  for (const auto& invalid : {fenced + "\nextra text", fenced + "\n" + fenced,
+       "```python\n" + facts.expected + "\n```", "```json\n" + facts.expected + "\n{}\n```",
+       "```json\n" + facts.expected + "```"})
+    expect(!validate_calibration_response(facts, 200, reply(invalid)).accepted, "fenced answers cannot hide extra content or unrelated formats");
+  auto truncated = reply(fenced);
+  truncated.replace(truncated.find("\"stop\""), 6, "\"length\"");
+  expect(!validate_calibration_response(facts, 200, truncated).accepted, "token-capped fenced quality answers still fail");
   expect(validate_calibration_response(tools_case(false), 200, tool_reply()).accepted, "two complete matching calls accepted");
   expect(!validate_calibration_response(tools_case(false), 200, tool_reply("{\"key\":")).accepted, "truncated arguments rejected");
   expect(!validate_calibration_response(tools_case(false), 200, tool_reply(R"({"key":"beta","value":12})")).accepted, "wrong tool values rejected");

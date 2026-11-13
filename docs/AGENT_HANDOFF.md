@@ -281,6 +281,24 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Gemma calibration accepts a correct JSON value in one code fence (2026-11-12)
+
+Owner-box synthetic probes reproduced Gemma returning the exact expected facts inside
+a standalone Markdown JSON code fence, even when JSON response format was requested.
+The calibration checker previously parsed the wrapper as JSON and rejected the correct
+answer. Structured known-answer checks now normalize one complete json-labelled or
+unlabelled fence before comparing the entire parsed value. They still reject wrong values,
+missing fields, extra prose, multiple values or fences, unrelated fence labels, incomplete
+fences and token-capped quality answers. Tool arguments and general response handling are
+unchanged. This verifies known values, not strict unwrapped JSON-format compliance.
+
+RED: both correct fenced-answer regressions fail before the fix. GREEN: all 22 targeted
+native workload, experiment and launcher checks pass; no existing assertion was removed.
+Native Release frontends rebuild with warnings as errors. Real Gemma Quick calibration
+then completed all three trials with passing quality and stable confirmations, producing
+a fresh saved result in isolated diagnostic state. Installation and normal-state validation
+wait for the owner to close the app. Private responses and records remain outside Git.
+
 ### Code-copy controls stay reachable while scrolling (2026-11-12)
 
 The chat code-block header now sticks to the chat viewport while its block is visible.

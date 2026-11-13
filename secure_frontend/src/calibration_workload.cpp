@@ -50,6 +50,18 @@ std::string_view trim(std::string_view s) {
   while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
   return s;
 }
+std::optional<JsonValue> known_json_answer(std::string_view s) {
+  s = trim(s);
+  if (s.starts_with("```")) {
+    const auto line = s.find('\n');
+    if (line == std::string_view::npos) return std::nullopt;
+    const auto opener = trim(s.substr(0, line));
+    const auto closing = s.rfind('\n');
+    if ((opener != "```json" && opener != "```") || closing == line || trim(s.substr(closing + 1U)) != "```") return std::nullopt;
+    s = trim(s.substr(line + 1U, closing - line - 1U));
+  }
+  return json(s);
+}
 bool valid(const CalibrationWorkloadRequest& r, const CalibrationTokenCounter& count) {
   return count && !r.model.empty() && r.model.size() <= 256U && is_valid_utf8(r.model) &&
       r.max_completion_tokens > 0U && r.max_completion_tokens <= 4096U &&
@@ -282,7 +294,7 @@ CalibrationQuality validate_calibration_response(const CalibrationCase& test, in
     if ((answer->finish != "stop" && !capped_performance) || !answer->calls.empty()) return fail("answer did not complete normally");
     if (test.acceptance == CalibrationAcceptance::exact_text && trim(answer->content) != test.expected) return fail("answer differs from the known answer");
     if (test.acceptance == CalibrationAcceptance::json_value) {
-      const auto expected = json(test.expected), got = json(answer->content);
+      const auto expected = json(test.expected), got = known_json_answer(answer->content);
       if (!expected || !got || !equal(*expected, *got)) return fail("structured answer differs from the known answer");
     }
     if (!semantic && trim(answer->content).empty()) return fail("performance workload returned no content");
