@@ -2277,6 +2277,17 @@ frontend prompt limits or the bounded synthetic prompt may prevent full coverage
 Telemetry is best effort: missing readings and unsupported thermal flags are shown as such.
 Snapshots cannot rule out activity or throttling between measurements.
 
+If quality checks pass but repeated calibration stays noisy, check memory pressure during
+the timed trials as well as during loading. A model can start successfully yet leave so
+little RAM that Windows repeatedly faults its working data back from disk. Calibration
+uses the card's context and memory allocation; Quick's live tuning cannot repair that
+startup allocation. For Qwen packs, the engine's bounded `--resident-budget-gib` mode can
+reserve RAM for the rest of the system by keeping only part of the experts resident.
+An explicit budget in the card's `config.engine.args` takes precedence over automatic
+low-RAM selection. Validate its speed and stability on the actual machine before keeping
+it: an unnecessarily small budget can be substantially slower. Keep the required context
+and precision settings, then recalibrate with the corrected memory allocation.
+
 Speed comparison explicitly tests supported accuracy tradeoffs against their accuracy defaults,
 including the bundled fast-math variant. It never applies a winner or changes card options.
 Inactive sampled-only controls are skipped for these greedy workloads. INT8/Q8 stays selected.

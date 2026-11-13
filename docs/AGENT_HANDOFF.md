@@ -281,6 +281,26 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Owner-authorized calibration diagnosis and memory remediation (2026-11-12)
+
+Repeated Quick failures were reproduced on the owner's machine with all workload quality
+checks passing but unstable baseline confirmations. Windows performance counters showed
+continuing disk-backed page reads and very little available RAM during measured trials,
+not just model loading. The card's automatic resident allocation was unsuitable for the
+available headroom. Private comparisons used the existing engine's bounded expert-memory
+mode; an overly conservative budget passed but reduced speed, while a larger tested budget
+restored speed and passed. No quality gate, variation threshold, precision or context limit
+was changed. This is a validated local card configuration remedy, not a general automatic
+memory-allocation fix or a claim that every noisy run is caused by paging.
+
+The installed card was backed up and changed only by its tested resident-memory budget.
+A fresh calibration then passed in the normal installed state folder. A subsequent server
+restart, without loading the model, verified that the saved calibration remained fresh;
+the model-list Calibrated tag uses that state. Diagnostic servers and engines were stopped;
+the app window was never launched. Private configuration, counters, logs and hardware
+measurements remain local and excluded from Git. Public documentation now explains this
+failure mode and the existing explicit memory-budget option; no binary changes were needed.
+
 ### Calibration tag in the model list (2026-11-12)
 
 Model rows now show a green Calibrated badge beside the lifecycle badge when the server

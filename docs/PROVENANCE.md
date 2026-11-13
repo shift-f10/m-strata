@@ -1,5 +1,13 @@
 # Provenance
 
+### Calibration memory-pressure guidance (2026-11-12)
+
+The Qwen memory-budget troubleshooting guidance describes the existing engine option
+`--resident-budget-gib` and the pinned setup's `resident_budget_gib` policy
+(`upstream/setup.py`). Owner-authorized local diagnostics compared explicit budgets;
+the frontend's existing explicit-argument precedence was used without modifying either
+engine source or reference tree. Those local settings and diagnostic records are private.
+
 ### Calibration measurement groups (2026-11-12)
 
 The owned chat/coding benchmark follows the pinned Strata calibration's median-of-three
