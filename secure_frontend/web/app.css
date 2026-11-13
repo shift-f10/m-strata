@@ -65,7 +65,10 @@ main { flex: 1; min-height: 0; display: flex; }
 .st-bubble h4 { font-size: var(--st-fs-base); margin: var(--st-s-3) 0 var(--st-s-2); color: var(--st-ink); }
 .st-bubble code.inline { font: 400 .9em var(--st-font-mono); background: var(--st-surface-2); border: 1px solid var(--st-line-soft);
                          border-radius: 6px; padding: 1px 5px; }
-.st-bubble .st-code { margin: var(--st-s-3) 0; }
+.st-bubble .st-code { margin: var(--st-s-3) 0; overflow: visible; }
+.st-bubble .st-code__head { position: sticky; top: 0; z-index: 1; background: var(--st-code-bg);
+                           border-radius: var(--st-r-md) var(--st-r-md) 0 0; }
+.st-bubble .st-code pre { border-radius: 0 0 var(--st-r-md) var(--st-r-md); }
 .st-bubble blockquote { margin: 0 0 var(--st-s-3); padding-left: var(--st-s-3); border-left: 3px solid var(--st-line);
                         color: var(--st-ink-muted); }
 .st-bubble hr { border: 0; border-top: 1px solid var(--st-line); margin: var(--st-s-4) 0; }

@@ -281,6 +281,21 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Code-copy controls stay reachable while scrolling (2026-11-12)
+
+The chat code-block header now sticks to the chat viewport while its block is visible.
+The owned app stylesheet removes the component's intervening overflow clipping; horizontal
+scrolling stays on the code's pre element. An opaque header and separate corner radii
+preserve the code box appearance. The header leaves with its block rather than floating
+over later messages. Copy still uses the complete original code string.
+
+RED: a real headless Edge layout check fails on the old header position. GREEN: the same
+check passes at narrow and wide widths, including vertical scrolling, horizontal overflow,
+exact copy content, and the transition between consecutive blocks. Native Release frontends
+rebuild with warnings as errors. Both changed executables were backed up, copied into the
+closed installation and SHA-256 verified; configuration is unchanged. No installed app
+or model was launched for this change.
+
 ### Owner-authorized calibration diagnosis and memory remediation (2026-11-12)
 
 Repeated Quick failures were reproduced on the owner's machine with all workload quality
