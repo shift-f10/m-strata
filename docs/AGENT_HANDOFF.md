@@ -296,8 +296,12 @@ RED: both correct fenced-answer regressions fail before the fix. GREEN: all 22 t
 native workload, experiment and launcher checks pass; no existing assertion was removed.
 Native Release frontends rebuild with warnings as errors. Real Gemma Quick calibration
 then completed all three trials with passing quality and stable confirmations, producing
-a fresh saved result in isolated diagnostic state. Installation and normal-state validation
-wait for the owner to close the app. Private responses and records remain outside Git.
+a fresh saved result in isolated diagnostic state. After the owner closed the app, both
+frontend executables were backed up, copied and SHA-256 verified, with configuration
+unchanged. Gemma then passed all three trials in normal installed state. A server restart
+without loading either model verified that Gemma and the previously calibrated Qwen both
+remained fresh. All diagnostic processes were stopped; the app window was not launched.
+Private responses and records remain outside Git.
 
 ### Code-copy controls stay reachable while scrolling (2026-11-12)
 
