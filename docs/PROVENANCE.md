@@ -1,5 +1,14 @@
 # Provenance
 
+### Flint host-memory recovery (2026-11-13)
+
+The owned Flint engine now recovers from CUDA host-pin capacity exhaustion through its
+existing CPU-lane and streamed-prompt paths, with pageable host backing for remaining
+layers. Expert bytes and numerical kernels are unchanged; the allocation policy and
+short-tail routing are owned additions. No upstream or vendored source is modified and
+no dependency is added. The calibration arithmetic task keeps the same expression and
+expected result, requesting structured JSON to avoid accepting prose around the answer.
+
 ### Calibration memory-pressure guidance (2026-11-12)
 
 The Qwen memory-budget troubleshooting guidance describes the existing engine option

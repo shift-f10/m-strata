@@ -6,6 +6,7 @@
 // attention with per-head sinks, NeoX RoPE only on the layers rope_pattern names, the 513-key window only on the
 // sliding ones; the sigmoid router's top 6 with an ungated shared expert; SwiGLU; an untied head; any number of shards.
 #include "f_engine.hpp"
+#include "f_host_experts.hpp"
 
 #include "f_kernels.cuh"
 #include "f_lane.hpp"
@@ -97,8 +98,8 @@ struct DevLayer {
   flk::Mat q{}, k{}, v{}, o{}, gate{}, up{}, down{}, router{}, gs{}, us{}, ds{};
   float *attn_norm{}, *q_norm{}, *k_norm{}, *sinks{}, *ffn_norm{};
   strata::kernels::NativeExpertLayout nl{};  // the layer's native expert blob (GGUF blocks, SwiGLU)
-  std::uint8_t* host_experts{};   // the pinned arena's range for this layer: 256 blobs (mapped)
-  std::uint8_t* host_alias{};     // the device's address for it
+  std::uint8_t* host_experts{};   // this layer's 256 blobs, mapped or pageable after pin exhaustion
+  std::uint8_t* host_alias{};     // device address for a mapped range; null for pageable storage
   int n_slots{0};
   int slot0{0};                   // the layer's first slot in the expert cache
   std::vector<int> slot_of;       // expert -> slot index in the cache, -1 when only in RAM, -2 landing
@@ -191,6 +192,8 @@ class FlintEngine final : public Engine {
   std::vector<std::uint8_t> staging_;
   std::vector<void*> allocations_;
   std::vector<void*> pinned_;
+  std::vector<void*> pageable_experts_;
+  bool allow_pageable_experts_{false}, pageable_mode_{false};
   cudaStream_t st_{};
   cudaStream_t copy_{};   // the copy engine's stream: the expert cache's swaps (paper finding 10)
   cublasHandle_t blas_{};
@@ -357,6 +360,8 @@ void FlintEngine::release() {
   allocations_.clear();
   for (void* p : pinned_) cudaFreeHost(p);
   pinned_.clear();
+  for (void* p : pageable_experts_) std::free(p);
+  pageable_experts_.clear();
   if (copy_ != nullptr) cudaStreamDestroy(copy_);
   copy_ = nullptr;
   if (st_ != nullptr) cudaStreamDestroy(st_);
@@ -426,9 +431,9 @@ bool FlintEngine::upload_matrix(const TensorSpan& t, flk::Mat& out) {
   return true;
 }
 
-// The pinned arena (paper 3.1, finding 13): every routed expert in page-locked RAM, one range per layer (a copy or a
-// read never spans two), mapped so the GPU can reach it too. Each blob is the GGUF's own bytes: the expert's gate slice
-// then its up slice into [0, down_off), its down slice into [down_off, bytes).
+// Prefer the pinned arena (paper 3.1, finding 13), one range per layer. If pin capacity runs out, the CPU lane and
+// prompt stream can read the remaining ranges from pageable RAM instead. Each blob remains the GGUF's exact bytes:
+// gate then up in [0, down_off), followed by down. Pageable addresses never enter the direct GPU expert path.
 bool FlintEngine::load_experts(DevLayer& L, const LayerDesc& d) {
   L.nl = native_layout(d.gate_exps.type, d.down_exps.type);
   const std::size_t g_file = row_bytes(d.gate_exps.type, kEmbd) * kFfExp;
@@ -437,17 +442,33 @@ bool FlintEngine::load_experts(DevLayer& L, const LayerDesc& d) {
     std::fprintf(stderr, "multiengine-flint: the expert tensors do not match the native blob layout\n");
     return false;
   }
-  void* host = nullptr;
-  if (!cuda_ok(cudaHostAlloc(&host, L.nl.bytes * kExperts, cudaHostAllocMapped | cudaHostAllocPortable), "cudaHostAlloc")) {
-    std::fprintf(stderr, "multiengine-flint: cannot pin %.2f GiB of host memory for a layer's experts\n",
+  const bool was_pageable = pageable_mode_;
+  const auto block = allocate_host_experts(L.nl.bytes * kExperts, allow_pageable_experts_, pageable_mode_,
+      [&](std::size_t bytes) {
+        void* host = nullptr;
+        const auto status = cudaHostAlloc(&host, bytes, cudaHostAllocMapped | cudaHostAllocPortable);
+        if (status == cudaErrorMemoryAllocation) {
+          (void)cudaGetLastError();
+          return HostExpertAttempt{nullptr, nullptr, true};
+        }
+        if (!cuda_ok(status, "cudaHostAlloc")) return HostExpertAttempt{};
+        void* alias = nullptr;
+        if (!cuda_ok(cudaHostGetDevicePointer(&alias, host, 0), "cudaHostGetDevicePointer")) {
+          cudaFreeHost(host);
+          return HostExpertAttempt{};
+        }
+        return HostExpertAttempt{host, alias, false};
+      }, [](std::size_t bytes) { return std::malloc(bytes); });
+  if (!block) {
+    std::fprintf(stderr, "multiengine-flint: cannot allocate %.2f GiB of host expert storage (pageable fallback needs the CPU lane)\n",
                  double(L.nl.bytes * kExperts) / double(1ull << 30));
     return false;
   }
-  pinned_.push_back(host);
-  L.host_experts = static_cast<std::uint8_t*>(host);
-  void* alias = nullptr;
-  if (!cuda_ok(cudaHostGetDevicePointer(&alias, host, 0), "cudaHostGetDevicePointer")) return false;
-  L.host_alias = static_cast<std::uint8_t*>(alias);
+  (block->pageable ? pageable_experts_ : pinned_).push_back(block->host);
+  L.host_experts = static_cast<std::uint8_t*>(block->host);
+  L.host_alias = static_cast<std::uint8_t*>(block->device);
+  if (!was_pageable && pageable_mode_)
+    std::fprintf(stderr, "multiengine-flint: host pin capacity exhausted; remaining experts use pageable RAM with the CPU lane and streamed prompts\n");
   for (int e = 0; e < kExperts; ++e) {
     std::uint8_t* blob = L.host_experts + L.nl.bytes * static_cast<std::size_t>(e);
     if (!read(d.gate_exps, g_file * static_cast<std::size_t>(e), blob, g_file) ||
@@ -526,7 +547,7 @@ bool FlintEngine::lend() {
         lent_experts_.emplace_back(s, e);
         L.expert_in[static_cast<std::size_t>(j)] = -1;
         L.slot_of[static_cast<std::size_t>(e)] = -1;
-        if (!set_ptr(L, e, reinterpret_cast<unsigned long long>(L.host_alias + L.nl.bytes * static_cast<std::size_t>(e)))) return false;
+        if (!set_ptr(L, e, L.host_alias ? reinterpret_cast<unsigned long long>(L.host_alias + L.nl.bytes * static_cast<std::size_t>(e)) : 0ULL)) return false;
         set_res(L, e, -1);
       }
     }
@@ -694,7 +715,7 @@ bool FlintEngine::place_experts(double vram_gib, int forced_slots, const std::st
     L.score.assign(kExperts, 0.0);
     L.ptr_host.resize(kExperts);
     for (int e = 0; e < kExperts; ++e)
-      L.ptr_host[static_cast<std::size_t>(e)] = reinterpret_cast<unsigned long long>(L.host_alias + L.nl.bytes * static_cast<std::size_t>(e));
+      L.ptr_host[static_cast<std::size_t>(e)] = L.host_alias ? reinterpret_cast<unsigned long long>(L.host_alias + L.nl.bytes * static_cast<std::size_t>(e)) : 0ULL;
     for (int j = 0; j < S; ++j) {
       const int e = fill[static_cast<std::size_t>(t)][static_cast<std::size_t>(j)];
       const int slot = L.slot0 + j;
@@ -734,6 +755,7 @@ bool FlintEngine::load(const EngineConfig& cfg, const ModelDesc& m, std::string&
   chunk_ = cfg.chunk;
   graph_on_ = cfg.graph;
   n_run_ = std::clamp(cfg.layers, 1, kLayers);
+  allow_pageable_experts_ = cfg.cpu_lane && n_run_ == kLayers;
   if (const char* sd = std::getenv("STRATA_FLINT_SEAMS"); sd != nullptr) seams_ = sd;
   ring_ = kWindow + std::max(cfg.chunk, kWindow);
   eps_ = m.rms_eps;
@@ -770,7 +792,7 @@ bool FlintEngine::load(const EngineConfig& cfg, const ModelDesc& m, std::string&
     } else if (ok) {
       ok = upload_matrix(d.gate_inp, L.router) && upload_matrix(d.gate_shexp, L.gs) && upload_matrix(d.up_shexp, L.us) &&
            upload_matrix(d.down_shexp, L.ds) && load_experts(L, d);
-      if (ok) pinned += L.nl.bytes * kExperts;
+      if (ok && L.host_alias != nullptr) pinned += L.nl.bytes * kExperts;
     }
     if (!ok) {
       error = "cannot load layer weights";
@@ -938,7 +960,7 @@ bool FlintEngine::load(const EngineConfig& cfg, const ModelDesc& m, std::string&
       borrow_ = false;
     }
   }
-  if (lane && report_.slots_per_layer < kExperts && !start_lane(cfg, error)) return false;
+  if (lane && (report_.slots_per_layer < kExperts || pageable_mode_) && !start_lane(cfg, error)) return false;
   std::size_t free_b = 0, total_b = 0;
   cudaMemGetInfo(&free_b, &total_b);
   report_.vram_used_mib = double(total_b - free_b) / double(1 << 20);
@@ -1160,6 +1182,11 @@ bool FlintEngine::prompt_attention(DevLayer& L, int pos0, int T) {
 // The layer's routed experts for T tokens through Strata's grouped expert kernel on the native blobs (as Gemma 4's):
 // the input h_ as q8_1 blocks, one group per expert with entries, each group's blob read where the expert lives.
 bool FlintEngine::moe_experts(DevLayer& L, int T) {
+  if (pageable_mode_) {
+    std::fprintf(stderr, "multiengine-flint: unmapped experts require the CPU lane or prompt stream\n");
+    broken_ = true;
+    return false;
+  }
   const int A = T * kPicks;
   strata::kernels::quantize_q8_1_rows(h_, T, kEmbd, xq_, st_);
   int groups = kPicks;
@@ -1476,12 +1503,14 @@ int FlintEngine::process(const std::int32_t* ids, int n, const std::function<boo
   int done = 0;
   while (done < n) {
     const int left = n - done;
-    if (left <= 4) {
+    const int chunk_rows = std::min(left, chunk_);
+    if (left <= 4 || scalar_expert_prompt(pageable_mode_, mmq_on_, chunk_rows, kMmqMinRows)) {
       if (!give_back()) return -1;
-      for (int i = 0; i < left; ++i) {
+      const int scalar_rows = left <= 4 ? left : chunk_rows;
+      for (int i = 0; i < scalar_rows; ++i) {
         if (!forward_one(ids[done + i])) return -1;
       }
-      done = n;
+      done += scalar_rows;
     } else {
       const int T = std::min(left, chunk_);
       if (!(mmq_on_ && T >= kMmqMinRows ? lend() : give_back())) return -1;
@@ -1609,7 +1638,7 @@ void FlintEngine::rebalance(int max_swaps) {
       if (L.score[static_cast<std::size_t>(hot)] <= L.score[static_cast<std::size_t>(cold)] * 1.25 + 0.5) continue;
       L.expert_in[static_cast<std::size_t>(cold_slot)] = -1;
       L.slot_of[static_cast<std::size_t>(cold)] = -1;
-      set_ptr(L, cold, reinterpret_cast<unsigned long long>(L.host_alias + L.nl.bytes * static_cast<std::size_t>(cold)));
+      set_ptr(L, cold, L.host_alias ? reinterpret_cast<unsigned long long>(L.host_alias + L.nl.bytes * static_cast<std::size_t>(cold)) : 0ULL);
       set_res(L, cold, -1);
       L.slot_of[static_cast<std::size_t>(hot)] = -2;
       picks.push_back({t, L.slot0 + cold_slot, hot});

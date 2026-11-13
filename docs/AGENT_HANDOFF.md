@@ -281,6 +281,37 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Flint starts when host pin capacity is exhausted (2026-11-13)
+
+Owner-box diagnostics reproduced Flint exiting before READY when a layer's cudaHostAlloc
+failed. Its full pinned expert arena could not be allocated. The owned engine now recovers
+only from pin-capacity exhaustion, retaining remaining layers' exact expert bytes in pageable
+host storage when the full-model CPU lane is enabled. Other CUDA failures, host-allocation
+failures and mapped-only configurations remain failures. Once fallback starts, later layers
+avoid more large pin attempts. Ownership and cleanup distinguish CUDA-pinned and pageable
+allocations, and the pinned-memory report counts only actually mapped expert ranges.
+
+Unmapped ranges have no fabricated GPU alias. Decode uses the existing CPU lane, including
+when all experts fit the GPU cache. Streamed prompts retain their existing path; short tails
+and a disabled prompt stream use scalar decode instead of the direct mapped-memory kernel.
+A guard rejects any accidental direct expert-kernel call in pageable mode. No numerical
+kernel, model precision, context setting or calibration acceptance threshold changes.
+
+The subsequent synthetic quality probe exposed Flint adding prose around a correct bare
+arithmetic answer. The short-chat task now requests the same computed integer in a strict
+JSON result object. Wrong values and extra explanations still fail; previous exact-text
+validator tests remain intact. Resume identity is versioned for the changed request.
+
+RED: the installed engine fails at host pin allocation before READY; a new arithmetic
+contract assertion fails on the old workload. GREEN: 12 Flint host checks, eight real GPU
+kernel checks and 22 frontend calibration checks pass. Accurate and explicit fast-math Flint
+libraries compile with warnings as errors. Real-model Quick calibration with both fixes
+passes all three trials in isolated state. A six-token prompt plus full PCIe staging also
+completes using the fallback, exercising short-tail routing and pageable transfer sources.
+An independent full-model logit comparison was not run; the historical reference checkout
+is unavailable. Installation and normal-state validation remain pending. Private logs,
+responses and machine measurements remain excluded from Git.
+
 ### Saved calibration and latest attempt are displayed separately (2026-11-12)
 
 A valid saved calibration can coexist with a newer rejected recalibration. The UI previously

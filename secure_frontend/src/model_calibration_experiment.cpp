@@ -747,7 +747,7 @@ bool ModelLauncher::run_benchmark(const Job& job) {
       ? calibration_key(card,fast_values).runtime : std::string{};
   CalibrationResult identity_record{card.name, {}, 0, 0, "", false, base_key};
   const auto identity = to_hex(
-      sha256("benchmark-workload-v5-fixed-baseline-groups\n" + render_calibration(identity_record) +
+      sha256("benchmark-workload-v6-json-arithmetic\n" + render_calibration(identity_record) +
              render_remembered_options({{card.name, base_values}}) +
              python_json_text(strings(baseline_args)) +
              workload_name(options.workload) +

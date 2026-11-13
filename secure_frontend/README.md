@@ -2276,6 +2276,9 @@ Structured known-answer probes compare complete JSON values. A single standalone
 code fence is allowed around the answer; wrong values, missing fields, extra prose,
 multiple answers and incomplete responses still fail. These checks do not certify strict
 unwrapped JSON-format compliance. Tool arguments remain strict JSON.
+The short-chat arithmetic probe asks for its computed integer in a JSON result object,
+using the same strict value comparison as the factual probe rather than requiring a bare
+integer response. Extra explanations do not pass this check.
 The optional context probe must cover at least 95% of the requested input budget to pass;
 frontend prompt limits or the bounded synthetic prompt may prevent full coverage.
 Telemetry is best effort: missing readings and unsupported thermal flags are shown as such.

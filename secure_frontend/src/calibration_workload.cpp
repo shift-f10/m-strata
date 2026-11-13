@@ -199,7 +199,7 @@ CalibrationCases build_calibration_workload(const CalibrationWorkloadRequest& r,
       add("chat-explanation", "Write a detailed practical explanation of how to organize a community library, covering cataloging, lending, accessibility, staffing and maintenance. Use at least 400 words. Do not use tools.", CalibrationAcceptance::performance_text, "");
       add("chat-process", "Explain in two paragraphs how a refrigerator moves heat from inside to outside. Do not use tools.", CalibrationAcceptance::performance_text, "");
       add("chat-list", "List twelve common kitchen tools with a sentence about a practical use for each. Do not use tools.", CalibrationAcceptance::performance_text, "");
-      add("chat-arithmetic", "Calculate (17 * 3) + 8. Reply only with the integer answer, without explanations.", CalibrationAcceptance::exact_text, "59");
+      add("chat-arithmetic", "Calculate (17 * 3) + 8. Return only JSON with one key result holding the integer answer, without explanations.", CalibrationAcceptance::json_value, R"({"result":59})");
       add("chat-facts", "Facts: The parcel is blue, its code is LIME-482, and it contains 6 books. Return only JSON with keys color, code, count in that order.", CalibrationAcceptance::json_value, R"({"color":"blue","code":"LIME-482","count":6})");
       break;
     case BenchmarkWorkload::coding:

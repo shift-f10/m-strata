@@ -41,6 +41,10 @@ void fixed_workloads_have_known_answers_and_real_token_counts() {
       expect(test.context_probe == (kind == BenchmarkWorkload::long_context), "only context-fill cases are probes despite every case having a target token count");
       expect(test.request_body.find("reasoning_effort") == std::string::npos, "profile-incompatible reasoning override is absent");
       expect(test.request_body.find("\"strata_search\":false") != std::string::npos, "benchmark requests cannot invoke server web search");
+      if (test.id == "chat-arithmetic") {
+        expect(test.acceptance == CalibrationAcceptance::json_value && test.expected == R"({"result":59})",
+               "arithmetic checks the same computed value through the structured answer contract");
+      }
     }
     if (kind == BenchmarkWorkload::tools) expect(cases->size() == 2U && !cases->front().stream && cases->back().stream, "tools cover both modes");
     else expect(performance && known_answer, "standard workloads separate representative performance from known-answer quality");
