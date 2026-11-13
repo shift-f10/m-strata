@@ -57,6 +57,41 @@ void experiment_plan_explains_fixed_and_inactive_settings() {
   expect(std::none_of(glm.steps.begin(), glm.steps.end(), [](const auto& step) { return step.flag == "glm.pcie_share"; }), "fixed environment-backed row skipped");
 }
 
+void every_profile_and_mode_keeps_completion_and_acceptance_contracts() {
+  for (const auto profile : {EngineProfile::qwen, EngineProfile::glm53, EngineProfile::gemma4,
+       EngineProfile::deepseek, EngineProfile::raon1, EngineProfile::flint, EngineProfile::minimax}) {
+    for (const auto mode : {BenchmarkMode::quick, BenchmarkMode::thorough, BenchmarkMode::maximum}) {
+      BenchmarkOptions options; options.mode = mode;
+      const auto plan = make_experiment_plan(profile, {24U, 12U}, options, {}, true);
+      const auto stable = run_experiment(plan, options, [](const ExperimentTrial&) -> std::optional<ExperimentSample> {
+        return ExperimentSample{100.0};
+      });
+      expect(stable.end == ExperimentOutcome::End::done && stable.apply_allowed && !stable.noisy,
+             "every profile and mode can accept a stable verified baseline");
+      expect(!stable.records.empty() && stable.records.size() <= experiment_trial_upper_bound(plan),
+             "every profile's executed trials fit its published bound");
+      if (mode == BenchmarkMode::quick) for (const auto& step : plan.steps)
+        expect(profile == EngineProfile::qwen && (step.flag == "--pcie-frac" || step.flag == "--spec-min-p"),
+               "Quick never introduces startup sweeps for another family");
+      const auto wrong = run_experiment(plan, options, [](const ExperimentTrial&) -> std::optional<ExperimentSample> {
+        return ExperimentSample{100.0, false};
+      });
+      expect(wrong.end == ExperimentOutcome::End::quality_failed && !wrong.apply_allowed && wrong.args.empty(),
+             "no profile or mode can accept a wrong known answer");
+      const auto busy = run_experiment(plan, options, [](const ExperimentTrial&) -> std::optional<ExperimentSample> {
+        return ExperimentSample{100.0, true, true};
+      });
+      expect(busy.end == ExperimentOutcome::End::contaminated && !busy.apply_allowed && busy.args.empty(),
+             "no profile or mode can apply a contaminated measurement");
+      const auto noisy = run_experiment(plan, options, [](const ExperimentTrial& trial) -> std::optional<ExperimentSample> {
+        return ExperimentSample{trial.stage == "confirming-baseline" && trial.replicate % 2U ? 200.0 : 100.0};
+      });
+      expect(noisy.end == ExperimentOutcome::End::done && noisy.noisy && !noisy.apply_allowed && noisy.args.empty(),
+             "every profile and mode keeps the unstable-baseline rejection");
+    }
+  }
+}
+
 void thorough_work_is_bounded_by_reference_calibrators() {
   BenchmarkOptions options; options.mode = BenchmarkMode::thorough;
   const SweepMachine machine{24U, 12U};
@@ -226,6 +261,7 @@ int main(int argc, char** argv) {
       {"benchmark_options_are_strict_and_bounded", benchmark_options_are_strict_and_bounded},
       {"experiment_plan_explains_fixed_and_inactive_settings", experiment_plan_explains_fixed_and_inactive_settings},
       {"thorough_work_is_bounded_by_reference_calibrators", thorough_work_is_bounded_by_reference_calibrators},
+      {"every_profile_and_mode_keeps_completion_and_acceptance_contracts", every_profile_and_mode_keeps_completion_and_acceptance_contracts},
       {"maximum_revisits_combinations_and_confirms", maximum_revisits_combinations_and_confirms},
       {"budgets_and_cancellation_never_expose_partial_winners", budgets_and_cancellation_never_expose_partial_winners},
       {"quality_contamination_noise_and_comparison_gate_application", quality_contamination_noise_and_comparison_gate_application}}, failures);

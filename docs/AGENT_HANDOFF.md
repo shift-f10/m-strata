@@ -281,6 +281,24 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### Cross-family calibration regression gate (2026-11-13)
+
+Owner: calibration must work across model types; fixing one family must not break another.
+The regression suite now builds every chat and coding calibration request with each of the
+seven native profile encoders and its actual reasoning-schema policy. It checks complete
+prompt token counts and independent known-answer validation. A second matrix covers all
+seven engine profiles in Quick, Thorough and Maximum: stable completion, published trial
+bounds, Quick's live-control restriction, and rejection of bad, contaminated or noisy data.
+No existing assertion is removed and no acceptance threshold changes.
+
+The expanded frontend selection runs 60 tests with zero failures and one CTest real-pack
+fixture skip; profile/template and tool-prompt suites are included. These are contract and
+synthetic-tokenizer checks, not real-weight inference proof for absent model families.
+Owner-box real-model regression currently confirms Flint, Gemma 4 with 256K context and
+Raon. Qwen memory comparisons at the saved 256K contexts remain in progress; rejected
+unstable results are not presented as successful calibrations. Private card configuration
+and hardware measurements remain local. The app window stays closed during diagnostics.
+
 ### Flint starts when host pin capacity is exhausted (2026-11-13)
 
 Owner-box diagnostics reproduced Flint exiting before READY when a layer's cudaHostAlloc
@@ -309,8 +327,11 @@ libraries compile with warnings as errors. Real-model Quick calibration with bot
 passes all three trials in isolated state. A six-token prompt plus full PCIe staging also
 completes using the fallback, exercising short-tail routing and pageable transfer sources.
 An independent full-model logit comparison was not run; the historical reference checkout
-is unavailable. Installation and normal-state validation remain pending. Private logs,
-responses and machine measurements remain excluded from Git.
+is unavailable. Both frontend executables and both Flint math-variant libraries were backed
+up, installed and hash-verified. The variant manifest and build record were updated, while
+the main configuration was preserved. Real Flint Quick calibration then passed in normal
+installed state. Previously current records are being refreshed after the shared-runtime
+fingerprint change. Private logs, responses and machine measurements remain excluded from Git.
 
 ### Saved calibration and latest attempt are displayed separately (2026-11-12)
 

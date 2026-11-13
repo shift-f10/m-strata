@@ -1,6 +1,10 @@
 #include "secure_frontend/calibration_workload.hpp"
 #include "secure_frontend/json.hpp"
+#include "secure_frontend/chat_route.hpp"
+#include "secure_frontend/frontend_config.hpp"
 #include "support/test_support.hpp"
+#include "support/test_tokenizer.hpp"
+#include <algorithm>
 #include <iostream>
 
 namespace {
@@ -20,6 +24,67 @@ std::string tool_reply(std::string_view second = R"({"key":"beta","value":11})")
 }
 std::string event(std::string_view delta, std::string_view finish = "null") {
   return "data: {\"choices\":[{\"index\":0,\"delta\":" + std::string(delta) + ",\"finish_reason\":" + std::string(finish) + "}]}\n\n";
+}
+void chat_and_coding_workloads_plan_for_every_profile() {
+  for (const auto profile : {NativeChatProfile::qwen, NativeChatProfile::glm53, NativeChatProfile::gemma4,
+       NativeChatProfile::deepseek, NativeChatProfile::raon1, NativeChatProfile::flint, NativeChatProfile::minimax}) {
+    auto pack = profile == NativeChatProfile::gemma4 ? test_support::spm_tokenizer() : test_support::byte_tokenizer();
+    const auto marker = [&](std::string_view value, int type) {
+      const auto found = std::find(pack.tokens_by_id.begin(), pack.tokens_by_id.end(), value);
+      if (found == pack.tokens_by_id.end()) { pack.tokens_by_id.emplace_back(value); pack.token_types.push_back(type); }
+    };
+    switch (profile) {
+      case NativeChatProfile::qwen:
+      case NativeChatProfile::raon1:
+        marker("<think>", profile == NativeChatProfile::raon1 ? 3 : 4);
+        marker("</think>", profile == NativeChatProfile::raon1 ? 3 : 4); marker("<|endoftext|>", 3);
+        if (profile == NativeChatProfile::raon1) pack.mode = TokenizerMode::raon_bpe;
+        break;
+      case NativeChatProfile::glm53:
+        pack.mode = TokenizerMode::glm_bpe;
+        for (auto value : {"[gMASK]", "<sop>", "<|system|>", "<|user|>", "<|assistant|>", "<|observation|>", "<think>", "</think>"}) marker(value, 3);
+        break;
+      case NativeChatProfile::gemma4: break;
+      case NativeChatProfile::flint:
+        pack.mode = TokenizerMode::flint_bpe;
+        for (auto value : {"<|begin_of_text|>", "<|end_of_text|>", "<|system|>", "<|user|>", "<|assistant|>", "<|observation|>", "<|developer|>"}) marker(value, 3);
+        marker("<think>", 4); marker("</think>", 4);
+        break;
+      case NativeChatProfile::deepseek:
+        pack.mode = TokenizerMode::deepseek_bpe;
+        for (auto value : {"<｜begin▁of▁sentence｜>", "<｜System｜>", "<｜User｜>", "<｜Assistant｜>", "<｜end▁of▁sentence｜>"}) marker(value, 3);
+        marker("<think>", 4); marker("</think>", 4);
+        break;
+      case NativeChatProfile::minimax:
+        pack.mode = TokenizerMode::minimax_bpe;
+        for (auto value : {"]~!b[", "]~b]", "[e~["}) marker(value, 3);
+        marker("<mm:think>", 4); marker("</mm:think>", 4);
+        break;
+    }
+    ChatSchemaLimits schema;
+    schema.per_request_reasoning_effort = profile != NativeChatProfile::glm53;
+    const auto counter = [&](std::string_view body) -> std::optional<std::size_t> {
+      const auto parsed = parse_chat_request(body, schema);
+      const auto* request = std::get_if<ChatCompletionRequest>(&parsed);
+      if (!request) return std::nullopt;
+      const auto planned = select_chat_generation_plan(profile, *request, pack, 8192U, SamplingDefaults{}, {}, false, {}, {.off = true});
+      const auto* plan = std::get_if<ChatGenerationPlan>(&planned);
+      if (!plan) return std::nullopt;
+      return plan->prompt_token_ids.size();
+    };
+    for (const auto workload : {BenchmarkWorkload::chat, BenchmarkWorkload::coding}) {
+      CalibrationWorkloadRequest input; input.model = "fixture"; input.workload = workload;
+      input.disable_thinking = schema.per_request_reasoning_effort;
+      const auto result = build_calibration_workload(input, counter);
+      const auto* cases = std::get_if<std::vector<CalibrationCase>>(&result);
+      if (!cases) std::cerr << "calibration profile " << static_cast<int>(profile) << " workload rejected\n";
+      expect(cases && cases->size() == 5U, "every profile admits all three performance and both known-answer requests");
+      if (cases) for (const auto& test : *cases) {
+        expect(test.prompt_tokens > 0U && test.prompt_tokens == counter(test.request_body), "profile's real encoder counts the complete calibration request");
+        if (!test.measured) expect(validate_calibration_response(test, 200, reply(test.expected)).accepted, "known answers remain independently checked for every profile");
+      }
+    }
+  }
 }
 void fixed_workloads_have_known_answers_and_real_token_counts() {
   CalibrationWorkloadRequest input; input.model = "fixture";
@@ -196,6 +261,7 @@ void host_diagnostics_distinguish_busy_baseline_and_thermal_evidence() {
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
       {"fixed_workloads_have_known_answers_and_real_token_counts", fixed_workloads_have_known_answers_and_real_token_counts},
+      {"chat_and_coding_workloads_plan_for_every_profile", chat_and_coding_workloads_plan_for_every_profile},
       {"memory_probe_reports_partial_coverage_and_honors_limits", memory_probe_reports_partial_coverage_and_honors_limits},
       {"quality_rejects_wrong_answers_truncation_and_incomplete_tool_arguments", quality_rejects_wrong_answers_truncation_and_incomplete_tool_arguments},
       {"streamed_tools_require_two_complete_calls_and_terminal_done", streamed_tools_require_two_complete_calls_and_terminal_done},
