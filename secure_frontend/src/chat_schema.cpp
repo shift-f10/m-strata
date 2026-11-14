@@ -114,6 +114,73 @@ bool text_or_empty(const JsonValue& value, const std::size_t max_bytes, std::str
   return true;
 }
 
+const JsonValue* member_of(const JsonValue& value, const std::string_view name) {
+  if (const auto* fields = value.if_object()) {
+    for (const auto& field : *fields) {
+      if (field.key == name) return &field.value;
+    }
+  }
+  return nullptr;
+}
+
+const std::string* string_member(const JsonValue& value, const std::string_view name) {
+  const auto* field = member_of(value, name);
+  return field == nullptr ? nullptr : field->if_string();
+}
+
+bool valid_tool_name(const std::string_view name) {
+  return !name.empty() && name.size() <= kMaxCallNameBytes && std::all_of(name.begin(), name.end(), [](const char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+  });
+}
+
+bool read_tool_result(const JsonValue& content, const std::size_t max_bytes, std::string& out) {
+  const auto* parts = content.if_array();
+  if (parts == nullptr) return text_or_empty(content, max_bytes, out);
+  for (const auto& part : *parts) {
+    const auto* type = string_member(part, "type");
+    const auto* text = string_member(part, "text");
+    if (type == nullptr || *type != "text" || text == nullptr ||
+        (!text->empty() && !valid_content(*text, max_bytes - out.size()))) return false;
+    out += *text;
+  }
+  return true;
+}
+
+bool parse_client_calls(const JsonValue& value, const std::size_t max_bytes, ToolRound& round,
+                        std::vector<std::string>& ids) {
+  const auto* entries = value.if_array();
+  if (entries == nullptr || entries->empty() || entries->size() > kMaxClientToolCalls) return false;
+  for (const auto& entry : *entries) {
+    const auto* id = string_member(entry, "id");
+    const auto* type = string_member(entry, "type");
+    const auto* function = member_of(entry, "function");
+    if (id == nullptr || !valid_content(*id, 128U) || type == nullptr || *type != "function" || function == nullptr ||
+        std::find(ids.begin(), ids.end(), *id) != ids.end()) return false;
+    const auto* name = string_member(*function, "name");
+    const auto* args = member_of(*function, "arguments");
+    if (name == nullptr || !valid_tool_name(*name) || args == nullptr) return false;
+    JsonValue arguments;
+    if (const auto* encoded = args->if_string()) {
+      auto parsed = parse_json(*encoded, {.max_bytes = max_bytes, .max_depth = api_constants::kChatMaxJsonDepth,
+                                          .max_container_entries = 1024U, .max_string_bytes = max_bytes, .allow_fractions = true});
+      auto* object = std::get_if<JsonValue>(&parsed);
+      if (object == nullptr || object->if_object() == nullptr) return false;
+      arguments = std::move(*object);
+    } else if (args->if_object() != nullptr) {
+      arguments = *args;
+    } else {
+      return false;
+    }
+    ToolCall call{.name = *name, .arguments = {}};
+    for (const auto& argument : *arguments.if_object()) call.arguments.push_back({argument.key, argument.value});
+    round.calls.push_back(std::move(call));
+    ids.push_back(*id);
+  }
+  round.results.resize(ids.size());
+  return true;
+}
+
 bool parse_call(const JsonValue& value, ToolCall& call) {
   const auto* fields = value.if_object();
   if (fields == nullptr) return false;
@@ -200,7 +267,7 @@ bool image_data_url_shape(const std::string_view url, const std::size_t max_b64_
 
 namespace {
 
-constexpr std::string_view kExtensionKeys[] = {"tools", "tool_choice", "functions", "function_call", "parallel_tool_calls", "mcp_servers"};
+constexpr std::string_view kExtensionKeys[] = {"functions", "function_call", "mcp_servers"};
 constexpr std::string_view kSp5Keys[] = {"top_k", "min_p", "top_logprobs"};
 template <std::size_t N>
 std::string_view find_key(const std::string_view (&keys)[N], const std::string_view key) {
@@ -247,7 +314,7 @@ ChatRequestResult parse_chat_request(const std::string_view json, const ChatSche
           if (fields == nullptr) continue;
           for (const auto& field : *fields) {
             const auto* role = field.value.if_string();
-            if (field.key == "role" && role != nullptr && (*role == "tool" || *role == "function")) {
+            if (field.key == "role" && role != nullptr && *role == "function") {
               return refuse(ApiError::extension_disabled, "role");
             }
           }
@@ -271,17 +338,104 @@ ChatRequestResult parse_chat_request(const std::string_view json, const ChatSche
       }
       request.model = *text;
       model_seen = true;
+    } else if (key == "tools") {
+      if (value.kind() == JsonKind::null) continue;
+      const auto* tools = value.if_array();
+      if (tools == nullptr || tools->size() > 128U) return refuse(ApiError::invalid_request);
+      for (const auto& tool : *tools) {
+        const auto* fields = tool.if_object();
+        if (fields == nullptr) return refuse(ApiError::invalid_request);
+        const auto* type = string_member(tool, "type");
+        const JsonValue* function = type == nullptr ? &tool : member_of(tool, "function");
+        if ((type != nullptr && *type != "function") || function == nullptr || function->if_object() == nullptr)
+          return refuse(ApiError::invalid_request);
+        ClientTool parsed_tool;
+        for (const auto& field : *function->if_object()) {
+          if (field.key == "name") {
+            const auto* name = field.value.if_string();
+            if (name == nullptr || !valid_tool_name(*name))
+              return refuse(ApiError::invalid_request);
+            parsed_tool.declaration.name = *name;
+          }
+          if (field.key == "parameters") {
+            if (field.value.kind() == JsonKind::null) continue;
+            if (field.value.if_object() == nullptr) return refuse(ApiError::invalid_request);
+            for (const auto& parameter_field : *field.value.if_object()) {
+              if (parameter_field.key != "properties" || parameter_field.value.if_object() == nullptr) continue;
+              for (const auto& property : *parameter_field.value.if_object()) {
+                if (property.value.if_object() == nullptr) continue;
+                for (const auto& attribute : *property.value.if_object()) {
+                  if (attribute.key == "type" && attribute.value.if_string() != nullptr && *attribute.value.if_string() == "string")
+                    parsed_tool.declaration.string_parameters.push_back(property.key);
+                }
+              }
+            }
+          }
+        }
+        if (parsed_tool.declaration.name.empty() || std::any_of(request.client_tools.begin(), request.client_tools.end(),
+            [&](const ClientTool& previous) { return previous.declaration.name == parsed_tool.declaration.name; }))
+          return refuse(ApiError::invalid_request);
+        parsed_tool.template_json = python_json_text(*function);
+        request.client_tools.push_back(std::move(parsed_tool));
+      }
+    } else if (key == "tool_choice") {
+      const auto* choice = value.if_string() != nullptr ? value.if_string() : string_member(value, "type");
+      if (choice != nullptr) {
+        if (*choice == "none" || *choice == "required") {
+          request.tool_choice = *choice;
+        } else if (*choice == "function") {
+          const auto* function = member_of(value, "function");
+          const auto* name = function != nullptr ? string_member(*function, "name") : string_member(value, "name");
+          if (name != nullptr && valid_tool_name(*name)) request.named_tool = *name;
+        }
+      }
+    } else if (key == "parallel_tool_calls") {
+      if (value.if_boolean() == nullptr) return refuse(ApiError::invalid_request);
+      request.parallel_tool_calls = *value.if_boolean();
     } else if (key == "messages") {
       const auto* items = value.if_array();
       if (items == nullptr || items->empty() || items->size() > limits.max_messages) return refuse(ApiError::invalid_request);
       std::size_t image_count = 0;  // vision.max_n counts the WHOLE request (the pin reads one request's images at a time)
+      std::vector<std::string> pending_ids;
+      std::vector<bool> pending_results;
+      std::size_t results_left = 0;
+      bool after_tools = false;
       for (const auto& item : *items) {
         const auto* fields = item.if_object();
         if (fields == nullptr) return refuse(ApiError::invalid_request);
+        const auto* role = string_member(item, "role");
+        if (role != nullptr && *role == "tool") {
+          const auto* id = string_member(item, "tool_call_id");
+          const auto* content = member_of(item, "content");
+          if (results_left == 0U || id == nullptr || content == nullptr || fields->size() != 3U)
+            return refuse(ApiError::invalid_request);
+          const auto found = std::find(pending_ids.begin(), pending_ids.end(), *id);
+          if (found == pending_ids.end()) return refuse(ApiError::invalid_request);
+          const auto index = static_cast<std::size_t>(found - pending_ids.begin());
+          if (pending_results[index] ||
+              !read_tool_result(*content, limits.max_message_bytes, request.messages.back().rounds.back().results[index]))
+            return refuse(ApiError::invalid_request);
+          pending_results[index] = true;
+          after_tools = --results_left == 0U;
+          continue;
+        }
+        if (results_left != 0U) return refuse(ApiError::invalid_request);
+        const auto* calls = member_of(item, "tool_calls");
+        const bool assistant = role != nullptr && *role == "assistant";
+        const bool no_calls = calls == nullptr || calls->kind() == JsonKind::null ||
+                              (calls->if_array() != nullptr && calls->if_array()->empty());
+        const bool calls_message = assistant && !no_calls;
         ChatMessage message;
         bool role_seen = false;
         bool content_seen = false;
         for (const auto& field : *fields) {
+          if (assistant && field.key == "tool_calls") continue;
+          if (calls_message && field.key == "content" && field.value.kind() == JsonKind::null) {
+            content_seen = true;
+            continue;
+          }
+          if (assistant && field.key == "reasoning_content" &&
+              (field.value.kind() == JsonKind::null || field.value.if_string() != nullptr)) continue;
           if (field.key == "content" && field.value.kind() == JsonKind::array) {
             // C-9 carve-out (Ruling T12-b): the parts array is a MODEL capability decided by
             // the composed launch (vision_capable), never a request option. Without it the
@@ -354,12 +508,40 @@ ChatRequestResult parse_chat_request(const std::string_view json, const ChatSche
             return refuse(ApiError::invalid_request);
           }
         }
-        if (!role_seen || !content_seen) return refuse(ApiError::invalid_request);
+        if (!role_seen || (!content_seen && !calls_message)) return refuse(ApiError::invalid_request);
+        if (calls_message) {
+          if (!message.parts.empty() || !message.rounds.empty() || request.messages.empty()) return refuse(ApiError::invalid_request);
+          ToolRound round;
+          round.content = std::move(message.content);
+          if (const auto* reasoning = member_of(item, "reasoning_content");
+              reasoning != nullptr && reasoning->kind() != JsonKind::null &&
+              !text_or_empty(*reasoning, limits.max_message_bytes, round.reasoning)) return refuse(ApiError::invalid_request);
+          pending_ids.clear();
+          if (!parse_client_calls(*calls, limits.max_message_bytes, round, pending_ids)) return refuse(ApiError::invalid_request);
+          results_left = pending_ids.size();
+          pending_results.assign(results_left, false);
+          request.client_tool_history = true;
+          if (after_tools) {
+            if (request.messages.back().rounds.size() >= kMaxHistoryRounds) return refuse(ApiError::invalid_request);
+            request.messages.back().rounds.push_back(std::move(round));
+          } else {
+            message.rounds.push_back(std::move(round));
+            request.messages.push_back(std::move(message));
+          }
+          after_tools = false;
+          continue;
+        }
         // text, except for an earlier answer whose text all came before its searches; searches on answers only
         if (message.content.empty() && message.parts.empty() && message.rounds.empty()) return refuse(ApiError::invalid_request);
         if (!message.rounds.empty() && (message.role != "assistant" || !message.parts.empty())) return refuse(ApiError::invalid_request);
-        request.messages.push_back(std::move(message));
+        if (after_tools && message.role == "assistant" && message.parts.empty() && message.rounds.empty()) {
+          request.messages.back().content = std::move(message.content);
+        } else {
+          request.messages.push_back(std::move(message));
+        }
+        after_tools = false;
       }
+      if (results_left != 0U) return refuse(ApiError::invalid_request);
       messages_seen = true;
     } else if (key == "max_tokens" || key == "max_completion_tokens") {
       // B2: any integer >= 1 is accepted; values above UINT32_MAX are clamped
@@ -486,6 +668,12 @@ std::optional<std::string> render_chat_completion_response(const ChatCompletionR
   return response;
 }
 
+std::string tool_arguments_json(const ToolCall& call) {
+  std::vector<JsonMember> arguments;
+  for (const auto& argument : call.arguments) arguments.push_back(JsonMember{argument.name, argument.value});
+  return python_json_text(JsonValue::make_object(std::move(arguments)));
+}
+
 std::optional<std::string> render_chat_completion(const CompletionView& view, const ChatSchemaLimits& limits) {
   if (view.text.size() > limits.max_generated_bytes || view.reasoning.size() > limits.max_generated_bytes || !valid_utf8(view.text) ||
       !valid_utf8(view.reasoning) || !valid_utf8(view.model)) {
@@ -496,10 +684,28 @@ std::optional<std::string> render_chat_completion(const CompletionView& view, co
   out += ",\"object\":\"chat.completion\",\"created\":" + std::to_string(view.created) + ",\"model\":";
   append_json_string(&out, view.model);
   out += ",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":";
-  append_json_string(&out, view.text);
+  if (view.text.empty() && !view.tool_calls.empty()) out += "null";
+  else append_json_string(&out, view.text);
   if (!view.reasoning.empty()) {
     out += ",\"reasoning_content\":";
     append_json_string(&out, view.reasoning);
+  }
+  if (!view.tool_calls.empty()) {
+    out += ",\"tool_calls\":[";
+    bool first = true;
+    for (const auto& item : view.tool_calls) {
+      if (!valid_utf8(item.id) || !valid_utf8(item.call.name)) return std::nullopt;
+      if (!first) out += ',';
+      first = false;
+      out += "{\"id\":";
+      append_json_string(&out, item.id);
+      out += ",\"type\":\"function\",\"function\":{\"name\":";
+      append_json_string(&out, item.call.name);
+      out += ",\"arguments\":";
+      append_json_string(&out, tool_arguments_json(item.call));
+      out += "}}";
+    }
+    out += ']';
   }
   if (!view.search_events.empty()) {
     out += ",\"strata_search\":[";

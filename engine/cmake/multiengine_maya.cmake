@@ -12,7 +12,9 @@
 # A library per program, as Maya builds a program per model: their sources were never linked together, so none of their
 # same-named definitions can meet.  Each program's main source is compiled by its wrapper with main() renamed; the
 # target multiengine_maya_libraries builds them all into MULTIENGINE_MAYA_OUTPUT_DIR (beside the launcher).  Maya's own
-# executables stay as Maya builds them, for checking the libraries against.
+# executables share the accuracy overlay's removal of compiler fast-math by
+# default; explicit MULTIENGINE_FAST_MATH=ON retains upstream's flags.
+# source-written intrinsics and all other upstream options remain intact.
 if(NOT DEFINED _me_maya_deferred)
   set(_me_maya_deferred ON)
   # (a deferred call reads its arguments when it runs, so the path is written into it now)
@@ -65,3 +67,6 @@ add_custom_target(multiengine_maya_libraries)
 if(_me_maya_libraries)
   add_dependencies(multiengine_maya_libraries ${_me_maya_libraries})
 endif()
+
+include("${MULTIENGINE_SOURCE_DIR}/cmake/multiengine_accuracy.cmake")
+multiengine_preserve_cuda_accuracy("${CMAKE_CURRENT_SOURCE_DIR}")

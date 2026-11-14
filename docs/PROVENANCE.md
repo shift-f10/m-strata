@@ -1,6 +1,82 @@
 # Provenance
 
+### Live-control measurement settling (2026-11-13)
+
+The owned benchmark now reuses its existing two-group startup warm-up after effective
+internal request controls change. This is an owned measurement-policy correction, not an
+upstream import. No new inference kernel, numerical setting or dependency is introduced.
+The Qwen per-request control grammar and all pinned reference trees remain unchanged.
+
+### Flint host-memory recovery (2026-11-13)
+
+The owned Flint engine now recovers from CUDA host-pin capacity exhaustion through its
+existing CPU-lane and streamed-prompt paths, with pageable host backing for remaining
+layers. Expert bytes and numerical kernels are unchanged; the allocation policy and
+short-tail routing are owned additions. No upstream or vendored source is modified and
+no dependency is added. The calibration arithmetic task keeps the same expression and
+expected result, requesting structured JSON to avoid accepting prose around the answer.
+
+### Calibration memory-pressure guidance (2026-11-12)
+
+The Qwen memory-budget troubleshooting guidance describes the existing engine option
+`--resident-budget-gib` and the pinned setup's `resident_budget_gib` policy
+(`upstream/setup.py`). Owner-authorized local diagnostics compared explicit budgets;
+the frontend's existing explicit-argument precedence was used without modifying either
+engine source or reference tree. Those local settings and diagnostic records are private.
+
+### Calibration measurement groups (2026-11-12)
+
+The owned chat/coding benchmark follows the pinned Strata calibration's median-of-three
+performance group and two-group session warm-up (`upstream/tools/calibrate.py`,
+`Session.rate` and `Session.warm_up`). Its Qwen baseline follows the startup-reported
+control defaults used by reference `measure`, through the existing bounded INFO capture
+and internal GEN controls. Explicit selected fractions retain precedence. The frontend's
+independent known-answer checks and confirmation noise gates remain in place. No upstream
+file is modified and no new dependency is introduced.
+
+### Thorough trial schedule (2026-11-12)
+
+The owned Thorough planner uses the existing mapped candidate lists with reference
+repeat counts: pinned Strata `tools/calibrate.py` (`SWEEP_ROUNDS=3` for live controls,
+two measured groups per restart candidate), and pinned Maya `tools/calibrate_glm.py`
+(one screening group per mapped candidate before confirmation). DeepSeek/MiniMax
+screening uses the existing startup candidates, with sustained requests within each
+trial. This is a limit on the exposed controls' work, not a claim of full upstream
+calibration-feature parity. Maximum retains the prior extra refinement search.
+The reference files in the sparse Maya checkout were read from its pinned Git tree.
+Neither reference tree was modified; time-budget settings are unchanged.
+
+### Calibration engine reuse (2026-11-12)
+
+The owned frontend's Quick benchmark follows the pinned upstream calibration's
+single-engine request-tuning approach (`upstream/tools/calibrate.py`, `Session.rate`
+and `measure`). The bounded Qwen GEN keys `pcie_frac` and `spec_min_p` are supported
+by both the pinned upstream and the copied engine's request parser. Startup settings
+still require a fresh engine; the upstream submodule and copied engine sources are
+unchanged. No Python service or new client-controlled tuning API is introduced.
+
 ## This repository's license
+
+### Native embedded-template interpreter (2026-11-11)
+
+`secure_frontend/third_party/llama_jinja` vendors the value-only Jinja interpreter and Unicode helpers
+from the existing pinned llama.cpp dependency, commit `3cf03257f219afbe7334045ff7c6a06ac68c627d`,
+under MIT. `SOURCE.md` in that directory lists local adaptations and `UPSTREAM.sha256` records original
+source hashes. The original license is installed as `licenses/llama-jinja/LICENSE`. No Python runtime,
+template filesystem loader or network-capable template API is added. The separate `strata-template`
+helper uses bounded JSON and marked input spans, with mandatory process resource limits. This is an
+owner-authorized opt-in feature, not a change to the default native frontend prompt renderer; see
+`security/threat-model.md` and `validation/2026-11-11-accuracy-audit.md`.
+
+The multiengine launcher applies our accuracy-first defaults and explicitly selected, bounded speed settings before loading any family library,
+and refuses unsupported direct top-k values. The copied engine/kernel sources and `upstream/` remain
+unchanged. The frontend uses the same closed settings channel when launching an external engine.
+Owned CMake overlays remove compiler-wide CUDA fast-math flags by default after target creation; an
+explicit `MULTIENGINE_FAST_MATH=ON` build retains upstream flags. Packaging builds both modes in separate
+trees and installs the fast variant under `engine/fast-math`, with its matching dependencies. The
+manifest records their file hashes after verifying both engine and Maya compiler-mode caches.
+Normal FMA and explicit source intrinsics
+remain unchanged, and neither the copied CUDA sources nor ggml checkout is edited.
 
 The repository's own code is under the GNU Affero General Public License version 3 only: `LICENSE` is the FSF's text,
 byte for byte (https://www.gnu.org/licenses/agpl-3.0.txt, fetched 2026-10-28, SHA-256
@@ -386,6 +462,17 @@ covers the MiniMax model and Maya's MiniMax chat template and fixtures (`tools/m
 under Maya's MIT licence. The statements above that nothing was taken predate this.
 
 ## ggml / llama.cpp (bundled with upstream)
+
+The optional embedded-template renderer (2026-11-11) also vendors the native
+`common/jinja/` interpreter and `common/unicode.{cpp,h}` from the same pinned
+commit `3cf03257f219afbe7334045ff7c6a06ac68c627d`, under its MIT license, in
+`secure_frontend/third_party/llama_jinja/`. `SOURCE.md` there lists local input
+marking and dependency adaptations; `UPSTREAM.sha256` hashes the original git
+objects, checked directly at that commit. The separate `strata-template`
+helper imposes mandatory resource limits before parsing; Linux additionally
+uses a syscall allowlist. No Python or host-object access is registered. Its
+license is installed at `licenses/llama-jinja/LICENSE`. Windows Job Objects
+provide resource containment, not an AppContainer against native memory bugs.
 
 [ggml-org/llama.cpp][llamacpp] / ggml comes with the upstream baseline and is
 unchanged by us (it is inside the `upstream/` submodule). It is present in two

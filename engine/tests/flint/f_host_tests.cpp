@@ -3,6 +3,7 @@
 #include "f_cli.hpp"
 #include "f_model.hpp"
 #include "f_profile.hpp"
+#include "f_host_experts.hpp"
 #include "g4_gguf.hpp"
 #include "g4_test.hpp"
 #include "gguf_writer.hpp"
@@ -21,6 +22,36 @@ using g4_test::expect;
 using g4_test::GgufBuilder;
 
 namespace {
+
+void host_experts_recover_only_pin_capacity_and_keep_safe_routes() {
+  std::vector<unsigned char> bytes(64U, 0U);
+  bool pageable = false;
+  int pins = 0, heaps = 0;
+  const auto pin = [&](std::size_t n) { expect(n == bytes.size(), "full expert bytes requested"); ++pins; return fl::HostExpertAttempt{nullptr, nullptr, true}; };
+  const auto heap = [&](std::size_t n) -> void* { expect(n == bytes.size(), "fallback keeps all expert bytes"); ++heaps; return bytes.data(); };
+  auto block = fl::allocate_host_experts(bytes.size(), true, pageable, pin, heap);
+  expect(block && block->pageable && block->host == bytes.data() && !block->device && pageable,
+         "pin exhaustion selects CPU-readable storage without a fabricated GPU alias");
+  block = fl::allocate_host_experts(bytes.size(), true, pageable, pin, heap);
+  expect(block && pins == 1 && heaps == 2, "later layers do not exhaust pin capacity again");
+  pageable = false;
+  expect(!fl::allocate_host_experts(bytes.size(), false, pageable, pin, heap) && !pageable && heaps == 2,
+         "mapped-only decode cannot use an unmapped fallback");
+  const auto fatal = [](std::size_t) { return fl::HostExpertAttempt{}; };
+  expect(!fl::allocate_host_experts(bytes.size(), true, pageable, fatal, heap) && !pageable && heaps == 2,
+         "non-capacity CUDA failure cannot be hidden by fallback");
+  const auto empty = [](std::size_t) -> void* { return nullptr; };
+  expect(!fl::allocate_host_experts(bytes.size(), true, pageable, pin, empty) && !pageable,
+         "failed pageable allocation remains a startup failure");
+  const auto mapped = [&](std::size_t) { return fl::HostExpertAttempt{bytes.data(), bytes.data(), false}; };
+  block = fl::allocate_host_experts(bytes.size(), true, pageable, mapped, heap);
+  expect(block && !block->pageable && block->device == bytes.data() && !pageable && heaps == 2,
+         "successful mapped allocation retains the original fast path");
+  for (int rows : {1, 4, 5, 7}) expect(fl::scalar_expert_prompt(true, true, rows, 8), "short tails avoid unmapped device pointers");
+  expect(!fl::scalar_expert_prompt(true, true, 8, 8) && !fl::scalar_expert_prompt(false, false, 7, 8),
+         "streamed prompts and original mapped storage keep their existing paths");
+  expect(fl::scalar_expert_prompt(true, false, 512, 8), "a disabled prompt stream still cannot dereference unmapped experts");
+}
 
 // ---- shard names (llama.cpp's gguf-split pattern) ----
 
@@ -459,6 +490,7 @@ int main(int argc, char** argv) {
   return g4_test::run_cases(argc, argv,
                             {
                                 {"split_names_follow_gguf_split", split_names_follow_gguf_split},
+                                {"host_experts_recover_only_pin_capacity_and_keep_safe_routes", host_experts_recover_only_pin_capacity_and_keep_safe_routes},
                                 {"model_guard_accepts_the_flint_shape", model_guard_accepts_the_flint_shape},
                                 {"model_guard_takes_one_file_and_q8_0_weights", model_guard_takes_one_file_and_q8_0_weights},
                                 {"model_guard_reads_the_rope_pattern_on_its_own", model_guard_reads_the_rope_pattern_on_its_own},

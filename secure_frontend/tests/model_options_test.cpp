@@ -190,24 +190,24 @@ void option_tables_per_profile() {
   // low_ram since 2026-10-31 (upstream's low-RAM mode); vram_reserve since 2026-11-01 (upstream setup's --vram-reserve-mib)
   expect(names_of(EngineProfile::qwen) == Strings{"max_context", "kv", "kv_resident", "kv_grow", "mtp", "spec", "spec_min_p",
                                                   "expert_cache", "prefill", "low_ram", "vram_reserve", "thinking", "temperature",
-                                                  "top_p", "top_k", "min_p", "vision", "answer_minutes", "hot", "web_search", "gpus"},
+                                                  "top_p", "top_k", "min_p", "vision", "answer_minutes", "hot", "web_search", "gpus", "speed_route_tail_skip", "speed_route_resident", "speed_route_prior", "speed_route_resident_mtp", "speed_hc_req8", "speed_spec_prob", "speed_fast_math"},
          "the qwen options in display order: " + joined(names_of(EngineProfile::qwen)));
   // mtp since 2026-10-28 (the owner: "gemma4 has an mtp ... make sure we work that mtp in our gemma engine")
   expect(names_of(EngineProfile::gemma4) == Strings{"max_context", "chunk", "expert_vram", "mtp", "spec", "spec_min_p", "thinking",
-                                                    "temperature", "top_p", "top_k", "min_p", "answer_minutes", "hot", "web_search", "gpus"},
+                                                    "temperature", "top_p", "top_k", "min_p", "answer_minutes", "hot", "web_search", "gpus", "speed_route_tail_skip", "speed_fast_math"},
          "the gemma4 options in display order: " + joined(names_of(EngineProfile::gemma4)));
   // D10 met (owner 2026-10-27): Maya's own GLM choices - its context menu, the engine's --kv, the sampling defaults
   // the RAM headroom since 2026-10-29 (owner: "make it an option in the card setting")
   expect(names_of(EngineProfile::glm53) == Strings{"max_context", "kv", "ram_headroom", "temperature", "top_p", "top_k", "min_p",
-                                                   "answer_minutes", "hot", "web_search", "gpus"},
+                                                   "answer_minutes", "hot", "web_search", "gpus", "speed_glm_trunk_keep", "speed_glm_disk_skip_from", "speed_glm_disk_skip_w", "speed_glm_miss_skip_w", "speed_glm_mtp_keep", "speed_glm_defer_cpu", "speed_fast_math"},
          "the glm53 options in display order: " + joined(names_of(EngineProfile::glm53)));
 
   for (const auto profile : {EngineProfile::qwen, EngineProfile::gemma4, EngineProfile::glm53, EngineProfile::raon1,
                              EngineProfile::deepseek, EngineProfile::minimax, EngineProfile::flint}) {
     for (const auto& spec : secure_frontend::model_options_for(profile)) {
       const bool name_ok = !spec.name.empty() && std::all_of(spec.name.begin(), spec.name.end(),
-                                                             [](const char c) { return (c >= 'a' && c <= 'z') || c == '_'; });
-      expect(name_ok && !spec.label.empty() && !spec.help.empty(), "every option has a [a-z_]+ name, a label and a help line");
+                                                             [](const char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'; });
+      expect(name_ok && !spec.label.empty() && !spec.help.empty(), "every option has a [a-z0-9_]+ name, a label and a help line");
       expect(secure_frontend::find_model_option(profile, spec.name) == &spec, "find_model_option finds the table row");
       expect(secure_frontend::is_model_option_name(spec.name), "every option name is a fixed option name");
       if (spec.kind == ModelOptionKind::choice) expect(!spec.choices.empty(), "a choice option lists its choices");
@@ -701,7 +701,7 @@ void gemma4_mtp_off_drops_the_mtp_file() {
 void flint_options_follow_the_flint_engine() {
   using secure_frontend::EngineArgumentsProfile;
   expect(names_of(EngineProfile::flint) ==
-             Strings{"max_context", "chunk", "expert_vram", "thinking", "temperature", "top_p", "top_k", "min_p", "answer_minutes", "hot", "web_search", "gpus"},
+             Strings{"max_context", "chunk", "expert_vram", "thinking", "temperature", "top_p", "top_k", "min_p", "answer_minutes", "hot", "web_search", "gpus", "speed_route_tail_skip", "speed_fast_math"},
          "the flint options in display order: " + joined(names_of(EngineProfile::flint)));
   for (const auto& [name, flag] : {std::pair{"max_context", "--max-context"}, std::pair{"chunk", "--chunk"},
                                    std::pair{"expert_vram", "--expert-vram"}}) {
@@ -1127,7 +1127,7 @@ void every_card_offers_keep_loaded() {
 // high 75, none chat mode), the sampling rows. The context is maya-ds4's own --max-context in engine.args (the maya_ds4
 // allowlist), the thinking level reasoning.effort.
 void deepseek_options_are_mayas() {
-  expect(names_of(EngineProfile::deepseek) == Strings{"max_context", "thinking", "temperature", "top_p", "top_k", "min_p", "answer_minutes", "hot", "web_search", "gpus"},
+  expect(names_of(EngineProfile::deepseek) == Strings{"max_context", "thinking", "temperature", "top_p", "top_k", "min_p", "answer_minutes", "hot", "web_search", "gpus", "speed_ds4_disk_skip_w", "speed_ds4_ram_skip_w", "speed_ds4_dspark_sample", "speed_ds4_yoco", "speed_ds4_yoco_keep", "speed_fast_math"},
          "the deepseek options in display order: " + joined(names_of(EngineProfile::deepseek)));
   const auto* context = secure_frontend::find_model_option(EngineProfile::deepseek, "max_context");
   expect(context != nullptr && context->kind == ModelOptionKind::integer && context->minimum == 1 && context->maximum == 1048576 &&
@@ -1295,7 +1295,7 @@ void the_vision_option_writes_the_encoder_rows() {
 }
 
 void minimax_options_are_mayas() {
-  expect(names_of(EngineProfile::minimax) == Strings{"max_context", "kv", "thinking", "temperature", "top_p", "answer_minutes", "hot", "web_search", "gpus"},
+  expect(names_of(EngineProfile::minimax) == Strings{"max_context", "kv", "thinking", "temperature", "top_p", "answer_minutes", "hot", "web_search", "gpus", "speed_fast_math"},
          "the minimax options in display order: " + joined(names_of(EngineProfile::minimax)));
   const auto* context = secure_frontend::find_model_option(EngineProfile::minimax, "max_context");
   expect(context != nullptr && context->kind == ModelOptionKind::integer && context->minimum == 1 && context->maximum == 1048576 &&
@@ -1355,6 +1355,101 @@ void past_trained_context_adds_yarn() {
 
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
+      {"fast_math_selects_a_typed_variant_for_every_family", [] {
+        for (const auto profile : {EngineProfile::qwen, EngineProfile::gemma4, EngineProfile::glm53, EngineProfile::raon1,
+                                   EngineProfile::flint, EngineProfile::deepseek, EngineProfile::minimax}) {
+          const auto* spec = secure_frontend::find_model_option(profile, "speed_fast_math");
+          expect(spec && spec->kind == ModelOptionKind::boolean && spec->accuracy_tradeoff && spec->accuracy_default == "false",
+                 "every family offers an opt-in fast math variant");
+          secure_frontend::FrontendConfigDraft draft;
+          secure_frontend::apply_option_values(profile, {{"speed_fast_math", true}}, draft);
+          expect(draft_is(draft, "engine.fast_math", true), "variant selection writes its dedicated boolean config row");
+          expect(draft.entries.find("engine.speed_settings") == draft.entries.end(), "compiler choice is not a runtime approximation name");
+          const auto defaults = secure_frontend::accuracy_option_defaults(profile, draft);
+          expect(defaults.contains("speed_fast_math") && std::get<bool>(defaults.at("speed_fast_math")),
+                 "explicit card variant remains its offered default");
+          if (!spec) continue;
+          const auto limits = limits_of(profile, R"({"speed_fast_math":{"default":false}})");
+          const auto remembered = secure_frontend::resolve_option_values(limits, nullptr, {{"speed_fast_math", true}});
+          expect(std::holds_alternative<ModelOptionValues>(remembered) &&
+                 std::get<bool>(std::get<ModelOptionValues>(remembered).at("speed_fast_math")), "variant choice is remembered normally");
+          const auto reset = json(R"({"speed_fast_math":false})");
+          const auto reset_values = secure_frontend::resolve_option_values(limits, &reset, {{"speed_fast_math", true}});
+          expect(std::holds_alternative<ModelOptionValues>(reset_values), "accuracy reset is accepted");
+          if (const auto* values = std::get_if<ModelOptionValues>(&reset_values)) secure_frontend::apply_option_values(profile, *values, draft);
+          expect(draft_is(draft, "engine.fast_math", false), "accuracy reset selects the accurate variant");
+        }
+      }},
+      {"accuracy_tradeoffs_are_bounded_card_options", [] {
+        const auto* q = secure_frontend::find_model_option(EngineProfile::qwen, "speed_route_resident");
+        expect(q != nullptr && q->kind == ModelOptionKind::decimal && q->maximum_decimal == 1.0,
+               "residency margin is an explicit bounded decimal option");
+        expect(q && q->accuracy_tradeoff && q->accuracy_default == "0", "decimal control carries an explicit accuracy reset value");
+        expect(secure_frontend::find_model_option(EngineProfile::gemma4, "speed_route_tail_skip") != nullptr,
+               "Gemma's actual expert lane offers tail skip");
+        expect(secure_frontend::find_model_option(EngineProfile::flint, "speed_route_tail_skip") != nullptr,
+               "flint's actual expert lane offers tail skip");
+        expect(secure_frontend::find_model_option(EngineProfile::raon1, "speed_glm_trunk_keep") != nullptr,
+               "raon1's GLM lane offers its implemented rank limit");
+        expect(secure_frontend::find_model_option(EngineProfile::minimax, "speed_route_resident") == nullptr,
+               "unimplemented controls are absent from other families");
+        secure_frontend::FrontendConfigDraft draft;
+        secure_frontend::apply_option_values(EngineProfile::qwen,
+            {{"speed_route_resident", 0.25}, {"speed_hc_req8", true}, {"speed_route_tail_skip", std::int64_t{7}}}, draft);
+        const auto row = draft.entries.find("engine.speed_settings");
+        expect(row != draft.entries.end(), "explicit card values reach typed engine speed settings");
+        if (row != draft.entries.end()) {
+          const auto* settings = std::get_if<Strings>(&row->second.value);
+          expect(settings && std::find(settings->begin(), settings->end(), "ROUTE_RESIDENT=0.25") != settings->end() &&
+                 std::find(settings->begin(), settings->end(), "HC_REQ8=1") != settings->end() &&
+                 std::find(settings->begin(), settings->end(), "ROUTE_TAIL_SKIP=7") != settings->end(),
+                 "card names map to closed numeric engine names");
+        }
+        const auto prior = draft.entries;
+        secure_frontend::apply_option_values(EngineProfile::qwen, {}, draft);
+        expect(draft_is(draft, "engine.speed_settings", std::get<Strings>(prior.at("engine.speed_settings").value)),
+               "empty option application preserves explicit card configuration");
+        secure_frontend::apply_option_values(EngineProfile::qwen, {{"speed_route_resident", 0.5}}, draft);
+        const auto settings = std::get<Strings>(draft.entries.at("engine.speed_settings").value);
+        expect(std::count(settings.begin(), settings.end(), "ROUTE_RESIDENT=0.5") == 1 &&
+               std::find(settings.begin(), settings.end(), "ROUTE_RESIDENT=0.25") == settings.end() && settings.size() == 3U,
+               "changing one control replaces its entry while preserving others");
+        const auto defaults = secure_frontend::accuracy_option_defaults(EngineProfile::qwen, draft);
+        expect(std::get<double>(defaults.at("speed_route_resident")) == 0.5 && std::get<bool>(defaults.at("speed_hc_req8")) &&
+               !std::get<bool>(defaults.at("speed_spec_prob")), "card rows become defaults and unspecified controls keep accuracy baseline");
+        const auto limits = limits_of(EngineProfile::qwen, R"({"speed_route_resident":{"default":0},"speed_hc_req8":{"default":false}})");
+        const auto description = secure_frontend::describe_options_json(limits, {});
+        expect(description.find(R"("accuracy_tradeoff":true,"accuracy_default":false)") != std::string::npos &&
+               description.find(R"("accuracy_tradeoff":true,"accuracy_default":0)") != std::string::npos,
+               "descriptor reset values are typed JSON booleans and numbers");
+        const auto invalid = secure_frontend::parse_card_options(EngineProfile::qwen, json(R"({"speed_route_resident":{"default":1.01}})"));
+        expect(std::holds_alternative<ConfigErrors>(invalid), "card defaults cannot exceed audited bounds");
+        const auto ds_limits = limits_of(EngineProfile::deepseek,
+            R"({"max_context":{"default":32768},"speed_ds4_yoco_keep":{"default":0}})");
+        const auto too_many = json(R"({"speed_ds4_yoco_keep":65536})");
+        expect(std::holds_alternative<ConfigErrors>(secure_frontend::resolve_option_values(ds_limits, &too_many, {})),
+               "bounded replay rows cannot exceed the card context");
+        secure_frontend::FrontendConfigDraft alternate;
+        alternate.entries["engine.speed_settings"] = {Strings{"ROUTE_PRIOR=.5", "ROUTE_RESIDENT_MTP=01", "GLM_TRUNK_KEEP=04"}, secure_frontend::ConfigSource::file};
+        const auto qdefaults = secure_frontend::accuracy_option_defaults(EngineProfile::qwen, alternate);
+        const auto gdefaults = secure_frontend::accuracy_option_defaults(EngineProfile::glm53, alternate);
+        expect(qdefaults.contains("speed_route_prior") && std::get<double>(qdefaults.at("speed_route_prior")) == 0.5 &&
+               std::get<bool>(qdefaults.at("speed_route_resident_mtp")) &&
+               gdefaults.contains("speed_glm_trunk_keep") && std::get<std::int64_t>(gdefaults.at("speed_glm_trunk_keep")) == 4,
+               "valid engine numeric spellings preserve their actual typed defaults");
+        expect(std::holds_alternative<ConfigErrors>(secure_frontend::parse_card_options(EngineProfile::glm53,
+            json(R"({"speed_glm_trunk_keep":{"min":1,"max":4,"default":4}})"))),
+            "tradeoff bounds must retain the advertised accuracy reset value");
+        for (const auto& malformed : {Strings{""}, Strings{"ROUTE_PRIOR=.5;SPEC_PROB=1"}}) {
+          secure_frontend::FrontendConfigDraft bad_shape;
+          bad_shape.entries["engine.speed_settings"] = {malformed, secure_frontend::ConfigSource::file};
+          expect(secure_frontend::accuracy_option_defaults(EngineProfile::qwen, bad_shape).empty(),
+                 "malformed list entries never become offered defaults");
+          secure_frontend::apply_option_values(EngineProfile::qwen, {{"speed_route_prior", 0.25}}, bad_shape);
+          expect(std::get<Strings>(bad_shape.entries.at("engine.speed_settings").value) == malformed,
+                 "option application preserves malformed list entries for validation to reject");
+        }
+      }},
       {"option_tables_per_profile", option_tables_per_profile},
       {"card_options_parse_and_bound", card_options_parse_and_bound},
       {"card_option_refusals_name_the_option", card_option_refusals_name_the_option},

@@ -37,6 +37,13 @@ own arguments. `tests/multiengine/` holds the fake plugins and the test (`multie
 They share only the pinned ggml (`third_party/ggml/VERSION.txt`) and the CUDA toolkit. Everything under `src`,
 `include`, `tests`, `cmake`, `data` and `third_party/ggml*` that is not one of ours above is upstream's file as
 upstream ships it; the root `CMakeLists.txt` differs only by its last line (`include(cmake/multiengine.cmake)`).
+
+Flint prefers mapped, pinned host expert storage. If CUDA cannot pin another layer, a full-model
+run with the CPU lane enabled can keep remaining experts in pageable RAM. Decode uses the CPU
+lane and prompts use the existing expert stream; short tails use scalar decode so an unmapped
+address never enters the direct GPU expert kernel. Expert bytes and precision are unchanged.
+Other CUDA errors and failed host allocations remain fatal. This fallback is unavailable with
+the CPU lane disabled or test-only partial-layer execution. Pageable storage can be slower.
 To update upstream: `python -I engine/src/multiengine/sync_upstream.py G:\Strata <tag>` (it reads the tag from the
 clone's git objects and writes the changed files; then build and check each family against its references).
 

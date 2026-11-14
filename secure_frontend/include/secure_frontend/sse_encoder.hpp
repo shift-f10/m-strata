@@ -31,6 +31,9 @@ struct SseIdentity final {
 [[nodiscard]] std::string render_content_event(const SseIdentity& identity, std::string_view text);
 // A reasoning delta: {"reasoning_content": text} (upstream serve/server.py:5449-5450).
 [[nodiscard]] std::string render_reasoning_event(const SseIdentity& identity, std::string_view text);
+[[nodiscard]] std::string render_tool_call_event(const SseIdentity& identity, std::size_t index, std::string_view id,
+                                                  std::string_view name, std::string_view arguments);
+[[nodiscard]] std::string render_tool_arguments_event(const SseIdentity& identity, std::size_t index, std::string_view arguments);
 [[nodiscard]] std::string render_final_event(const SseIdentity& identity, std::string_view finish_reason);
 // Web search: one search loop event (a JSON object, search_rounds.hpp) as a chunk with an empty delta and the event as
 // strata_search, the way upstream sends its strata_mcp chunks.

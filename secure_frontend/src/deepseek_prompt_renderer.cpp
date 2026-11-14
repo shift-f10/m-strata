@@ -25,7 +25,7 @@ const std::string_view kAssistant = kDeepseekMarkers[3];
 const std::string_view kThinkOpen = kDeepseekMarkers[4];
 const std::string_view kThinkClose = kDeepseekMarkers[5];
 const std::string_view kEos = kDeepseekMarkers[6];
-constexpr std::string_view kDsml = "\xEF\xBD\x9C" "DSML\xEF\xBD\x9C";
+constexpr std::string_view kDsml = kDeepseekToolMarker;
 
 bool valid_utf8(const std::string_view value) {
   for (std::size_t index = 0U; index < value.size();) {
@@ -176,7 +176,8 @@ std::optional<std::vector<PromptPiece>> render_deepseek_tool_prompt(const std::v
                                                                     const std::optional<int> effort) {
   // The conversation obeys every rule of the plain prompt (roles, order, literals, sizes, the effort's range), and an
   // earlier answer's searches the rules of the rounds.
-  if (tools.empty() || !text_prompt(messages, effort, true) || !valid_rounds(rounds)) return std::nullopt;
+  if ((tools.empty() && !has_tool_rounds(messages, rounds)) || !text_prompt(messages, effort, true) || !valid_rounds(rounds))
+    return std::nullopt;
   // tools_from_openai_format: each tool's function object, written by to_json (json.dumps, ensure_ascii off)
   std::vector<std::string> schemas;
   for (const auto& tool : tools) {
@@ -205,13 +206,15 @@ std::optional<std::vector<PromptPiece>> render_deepseek_tool_prompt(const std::v
     out.text(messages.front().content);
     index = 1U;
   }
-  out.text("\n\n");
-  out.templated(tools_head(), tags);
-  for (std::size_t i = 0; i < schemas.size(); ++i) {
-    if (i != 0U) out.text("\n");
-    out.plain(schemas[i]);
+  if (!schemas.empty()) {
+    out.text("\n\n");
+    out.templated(tools_head(), tags);
+    for (std::size_t i = 0; i < schemas.size(); ++i) {
+      if (i != 0U) out.text("\n");
+      out.plain(schemas[i]);
+    }
+    out.text(kToolsTail);
   }
-  out.text(kToolsTail);
   // With tools the encoder keeps every turn's thinking: each assistant header opens <think> (thinking) or closes it.
   const auto header = [&out, thinking] {
     out.marker(kAssistant);

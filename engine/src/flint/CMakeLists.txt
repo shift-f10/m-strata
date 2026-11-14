@@ -48,7 +48,7 @@ if(STRATA_BUILD_TESTS OR STRATA_BUILD_FLINT_TESTS)
     target_include_directories(f_host_tests PRIVATE ${_fl_tests} ${_fl_g4_tests})
     target_link_libraries(f_host_tests PRIVATE strata_flint_host)
     target_compile_options(f_host_tests PRIVATE ${FL_HOST_WARNINGS})
-    set(FL_HOST_CASES split_names_follow_gguf_split model_guard_accepts_the_flint_shape
+    set(FL_HOST_CASES split_names_follow_gguf_split host_experts_recover_only_pin_capacity_and_keep_safe_routes model_guard_accepts_the_flint_shape
         model_guard_takes_one_file_and_q8_0_weights model_guard_reads_the_rope_pattern_on_its_own
         model_guard_refuses_other_shapes cli_accepts_the_serve_flags cli_refuses_bad_and_test_only_flags_with_serve
         gen_lines_follow_the_q36_grammar sampler_and_seeds_match_gemma4s profile_fills_each_moe_layer_with_its_top_experts

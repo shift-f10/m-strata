@@ -18,6 +18,8 @@
 #include "secure_frontend/api_errors.hpp"
 #include "secure_frontend/api_router.hpp"
 #include "secure_frontend/calibration.hpp"
+#include "secure_frontend/calibration_experiment.hpp"
+#include "secure_frontend/calibration_thermal.hpp"
 #include "secure_frontend/calibration_report.hpp"
 #include "secure_frontend/engine_supervisor.hpp"
 #include "secure_frontend/frontend_config.hpp"
@@ -97,6 +99,7 @@ struct LauncherSettings final {
   // on the calibration's thread (unset: the CPU, RAM and OS this process reads, with no GPU details).
   std::optional<std::filesystem::path> report_dir{};
   std::function<ReportMachine()> report_machine{};
+  std::function<CalibrationGpuSignals(std::span<const unsigned>)> benchmark_gpu{};
   // Upstream's low-RAM mode (owner 2026-10-31): this PC's RAM and GPUs, read at each start of a card whose low_ram is
   // auto or on (unset: the RAM this process reads, no GPU).
   std::function<HostMemory()> host_memory{};
@@ -157,7 +160,9 @@ class ModelLauncher final {
   // `then_start`, the card starts with it. `auto_recalibrate` (when given) is kept with the result: a later start at
   // other options calibrates first. A start of a card the page made that was never calibrated calibrates first too.
   [[nodiscard]] std::optional<Refusal> calibrate(std::string_view name, const JsonValue* options, bool then_start,
-                                                 std::optional<bool> auto_recalibrate, bool remote_client);
+                                                 std::optional<bool> auto_recalibrate, bool remote_client,
+                                                 std::optional<BenchmarkOptions> benchmark = std::nullopt);
+  [[nodiscard]] std::optional<Refusal> restore_calibration(std::string_view name, std::string_view id);
   // Stops the running calibration: its engine is stopped and nothing is kept. nullopt: accepted.
   [[nodiscard]] std::optional<Refusal> cancel_calibration();
   // "Recalibrate when settings change" for card `name`: kept with its calibration (or with the next one).
@@ -240,6 +245,7 @@ class ModelLauncher final {
     std::optional<bool> auto_recalibrate{};   // calibrate: kept with the result
     bool prefill_first{false};                // start: MiniMax's prefill calibration runs first (run_prefill_calibration)
     std::string name{};                       // remove: the card
+    std::optional<BenchmarkOptions> benchmark{};
   };
   void run_jobs();
   void run_start(const Job& job);
@@ -248,6 +254,14 @@ class ModelLauncher final {
   void warm(const std::shared_ptr<ModelRuntime>& runtime, const ModelCard& card);
   // §5: the sweep, each candidate one engine start of the card with those flags; true when a result was kept.
   [[nodiscard]] bool run_calibration(const Job& job);
+  [[nodiscard]] bool run_benchmark(const Job& job);
+  [[nodiscard]] std::optional<ExperimentSample> measure_benchmark(const ModelCard& card,
+      const ModelOptionValues& values, const ExperimentTrial& trial, const BenchmarkOptions& options,
+      const std::function<bool()>& stopped, JsonValue& detail,
+      std::shared_ptr<ModelRuntime>& session, std::shared_ptr<ServeMonitor>& meter, std::string& signature);
+  [[nodiscard]] std::string benchmark_json(const ModelCard& card, const ModelOptionValues& values) const;
+  void archive_calibration(const CalibrationResult& result, const ModelOptionValues& values, std::string_view label);
+  std::map<std::string, std::string, std::less<>> benchmark_status_;
   // `trial` (when given) is filled with how the start went: its speed, or why it failed, the server's lines for its
   // engine and the engine's last lines of output (a report's, owner 2026-10-30).
   [[nodiscard]] std::optional<double> measure(const ModelCard& card, const ModelOptionValues& values,
@@ -275,6 +289,7 @@ class ModelLauncher final {
   [[nodiscard]] ModelOptionValues launch_values(const ModelCard& card, ModelOptionValues values, bool say) const;
   [[nodiscard]] CalibrationKey calibration_key(const ModelCard& card, const ModelOptionValues& values) const;
   [[nodiscard]] std::optional<CalibrationResult> read_calibration(const ModelCard& card) const;
+  [[nodiscard]] std::optional<CalibrationResult> read_calibration(std::string_view card) const;
   [[nodiscard]] bool calibration_supported(const ModelCard& card) const;
   // Under mutex_: GET /v1/strata/models' "calibration" of card `index` at `values` (null when it has none).
   [[nodiscard]] std::string calibration_json(std::size_t index, const ModelCard& card, const ModelOptionValues& values) const;

@@ -85,6 +85,7 @@ class CardRoutes final {
   HttpResponse publish(const CardText& text);
   HttpResponse repoint(std::string_view body);
   HttpResponse point_draft(std::string_view body);
+  HttpResponse chat_template(std::string_view body);
   HttpResponse delete_begin(std::string_view body);
   HttpResponse delete_confirm(std::string_view body);
   HttpResponse remove(std::string_view body);

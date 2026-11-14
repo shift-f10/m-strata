@@ -14,6 +14,7 @@
 /secure_frontend/out/
 /secure_frontend/build/
 /out/
+/.local-output-archive/
 
 # Python
 __pycache__/

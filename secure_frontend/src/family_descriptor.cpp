@@ -134,6 +134,51 @@ constexpr ModelOptionSpec kAnswerMinutes = listed(
 constexpr ModelOptionSpec kHot =
     boolean_option("hot", "Keep loaded", "Never unload this model when it idles, so it is always ready");
 
+// The accuracy trade-offs (main, 2026-11): the speed options that may change results, each with the value that
+// restores the accuracy baseline; in every table after its GPUs.
+constexpr ModelOptionSpec tradeoff(ModelOptionSpec spec, const std::string_view baseline, const std::string_view at_most = {}) {
+  spec.accuracy_tradeoff = true;
+  spec.accuracy_default = baseline;
+  spec.at_most = at_most;
+  return spec;
+}
+constexpr ModelOptionSpec kTailSkip = tradeoff(integer_option("speed_route_tail_skip", "Skip uncached tail experts",
+    "May reduce accuracy: omit uncached experts at this zero-based route rank or later; 0 computes every selected expert", 0, 9), "0");
+constexpr ModelOptionSpec kRouteResident = tradeoff(decimal_option("speed_route_resident", "Residency routing margin",
+    "May reduce accuracy: replace model-selected tail experts with cached experts within this logit margin; only 512-expert top-10 routers; 0 disables", 0, 1), "0");
+constexpr ModelOptionSpec kRoutePrior = tradeoff(decimal_option("speed_route_prior", "Cached-expert routing bonus",
+    "May reduce accuracy: bias every routing rank toward cached experts; only 512-expert top-10 routers; combines with residency margin; 0 disables", 0, 1), "0");
+constexpr ModelOptionSpec kResidentMtp = tradeoff(boolean_option("speed_route_resident_mtp", "Bias draft routing toward cache",
+    "Experimental: uses the final layer's cache for draft routing; requires positive residency margin, an active MTP drafter and one GPU; may lower acceptance"), "false");
+constexpr ModelOptionSpec kHcReq8 = tradeoff(boolean_option("speed_hc_req8", "Requantize hyper-connections to INT8",
+    "May reduce accuracy: requantize BF16 hyper-connection weights to INT8 to free expert-cache memory; only hyper-connection models on one GPU"), "false");
+constexpr ModelOptionSpec kSpecProb = tradeoff(boolean_option("speed_spec_prob", "Experimental sampled draft acceptance",
+    "May change sampling probabilities: confidence-gated sampled drafts are not distribution-preserving; requires sampled requests and an active MTP drafter"), "false");
+constexpr ModelOptionSpec kTrunkKeep = tradeoff(integer_option("speed_glm_trunk_keep", "Uncached trunk experts to keep",
+    "May reduce accuracy: omit uncached experts outside these leading routing ranks; 8 computes every selected expert", 1, 8), "8");
+constexpr ModelOptionSpec kDiskFrom = tradeoff(integer_option("speed_glm_disk_skip_from", "Skip disk experts from rank",
+    "May reduce accuracy: omit disk-only trunk experts from this zero-based routing rank onward; 8 disables", 0, 8), "8");
+constexpr ModelOptionSpec kDiskWeight = tradeoff(decimal_option("speed_glm_disk_skip_w", "Disk-expert weight cutoff",
+    "May reduce accuracy: omit disk-only trunk experts below this fraction of route weight; 0 disables", 0, 1), "0");
+constexpr ModelOptionSpec kMissWeight = tradeoff(decimal_option("speed_glm_miss_skip_w", "Uncached-expert weight cutoff",
+    "May reduce accuracy: omit every non-VRAM trunk expert below this fraction of route weight, including RAM experts; 0 disables", 0, 1), "0");
+constexpr ModelOptionSpec kMtpKeep = tradeoff(integer_option("speed_glm_mtp_keep", "Uncached draft experts to keep",
+    "Omit draft-only experts outside these leading ranks; verified output stays with the target but acceptance and speed may worsen; 8 keeps all", 0, 8), "8");
+constexpr ModelOptionSpec kDeferCpu = tradeoff(boolean_option("speed_glm_defer_cpu", "Defer CPU expert results",
+    "May reduce accuracy: add CPU expert results after the next layer's attention; requires a CPU expert lane and uncached experts"), "false");
+constexpr ModelOptionSpec kDsDisk = tradeoff(decimal_option("speed_ds4_disk_skip_w", "Disk-expert weight cutoff",
+    "May reduce accuracy: omit disk-only experts below this route-weight fraction during decode and verification, without renormalizing; 0 disables", 0, 1), "0");
+constexpr ModelOptionSpec kDsRam = tradeoff(decimal_option("speed_ds4_ram_skip_w", "Uncached-expert weight cutoff",
+    "May reduce accuracy: omit non-VRAM experts below this route-weight fraction, even when RAM holds them; 0 disables", 0, 1), "0");
+constexpr ModelOptionSpec kDsSample = tradeoff(boolean_option("speed_ds4_dspark_sample", "Experimental sampled DSpark drafts",
+    "May change sampling probabilities: confidence-gated sampled proposals are not distribution-preserving; requires a loaded DSpark drafter and sampled requests"), "false");
+constexpr ModelOptionSpec kDsYoco = tradeoff(integer_option("speed_ds4_yoco", "Prompt replay mode",
+    "0 disables pruning; 1 uses exact dependency-based pruning; 2 replays only the attention window and may reduce accuracy on long prompts", 0, 2), "1");
+constexpr ModelOptionSpec kDsKeep = tradeoff(integer_option("speed_ds4_yoco_keep", "Prompt replay rows",
+    "May reduce accuracy: positive values override exact replay with bounded history, at least one attention window and at most context; 0 uses the selected replay mode", 0, 1048576), "0", "max_context");
+constexpr ModelOptionSpec kFastMath = tradeoff(boolean_option("speed_fast_math", "CUDA fast math",
+    "May change numerical accuracy: selects the bundled fast-math engine on the next model start; model weights and INT8/Q8 cache settings stay unchanged"), "false");
+
 // The upstream Strata engine (strata_0143). Flags, units and limits as its argument parser reads
 // them (upstream/src/program/generate.cpp): --max-context :2428 (positive, below 2^31 :3254-3258;
 // the frontend's cap 1,048,576 is glm.max_context's); --kv-resident :2464 (>= 0 :3162); --kv-grow
@@ -142,14 +187,14 @@ constexpr ModelOptionSpec kHot =
 // draft must reach, core/mtp.cpp:1689); --expert-cache :2541-2544 (auto or a count of expert blobs
 // in VRAM, >= -1 :3304; at most the 48 x 512 experts there are, core/geometry.hpp:25/:53);
 // --prefill :2558-2565 (auto or a chunk of N prompt tokens; auto's largest is 32,768, :2564).
-constexpr std::array<ModelOptionSpec, 21> kQwenOptions{{
+constexpr std::array<ModelOptionSpec, 28> kQwenOptions{{
     listed(integer_option("max_context", "Context length",
                           "Tokens of context the engine allocates; past the trained 256K the engine stretches the model with "
                           "YaRN rope scaling (experimental, upstream's own rule)",
                           1, 1048576),
            kQwenContexts),
     choice_option("kv", "KV cache precision",
-                  "How the engine stores the attention cache: fp16, int8, 4-bit q4_0, or k8v4 (int8 keys, 4-bit values)", kQwenKv),
+                  "Attention cache: fp16 preserves precision; int8, q4_0 and k8v4 save memory and can change results", kQwenKv),
     listed(integer_option("kv_resident", "KV streaming",
                           "Attention-cache tokens kept in VRAM, the rest streamed from RAM (Off: all of it in VRAM); at most "
                           "the context",
@@ -190,6 +235,8 @@ constexpr std::array<ModelOptionSpec, 21> kQwenOptions{{
     kHot,
     kWebSearch,
     kGpus,
+    kTailSkip, kRouteResident, kRoutePrior, kResidentMtp, kHcReq8, kSpecProb,
+    kFastMath,
 }};
 
 // Our strata-gemma4-engine (strata_gemma4): the bounds are kGemma4Flags (engine_arguments.cpp). Web search since
@@ -197,7 +244,7 @@ constexpr std::array<ModelOptionSpec, 21> kQwenOptions{{
 // work that mtp in our gemma engine"): a card that has the model's MTP draft file lists it; off drops the card's
 // --mtp <file> for that start (write_option); its window and confidence are the engine's --spec and --spec-min-p (the
 // latter only while the switch is on).
-constexpr std::array<ModelOptionSpec, 15> kGemmaOptions{{
+constexpr std::array<ModelOptionSpec, 17> kGemmaOptions{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (up to the model's trained 256K)",
                           1, 262144),
            kGemmaContexts),
@@ -217,11 +264,13 @@ constexpr std::array<ModelOptionSpec, 15> kGemmaOptions{{
     kHot,
     kWebSearch,
     kOneGpu,
+    kTailSkip,
+    kFastMath,
 }};
 
 // multiengine_flint (strata_flint): the Gemma engine's options, bounded by kFlintFlags (engine_arguments.cpp); its
 // trained context is 256K too.
-constexpr std::array<ModelOptionSpec, 12> kFlintOptions{{
+constexpr std::array<ModelOptionSpec, 14> kFlintOptions{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (up to the model's trained 256K)",
                           1, 262144),
            kGemmaContexts),
@@ -237,6 +286,8 @@ constexpr std::array<ModelOptionSpec, 12> kFlintOptions{{
     kHot,
     kWebSearch,
     kOneGpu,
+    kTailSkip,
+    kFastMath,
 }};
 
 // Maya's GLM-5.3 engine (multiengine_maya, the glm53 profile, launcher spec D10 met 2026-10-27): its launch is
@@ -255,12 +306,12 @@ constexpr ModelOptionSpec kRamHeadroom = listed(
                    "with a separate GPU), more keeps the desktop responsive",
                    6, 1024),
     kRamHeadroomValues);
-constexpr std::array<ModelOptionSpec, 11> kGlmOptions{{
+constexpr std::array<ModelOptionSpec, 18> kGlmOptions{{
     listed(integer_option("max_context", "Context length",
                           "Tokens of context the engine allocates (Maya's choices; past 32K the attention cache streams from RAM)",
                           1, 1048576),
            kGlmContexts),
-    choice_option("kv", "KV cache precision", "How the engine stores the attention cache: fp16, int8, or ggml's q8_0 / q4_0 blocks",
+    choice_option("kv", "KV cache precision", "Attention cache: fp16 preserves precision; int8, q8_0 and q4_0 save memory and can change results",
                   kGlmKv),
     kRamHeadroom,
     kTemperature,
@@ -271,17 +322,19 @@ constexpr std::array<ModelOptionSpec, 11> kGlmOptions{{
     kHot,
     kWebSearch,
     kGpus,
+    kTrunkKeep, kDiskFrom, kDiskWeight, kMissWeight, kMtpKeep, kDeferCpu,
+    kFastMath,
 }};
 
 // raon-1-mini on our port of Maya's GLM engine (multiengine_raon1, the raon1 profile; owner 2026-10-27: its card from
 // its files): the same typed rows as glm53 (glm.max_context, glm.kv) up to the 256K it was served at; the cache in the
 // GLM engine's vocabulary (fp16 keeps raon1's exact F32 cache); KRAFTON's sampling as the card's defaults.
 constexpr std::array<std::int64_t, 5> kRaon1Contexts{8192, 32768, 65536, 131072, 262144};
-constexpr std::array<ModelOptionSpec, 11> kRaon1Options{{
+constexpr std::array<ModelOptionSpec, 18> kRaon1Options{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (its full attention keeps them all)",
                           1, 1048576),
            kRaon1Contexts),
-    choice_option("kv", "KV cache precision", "How the engine stores the attention cache: fp16 (raon1's exact cache), int8, or ggml's q8_0 / q4_0 blocks",
+    choice_option("kv", "KV cache precision", "Attention cache: fp16 uses raon1's exact cache; int8, q8_0 and q4_0 save memory and can change results",
                   kGlmKv),
     kRamHeadroom,
     kTemperature,
@@ -292,13 +345,15 @@ constexpr std::array<ModelOptionSpec, 11> kRaon1Options{{
     kHot,
     kWebSearch,
     kGpus,
+    kTrunkKeep, kDiskFrom, kDiskWeight, kMissWeight, kMtpKeep, kDeferCpu,
+    kFastMath,
 }};
 
 // DeepSeek-V4.1 on Maya's maya-ds4 (2026-10-27, spec 2026-10-27-strata-prepare-design §7.2): Maya's own choices - its
 // context menu (maya.py v1.1.30 DS4_CONTEXTS; maya-ds4's own --max-context, in engine.args by the maya_ds4 allowlist),
 // the thinking level (DS4_EFFORT "high"; DeepSeek's effort line: low 50, medium and high 75, none chat mode), sampling.
 constexpr std::array<std::int64_t, 6> kDeepseekContexts{32768, 65536, 131072, 262144, 524288, 1048576};
-constexpr std::array<ModelOptionSpec, 10> kDeepseekOptions{{
+constexpr std::array<ModelOptionSpec, 16> kDeepseekOptions{{
     listed(integer_option("max_context", "Context length", "Tokens of context the engine allocates (Maya's choices)", 1, 1048576),
            kDeepseekContexts),
     choice_option("thinking", "Thinking", "The thinking level for requests that name none (DeepSeek's reasoning effort)",
@@ -311,6 +366,8 @@ constexpr std::array<ModelOptionSpec, 10> kDeepseekOptions{{
     kHot,
     kWebSearch,  // DSML calls, as Maya renders and reads them (owner 2026-10-28)
     kGpus,
+    kDsDisk, kDsRam, kDsSample, kDsYoco, kDsKeep,
+    kFastMath,
 }};
 
 // MiniMax-M3.1-Flash on Maya's maya-mm3 (owner 2026-10-28): Maya's own choices - its context menu (maya.py v1.1.30
@@ -320,11 +377,11 @@ constexpr std::array<ModelOptionSpec, 10> kDeepseekOptions{{
 constexpr std::array<std::int64_t, 6> kMinimaxContexts{32768, 65536, 131072, 262144, 524288, 1048576};
 constexpr std::array<std::string_view, 4> kMinimaxKv{"bf16", "int8", "fp8", "fp4"};
 constexpr std::array<std::string_view, 5> kMinimaxThinking{"auto", "none", "low", "medium", "high"};
-constexpr std::array<ModelOptionSpec, 9> kMinimaxOptions{{
+constexpr std::array<ModelOptionSpec, 10> kMinimaxOptions{{
     listed(integer_option("max_context", "Context length",
                           "Tokens of context the engine allocates (Maya's choices; past 256K not yet run end to end)", 1, 1048576),
            kMinimaxContexts),
-    choice_option("kv", "KV cache precision", "How the engine stores the attention cache: bf16, int8, fp8 or fp4", kMinimaxKv),
+    choice_option("kv", "KV cache precision", "Attention cache: bf16 preserves precision; int8, fp8 and fp4 save memory and can change results", kMinimaxKv),
     choice_option("thinking", "Thinking",
                   "The thinking level for requests that name none (auto: MiniMax decides when to think)", kMinimaxThinking),
     kTemperature,
@@ -333,6 +390,7 @@ constexpr std::array<ModelOptionSpec, 9> kMinimaxOptions{{
     kHot,
     kWebSearch,  // its namespaced XML calls, as Maya renders and reads them (owner 2026-10-28)
     kGpus,
+    kFastMath,
 }};
 
 constexpr std::array<std::string_view, 1> kDeepseekFlags{"--max-context"};

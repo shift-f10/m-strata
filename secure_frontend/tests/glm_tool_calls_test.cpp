@@ -153,7 +153,8 @@ void refuses_what_the_glm_tool_prompt_cannot_say() {
   const secure_frontend::ToolCall call{"web_search", {{"query", secure_frontend::JsonValue::make_string("q")}}};
   const std::vector<secure_frontend::ToolRound> good{{"r", "", {call}, {"ok"}}};
   expect(secure_frontend::render_glm53_tool_prompt(question, tools, good).has_value(), "the good case renders");
-  expect(!secure_frontend::render_glm53_tool_prompt(question, {}, good), "no tools");
+  expect(!secure_frontend::render_glm53_tool_prompt(question, {}, {}), "no declarations or history");
+  expect(secure_frontend::render_glm53_tool_prompt(question, {}, good).has_value(), "history needs no new declarations");
   const std::vector<secure_frontend::ToolRound> no_call{{"r", "", {}, {}}};
   expect(!secure_frontend::render_glm53_tool_prompt(question, tools, no_call), "a round without a call");
   const std::vector<secure_frontend::ToolRound> short_results{{"r", "", {call, call}, {"ok"}}};

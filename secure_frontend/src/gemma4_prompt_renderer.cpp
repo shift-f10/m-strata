@@ -575,7 +575,7 @@ std::optional<std::vector<PromptPiece>> render_gemma4_tool_prompt(const std::vec
                                                                   const std::span<const ToolRound> rounds, const bool thinking) {
   // The conversation obeys every rule of the plain prompt (roles, order, literals, sizes), but an earlier answer that
   // searched: its rounds as the current turn's must be, and its own text may be none (turn_text).
-  if (tools.empty() || !text_prompt(messages, thinking, true)) return std::nullopt;
+  if ((tools.empty() && !has_tool_rounds(messages, rounds)) || !text_prompt(messages, thinking, true)) return std::nullopt;
   if (!std::all_of(rounds.begin(), rounds.end(), writable)) return std::nullopt;
   std::vector<JsonValue> declared;
   for (const auto& tool : tools) {

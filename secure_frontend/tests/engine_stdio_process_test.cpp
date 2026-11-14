@@ -341,6 +341,45 @@ void stderr_lines_reach_the_sink_when_asked(const std::filesystem::path& fake) {
   }
 }
 
+void stdout_errors_use_only_the_opted_in_bounded_sink() {
+  const std::vector<std::string> emitted{
+      "READY 4096 stop", "T 17", "GEN 1 private-prompt", "ordinary private text", "ERROR not-an-ERR-record",
+      "ERR restoring checkpoint\tfailed\x1b[31m", "ERR", "ERR " + std::string(5000U, 'x'), "DONE stop"};
+  for (const bool enabled : {false, true}) {
+    std::vector<std::string> logged;
+    secure_frontend::EngineStdioProcess transport;
+    secure_frontend::EngineCommand command{
+        .executable = test_support::current_executable(), .arguments = {"--stdout-errors-child"}, .environment = {},
+        .insert_serve = false, .read_conversation_cache = true};
+    if (enabled) command.stderr_lines = [&](const std::string_view line) { logged.emplace_back(line); };
+    expect(!transport.start(command), "stdout error fixture must start");
+    for (const auto& expected : emitted) {
+      const auto actual = transport.read_line(std::chrono::seconds(5));
+      expect(actual.kind == secure_frontend::EngineReadKind::line && actual.line == expected,
+             "logging must leave every protocol line unchanged");
+    }
+    expect(transport.terminate(std::chrono::milliseconds(500)), "stdout error fixture must terminate");
+    if (!enabled) expect(logged.empty(), "no raw stdout logging without the explicit sink");
+    else {
+      expect(logged.size() == 3U, "only the exact three ERR records reach the sink");
+      expect(logged[0] == "ERR restoring checkpoint failed?[31m" && logged[1] == "ERR",
+             "ERR details are sanitized with the existing stderr rules");
+      expect(logged[2] == "ERR " + std::string(4092U, 'x') + " [cut at 4096 bytes]",
+             "stdout error diagnostics share the 4096-byte stderr bound");
+    }
+  }
+  secure_frontend::EngineStdioProcess transport;
+  expect(!transport.start({.executable = test_support::current_executable(), .arguments = {"--stdout-errors-child"}, .environment = {},
+                            .insert_serve = false, .stderr_lines = [](std::string_view) { throw std::runtime_error("sink unavailable"); }}),
+         "throwing-sink fixture must start");
+  for (const auto& expected : emitted) {
+    const auto actual = transport.read_line(std::chrono::seconds(5));
+    expect(actual.kind == secure_frontend::EngineReadKind::line && actual.line == expected,
+           "diagnostic sink failure cannot change protocol transport");
+  }
+  expect(transport.terminate(std::chrono::milliseconds(500)), "throwing-sink fixture must terminate");
+}
+
 // The running engine's memory (Windows working set, Linux VmRSS), and none once it ended.
 void resident_bytes_read_the_running_engine(const std::filesystem::path& fake) {
   expect(secure_frontend::parse_proc_status_resident_bytes("Name:\tstrata\nVmPeak:\t  9000 kB\nVmRSS:\t   123456 kB\nThreads:\t4\n") ==
@@ -363,6 +402,11 @@ void resident_bytes_read_the_running_engine(const std::filesystem::path& fake) {
 
 // SP1 Task 2's case list, unchanged; only the engine is now the standalone fake.
 int main(int argc, char* argv[]) {
+  if (argc == 2 && std::string_view{argv[1]} == "--stdout-errors-child") {
+    std::cout << "READY 4096 stop\nT 17\nGEN 1 private-prompt\nordinary private text\nERROR not-an-ERR-record\n"
+                 "ERR restoring checkpoint\tfailed\x1b[31m\nERR\nERR " << std::string(5000U, 'x') << "\nDONE stop\n" << std::flush;
+    return 0;
+  }
   static const int no_counted_failures = 0;  // expect() throws; run_cases reports the exception
   static const auto fake = test_support::fake_engine_path();
   return secure_frontend_test::run_cases(argc, argv, {
@@ -374,6 +418,7 @@ int main(int argc, char* argv[]) {
       {"stderr_gives_only_the_conversation_cache_numbers", [] { stderr_gives_only_the_conversation_cache_numbers(fake); }},
       {"stderr_flood_never_blocks_the_engine", [] { stderr_flood_never_blocks_the_engine(fake); }},
       {"stderr_lines_reach_the_sink_when_asked", [] { stderr_lines_reach_the_sink_when_asked(fake); }},
+      {"stdout_errors_use_only_the_opted_in_bounded_sink", stdout_errors_use_only_the_opted_in_bounded_sink},
       {"resident_bytes_read_the_running_engine", [] { resident_bytes_read_the_running_engine(fake); }},
 #if defined(_WIN32)
       {"job_object_terminates_grandchild", [] { job_object_terminates_grandchild(fake); }},

@@ -1,4 +1,5 @@
 #include "secure_frontend/model_options.hpp"
+#include "secure_frontend/engine_accuracy_policy.hpp"
 
 #include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/plugin_manifest.hpp"
@@ -32,6 +33,12 @@ void add(ConfigErrors& errors, std::string key_path, const ConfigIssueCode code,
 }
 
 std::string option_path(const std::string_view name) { return "options." + std::string{name}; }
+
+std::string speed_setting_name(const std::string_view option) {
+  std::string name(option.substr(std::string_view{"speed_"}.size()));
+  for (auto& c : name) if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+  return name;
+}
 
 // Shortest round-trip decimal text.
 std::string decimal_text(const double value) {
@@ -292,6 +299,16 @@ std::optional<ModelOptionLimits> card_option(const ModelOptionSpec& spec, const 
     return std::nullopt;
   }
   if (!bounds_ok) return std::nullopt;  // the default cannot be checked against broken bounds
+  if (spec.accuracy_tradeoff) {
+    const auto baseline = parse_json(spec.accuracy_default, {.max_bytes = 64U, .max_depth = 1U, .max_container_entries = 1U,
+                                                            .max_string_bytes = 64U, .allow_fractions = true});
+    const auto* scalar = std::get_if<JsonValue>(&baseline);
+    const auto reset = scalar ? typed(spec.kind, *scalar) : std::nullopt;
+    if (!reset || !within(limit, *reset)) {
+      add(errors, path, ConfigIssueCode::out_of_range, "bounds must include the accuracy default");
+      return std::nullopt;
+    }
+  }
   auto value = typed(spec.kind, *default_json);
   if (!value.has_value()) {
     add(errors, path, ConfigIssueCode::wrong_type, "default " + std::string{type_reason(spec.kind)});
@@ -593,6 +610,43 @@ ModelOptionValues recommended_sampling(const EngineProfile profile) {
   return out;
 }
 
+ModelOptionValues accuracy_option_defaults(const EngineProfile profile, const FrontendConfigDraft& draft) {
+  const auto row = draft.entries.find("engine.speed_settings");
+  const auto* configured = row == draft.entries.end() ? nullptr : std::get_if<std::vector<std::string>>(&row->second.value);
+  std::vector<EngineSpeedValue> selected;
+  if (configured && !parse_engine_speed_settings(*configured, selected)) return {};
+  ModelOptionValues values;
+  for (const auto& spec : model_options_for(profile)) {
+    if (!spec.accuracy_tradeoff) continue;
+    if (spec.name == "speed_fast_math") {
+      const auto variant = draft.entries.find("engine.fast_math");
+      const auto* enabled = variant == draft.entries.end() ? nullptr : std::get_if<bool>(&variant->second.value);
+      values.emplace(spec.name, enabled != nullptr && *enabled);
+      continue;
+    }
+    std::string encoded(spec.accuracy_default);
+    const auto parsed = parse_json(encoded, {.max_bytes = 64U, .max_depth = 1U, .max_container_entries = 1U,
+                                             .max_string_bytes = 64U, .allow_fractions = true});
+    const auto* scalar = std::get_if<JsonValue>(&parsed);
+    auto value = scalar ? remembered_value(*scalar) : std::nullopt;
+    if (value) value = typed(spec.kind, *value);
+    for (const auto& setting : selected) {
+      if (setting.spec->name != speed_setting_name(spec.name)) continue;
+      if (spec.kind == Kind::decimal) {
+        double number = 0;
+        const auto result = std::from_chars(setting.value.data(), setting.value.data() + setting.value.size(), number);
+        if (result.ec == std::errc{}) value = number;
+      } else {
+        std::int64_t number = 0;
+        const auto result = std::from_chars(setting.value.data(), setting.value.data() + setting.value.size(), number);
+        if (result.ec == std::errc{}) value = spec.kind == Kind::boolean ? ModelOptionValue{number != 0} : ModelOptionValue{number};
+      }
+    }
+    if (value) values.emplace(spec.name, std::move(*value));
+  }
+  return values;
+}
+
 const ModelOptionSpec* find_model_option(const EngineProfile profile, const std::string_view name) noexcept {
   const auto options = model_options_for(profile);
   const auto it = std::find_if(options.begin(), options.end(), [name](const ModelOptionSpec& spec) { return spec.name == name; });
@@ -712,6 +766,18 @@ std::variant<ModelOptionValues, ConfigErrors> resolve_option_values(const std::v
     }
     if (fault.has_value()) add(errors, "options.kv_resident", *fault, std::string{kv_resident_reason(*fault)});
   }
+  const auto replay = values.find("speed_ds4_yoco_keep");
+  const auto* replay_limit = limit_named(limits, "speed_ds4_yoco_keep");
+  if (replay != values.end() && replay_limit && context != values.end()) {
+    const auto* rows = std::get_if<std::int64_t>(&replay->second);
+    const auto* tokens = std::get_if<std::int64_t>(&context->second);
+    if (rows && tokens && *rows > *tokens) {
+      const auto* fallback = std::get_if<std::int64_t>(&replay_limit->default_value);
+      if ((members == nullptr || member_named(*members, "speed_ds4_yoco_keep") == nullptr) && fallback && *fallback <= *tokens)
+        replay->second = replay_limit->default_value;
+      else add(errors, "options.speed_ds4_yoco_keep", ConfigIssueCode::out_of_range, "must not exceed max_context");
+    }
+  }
   if (!errors.empty()) return errors;
   return values;
 }
@@ -723,7 +789,30 @@ void apply_option_values(const EngineProfile profile, const ModelOptionValues& v
   std::vector<std::string> flags;
   for (const auto& spec : model_options_for(profile)) {
     const auto it = values.find(spec.name);
-    if (it != values.end()) write_option(profile, spec.name, it->second, draft_layer_on, flags, draft);
+    if (it == values.end()) continue;
+    if (spec.name == "speed_fast_math") {
+      const auto row = draft.entries.find("engine.fast_math");
+      if (row != draft.entries.end() && !std::holds_alternative<bool>(row->second.value)) continue;
+      if (const auto* enabled = std::get_if<bool>(&it->second)) set_entry(draft, "engine.fast_math", *enabled);
+      continue;
+    }
+    if (!spec.accuracy_tradeoff) {
+      write_option(profile, spec.name, it->second, draft_layer_on, flags, draft);
+      continue;
+    }
+    const auto row = draft.entries.find("engine.speed_settings");
+    if (row != draft.entries.end() && !std::holds_alternative<std::vector<std::string>>(row->second.value)) continue;
+    std::vector<std::string> settings = row == draft.entries.end() ? std::vector<std::string>{} :
+        std::get<std::vector<std::string>>(row->second.value);
+    std::vector<EngineSpeedValue> checked;
+    if (!parse_engine_speed_settings(settings, checked)) continue;  // validate() must see the original invalid row
+    const auto prefix = speed_setting_name(spec.name) + "=";
+    settings.erase(std::remove_if(settings.begin(), settings.end(), [&](const auto& value) { return value.starts_with(prefix); }), settings.end());
+    std::string encoded;
+    if (const auto* boolean = std::get_if<bool>(&it->second)) encoded = *boolean ? "1" : "0";
+    else append_value(encoded, it->second, false);
+    settings.push_back(prefix + encoded);
+    set_entry(draft, "engine.speed_settings", std::move(settings));
   }
   if (flags.empty()) return;
   const auto args = draft.entries.find("engine.args");
@@ -756,6 +845,10 @@ std::string describe_options_json(const std::vector<ModelOptionLimits>& limits, 
     append_json_string(&out, spec.label);
     out += ",\"help\":";
     append_json_string(&out, spec.help);
+    if (spec.accuracy_tradeoff) {
+      out += ",\"accuracy_tradeoff\":true,\"accuracy_default\":";
+      out += spec.accuracy_default;
+    }
     out += ",\"default\":";
     append_value(out, limit.default_value, false);
     switch (spec.kind) {
@@ -776,10 +869,10 @@ std::string describe_options_json(const std::vector<ModelOptionLimits>& limits, 
             append_json_string(&out, option_value_label(spec, shown[i]));
           }
           out += ']';
-          if (!spec.at_most.empty() && limit_named(limits, spec.at_most) != nullptr) {
-            out += ",\"at_most\":";
-            append_json_string(&out, spec.at_most);
-          }
+        }
+        if (!spec.at_most.empty() && limit_named(limits, spec.at_most) != nullptr) {
+          out += ",\"at_most\":";
+          append_json_string(&out, spec.at_most);
         }
         break;
       case Kind::decimal:

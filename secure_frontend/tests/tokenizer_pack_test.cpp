@@ -66,6 +66,33 @@ void loads_validates_and_decodes_offline_pack() {
   std::filesystem::remove_all(root);
 }
 
+void pack_templates_are_not_opened_or_evaluated() {
+  const auto root = temporary_pack();
+  test_support::write_tokenizer_pack(root);
+  const auto before = secure_frontend::load_local_tokenizer_pack(root, kByte);
+  expect(std::holds_alternative<secure_frontend::TokenizerPack>(before), "baseline tokenizer loads");
+  if (!std::holds_alternative<secure_frontend::TokenizerPack>(before)) return;
+  const auto expected = secure_frontend::encode_text(std::get<secure_frontend::TokenizerPack>(before), "hello");
+  write(root / "chat_template.jinja", "{% include '/must-not-be-opened' %}{{ cycler.__init__.__globals__ }}");
+  write(root / "tokenizer_config.json", R"({"chat_template":"{% invalid jinja %}"})");
+  const auto check = [&] {
+    const auto after = secure_frontend::load_local_tokenizer_pack(root, kByte);
+    const auto* pack = std::get_if<secure_frontend::TokenizerPack>(&after);
+    expect(pack != nullptr, "a template never participates in tokenizer loading");
+    if (pack == nullptr) return;
+    const auto actual = secure_frontend::encode_text(*pack, "hello");
+    const auto* ids = std::get_if<std::vector<std::size_t>>(&actual);
+    const auto* wanted = std::get_if<std::vector<std::size_t>>(&expected);
+    expect(ids != nullptr && wanted != nullptr && *ids == *wanted, "template cannot change the input tokens");
+  };
+  check();
+  // A directory at the template path would fail a read; it must still be ignored.
+  std::filesystem::remove(root / "chat_template.jinja");
+  std::filesystem::create_directory(root / "chat_template.jinja");
+  check();
+  std::filesystem::remove_all(root);
+}
+
 void encoding_fails_closed_for_special_invalid_and_missing_tokens() {
   const auto root = temporary_pack();
   write(root / "vocab.json", R"({"a":0,"<|stop|>":1})");
@@ -1272,6 +1299,7 @@ int main(int argc, char** argv) {
       {"glm_bpe_takes_a_whole_vocabulary_piece", glm_bpe_takes_a_whole_vocabulary_piece},
       {"glm53_real_pack_encodes_as_maya", glm53_real_pack_encodes_as_maya},
       {"loads_validates_and_decodes_offline_pack", loads_validates_and_decodes_offline_pack},
+      {"pack_templates_are_not_opened_or_evaluated", pack_templates_are_not_opened_or_evaluated},
       {"rejects_ambiguous_or_incompatible_pack_assets", rejects_ambiguous_or_incompatible_pack_assets},
       {"rejects_malformed_json_and_special_literals_for_decode", rejects_malformed_json_and_special_literals_for_decode},
       {"encoding_fails_closed_for_special_invalid_and_missing_tokens", encoding_fails_closed_for_special_invalid_and_missing_tokens},

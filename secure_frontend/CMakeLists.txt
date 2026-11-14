@@ -342,7 +342,7 @@ secure_frontend_add_library(secure_frontend_chat_route
     SOURCES src/chat_route.cpp src/chat_search_route.cpp
     LINKS secure_frontend_generation_gate secure_frontend_chat_execution secure_frontend_chat_schema
           secure_frontend_chat_generation_plan secure_frontend_secrets secure_frontend_api_core
-          secure_frontend_image_payload)
+          secure_frontend_image_payload secure_frontend_config)
 target_link_libraries(secure_frontend_chat_route PUBLIC secure_frontend_chat_stream secure_frontend_search_rounds)
 
 secure_frontend_add_library(secure_frontend_request_log
@@ -758,18 +758,34 @@ secure_frontend_add_library(secure_frontend_first_start SOURCES src/first_start.
 
 # Model launcher (plan 2026-10-23 Task 3): the per-model half of the boot (compose_model) and
 # one running model's serving objects (ModelRuntime), shared by the boot and the launcher.
+secure_frontend_add_library(secure_frontend_template_review SOURCES src/template_review.cpp
+    LINKS secure_frontend_tokenizer_pack secure_frontend_sha256)
+secure_frontend_add_library(secure_frontend_engine_variant SOURCES src/engine_variant.cpp
+    LINKS secure_frontend_paths secure_frontend_json secure_frontend_sha256)
 secure_frontend_add_library(secure_frontend_model_runtime
     SOURCES src/model_runtime.cpp
     LINKS secure_frontend_launch secure_frontend_tokenizer_pack secure_frontend_chat_route secure_frontend_engine_supervisor
           secure_frontend_generation_gate secure_frontend_subsystem_limits secure_frontend_chat_schema
-          secure_frontend_engine_arguments secure_frontend_typed_config)
+          secure_frontend_engine_arguments secure_frontend_typed_config secure_frontend_template_review secure_frontend_engine_variant)
 # Model launcher (plan 2026-10-23 Task 3): the cards, the running model, starts, switches and stops.
 secure_frontend_add_library(secure_frontend_model_launcher
-    SOURCES src/model_launcher.cpp
+    SOURCES src/model_launcher.cpp src/model_calibration_experiment.cpp
     LINKS secure_frontend_model_runtime secure_frontend_model_cards secure_frontend_model_options secure_frontend_api_router
           secure_frontend_engine_stdio_process secure_frontend_token_store secure_frontend_typed_config secure_frontend_launch
           secure_frontend_calibration secure_frontend_subsystem_limits secure_frontend_card_builder
           secure_frontend_calibration_report secure_frontend_low_ram)
+secure_frontend_add_library(secure_frontend_calibration_experiment
+    SOURCES src/calibration_experiment.cpp
+    LINKS secure_frontend_calibration secure_frontend_json)
+target_link_libraries(secure_frontend_model_launcher PUBLIC secure_frontend_calibration_experiment)
+secure_frontend_add_library(secure_frontend_calibration_workload
+    SOURCES src/calibration_workload.cpp
+    LINKS secure_frontend_json secure_frontend_serve_monitor)
+target_link_libraries(secure_frontend_model_launcher PUBLIC secure_frontend_calibration_workload)
+secure_frontend_add_library(secure_frontend_calibration_thermal
+    SOURCES src/calibration_thermal.cpp
+    LINKS secure_frontend_serve_monitor secure_frontend_engine_stdio_process secure_frontend_paths)
+target_link_libraries(secure_frontend_model_launcher PUBLIC secure_frontend_calibration_thermal)
 # GUI-first start-up (spec 2026-10-27 §5a): the optional email alerts - the SMTP dialogue, its TLS connection (SChannel
 # on Windows, OpenSSL elsewhere), the queue and the password - only with SECURE_FRONTEND_EMAIL_ALERTS.
 if(SECURE_FRONTEND_EMAIL_ALERTS OR SECURE_FRONTEND_WEB_SEARCH)
@@ -816,7 +832,7 @@ endif()
 secure_frontend_add_library(secure_frontend_low_ram SOURCES src/low_ram.cpp)
 # GUI-first start-up (spec 2026-10-27 §5): calibration - the sweep, the plan per engine, the result file and its key.
 secure_frontend_add_library(secure_frontend_calibration SOURCES src/calibration.cpp
-    LINKS secure_frontend_model_options secure_frontend_typed_config secure_frontend_json)
+    LINKS secure_frontend_model_options secure_frontend_typed_config secure_frontend_json secure_frontend_paths secure_frontend_sha256)
 if(WIN32)
     target_link_libraries(secure_frontend_calibration PUBLIC advapi32)
 endif()
@@ -861,7 +877,8 @@ secure_frontend_add_library(secure_frontend_calibration_report SOURCES src/calib
 # GUI-first start-up (spec 2026-10-27 §4): the page's card and folder routes (kModelCardRoutes) over the launcher.
 secure_frontend_add_library(secure_frontend_card_routes SOURCES src/card_routes.cpp
     LINKS secure_frontend_card_builder secure_frontend_local_folders secure_frontend_model_launcher secure_frontend_api_core
-          secure_frontend_token_store secure_frontend_tokenizer_pack secure_frontend_paths secure_frontend_config_writer)
+          secure_frontend_token_store secure_frontend_tokenizer_pack secure_frontend_paths secure_frontend_config_writer
+          secure_frontend_template_review)
 
 # SP5 M1 Task 13 (Ruling T13-b): the supervised serve path as a library — the one
 # boot `strata-unified-server` and `strata serve` share (server_bootstrap.hpp).
@@ -983,6 +1000,7 @@ secure_frontend_set_warnings(strata)
 # Installing (make.py at the repository root): `cmake --install <build> --component runtime --prefix <out>` writes the
 # two user-facing programs (the page, the catalog and the prepare script are embedded in them) and, on Windows, the
 # MSVC runtime beside them (Microsoft's app-local deployment). Nothing else of this tree is installed.
+include(cmake/jinja_renderer.cmake)
 install(TARGETS strata-unified-server strata RUNTIME DESTINATION . COMPONENT runtime)
 if(SECURE_FRONTEND_WEB_SEARCH)
     # web search, a first-party tool plugin (plugin spec 2026-10-30, section 10): strata-search in plugins/search/,
@@ -1075,7 +1093,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     set(SECURE_FRONTEND_SSE_CASES
         utf8_split_across_tokens_is_held_then_released utf8_invalid_sequence_becomes_replacement_character
         utf8_incomplete_tail_dropped_on_length_and_cancel utf8_incomplete_tail_on_stop_becomes_one_replacement
-        sse_events_never_contain_raw_newline sse_coalesced_control_heavy_text_respects_event_cap sse_chunk_framing_units
+        sse_tool_call_event_shape sse_events_never_contain_raw_newline sse_coalesced_control_heavy_text_respects_event_cap sse_chunk_framing_units
         sse_chunked_framing_and_terminal_chunk sink_buffers_on_would_block_and_flushes_later
         sink_write_stall_marks_client_gone sink_send_failure_and_peer_probe_are_gone
         sse_role_content_final_done_sequence sse_include_usage_adds_usage_chunk sse_ids_and_created_constant_per_stream
@@ -1198,7 +1216,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_engine_stdio_process)
     set(_stdio_cases test_round_trip test_invalid_record write_line_fails_once_deadline_passed read_line_rejects_oversize_on_all_platforms
         read_line_waits_for_a_record_split_across_writes stderr_gives_only_the_conversation_cache_numbers
-        stderr_flood_never_blocks_the_engine stderr_lines_reach_the_sink_when_asked resident_bytes_read_the_running_engine)
+        stderr_flood_never_blocks_the_engine stderr_lines_reach_the_sink_when_asked stdout_errors_use_only_the_opted_in_bounded_sink
+        resident_bytes_read_the_running_engine)
     if(WIN32)
         list(APPEND _stdio_cases job_object_terminates_grandchild)
     else()
@@ -1343,7 +1362,13 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_test_support secure_frontend_api_core secure_frontend_socket_io secure_frontend_api_client
         secure_frontend_typed_config)
     secure_frontend_test_paths(secure_frontend_api_server_tests)
+    target_link_libraries(secure_frontend_api_server_tests PRIVATE secure_frontend_sha256)
+    if(TARGET strata-template)
+        add_dependencies(secure_frontend_api_server_tests strata-template)
+    endif()
     set(SECURE_FRONTEND_API_SERVER_CASES
+        embedded_template_is_used_for_complete_and_stream embedded_template_hash_change_refuses_startup
+        embedded_template_render_failure_has_no_fallback
         dos01_body_over_limit_is_413_before_reading dos01_content_length_over_request_limit_is_413_before_auth
         dos01_unauthenticated_gets_401_before_body_is_read dos01_expect_continue_after_auth_only
         dos01_slow_header_is_408_at_header_deadline dos01_slow_body_is_408_at_request_deadline
@@ -1565,6 +1590,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_test_paths(secure_frontend_serve_monitor_tests)
     secure_frontend_add_cases(secure_frontend_serve_monitor_tests
         parses_nvidia_smi_lines nvidia_smi_command_is_fixed nvidia_smi_environment_is_program_files_only the_live_speed_is_the_last_two_seconds
+        calibration_snapshots_separate_prompt_work_ttft_and_host_freshness
         monitor_records_generations monitor_reports_live_states a_stopped_engine_reads_stopped_and_requests_name_their_model
         engine_readings_reach_the_engine_block
         monitor_keeps_a_bounded_history engine_change_drops_the_old_engines_readings
@@ -1692,7 +1718,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
 
     secure_frontend_add_test_executable(secure_frontend_chat_schema_tests tests/chat_schema_test.cpp secure_frontend_chat_schema)
     secure_frontend_add_cases(secure_frontend_chat_schema_tests
-        parses_minimal_text_request default_limits_take_a_long_conversation earlier_searches_ride_on_an_assistant_message
+        accepts_client_function_tools renders_client_tool_calls parses_minimal_text_request default_limits_take_a_long_conversation earlier_searches_ride_on_an_assistant_message
         image_url_parts_accepted_only_for_vision_models
         reasoning_effort_per_request
         strata_search_per_request remote_looking_text_is_text
@@ -1857,7 +1883,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
 
     secure_frontend_add_test_executable(secure_frontend_tokenizer_pack_tests tests/tokenizer_pack_test.cpp
         secure_frontend_tokenizer_pack)
-    set(_tokenizer_cases loads_validates_and_decodes_offline_pack rejects_ambiguous_or_incompatible_pack_assets
+    set(_tokenizer_cases loads_validates_and_decodes_offline_pack pack_templates_are_not_opened_or_evaluated
+        rejects_ambiguous_or_incompatible_pack_assets
         rejects_malformed_json_and_special_literals_for_decode encoding_fails_closed_for_special_invalid_and_missing_tokens
         token_byte_decoder_returns_raw_token_bytes finds_qwen_think_tokens_only_when_unambiguous
         qwen_encoder_takes_think_markers_only_as_generation_tail finds_qwen_end_of_turn_tokens finds_glm53_end_of_turn_tokens
@@ -2033,6 +2060,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_card_builder secure_frontend_first_start)
     secure_frontend_test_paths(secure_frontend_model_launcher_tests)
     secure_frontend_add_cases(secure_frontend_model_launcher_tests
+        fast_math_variant_is_selected_before_engine_start
+        card_speed_options_reach_child_and_are_remembered
         launcher_boots_idle_and_starts_a_card a_card_reads_pictures_with_its_encoder switch_waits_for_the_generation_then_swaps failed_start_keeps_the_server_usable
         start_refusals_name_the_problem a_start_says_its_phase_and_time_and_a_failure_its_code the_settings_say_the_running_models_values options_are_remembered models_start_and_control_off
         bad_card_refused_at_boot_and_main_rows_refused experts_show_as_soon_as_a_model_runs
@@ -2043,7 +2072,12 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         cards_offer_their_longest_answer_at_the_servers_value
         a_card_without_sampling_starts_with_the_recommended
         a_qwen36_card_reads_its_tokenizer_from_the_gguf
-        calibration_finds_the_win_and_starts_with_it a_first_start_calibrates_first a_start_without_calibrating_starts_at_once
+        calibration_finds_the_win_and_starts_with_it calibration_keeps_the_options_it_measured a_first_start_calibrates_first a_start_without_calibrating_starts_at_once
+        benchmark_quality_failure_preserves_previous_calibration benchmark_resume_refuses_unmatched_checkpoint_and_restore_is_bounded
+        quick_benchmark_reuses_one_engine_for_confirmations quick_qwen_tunes_requests_without_reloading
+        benchmark_success_preserves_private_input_and_restores_history benchmark_cancel_resume_is_bound_to_all_options
+        benchmark_route_accepts_bounded_custom_input_and_rejects_mixed_actions
+        benchmark_rejects_runtime_changes_during_trials
         the_start_route_takes_calibrate_false the_monitor_names_a_calibration_while_it_runs
         a_minimax_card_measures_its_prompt_reading_first a_glm_card_calibrates a_failed_prefill_calibration_is_not_retried_by_itself
         a_prefill_calibration_falls_back_to_the_default_chunk
@@ -2087,6 +2121,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
     secure_frontend_add_test_executable(secure_frontend_model_options_tests tests/model_options_test.cpp
         secure_frontend_model_options)
     secure_frontend_add_cases(secure_frontend_model_options_tests
+        fast_math_selects_a_typed_variant_for_every_family
+        accuracy_tradeoffs_are_bounded_card_options
         option_tables_per_profile card_options_parse_and_bound card_option_refusals_name_the_option
         page_values_resolve_within_bounds kv_resident_cross_rules options_apply_as_flags_and_keys
         mtp_off_drops_the_draft_options controlled_flags_listed description_json_shape
@@ -2125,6 +2161,35 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
 
     secure_frontend_add_test_executable(secure_frontend_chat_generation_plan_tests tests/chat_generation_plan_test.cpp
         secure_frontend_chat_generation_plan)
+    secure_frontend_add_test_executable(secure_frontend_calibration_experiment_tests tests/calibration_experiment_test.cpp secure_frontend_calibration_experiment)
+    secure_frontend_add_test_executable(secure_frontend_calibration_thermal_tests tests/calibration_thermal_test.cpp secure_frontend_calibration_thermal)
+    secure_frontend_add_cases(secure_frontend_calibration_thermal_tests thermal_flags_and_selected_devices
+        unavailable_and_malformed_fields tool_failure_timeout_and_output_bounds)
+    secure_frontend_add_test_executable(secure_frontend_calibration_workload_tests tests/calibration_workload_test.cpp secure_frontend_calibration_workload secure_frontend_chat_route)
+    secure_frontend_add_cases(secure_frontend_calibration_workload_tests
+        fixed_workloads_have_known_answers_and_real_token_counts chat_and_coding_workloads_plan_for_every_profile memory_probe_reports_partial_coverage_and_honors_limits
+        quality_rejects_wrong_answers_truncation_and_incomplete_tool_arguments streamed_tools_require_two_complete_calls_and_terminal_done
+        captures_are_bounded_and_custom_quality_is_not_claimed host_diagnostics_distinguish_busy_baseline_and_thermal_evidence)
+    secure_frontend_add_cases(secure_frontend_calibration_experiment_tests
+        benchmark_options_are_strict_and_bounded experiment_plan_explains_fixed_and_inactive_settings every_profile_and_mode_keeps_completion_and_acceptance_contracts
+        maximum_revisits_combinations_and_confirms budgets_and_cancellation_never_expose_partial_winners
+        quality_contamination_noise_and_comparison_gate_application progress_is_available_before_measurement_and_after_failure
+        stable_baseline_survives_a_noisy_candidate thorough_work_is_bounded_by_reference_calibrators)
+    secure_frontend_add_test_executable(secure_frontend_engine_variant_tests tests/engine_variant_test.cpp secure_frontend_engine_variant)
+    secure_frontend_add_cases(secure_frontend_engine_variant_tests
+        default_needs_no_variant_installation missing_or_wrong_mode_is_refused valid_fast_variant_verifies_every_file
+        invalid_manifest_paths_and_duplicates_are_refused linked_variant_file_is_refused)
+    secure_frontend_add_test_executable(secure_frontend_embedded_template_plan_tests tests/embedded_template_plan_test.cpp
+        secure_frontend_chat_route secure_frontend_typed_config)
+    target_compile_definitions(secure_frontend_embedded_template_plan_tests PRIVATE
+        STRATA_QWEN_TEMPLATE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../upstream/serve/chat_template.jinja")
+    if(TARGET strata-template)
+        add_dependencies(secure_frontend_embedded_template_plan_tests strata-template)
+    endif()
+    secure_frontend_add_cases(secure_frontend_embedded_template_plan_tests
+        upstream_qwen_template_matches_fixed_prompt_and_tools
+        template_spans_keep_user_markers_plain template_context_keeps_tools_and_history
+        selected_template_renders_instead_of_fixed_profile selected_template_errors_never_fall_back)
     secure_frontend_add_cases(secure_frontend_chat_generation_plan_tests
         composes_schema_prompt_and_tokenizer glm_pack_serves_raon1_chatml_when_pack_is_chatml
         raon1_reasoning_opens_or_closes_the_think_block raon1_history_renders_as_the_official_template
@@ -2226,12 +2291,15 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         # the search plugin as make ships it (its manifest, strata-search) and a third-party stand-in (the fake tool)
         target_compile_definitions(secure_frontend_web_search_server_tests PRIVATE
             SECURE_FRONTEND_REPO_PLUGINS="${CMAKE_CURRENT_SOURCE_DIR}/../plugins"
-            STRATA_SEARCH_PATH="$<TARGET_FILE:strata-search>" FAKE_MCP_TOOL_PATH="$<TARGET_FILE:secure_frontend_fake_mcp_tool>")
-        add_dependencies(secure_frontend_web_search_server_tests strata-search secure_frontend_fake_mcp_tool)
+            STRATA_SEARCH_PATH="$<TARGET_FILE:strata-search>" FAKE_MCP_TOOL_PATH="$<TARGET_FILE:secure_frontend_fake_mcp_tool>"
+            STRATA_QWEN_TEMPLATE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../upstream/serve/chat_template.jinja")
+        target_link_libraries(secure_frontend_web_search_server_tests PRIVATE secure_frontend_sha256)
+        add_dependencies(secure_frontend_web_search_server_tests strata-search secure_frontend_fake_mcp_tool strata-template)
         if(WIN32)
             target_link_libraries(secure_frontend_web_search_server_tests PRIVATE ws2_32)
         endif()
-        secure_frontend_add_cases(secure_frontend_web_search_server_tests a_chat_searches_through_strata_search_and_answers
+        secure_frontend_add_cases(secure_frontend_web_search_server_tests client_tool_calls_round_trip embedded_template_client_tool_calls_round_trip tool_call_hosts_restrict_only_client_tools
+            a_chat_searches_through_strata_search_and_answers
             a_chat_can_turn_search_off a_started_card_searches_too a_card_started_without_web_search_never_searches
             a_model_that_cannot_carry_the_tool_says_so old_search_rows_move_to_the_plugin a_third_party_tool_plugin_runs_once_approved
             LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME} TIMEOUT 180)
@@ -2293,6 +2361,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         the_plan_follows_the_engine joint_steps_and_longer_answers a_step_ends_below_its_floor
         a_calibration_applies_flags_and_rows the_file_takes_every_sweeps_settings prefill_records_round_trip
         results_round_trip_and_keys_compare physical_cores_count_every_core
+        runtime_identity_tracks_selected_libraries legacy_runtime_identity_is_adopted_only_for_unchanged_files
         the_key_reads_files_and_options
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
 
@@ -2308,6 +2377,8 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_card_routes secure_frontend_first_start secure_frontend_plugins)
     secure_frontend_test_paths(secure_frontend_card_routes_tests)
     secure_frontend_add_cases(secure_frontend_card_routes_tests
+        embedded_template_review_requires_acknowledgment_and_current_hash
+        embedded_template_extraction_obeys_bounds_and_refuses_links
         card_routes_answer_loopback_clients_only folders_list_the_drives_and_one_folder a_card_is_added_from_a_folder a_qwen_model_beside_its_encoder_reads_pictures qwen38_and_glm_models_are_added_with_their_packs
         a_qwen38_model_finds_its_draft_layer
         a_deepseek_model_is_added_with_mayas_ds4_pack a_minimax_model_is_added_with_mayas_mm3_pack
@@ -2333,6 +2404,7 @@ if(STRATA_BUILD_SECURE_FRONTEND_TESTS)
         secure_frontend_tokenizer_pack)
     secure_frontend_add_cases(secure_frontend_gguf_metadata_tests
         reads_typed_metadata_and_stops_at_the_header refuses_malformed_headers tokenizer_comes_from_the_gguf
+        embedded_templates_are_inert_data
         LABELS ${SECURE_FRONTEND_WINDOWS_RUNTIME})
     # flint: the tokenizer read from the real GGUF against llama.cpp master's ids (the fixture holds texts and ids only).
     # SECURE_FRONTEND_FLINT_GGUF names the folder holding flint-Q8_0.gguf; unset, skipped.

@@ -192,7 +192,8 @@ void refuses_what_the_tool_prompt_cannot_say() {
     return secure_frontend::render_deepseek_tool_prompt(m, t, r, 75);
   };
   expect(render(question, tools, good).has_value(), "the good case renders");
-  expect(!render(question, {}, good), "no tools");
+  expect(!render(question, {}, {}), "no declarations or history");
+  expect(render(question, {}, good).has_value(), "history needs no new declarations");
   expect(!render(question, tools, {{"r", "", {}, {}}}), "a round without a call");
   expect(!render(question, tools, {{"r", "", {call, call}, {"ok"}}}), "fewer results than calls");
   expect(!render(question, tools, {{"r", "", {{"", {}}}, {"ok"}}}), "a call without a name");

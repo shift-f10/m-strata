@@ -312,6 +312,23 @@ void typed_config_cross_field_rules() {
     for (auto& [k, v] : extra) literals[k] = v;
     return validate_text(render_config_json(literals), f.dir);
   };
+  for (const auto* value : {"true", "false"}) {
+    const auto configured = with({{"engine.fast_math", value}});
+    expect(std::holds_alternative<secure_frontend::ValidatedConfig>(configured), "fast math is a typed boolean");
+    if (const auto* valid = std::get_if<secure_frontend::ValidatedConfig>(&configured))
+      expect(valid->shared()->engine.fast_math == (std::string_view{value} == "true"), "fast math preserves explicit choice");
+  }
+  expect(std::holds_alternative<secure_frontend::ConfigErrors>(with({{"engine.fast_math", "1"}})),
+         "numeric fast math is refused instead of coerced");
+  expect(std::holds_alternative<secure_frontend::ValidatedConfig>(with({{"engine.speed_settings",
+      R"(["ROUTE_TAIL_SKIP=7","ROUTE_RESIDENT=0.125","GLM_TRUNK_KEEP=4"])"}})),
+      "explicit bounded speed settings are accepted");
+  for (const char* bad : {R"(["HOME=1"])", R"(["ROUTE_TAIL_SKIP=10"])", R"(["ROUTE_TAIL_SKIP=1.5"])",
+                          R"(["ROUTE_RESIDENT=nan"])", R"(["GLM_TRUNK_KEEP=0"])", R"([""])",
+                          R"(["ROUTE_TAIL_SKIP=1;SPEC_PROB=1"])", R"(["SPEC_PROB=0","SPEC_PROB=1"])"}) {
+    expect(has_issue(with({{"engine.speed_settings", bad}}), "engine.speed_settings", ConfigIssueCode::invalid_value),
+           "unknown, malformed, duplicate and out-of-range speed settings are rejected");
+  }
   expect(has_issue(with({{"limits.http.max_request_bytes", "8192"}, {"limits.http.max_header_bytes", "16384"}}),
                    "limits.http.max_header_bytes", ConfigIssueCode::conflicting_values), "header > request");
   expect(has_issue(with({{"limits.http.max_header_bytes", "2048"}, {"limits.http.max_request_line_bytes", "4096"}}),

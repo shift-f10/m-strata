@@ -132,6 +132,8 @@ struct ListenerConfig final {
   bool loopback_without_key;              // the one keyless listener: loopback only, no token.source
   bool monitor;                           // GET /metrics, the page's Monitor tab (serve_monitor.hpp)
   bool login_link{false};                 // a one-time login link printed at every start (spec 2026-10-27 §3)
+  bool restrict_tool_calls{false};
+  std::vector<IpNetwork> tool_call_hosts{};
 };
 struct HttpLimits final {
   std::chrono::milliseconds request_deadline;
@@ -337,6 +339,10 @@ struct EngineLaunch final {
   // model.name (session log step 13; the pin's model_name, default_model_name :7855): the name
   // the API serves the model as. Unset: the model's own id (inventory file, or name:tag).
   std::optional<std::string> served_name{};
+  // Empty: built-in frontend renderer. A digest opts in to exactly the reviewed model template.
+  std::string chat_template_sha256{};
+  std::vector<std::string> speed_settings{};
+  bool fast_math{false};  // Select the separately compiled variant at the next model start.
 };
 
 // Model launcher (plan 2026-10-23 Task 1; spec §3.1, D1/D2/D5): the card files the page may

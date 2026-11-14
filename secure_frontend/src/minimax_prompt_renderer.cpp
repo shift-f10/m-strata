@@ -257,8 +257,8 @@ std::optional<std::vector<PromptPiece>> render_minimax_tool_prompt(const std::ve
                                                                    const std::span<const ToolRound> rounds,
                                                                    const MinimaxThinking& thinking,
                                                                    const std::span<const std::string_view> special) {
-  if (tools.empty()) return std::nullopt;
-  if (!std::all_of(rounds.begin(), rounds.end(), well_formed)) return std::nullopt;
+  if ((tools.empty() && !has_tool_rounds(messages, rounds)) || !std::all_of(rounds.begin(), rounds.end(), well_formed))
+    return std::nullopt;
   // each tool's function object, as the template's tojson(ensure_ascii=False) writes it
   std::vector<std::string> schemas;
   for (const auto& tool : tools) {

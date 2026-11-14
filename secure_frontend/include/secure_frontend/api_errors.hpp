@@ -14,6 +14,7 @@ namespace secure_frontend {
 enum class ApiError {
   invalid_request, invalid_json, unsupported_parameter, extension_disabled, context_length_exceeded,
   invalid_api_key, forbidden, not_found, model_not_found, method_not_allowed, request_timeout, length_required,
+  tool_call_not_allowed,
   request_too_large, request_line_too_long, unsupported_media_type, expectation_failed, header_too_large,
   internal_error, server_busy, engine_unavailable, engine_error, server_shutting_down, http_version_not_supported,
   // Model launcher (plan 2026-10-23 Tasks 3-4; spec §5.3-§5.4, D2/D6).

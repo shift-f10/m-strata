@@ -121,12 +121,14 @@ std::string render_sampling_keys(const SamplingParams& sampling, const bool zero
     out.append(buffer, end);
   };
   // The pinned v0.2.2 wire rules (serve/server.py:1367-1401), in the pin's
-  // order: neutral values the engine already defaults to are omitted, top_k
+  // order: explicit temperature/top_p must survive even at 0/1: Maya enables
+  // sampling for other keys and otherwise inherits its non-neutral top_p.
+  // Other neutral values the engine already defaults to are omitted, top_k
   // clamps wide lists to the engine's 64 candidates, penalties take the
   // engine's alias names, and any penalty without a window gets the engine's
   // default window of 64.
-  if (sampling.temperature.has_value() && *sampling.temperature > 0.0) number("temperature", *sampling.temperature);
-  if (sampling.top_p.has_value() && *sampling.top_p < 1.0) number("top_p", *sampling.top_p);
+  if (sampling.temperature.has_value()) number("temperature", *sampling.temperature);
+  if (sampling.top_p.has_value()) number("top_p", *sampling.top_p);
   if (sampling.top_k.has_value() && *sampling.top_k >= 0) {
     const auto candidates = (*sampling.top_k >= 1 && *sampling.top_k <= 64) ? *sampling.top_k : 64;
     out += " top_k=" + std::to_string(candidates);
@@ -151,6 +153,12 @@ std::string render_sampling_keys(const SamplingParams& sampling, const bool zero
     }
   }
   if (sampling.seed.has_value() && *sampling.seed > 0U) out += " seed=" + std::to_string(*sampling.seed);
+  if (!zero_window_disables) {
+    if (sampling.calibration_pcie_frac && *sampling.calibration_pcie_frac >= 0.0 && *sampling.calibration_pcie_frac <= 1.0)
+      number("pcie_frac", *sampling.calibration_pcie_frac);
+    if (sampling.calibration_spec_min_p && *sampling.calibration_spec_min_p >= 0.0 && *sampling.calibration_spec_min_p <= 1.0)
+      number("spec_min_p", *sampling.calibration_spec_min_p);
+  }
   return out;
 }
 

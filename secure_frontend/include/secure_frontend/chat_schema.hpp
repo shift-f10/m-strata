@@ -19,8 +19,8 @@ namespace secure_frontend {
 // This is a schema boundary, not an engine API: text messages are the rule;
 // the ONE carve-out is SP5 M1 Task 12 (C-9): a content ARRAY of text/image_url
 // parts, accepted only when the composition proved the active model can read
-// images (vision_capable). It still has no representation for tools, URLs of
-// any other kind, or MCP.
+// images (vision_capable). Function-tool requests carry declarations and
+// history as data. External image URLs and client MCP servers are refused.
 struct ChatMessagePart final {
   std::string text;            // set for a {"type":"text"} part
   std::string image_data_url;  // set for a {"type":"image_url"} part — the data URL, verbatim
@@ -35,6 +35,25 @@ struct ChatMessage final {
   // and one result each (reasoning empty); `content` is then the answer's text after its last round, and may be empty.
   std::vector<ToolRound> rounds{};
 };
+
+[[nodiscard]] inline bool has_tool_rounds(const std::span<const ChatMessage> messages, const std::span<const ToolRound> trailing) {
+  if (!trailing.empty()) return true;
+  for (const auto& message : messages) {
+    if (!message.rounds.empty()) return true;
+  }
+  return false;
+}
+
+struct ClientTool final {
+  ToolDeclaration declaration;
+  std::string template_json;
+};
+struct ClientToolCall final {
+  std::string id;
+  ToolCall call;
+};
+
+inline constexpr std::size_t kMaxClientToolCalls = 128U;
 
 struct ChatCompletionRequest final {
   std::string model;
@@ -52,6 +71,11 @@ struct ChatCompletionRequest final {
   // The owner's client-compatibility spec (2026-10-31): response_format {"type":"json_object"} - the request asks for a JSON object.
   // Nothing constrains the decoding; such a request does not think unless it names its own reasoning_effort.
   bool json_object{false};
+  std::vector<ClientTool> client_tools{};
+  std::string tool_choice{"auto"};
+  std::optional<std::string> named_tool{};
+  bool parallel_tool_calls{true};
+  bool client_tool_history{false};
 };
 
 // Chat request/response bounds; derived from FrontendConfig by chat_schema_limits().
@@ -81,8 +105,8 @@ struct ChatRequestError final {
 using ChatRequestResult = std::variant<ChatCompletionRequest, ChatRequestError>;
 
 // Spec §3.1: the full request schema. Errors name only a fixed parameter key
-// (string literal storage), never request bytes. Extension keys and tool or
-// function roles are refused first, in document order (EXT-01).
+// (string literal storage), never request bytes. Disabled extension keys and
+// the legacy function role are refused first, in document order (EXT-01).
 [[nodiscard]] ChatRequestResult parse_chat_request(std::string_view json, const ChatSchemaLimits& limits = {});
 
 // Wrapper over parse_chat_request: nullopt on any error.
@@ -113,8 +137,10 @@ struct CompletionView final {
   // Web search: message.strata_search, the search loop's events (each a JSON object), written only when there are any
   // (upstream's openai_collect keeps its strata_mcp items so).
   std::span<const std::string> search_events{};
+  std::span<const ClientToolCall> tool_calls{};
 };
 
 [[nodiscard]] std::optional<std::string> render_chat_completion(const CompletionView& view, const ChatSchemaLimits& limits = {});
+[[nodiscard]] std::string tool_arguments_json(const ToolCall& call);
 
 }  // namespace secure_frontend

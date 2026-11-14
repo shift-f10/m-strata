@@ -25,7 +25,8 @@ namespace secure_frontend {
 // the generation has ended.
 class ToolCallObserver final : public GenerationObserver {
  public:
-  ToolCallObserver(GenerationObserver& client, std::vector<ToolDeclaration> tools, ToolFormat format = ToolFormat::qwen);
+  ToolCallObserver(GenerationObserver& client, std::vector<ToolDeclaration> tools, ToolFormat format = ToolFormat::qwen,
+                   std::function<void(const ToolCall&)> on_call = {});
 
   void on_text(std::string_view text) override;
   void on_reasoning(std::string_view text) override;
@@ -43,6 +44,7 @@ class ToolCallObserver final : public GenerationObserver {
 
   GenerationObserver& client_;
   std::unique_ptr<ToolCallParser> parser_;
+  std::function<void(const ToolCall&)> on_call_;
   std::string reasoning_;
   std::string content_;
   std::vector<ToolCall> calls_;

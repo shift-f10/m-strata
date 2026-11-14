@@ -1,4 +1,5 @@
 #include "secure_frontend/chat_route.hpp"
+#include "secure_frontend/embedded_template_plan.hpp"
 
 #include "secure_frontend/api_errors.hpp"
 #include "secure_frontend/chat_generation_plan.hpp"
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cmath>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -18,6 +20,15 @@
 #include <vector>
 
 namespace secure_frontend {
+bool ChatRoute::set_calibration_tuning(std::optional<double> pcie, std::optional<double> min_p, bool* changed) {
+  const auto valid = [](const auto& value) { return !value || (std::isfinite(*value) && *value >= 0.0 && *value <= 1.0); };
+  if ((pcie || min_p) && config_.profile != NativeChatProfile::qwen) return false;
+  if (!valid(pcie) || !valid(min_p)) return false;
+  if (changed) *changed = calibration_pcie_ != pcie || calibration_min_p_ != min_p;
+  calibration_pcie_ = pcie;
+  calibration_min_p_ = min_p;
+  return true;
+}
 namespace {
 
 // The Monitor's name for how a non-streamed generation ended (monitor_finish's literals).
@@ -59,6 +70,10 @@ std::optional<std::string> make_completion_id() {
   return id;
 }
 
+std::string make_tool_call_id(const std::string_view completion_id, const std::size_t index) {
+  return "call_" + std::string(completion_id.substr(std::string_view("chatcmpl-").size())) + "_" + std::to_string(index);
+}
+
 // Gemma 4 plan 1 Task 10 (spec §6.6, D10): none is off, low/medium/high are on, and a request
 // that names no level takes the server's default (reasoning.effort; unset = off).
 bool gemma4_request_thinks(const std::optional<std::string>& reasoning_effort, const bool thinking_default) {
@@ -90,7 +105,20 @@ ChatGenerationPlanResult select_chat_generation_plan(const NativeChatProfile pro
                                                      const TokenizerPack& tokenizer, const std::size_t maximum_prompt_tokens,
                                                      const SamplingDefaults& defaults,
                                                      const std::span<const std::size_t> image_token_counts, const bool thinking,
-                                                     const QwenEffortPlacement qwen_effort, const MinimaxThinking& minimax) {
+                                                     const QwenEffortPlacement qwen_effort, const MinimaxThinking& minimax,
+                                                     const EmbeddedTemplateSelection* embedded) {
+  if (embedded != nullptr) {
+    if (!image_token_counts.empty()) return ChatGenerationPlanError{ChatGenerationPlanErrorCode::invalid_request,
+                                                                  "embedded templates currently serve text only"};
+    // Only use the fixed profile to establish reply parsing and sampling. User
+    // content is rendered once, by the selected template, with input marking.
+    auto skeleton = request;
+    skeleton.messages = {{"user", "a"}};
+    auto baseline = select_chat_generation_plan(profile, skeleton, tokenizer, 1048576U, defaults, {}, thinking, qwen_effort, minimax);
+    const auto effort = minimax.effort.value_or(qwen_effort.effort == QwenEffort::low ? "low" :
+                                              qwen_effort.effort == QwenEffort::medium ? "medium" : "high");
+    return apply_embedded_template(std::move(baseline), *embedded, request, tokenizer, {}, {}, maximum_prompt_tokens, thinking, effort);
+  }
   // The route resolves the output budget itself (resolve_max_tokens), so the plans get 1.
   switch (profile) {
     case NativeChatProfile::qwen:
@@ -168,6 +196,11 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
   const ChatRequestResult parsed = parse_chat_request(body, config_.schema);
   if (const auto* error = std::get_if<ChatRequestError>(&parsed)) return make_error_response(error->error, {.param = error->param});
   const ChatCompletionRequest& request = std::get<ChatCompletionRequest>(parsed);
+  if (config_.restrict_tool_calls && (!request.client_tools.empty() || request.client_tool_history) &&
+      std::none_of(config_.tool_call_hosts.begin(), config_.tool_call_hosts.end(),
+                   [&context](const IpNetwork& host) { return network_contains(host, context.peer); })) {
+    return make_error_response(ApiError::tool_call_not_allowed);
+  }
   // SP5 M1 Task 8 (model.aliases; set_aliases :3764-3777): the served id plus the
   // configured aliases answer; matching is exact (§4: an empty or partial name never
   // matches — an empty request.model is refused by the schema before this line).
@@ -225,6 +258,32 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
     }
   }
   const bool vision_request = !image_urls.empty();
+  if (vision_request && config_.embedded_template) return make_error_response(ApiError::unsupported_parameter, {.param = "image_url"});
+  const auto tool_format = search_tool_format(config_.profile);
+  const bool client_tool_request = !request.client_tools.empty() || request.client_tool_history || request.tool_choice != "auto" ||
+                                   request.named_tool.has_value();
+  std::optional<ClientToolTurn> client_tools;
+  if (request.client_tool_history || (!request.client_tools.empty() && request.tool_choice != "none")) {
+    if (vision_request || !tool_format) return make_error_response(ApiError::invalid_request);
+    client_tools.emplace(ClientToolTurn{.format = *tool_format, .declarations = {}, .parallel = request.parallel_tool_calls});
+    if (request.tool_choice != "none") {
+      for (const auto& tool : request.client_tools) client_tools->declarations.push_back(tool.declaration);
+    }
+    if (*tool_format == ToolFormat::qwen || *tool_format == ToolFormat::raon1 || *tool_format == ToolFormat::deepseek) {
+      const auto named = std::find_if(client_tools->declarations.begin(), client_tools->declarations.end(), [&](const auto& tool) {
+        return request.named_tool == tool.name;
+      });
+      const bool required = request.tool_choice == "required" && !client_tools->declarations.empty();
+      if (named != client_tools->declarations.end() || required) {
+        const bool dsml = *tool_format == ToolFormat::deepseek;
+        client_tools->prefix = dsml ? "<" + std::string(kDeepseekToolMarker) + " calls>\n<" +
+                                      std::string(kDeepseekToolMarker) + " invoke name=\"" : "<tool_call>\n<function=";
+        const ToolDeclaration* fixed = named != client_tools->declarations.end() ? &*named :
+            client_tools->declarations.size() == 1U ? &client_tools->declarations.front() : nullptr;
+        if (fixed != nullptr) client_tools->prefix += fixed->name + (dsml ? "\">\n" : ">\n");
+      }
+    }
+  }
   // The schema gate (vision_capable) and this pointer are one boot-time decision
   // (Ruling T12-b); a mismatch is a wiring bug — closed, not served.
   if (vision_request && config_.vision == nullptr) return make_error_response(ApiError::invalid_request);
@@ -256,8 +315,7 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
   // Web search (spec 2026-10-27-web-search-design §2): a qwen, GLM-5.3, raon1 or flint text chat gets the server's
   // tool, when there is one now, in its family's form - unless the request turned it off ("strata_search": false).
   std::shared_ptr<SearchTurn> search;
-  const std::optional<ToolFormat> tool_format = search_tool_format(config_.profile);
-  if (config_.tools != nullptr && tool_format && !vision_request && request.strata_search != false) {
+  if (!client_tool_request && config_.tools != nullptr && tool_format && !vision_request && request.strata_search != false) {
     if (auto offers = config_.tools->offers(); !offers.empty()) {
       // owner 2026-10-28: its system message says today's date and to search for anything recent (every round's prompt;
       // each tool plugin's note, 2026-10-30)
@@ -279,12 +337,14 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
   std::vector<std::uint32_t> prompt_ids;
   if (!vision_request) {
     // Gemma 4 plan 1 Tasks 3 and 10: an exhaustive switch, so a profile never takes another's plan.
-    auto plan_result = search != nullptr ? search_first_plan(config_, *search, tokenizer_)
+    auto plan_result = client_tools ? client_tool_plan(config_, request, tokenizer_, *client_tools, thinking, effort, minimax_thinking)
+                       : search != nullptr ? search_first_plan(config_, *search, tokenizer_)
                                          : select_chat_generation_plan(config_.profile, text_request, tokenizer_, config_.max_prompt_tokens,
-                                                                       config_.sampling_default, {}, thinking, effort, minimax_thinking);
+                                                                       config_.sampling_default, {}, thinking, effort, minimax_thinking,
+                                                                       config_.embedded_template.get());
     // A pack without the family's tool tags serves the chat without the tool, and the server log says so.
     if (const auto* refused = std::get_if<ChatGenerationPlanError>(&plan_result);
-        search != nullptr && refused != nullptr && refused->code == ChatGenerationPlanErrorCode::tokenization_failed) {
+        search != nullptr && !config_.embedded_template && refused != nullptr && refused->code == ChatGenerationPlanErrorCode::tokenization_failed) {
       config_.tools->served_without(refused->message);
       search.reset();
       plan_result = select_chat_generation_plan(config_.profile, text_request, tokenizer_, config_.max_prompt_tokens, config_.sampling_default, {},
@@ -295,6 +355,8 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
                                                                                                    : ApiError::invalid_request);
     }
     plan = std::get<ChatGenerationPlan>(std::move(plan_result));
+    plan->sampling.calibration_pcie_frac = calibration_pcie_;
+    plan->sampling.calibration_spec_min_p = calibration_min_p_;
     prompt_ids.reserve(plan->prompt_token_ids.size());
     for (const std::size_t id : plan->prompt_token_ids) {
       if (id > std::numeric_limits<std::uint32_t>::max()) return make_error_response(ApiError::invalid_request);
@@ -379,13 +441,15 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
                                          config_.maximum_output_tokens);
   if (budget && request.stream)
     return stream_response(lease, prompt_ids, *budget, *plan, request.include_usage, context,
-                           std::move(embeddings), combined_file, search);
+                           std::move(embeddings), combined_file, search, std::move(client_tools));
   std::vector<std::string> search_events;  // web search: message.strata_search
+  std::vector<ToolCall> tool_calls;
   if (!budget) {
     context_refused = true;
   } else {
     if (config_.monitor != nullptr) config_.monitor->generation_started(prompt_ids.size(), *budget, context_tokens, config_.model_id);
-    outcome = search != nullptr
+    outcome = client_tools ? run_client_tools(*lease, *client_tools, *plan, prompt_ids, *budget, context, tool_calls)
+              : search != nullptr
                   ? run_search_rounds(*lease, *search, *plan, prompt_ids, *budget, context, search_events)
                   : lease->chat().run_generation(
                         prompt_ids,
@@ -423,11 +487,14 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
   const GenerationResult& result = std::get<GenerationResult>(outcome);
   const auto id = make_completion_id();
   if (!id) return make_error_response(ApiError::internal_error);
+  std::vector<ClientToolCall> wire_calls;
+  for (auto& call : tool_calls) wire_calls.push_back({make_tool_call_id(*id, wire_calls.size()), std::move(call)});
   const auto created = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
   const auto rendered = render_chat_completion({.id = *id, .created = created, .model = config_.model_id, .text = result.text,
-                                                .finish_reason = result.finish == FinishReason::length ? "length" : "stop",
+                                                .finish_reason = result.finish == FinishReason::length ? "length" :
+                                                                 (wire_calls.empty() ? "stop" : "tool_calls"),
                                                 .prompt_tokens = result.prompt_tokens, .completion_tokens = result.completion_tokens,
-                                                .reasoning = result.reasoning, .search_events = search_events},
+                                                .reasoning = result.reasoning, .search_events = search_events, .tool_calls = wire_calls},
                                                config_.schema);
   if (!rendered) return make_error_response(ApiError::internal_error);
   HttpResponse response{.status = 200, .headers = {{"Content-Type", "application/json; charset=utf-8"}}, .body = *rendered};
@@ -438,7 +505,7 @@ RouteResult ChatRoute::handle(const std::string_view body, const RequestContext&
 RouteResult ChatRoute::stream_response(std::optional<Lease>& lease, const std::vector<std::uint32_t>& prompt_ids, const std::size_t max_tokens,
                                        const ChatGenerationPlan& plan, const bool include_usage, const RequestContext& context,
                                        std::string embeddings, std::optional<std::filesystem::path> combined_file,
-                                       std::shared_ptr<const SearchTurn> search) {
+                                       std::shared_ptr<const SearchTurn> search, std::optional<ClientToolTurn> client_tools) {
   const std::atomic<bool>* flag = context.shutting_down;
   std::function<bool()> shutting_down = [flag] { return (flag != nullptr && flag->load()) || shutdown_signalled(); };  // R-H
   auto hold = std::make_shared<LeaseHold>(std::move(*lease), gate_, port_, shutting_down);
@@ -481,7 +548,7 @@ RouteResult ChatRoute::stream_response(std::optional<Lease>& lease, const std::v
   std::optional<SearchLimits> rounds_limits;
   if (search != nullptr) rounds_limits = search_limits(config_);
   return StreamHandler{[hold, identity = std::move(identity), settings, tokenizer, shutting_down, vision = config_.vision,
-                      combined_file, turn, search, rounds_limits](StreamSink& sink) {
+                      combined_file, turn, search, rounds_limits, client_tools = std::move(client_tools)](StreamSink& sink) {
     // The engine consumed the GENI file at generation start; if it never began, the
     // begin() failure above already removed it. Either way it must not outlive the stream.
     const struct FileGuard {
@@ -495,6 +562,9 @@ RouteResult ChatRoute::stream_response(std::optional<Lease>& lease, const std::v
     ChatStreamSettings stream_settings = settings;
     if (search != nullptr && rounds_limits.has_value()) {
       rounds = make_search_stream_rounds(*rounds_limits, search, *tokenizer, hold->lease().chat(), identity);
+      stream_settings.rounds = rounds.get();
+    } else if (client_tools) {
+      rounds = make_client_tool_stream(*client_tools, identity);
       stream_settings.rounds = rounds.get();
     }
     const ChatStreamOutcome outcome =

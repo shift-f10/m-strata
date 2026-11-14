@@ -27,11 +27,16 @@ constexpr JsonLimits kBodyLimits{.max_bytes = kModelControlBodyLimit, .max_depth
 // The rows the Settings tab manages (spec 2026-10-28 Part 1): the listener and LAN access, limits and timeouts (with the
 // tool plugins' rounds, plugin spec section 10), folders; the engine's output in the log (owner 2026-10-29).
 // The key itself is not a row (its store is rotated, never written through here).
-constexpr std::array<std::string_view, 16> kManaged{
+constexpr std::array<std::string_view, 18> kManaged{
     "listener.host", "listener.port", "listener.allow_remote", "listener.allow_wildcard_bind", "listener.host_aliases",
     "models.control_remote", "models.control_remote_networks", "limits.engine.generation_timeout_s",
     "limits.engine.ready_timeout_s", "limits.chat.max_prompt_tokens", "limits.chat.max_completion_tokens", "tools.max_rounds",
-    "pull.connections", "models.downloads_root", "models.default_root", "logging.engine_output"};
+    "pull.connections", "models.downloads_root", "models.default_root", "logging.engine_output",
+    "listener.restrict_tool_calls", "listener.tool_call_hosts"};
+
+bool tool_access_setting(const std::string_view path) {
+  return path == "listener.restrict_tool_calls" || path == "listener.tool_call_hosts";
+}
 
 // The Troubleshooting row only while the Debugging plugin's Troubleshooting is on (the owner 2026-10-29: "when the
 // "--debugging on" was not provided in the install/builder, I want the settings to hide the Troubleshooting section";
@@ -136,15 +141,15 @@ HttpResponse ConfigRoutes::answer(const RouteId route, const std::string_view bo
                             : (settings_.client_allowed ? settings_.client_allowed(context) : context.loopback_peer);
   if (!allowed) return make_error_response(ApiError::control_not_allowed);
   switch (route) {
-    case RouteId::strata_config: return settings_json();
-    case RouteId::strata_config_settings: return save(body);
+    case RouteId::strata_config: return settings_json(context.loopback_peer);
+    case RouteId::strata_config_settings: return save(body, context.loopback_peer);
     case RouteId::strata_key_rotate: return rotate(body);
     case RouteId::strata_key_inference: return inference(body);
     default: return make_error_response(ApiError::not_found);
   }
 }
 
-HttpResponse ConfigRoutes::settings_json() const {
+HttpResponse ConfigRoutes::settings_json(const bool loopback) const {
   FrontendConfigDraft draft;
   if (settings_.config_file.has_value()) {
     auto read = read_config_file(*settings_.config_file);
@@ -155,6 +160,7 @@ HttpResponse ConfigRoutes::settings_json() const {
                     ",\"debugging\":" + (settings_.troubleshooting ? "true" : "false") + ",\"settings\":[";
   bool first = true;
   for (const auto path : kManaged) {
+    if (!loopback && tool_access_setting(path)) continue;
     const auto* key = managed(path, settings_.troubleshooting) ? find_config_key(path) : nullptr;
     if (key == nullptr) continue;
     const auto row = draft.entries.find(path);
@@ -173,7 +179,7 @@ HttpResponse ConfigRoutes::settings_json() const {
   return json_answer(200, std::move(out));
 }
 
-HttpResponse ConfigRoutes::save(const std::string_view body) {
+HttpResponse ConfigRoutes::save(const std::string_view body, const bool loopback) {
   if (!settings_.config_file.has_value()) return refused("this server was started without a config file to write");
   const auto parsed = parse_json(body, kBodyLimits);
   const auto* root = std::get_if<JsonValue>(&parsed);
@@ -184,6 +190,7 @@ HttpResponse ConfigRoutes::save(const std::string_view body) {
   // Each value checked for its key's type here; every other rule by the whole file's check below.
   std::vector<std::pair<std::string, std::optional<ConfigDraftValue>>> changes;
   for (const auto& member : *(*members)[0].value.if_object()) {
+    if (!loopback && tool_access_setting(member.key)) return make_error_response(ApiError::control_not_allowed);
     const auto* key = managed(member.key, settings_.troubleshooting) ? find_config_key(member.key) : nullptr;
     if (key == nullptr) return refused(member.key.substr(0, 64) + " is not a setting this page manages");
     if (member.value.kind() == JsonKind::null) {

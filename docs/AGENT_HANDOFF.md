@@ -281,6 +281,378 @@ Follow [`PROVENANCE.md`](PROVENANCE.md), "Updating the baseline" (the only copy 
 
 ## What has changed
 
+### 2026-11-13 z102 (Windows box; owner-directed, plugins only)
+
+The owner: "origin has a lot of updates, pull it", then "Yes, bring them" and "Do it here": main's 21 commits
+`83b54bb2..71db3512` (calibration modes and experiments, model templates and the template review, client function calls
+and the tool-access policy, the accuracy trade-off options and the dual compiler-math runtimes, Flint's pin-capacity
+recovery, the code-copy controls) are on plugins as ONE change - their entries are the 16 below, as main wrote them.
+Applied as main's whole range against plugins (a commit of main's tree on `83b54bb2`, cherry-picked): 21 files
+conflicted in 35 places, resolved so both designs stand:
+- **Tools:** main's client function calls and `listener.restrict_tool_calls` / `listener.tool_call_hosts` beside the
+  plugins' tool hub: `tool_plan` (main's, with the embedded template) takes the tools; `search_plan` gives it every
+  running tool plugin's offer; a client-tool request never starts a search turn; Settings manages both rows and
+  `tools.max_rounds` (18 managed rows).
+- **Card options:** main's accuracy trade-offs (`tradeoff`, the 19 `speed_*` options, the KV help texts) live in
+  family_descriptor.cpp's tables, after each family's GPUs (qwen 28, gemma4 17, flint 14, glm53 18, raon1 18, deepseek
+  16, minimax 10); `ModelOptionSpec` gains `accuracy_tradeoff` and `accuracy_default` (model_option_spec.hpp).
+- **Calibration:** main's runtime, configuration and model identity in the key, with the plugins' engine fact (an engine
+  plugin's library) and its family's parse; `read_calibration` by card, and by name for main's experiments.
+- **make.py:** the first-party plugins, their signing and the SearXNG address beside `--fast-math`, engine/fast-math/
+  and engine/variants.json; the build record's features end with "dual-math"; the MSVC runtime beside every program,
+  engine/fast-math included.
+- **After the merge:** `kTable` 47 error rows (both sides added one), a doubled `tool_format` line.
+- **Tests changed for it:** the family descriptor test's counts and last option (`speed_fast_math`); test_make's email
+  record expects "dual-math"; main's dual-math test stages the plugins before the record; README.txt lists engine/
+  fast-math and variants.json before the plugins.
+- **Proof:** Windows (MSVC, the shares tree, everything built, no errors): 1632 of 1635 - the two release-only cases
+  and, with the engine compiling beside it, three launcher cases that pass alone (the launcher suite 60/60). Linux
+  (WSL, gcc 13.3 / clang 18.1, -Werror, no warnings): full-gcc and full-clang 1684/1687 (the release-only pair; egress
+  passes alone), window-gcc 1641/1642 (egress alone). pytest: 204 passed, 8 failed - the same 8 fail on main at
+  71db3512 on this PC (test_build_release's seven, test_code_copy_ui's one). The engine tree (nvcc, MSVC): multiengine
+  and every family built, its multiengine tests 2/2 (the flint host test is not built in that tree).
+- **Not done:** no GPU run, no make of a whole folder, and nothing of it run on Linux beyond the frontend's suites.
+
+### Warm live controls before timing them (2026-11-13)
+
+Qwen benchmarks reused one engine but warmed only at initial load, timing a changed PCIe
+share or draft floor immediately, including restoration of the baseline controls. Internal
+tuning now reports whether its effective values changed, and the benchmark performs the
+same two unmeasured workload groups after a change as after initial startup. Unchanged
+controls do not add warm-up requests. Profiles without live tuning keep their existing
+startup-only warm-up. Model-load and trial counts, budgets and acceptance gates are unchanged;
+resume identity is bumped for the new measurement policy.
+
+RED: the recorded fake-engine GEN stream lacks warm-up requests after a candidate control
+change. GREEN: the strengthened integration test passes while still asserting one engine
+load and restored baseline controls. The expanded 60-test frontend selection has zero
+failures and one real-pack fixture skip. Native Release builds with warnings as errors.
+Both installed Qwen variants passed real-model comparisons with the new warm-up at their
+saved 256K contexts and tested per-card memory budgets. Both frontend executables were
+backed up, installed and hash-verified. Only the tested memory-budget arguments changed in
+the Qwen cards; context, precision and other settings were preserved. Their accepted history
+records were imported unchanged and the application's existing Restore route validated
+hardware, runtime, model and selected options before writing the current records. A final
+headless server restart verified all five installed cards fresh and stopped. No app window
+was launched and no diagnostic process remains. This does not guarantee stable measurements
+under every workload or competing system activity.
+
+### Cross-family calibration regression gate (2026-11-13)
+
+Owner: calibration must work across model types; fixing one family must not break another.
+The regression suite now builds every chat and coding calibration request with each of the
+seven native profile encoders and its actual reasoning-schema policy. It checks complete
+prompt token counts and independent known-answer validation. A second matrix covers all
+seven engine profiles in Quick, Thorough and Maximum: stable completion, published trial
+bounds, Quick's live-control restriction, and rejection of bad, contaminated or noisy data.
+No existing assertion is removed and no acceptance threshold changes.
+
+The expanded frontend selection runs 60 tests with zero failures and one CTest real-pack
+fixture skip; profile/template and tool-prompt suites are included. These are contract and
+synthetic-tokenizer checks, not real-weight inference proof for absent model families.
+Owner-box real-model regression confirms Flint, Gemma 4 with 256K context, Raon and both
+installed Qwen variants at their saved 256K contexts. The Qwen comparisons also refined
+their per-card memory budgets for those contexts; rejected unstable results were not
+presented as successful calibrations. A restart verifies all five installed models retain
+fresh saved records. GLM, DeepSeek and MiniMax have contract/template regression coverage
+but no real-weight inference validation in this session. Private card configuration and
+hardware measurements remain local. The app window stayed closed during diagnostics.
+
+### Flint starts when host pin capacity is exhausted (2026-11-13)
+
+Owner-box diagnostics reproduced Flint exiting before READY when a layer's cudaHostAlloc
+failed. Its full pinned expert arena could not be allocated. The owned engine now recovers
+only from pin-capacity exhaustion, retaining remaining layers' exact expert bytes in pageable
+host storage when the full-model CPU lane is enabled. Other CUDA failures, host-allocation
+failures and mapped-only configurations remain failures. Once fallback starts, later layers
+avoid more large pin attempts. Ownership and cleanup distinguish CUDA-pinned and pageable
+allocations, and the pinned-memory report counts only actually mapped expert ranges.
+
+Unmapped ranges have no fabricated GPU alias. Decode uses the existing CPU lane, including
+when all experts fit the GPU cache. Streamed prompts retain their existing path; short tails
+and a disabled prompt stream use scalar decode instead of the direct mapped-memory kernel.
+A guard rejects any accidental direct expert-kernel call in pageable mode. No numerical
+kernel, model precision, context setting or calibration acceptance threshold changes.
+
+The subsequent synthetic quality probe exposed Flint adding prose around a correct bare
+arithmetic answer. The short-chat task now requests the same computed integer in a strict
+JSON result object. Wrong values and extra explanations still fail; previous exact-text
+validator tests remain intact. Resume identity is versioned for the changed request.
+
+RED: the installed engine fails at host pin allocation before READY; a new arithmetic
+contract assertion fails on the old workload. GREEN: 12 Flint host checks, eight real GPU
+kernel checks and 22 frontend calibration checks pass. Accurate and explicit fast-math Flint
+libraries compile with warnings as errors. Real-model Quick calibration with both fixes
+passes all three trials in isolated state. A six-token prompt plus full PCIe staging also
+completes using the fallback, exercising short-tail routing and pageable transfer sources.
+An independent full-model logit comparison was not run; the historical reference checkout
+is unavailable. Both frontend executables and both Flint math-variant libraries were backed
+up, installed and hash-verified. The variant manifest and build record were updated, while
+the main configuration was preserved. Real Flint Quick calibration then passed in normal
+installed state. Previously current records were refreshed after the shared-runtime
+fingerprint change; all five installed cards are fresh at final restart verification.
+Private logs, responses and machine measurements remain excluded from Git.
+
+### Saved calibration and latest attempt are displayed separately (2026-11-12)
+
+A valid saved calibration can coexist with a newer rejected recalibration. The UI previously
+let the latest error replace the saved result's explanation and called a completed noisy run
+unfinished. The card now describes the saved record's actual freshness first, then the latest
+attempt. Completed noisy attempts explicitly retain a fresh saved calibration in use; stale,
+settings-changed and missing records never receive that claim. Paused and failed attempts
+retain their separate explanations. The report is titled Latest calibration attempt and its
+retention label depends on whether a current saved calibration exists. The uncalibrated
+description now accurately describes default Quick behavior. Acceptance gates are unchanged.
+
+RED: the new text regression reproduces the contradictory unfinished message. GREEN: all
+four calibration UI checks pass, covering fresh, missing, stale, paused, failed and running
+states as well as default requests and visible list tags. Native Release frontends rebuild
+with warnings as errors. Both executables were backed up, copied into the closed installation
+and SHA-256 verified; configuration is unchanged. No installed executable was launched.
+
+### Gemma calibration accepts a correct JSON value in one code fence (2026-11-12)
+
+Owner-box synthetic probes reproduced Gemma returning the exact expected facts inside
+a standalone Markdown JSON code fence, even when JSON response format was requested.
+The calibration checker previously parsed the wrapper as JSON and rejected the correct
+answer. Structured known-answer checks now normalize one complete json-labelled or
+unlabelled fence before comparing the entire parsed value. They still reject wrong values,
+missing fields, extra prose, multiple values or fences, unrelated fence labels, incomplete
+fences and token-capped quality answers. Tool arguments and general response handling are
+unchanged. This verifies known values, not strict unwrapped JSON-format compliance.
+
+RED: both correct fenced-answer regressions fail before the fix. GREEN: all 22 targeted
+native workload, experiment and launcher checks pass; no existing assertion was removed.
+Native Release frontends rebuild with warnings as errors. Real Gemma Quick calibration
+then completed all three trials with passing quality and stable confirmations, producing
+a fresh saved result in isolated diagnostic state. After the owner closed the app, both
+frontend executables were backed up, copied and SHA-256 verified, with configuration
+unchanged. Gemma then passed all three trials in normal installed state. A server restart
+without loading either model verified that Gemma and the previously calibrated Qwen both
+remained fresh. All diagnostic processes were stopped; the app window was not launched.
+Private responses and records remain outside Git.
+
+### Code-copy controls stay reachable while scrolling (2026-11-12)
+
+The chat code-block header now sticks to the chat viewport while its block is visible.
+The owned app stylesheet removes the component's intervening overflow clipping; horizontal
+scrolling stays on the code's pre element. An opaque header and separate corner radii
+preserve the code box appearance. The header leaves with its block rather than floating
+over later messages. Copy still uses the complete original code string.
+
+RED: a real headless Edge layout check fails on the old header position. GREEN: the same
+check passes at narrow and wide widths, including vertical scrolling, horizontal overflow,
+exact copy content, and the transition between consecutive blocks. Native Release frontends
+rebuild with warnings as errors. Both changed executables were backed up, copied into the
+closed installation and SHA-256 verified; configuration is unchanged. No installed app
+or model was launched for this change.
+
+### Owner-authorized calibration diagnosis and memory remediation (2026-11-12)
+
+Repeated Quick failures were reproduced on the owner's machine with all workload quality
+checks passing but unstable baseline confirmations. Windows performance counters showed
+continuing disk-backed page reads and very little available RAM during measured trials,
+not just model loading. The card's automatic resident allocation was unsuitable for the
+available headroom. Private comparisons used the existing engine's bounded expert-memory
+mode; an overly conservative budget passed but reduced speed, while a larger tested budget
+restored speed and passed. No quality gate, variation threshold, precision or context limit
+was changed. This is a validated local card configuration remedy, not a general automatic
+memory-allocation fix or a claim that every noisy run is caused by paging.
+
+The installed card was backed up and changed only by its tested resident-memory budget.
+A fresh calibration then passed in the normal installed state folder. A subsequent server
+restart, without loading the model, verified that the saved calibration remained fresh;
+the model-list Calibrated tag uses that state. Diagnostic servers and engines were stopped;
+the app window was never launched. Private configuration, counters, logs and hardware
+measurements remain local and excluded from Git. Public documentation now explains this
+failure mode and the existing explicit memory-budget option; no binary changes were needed.
+
+### Calibration tag in the model list (2026-11-12)
+
+Model rows now show a green Calibrated badge beside the lifecycle badge when the server
+reports a fresh saved calibration. Missing, stale and settings-changed records never receive
+the tag; normal list refresh removes it when freshness changes. Badge groups wrap on narrow
+rows. No calibration decisions or service inputs change.
+
+RED: the DOM regression fails because the fresh model has no visible tag. GREEN: all three
+calibration UI checks pass, covering freshness changes, uncalibrated cards and preserved
+running-model ordering. Native Release frontend rebuild passes with warnings as errors.
+Both rebuilt frontend executables were backed up and copied into the closed installation;
+SHA-256 checks match, configuration is unchanged, and no installed executable was launched.
+
+### Repeatable baseline controls and grouped performance samples (2026-11-12)
+
+The latest Quick run rejected an unstable baseline even though the candidate was steady.
+Qwen benchmarks now pin missing per-request controls to the engine's bounded startup INFO
+fractions, restoring those controls for baseline confirmations after candidate tuning.
+Explicit selected settings still take precedence; absent or invalid INFO is never guessed.
+Unavailable baseline PCIe control produces a repeatability warning. Chat and coding trials
+now take the median of three performance answers alongside their separate known-answer
+checks. New engine sessions receive two unmeasured performance warm-up groups. Trial counts,
+time-budget settings, answer checks and the 5% confirmation threshold are unchanged.
+Duplicate telemetry notes are removed; resume identity is bumped to exclude older measurements.
+
+RED: baseline request-pinning and three-performance-case assertions fail before the fix.
+GREEN: all 22 targeted native workload, experiment and launcher checks pass, including
+unstable-baseline rejection, quality failure, cancellation and one-engine reuse. Native
+Release frontend executables rebuild with warnings as errors. Real-model stability still
+requires a new owner-run calibration; historical failed results are not rewritten.
+The two changed frontend executables were backed up, copied into the closed installation
+and SHA-256 verified. Configuration is unchanged, and the installed app was not launched.
+
+### Thorough uses reference trial counts; Maximum keeps exhaustive search (2026-11-12)
+
+Owner: the previous Thorough bound is unrealistic; retain it as Maximum, reduce Thorough's
+trials to upstream amounts, and do not impose a time cap. Thorough now runs one sweep over
+the existing mapped reference candidates: Strata live controls receive three screening rounds,
+its restart candidates two groups, and mapped Maya-family candidates one screening trial with
+sustained requests. No second combination refinement runs in Thorough. The prior exhaustive
+search and extra refinement remain in explicit Maximum mode; Quick stays the button default.
+For the fixed-draft-floor Qwen test plan, the bound changes from 117 to 39 measurements;
+the corresponding Strata reference work bound is 41. Mapped Maya GLM stays within its 17-group
+reference bound. These count limits cover exposed controls, not all upstream calibration features.
+
+Thorough retains three baseline and three winner confirmations. Startup-only confirmations
+use two baseline samples, three winner samples, then one baseline sample, bracketing the
+winner while avoiding six alternating cold starts. Live-only confirmation remains interleaved;
+Maximum preserves the former exhaustive behavior. Noise, answer and interference gates stay.
+No time-budget defaults, range or user selections are changed. Resume identity is versioned.
+
+The prior refinement regression is renamed for Maximum with all assertions intact, reflecting
+the owner's explicit mode split. New tests assert actual screening counts, no extra Thorough
+refinement, reference work bounds, all six confirmation samples, and unchanged custom budgets.
+RED: old Thorough violates reference bounds and rejects Maximum. GREEN: 16 native
+planner/integration cases and both calibration UI checks pass. Native Release rebuild passes
+warnings-as-errors. Two changed frontend executables were backed up, copied into the closed
+installation and SHA-256 verified; the configuration hash is unchanged. The installed app
+was not launched. No full real-model duration or parity with unexposed upstream controls is claimed.
+
+### Stable baseline retained when a candidate is noisy (2026-11-12)
+
+The owner's Quick run completed in about three minutes with passing answer checks, but the
+result was withheld because a candidate's confirmation variance was combined with the stable
+baseline's variance. Ordinary calibration can now accept the independently confirmed stable
+baseline while discarding noisy candidate tuning. The selected result reports baseline speed
+and variation; rejected-candidate variation is separate. The UI explicitly says current settings
+were verified and retained. Quick still preserves prior fresh startup tuning through its baseline.
+The 5% threshold is unchanged. Unstable baselines, failed quality, contamination, incomplete
+runs and explicit comparisons cannot use this fallback to bypass their existing gates.
+
+RED: the new synthetic stable-baseline/noisy-candidate regression fails on the old selection
+logic. GREEN: 15 planner/integration cases and both calibration UI checks pass; assertions also
+cover unstable-baseline rejection and report-only comparisons. Native Release builds with
+warnings-as-errors. The two changed frontend executables were backed up, copied into the
+closed installation and SHA-256 verified; the configuration hash is unchanged. No installed
+app was launched. The owner must rerun calibration; historical records were not rewritten.
+
+### Quick default and visible calibration explanation (2026-11-12)
+
+Owner first requested a visible note, then directed Quick to be the default when the extra
+Thorough cost is not justified. Clicking Calibrate without customization now explicitly sends
+Quick, Short chat and a 30-minute maximum budget; optional probes, resume and comparisons stay
+off. The visible note outside Calibration options states this default and explains how to
+select Thorough. The button references it with aria-describedby. Automatic/calibrate-then-start
+requests and API callers omitting benchmark retain their prior behavior. No claim is made that
+Thorough has no benefit: it still explores startup-only settings and combinations.
+The former legacy-default UI expectation is superseded by this owner instruction; automatic
+and explicit custom-request assertions remain. RED confirms the prior default returned no
+benchmark; both calibration UI checks pass after the change. Native Release rebuild passes
+warnings-as-errors. The two changed frontend executables are backed up, copied into the closed
+installation and SHA-256 verified; the configuration hash is unchanged. Nothing was launched.
+
+### Quick calibration uses one loaded engine (2026-11-12)
+
+Owner rejected the roughly hour-long Quick path. The pinned upstream calibration measures
+PCIe share and draft confidence through one engine, whereas our manual benchmark restarted
+for every measurement. Ordinary Quick now reuses a private runtime and only sweeps Qwen's
+supported bounded per-request controls. Startup-only sweeps are reserved for Thorough; other
+families' Quick runs verify and measure current settings. Previously fresh verified startup
+tuning is retained. Explicit accuracy-tradeoff comparisons can still require restarts in
+either mode, disclosed in the page. Automatic legacy calibration is unchanged.
+
+Same-startup measurements and repetitions reuse the engine in Thorough too; changing startup
+settings or comparison options stops the prior runtime before replacement. Each request resets
+its internal tune values to the current candidate or baseline, and no tuning field is accepted
+from client chat JSON. Answer, variation, confirmation, cancellation, budget, identity and
+thermal checks remain. The reused runtime's own allocation and GPU process are accounted for;
+additional compute processes and host activity remain interference signals. Resume identity
+is versioned. Reused measurements are marked and do not claim repeated cold loads.
+
+RED: disabling reuse produced three engine starts and failed the new single-load assertions.
+GREEN: 8 calibration integration cases, 42 planner/workload/protocol cases and 4 UI checks pass.
+Integration covers live Qwen GEN tuning, one engine across baseline/candidates/confirmation,
+retained prior startup tuning, failed quality, cancellation/resume, comparison non-application
+and runtime changes. Fixture setup now reports its prior ignored DPAPI failure explicitly;
+native integration tests run outside the sandbox for Windows DPAPI support. The native Release
+build passes warnings-as-errors. No full real-model duration is claimed. After the owner closed
+the app, all 14 staged frontend runtime files were backed up, copied into the installation and
+SHA-256 verified. The configuration hash is unchanged. No installed program was launched;
+the owner launches the installed runtime. Private staging/backup: quick-calibration-20261112.
+
+### Fresh frontend package rebuild, owner launches (2026-11-12)
+
+Owner reported the desktop window's generic server-start failure and requested a fresh compile
+without running the result. Rebuilt all five frontend programs from clean intermediates with
+native Release warnings-as-errors, staged the runtime component, then backed up and replaced
+14 runtime files in the existing installation. Every copied file's SHA-256 matches staging;
+the configuration hash is unchanged. Server and window executables are beside each other.
+No rebuilt program was launched and no OS security settings were changed. The owner's launch
+and final calibration validation remain pending; a rebuild alone does not prove the prior
+Application Control block is resolved. Private staging/backup: frontend-recompile-20261112.
+
+### Calibration trial counts from startup (2026-11-12)
+
+Manual quick/thorough benchmarks now publish their planned upper bound before expensive identity
+checks and publish the current trial before model loading/measurement. Completion counts are
+published even when the first trial fails. Legacy sweeps initialize counts before preparation;
+MiniMax includes its prompt-reading calibration as the first counted operation. Adaptive counts
+are labelled "up to" because later candidates may be skipped. Regression coverage checks quick
+and thorough counts from inside the first measurement and after first-trial failure. Final
+experiment suite and both calibration UI checks pass. RED runtime attempt was blocked by Windows
+Application Control; no policy was bypassed. Native Release build passes warnings-as-errors.
+The new server's --help launch succeeds; the workload test executable remains OS-blocked.
+After the owner closed the app, the final server was copied into the installation and its
+hash verified. Its isolated verification launch was blocked by Windows Application Control.
+The preceding build's successful --help launch does not establish permission for this final
+binary. The previous working installed server was immediately restored and hash verified.
+The functional/count corrections remain saved in source; they are NOT active in the installed
+app. No security policy was bypassed and no calibration is running from this verification.
+Subsequently, the owner explicitly requested copying the corrected server without launching it.
+The final rebuilt server is now copied into the installation and its hash matches the archived
+build. The previous version remains backed up. No launch was attempted after this copy; the
+owner will launch it. End-to-end verification of the final installed runtime remains pending.
+
+### Manual calibration functional corrections (2026-11-12)
+
+The owner's manual chat benchmark stopped after one trial, before inference. Its private
+summary reports workload rendering/prompt-limit rejection, not measured quality or speed.
+The UI now displays a failed summary's reason immediately; request-schema and generation-plan
+rejections retain their bounded diagnostic instead of collapsing to the generic workload message.
+The exact original three-second rendering rejection was not reproduced with copied card state:
+both native and embedded selections reached engine startup in an isolated development-key server.
+Real-model testing exposed two additional blockers. With optional thinking enabled, the short
+answer budget was consumed by reasoning and the performance workload returned no visible content.
+Synthetic requests now explicitly disable optional thinking only when the selected profile's
+schema supports that request field; incompatible profiles receive no override. Real embedded-
+template trial acceptance changed from quality_failed to quality_pass=true. Resume identity is
+versioned so old workload checkpoints cannot be reused with these changed requests.
+
+Ruling: memory consumed after the benchmark loads its own model is not proof of external
+interference. Low post-load headroom remains reported; pre-existing memory pressure still
+contaminates. Existing tests retain their assertions and add both cases. Windows WDDM's
+compute-process list includes ordinary desktop graphics processes; counts are now accepted only
+for selected TCC devices. WDDM/unknown mode reports compute-interference telemetry unavailable,
+with no claim that interference is absent. Host activity and actual thermal flags remain checked.
+
+Proof: UI RED against prior source, both UI checks GREEN. Initial direct-answer workload regression
+executable passed. Later workload executable and the final server were blocked by Windows
+Application Control, including an elevated launch; no policy was bypassed. Final native server
+and affected tests compile with warnings-as-errors. Thermal regression suite initially had two
+timeout-sensitive failures; isolated case and the unchanged full suite then passed. The final
+functional runtime is NOT installed or represented as end-to-end validated. The prior installation
+remains intact. Diagnostic servers and their model children were stopped. Full stable calibration
+acceptance with both templates remains to be verified after the OS permits the rebuilt executable.
+
 ### 2026-11-11 z101 (Windows box; owner-directed)
 
 z100's gap closed: the owner PC's guard (local, `.git/hooks/identifying_guard.py`; the copy before it kept beside it,
@@ -303,6 +675,321 @@ anew - with the reference copy's one gap (it does not refuse a `Co-Authored-By:`
 AGENTS.md and the resume document's rule 5 point to it; the stale "pre-push hook runs pytest" note says what runs now.
 - **Proof:** the section's two checks on this PC: a clean pushed range exits 0; an unreferenced commit with an address
   that is not the noreply one is refused (exit 1, the kind named, no value); `core.hooksPath` unset.
+### Web search enabled in the local installation (2026-11-11)
+
+At the owner's request, enabled search in the active installation's private configuration
+and set the owner-provided SearXNG endpoint. Its JSON API returned HTTP 200 with results for
+a test query. The endpoint and network details remain outside the repository. No server or
+window process was observed during the change; settings apply when the application starts.
+
+### Template choice at a glance (2026-11-11)
+
+The Template tab now loads the selected card's saved template choice automatically and displays
+it outside the collapsed review panel, with the restart caveat and any review error visible.
+The selection is the saved choice for the next start; a running model can still be using its
+previous choice. Existing approval, source review and save behavior are unchanged. The new
+focused UI test could not be run in this session: the Windows Python environment points to a
+missing interpreter and WSL cannot access this checkout's drive. The native Release frontend
+rebuilt successfully and the stopped installation's server executable was replaced and hash
+verified. Its previous executable is retained in the private template-save-fix backup.
+Owner feedback: the Template tab now shows the saved choice prominently and presents the
+selector above the review source without an extra disclosure click. The native Release server
+rebuilt and was installed after the owner closed the app; the executable hash matched the build.
+The previous executable is retained in the private template-save-fix backup. The focused UI
+test environment remains unavailable; no new interactive UI proof is claimed.
+Owner correction: showing the saved choice must not automatically display the GGUF source.
+The selector stays visible; the GGUF source and warnings appear only after choosing embedded
+and pressing View GGUF chat template. A new embedded choice requires viewing before approval.
+Eight focused UI behavior checks pass with project-contained Python and Node; the native Release
+server rebuilt and its installed executable matched the build hash. No interactive UI proof.
+
+### Embedded-template saved-state feedback (2026-11-11)
+
+Owner reported that selecting embedded, acknowledging risks and pressing the save button appeared
+to do nothing. Inspection found a durable embedded-template digest already in the selected card.
+The UI refreshed the review after saving, cleared the acknowledgment and left the save button
+looking actionable. This was a confirmed feedback defect, not evidence of failed persistence.
+
+The review now retains the acknowledgment only for an available, valid, previously saved embedded
+selection whose source does not need review. An unchanged saved choice shows a disabled Saved
+button; new choices show Save embedded/frontend template, and pending requests show Working.
+Changing cards or template contents still requires new acknowledgment. Feedback explicitly says
+to start/restart the model to apply the saved choice; the running model is never silently restarted.
+No template renderer, sandbox policy, inference settings or saved card values changed.
+
+RED: the new saved-approval assertion failed on the old refresh behavior. GREEN: nine focused
+UI tests, including durable indicator, duplicate-save prevention, switching back to the saved
+choice, changed-source reapproval, and existing literal-source/stale-response cases. Debug and
+Release each pass the 65 API/UI cases plus the real template route persistence/approval case.
+Native Windows and LLVM-MinGW server builds pass. The owner closed the app; the two changed
+frontend executables were backed up and SHA-256 verified into out/dist-tool-calling. Configuration
+hash unchanged. out still contains only that installation; build staging and backup are private
+under .local-output-archive/template-save-fix. The archived native build cache was temporarily
+restored to its original path for compilation, then returned to its archive.
+
+### Output-folder cleanup (2026-11-11)
+
+Owner requested that out contain only the installation in use. The running desktop window and
+server were confirmed to use out/dist-tool-calling. All 91 other top-level entries (old packages,
+build trees, diagnostics, logs and backups) were moved, without deletion, to the ignored private
+.local-output-archive/out-cleanup-20261111-221035 directory. An inventory is stored there.
+Only out/dist-tool-calling remains in out; its window/server executable and configuration SHA-256
+hashes were unchanged. The running application was not stopped, and its engine, models and data
+were not moved. Prior out artifact paths in this handoff now live beneath that archive unless
+they refer to dist-tool-calling. Future builds must recreate their build directory or restore it
+to its original path; moved CMake caches still reference their original absolute paths.
+
+### Model-card tabs and selection controls (2026-11-11)
+
+Owner requested less clutter, launch controls in model selection, and continued mobile support.
+The selected card now groups controls into Generation, Memory & GPU, Speed, Template, Calibration,
+and Files tabs. Start/Restart, Stop, loading progress and start errors live with the model list;
+the selected model is named there, and Stop's tooltip identifies the running model. Defaults stays
+with settings and still resets every tab. Unknown future options remain visible in Generation.
+Speculative-draft controls and accuracy tradeoffs share Speed, with the existing tradeoff warning,
+accuracy reset and disclosure retained; active tradeoffs also show a warning outside the tabs.
+No inference defaults, option payloads, KV precision or engine binaries changed for this UI work.
+
+Tabs use linked tab/tabpanel roles, roving keyboard focus, Arrow/Home/End navigation and wrapping
+44-pixel touch targets. Switching tabs keeps the original controls and unsaved precise values;
+ordinary polling preserves the selected tab. Invalid fields reveal their tab (and disclosure for
+tradeoffs), including server-reported option errors. Launch controls are hidden when management
+is denied. Phone layout keeps model selection and launch controls above the settings.
+
+Proof: new navigation/structure tests were RED on missing tabs and navigation, then GREEN.
+The previous speed-test assumption that fields were direct children of model-options is superseded
+by the owner's tab-layout request; all warning, reset, slider, typed-value and empty-group assertions
+remain. Nine focused Python/Node UI tests pass, including selected/running-model launch states,
+hidden validation, dependent KV/context bounds, templates, calibration and decimal precision.
+Debug and Release API/UI suites each pass 65/65 under Werror. Windows LLVM-MinGW server cross-build
+and native Windows frontend build/install pass. One Node run hit host VirtualAlloc failure;
+the unchanged test and final focused suite passed on rerun.
+
+The compiled UI was exercised on the owner's Windows box in an isolated loopback server with no
+model loaded: all six tabs, keyboard navigation and unsaved decimal preservation passed; browser
+console had no errors. Desktop and 390/320-pixel layouts were inspected, with no horizontal overflow.
+Final 320-pixel DOM measurements confirm 44-pixel tabs and Start button. The final screenshot service
+failed to capture after the touch-target adjustment; earlier desktop/phone captures were inspected.
+
+Native artifacts staged in out/dist-card-tabs. Three changed frontend executables were backed up,
+copied and SHA-256 verified in the canonical out/dist-tool-calling package; engines, data and configs
+were untouched. Private backup: out/backup-before-card-tabs-20261111-220354. This also packages the
+previously tested opt-in ERR diagnostic logging below; it does not establish or fix the original
+follow-up error's cause. The separate live follow-up diagnostic was not restarted for this UI task.
+
+### Follow-up chat failure investigation (2026-11-11)
+
+Owner reports engine_error on every follow-up, including short chats. The production log records
+killed_by_supervisor(protocol_failed), which also covers an engine ERR; that message alone does
+not establish malformed protocol. Source inspection found the current Strata RESUME/REUSED/PP/
+DONE grammar matches the frontend. Do not broaden accepted records without evidence.
+
+The existing explicit logging.engine_output sink now also receives only stdout ERR records,
+sanitized and capped at the existing 4096-byte limit. Default remains off; token records, requests
+and ordinary stdout are not logged. The original protocol line is unchanged, sink calls are
+serialized and sink exceptions do not alter transport behavior. Targeted RED demonstrated the
+missing diagnostic; all 13 transport cases pass in Debug and Release under Werror. The native
+Windows frontend was rebuilt and installed only into the isolated diagnostic runtime. The
+Windows LLVM-MinGW server and transport-test cross-build also passes without warnings.
+
+The owner stopped the production app and authorized an isolated live diagnostic. A separate
+loopback server under out/followup-diagnostic uses the development placeholder key and separate
+state; production configuration is unchanged. On the owner's Windows/GPU box, the same card and
+remembered options passed three short non-streaming turns, three short browser-format streaming
+turns, and six streaming coding/discussion turns. The latter two runs used high thinking and the
+default automatic output budget. The generated sample's three pure binary-search functions passed
+8910 boundary/duplicate/not-found checks. These are bounded examples, not a general accuracy
+certificate or proof that the reported failure is fixed. The native log also warns about low free
+VRAM; pressure is a hypothesis, not an established cause. The supplied long prompt completed with
+finish=stop (79130 completion tokens including reasoning, 70009 content characters). The diagnostic
+client's Windows console encoding failed while printing that result, before its follow-up; this was
+a harness failure, not an engine error. After correcting UTF-8 output and restarting the isolated
+server, three short non-streaming turns, three streaming follow-ups carrying the saved full answer,
+and a two-turn exchange through the actual browser UI all passed. The UI used High thinking,
+model-default sampling and no explicit output cap. A corrected rerun then completed 74730 tokens
+and its immediate same-process follow-up passed: 28595 prompt tokens, 116 reused, 178 generated,
+finish=stop. Across both diagnostic sessions all 23 inference requests passed, including this
+warm-cache transition. The owner then clarified the intended follow-up was a request to fix the
+generated code, and that the automation browser tab was inaccessible. Direct loopback browser
+access and the development placeholder sign-in key were provided. A further streaming replay used
+the original generated HTML and supplied JavaScript stack trace, requesting minimal corrections:
+29685 prompt tokens, 16009 completion tokens, finish=stop. The returned repair identified the raw
+uniform objects and supplied value wrappers plus the corresponding update-site changes. The HTML
+was neither modified nor executed. All 24 diagnostic inference requests have now passed; the
+reported engine_error remains unresolved, not silently declared fixed. In the subsequent owner-led
+UI reproduction, the first answer completed normally with 74165 output tokens and finish=stop;
+the visible UI showed the complete answer and an available Send button. A bounded local monitor
+is watching the owner's next follow-up and records only request metrics and engine diagnostics.
+The owner could not reconnect because the attempted address targeted the stopped production
+listener. The distinct diagnostic address was clarified, its HTTP page verified reachable, and
+a native diagnostic window attached to the existing server; no second model was started.
+The owner subsequently regenerated the initial answer (56146 output tokens, finish=stop) and
+sent a correction follow-up. That actual follow-up completed normally: 26290 prompt tokens,
+116 reused, 5863 output tokens, finish=stop, about 153 seconds. No ERR or protocol failure was
+recorded for it. The owner reports that the initial generated code was flawed. Successful
+transport does not establish first-answer code quality, and no causal inference regression or
+general accuracy fix has been established. The original intermittent engine_error is still
+unreproduced; neither a restart nor these passes are represented as its root-cause fix.
+No
+inference, routing, KV precision, template or production configuration was changed during diagnosis.
+Diagnosis and fix are still in progress. The owner
+prioritized reliable follow-up chat and answer accuracy; repairing the example generated HTML is
+not the requested task. Its JavaScript exception alone does not prove an inference regression.
+
+### Calibration improvements and completed-run freshness (2026-11-11)
+
+The owner confirmed calibration finished and authorized the documented backlog. Implementation
+is complete, verified and compiled. Scope and compatibility:
+[`calibration implementation`](superpowers/plans/2026-11-11-calibration-implementation.md).
+
+- Fixed a completed calibration immediately reporting settings_changed: successful calibration
+  remembers exactly the options measured, and identity comparisons resolve newly added defaults.
+- Explicit manual benchmark controls add quick/thorough mode, bounded time budget, chat/coding/
+  long-context/tools/custom workloads, optional context-fill probe, named results and resume.
+  Existing automatic/legacy requests retain their original behavior.
+- Longer performance answers measure decode, prompt processing and TTFT separately; independent
+  known-answer checks gate quality. Tool checks require two complete calls in JSON and SSE.
+  Custom workloads have structural checks only and say semantic accuracy is unvalidated.
+- Repeated promising candidates, refinement and interleaved baseline/winner confirmation guard
+  against noise. Failed, cancelled, contaminated, over-budget or noisy results never replace a
+  good calibration. Comparisons of speed tradeoffs are explicit and report-only; INT8/Q8 stays.
+- Cold startup, warm and sustained measurements, partial-context coverage, host memory/load and
+  actual NVIDIA thermal flags are reported. Missing telemetry is unavailable, never assumed safe;
+  before/after snapshots cannot exclude interference or throttling between those snapshots.
+- Bounded owner-private summaries/checkpoints and eight history entries support guarded restore.
+  Custom prompts and generated answers are never persisted. Resume binds all selected options,
+  workload and runtime identity; mismatched resume does not erase the original checkpoint.
+- Engine libraries (including external library search paths), profiles and fixed card settings
+  invalidate old identities. Older records lacking fixed-configuration evidence are conservatively
+  stale after this upgrade; their saved results remain on disk. Restores never restart a model.
+
+Verification: final Linux Debug **1551 passed + 11 environment skips, zero failures**; Release
+**30 release gates + 46 calibration cases + 7 benchmark cases**, all passing. Windows LLVM-MinGW
+cross-build and top-level integration build passed under warnings-as-errors. Python: **199 passed,
+11 skips** after the scoped WSL ownership correction; host UI **4/4**. Native Windows package
+compiled with both CUDA variants; all **58 manifest entries** verified, **78 runtime files**.
+Native frontend warnings remain errors; unchanged vendor CUDA warnings retain the previously
+recorded build exception. See [`verification record`](validation/2026-11-11-calibration-improvements.md).
+
+Published after the owner closed the app: **`out/dist-tool-calling`** now contains all 78
+verified runtime files from `out/dist-calibration-improvements`. SHA-256 comparisons before and
+after publication confirmed **all 377 data files unchanged**, including existing configuration,
+models and saved calibration records. Prior runtime backup:
+`out/backup-before-calibration-20261111-154630`. Publication proof: `out/calibration-publication.log`.
+The app was left closed for the owner's testing. Older calibration records are retained but need recalibration
+because their original fixed configuration cannot be proven. Development used synthetic fixtures;
+no new real-model/GPU numerical accuracy or Windows runtime validation claim is made.
+
+### Bundled CUDA math variants (2026-11-11, owner follow-up)
+
+The owner approved building both compiler modes by default and selecting them from each card.
+This supersedes the build-only `make --fast-math` behavior below: `make` builds separate accuracy
+and fast-math trees, installs complete matching runtime sets under `engine/` and `engine/fast-math/`,
+and retains accuracy as the default. Every family offers **CUDA fast math** in Speed improvements,
+with an accuracy warning, remembered choices and reset-to-OFF. Selection takes effect on the next
+model start. INT8/Q8 defaults and weights are unchanged.
+
+The dedicated `engine.fast_math` boolean is separate from numeric speed settings. Before launching,
+the frontend verifies a bounded `engine/variants.json`, fixed variant path, file sizes/SHA-256 and
+executable trust; missing/mismatched fast files fail clearly without fallback. The selected library
+directory precedes other configured directories. The manifest detects installation damage/mixing;
+it is not a signature and uses the existing trusted-installation boundary. Packaging checks outer
+and Maya CMake modes before writing hashes. The former single-mode CLI flag is refused with a
+migration explanation. Pristine sources and `upstream/` remain unchanged.
+
+TDD: packaging RED 4, variant selector RED 4, integration RED 3; targeted GREEN covers all seven
+card families, defaults/reset/typed mapping, accurate/fast selection, library precedence, missing
+and tampered packages, traversal/link rejection and switching back. Final full top-level Linux
+suite: **1527 passed, 11 environment skips, zero failures**. Release gates **30/30**, focused
+Release card/config/variant checks **35/35**, Python policy/package **61/61** plus the added
+Linux CUDA SONAME installation test; host UI **4/4**. Linux, Release and Windows LLVM-MinGW
+cross-builds passed with no warnings. Native CUDA/frontend package completed at
+`out/dist-dual-math` (1736 MiB); both variants have 29 independently rechecked manifest files,
+and all seven family DLLs differ between modes. Actual generated CUDA flags: accuracy 0,
+fast 72 outer / 33 Maya fast-math lines. Native CUDA retains the previously documented vendor
+warning exception; frontend uses `/WX`. No GPU performance or numerical-parity claim.
+Published **78 runtime files** to the canonical `out/dist-tool-calling`; previous files are
+backed up under `out/backup-before-dual-math-*`. Before/after SHA-256 checks confirmed all
+**373 existing data files unchanged**. No running application was stopped. No commit or push.
+
+### Opt-in card speed improvements (2026-11-11, owner follow-up)
+
+The owner clarified that upstream speed settings should remain available with accuracy warnings.
+This supersedes the earlier unconditional accuracy-policy enforcement below. Accuracy-first and
+INT8/Q8 defaults remain; supported per-family card controls now opt into expert skipping, routing
+bias, draft approximations, weight requantization and bounded replay. The separate section shows
+active tradeoffs and resets only these controls. Choices are remembered per card and apply at start.
+The frontend and launcher validate the same closed, bounded `engine.speed_settings` channel before
+family loading; generic inherited variables do not silently enable these features.
+
+Compiler fast math is restored as an explicit build choice (`make --fast-math`,
+`MULTIENGINE_FAST_MATH=ON`), default OFF, with configure/package warnings and recorded build metadata.
+It cannot switch at runtime in existing libraries. Pristine upstream files remain unchanged.
+Proof: full top-level serial Linux suite **1520 passed, 11 environment skips, zero failures**;
+final boundary checks **29/29**; Release gates **30/30** plus speed/card/config checks **30/30**;
+policy/build/package Python **42/42**; host UI **4/4**. Full Windows LLVM-MinGW cross-build passed.
+Native package and final rebuild/layout validation passed in `out/dist-speed-controls` with compiler
+fast math OFF. Positive child environment, restart/persistence, explicit reset, custom numeric spellings,
+reset-compatible bounds and malformed-list preservation are covered. No GPU performance/quality claim.
+Published all **48 runtime files** to `out/dist-tool-calling` after backing up replaced files under
+`out/backup-before-speed-controls-*`. Before/after SHA-256 verification confirmed all **373 data files
+unchanged**. No running app was stopped, and no commit or push was made.
+
+### Accuracy policy, fine controls and reviewed embedded templates (2026-11-11)
+
+- Owner explicitly retained INT8/Q8 KV defaults. Model sampling defaults remain model-specific.
+  Decimal card controls now have fine sliders plus exact entry; the drawer preserves untouched decimals.
+- The frontend child environment and multiengine launcher enforce the shared accuracy policy before
+  family initialization: no tail/rank/residency expert loss, no lossy GLM deferral, exact DeepSeek prompt
+  reuse, all selected GLM draft experts, and no audited confidence-gated sampled proposal bias.
+  Explicit zero temperature and unit top-p are serialized instead of silently omitted.
+- Owned CMake overlays remove compiler-wide CUDA fast math in the engine and Maya builds,
+  including directory-scoped source options and incremental external-build dependencies.
+  Existing FMA and source-written intrinsics remain; this is not a GPU numerical-parity claim.
+- Owner authorized inspecting embedded Jinja and proceeding despite risk warnings. The card review
+  reads bounded model source, reports line-based heuristic findings, requires explicit acknowledgment
+  of its SHA-256, and stores that hash only. The default remains the native frontend template.
+  Changed source refuses start; a fallback selection works without reading the source.
+- Optional rendering uses the separate resource-bounded native strata-template helper with value-only
+  built-ins and input-provenance-aware tokenization. No Python or host-access functions are exposed.
+  Text/tool conversations use the selected template; images require the frontend renderer. Fixed
+  model-profile output parsing remains. See the threat model and
+  `docs/validation/2026-11-11-accuracy-audit.md` for boundaries and verification.
+- Source edits preserve the pristine upstream trees and prior tool-calling/access work. No commit/push.
+- Regression corrections retain strict assertions: explicit greedy temperature is required on the wire,
+  the tool-host boolean is explicitly enumerated as authentication-preserving, and the missing-user-manager
+  test now supplies a failing systemctl fixture instead of touching the host's real user manager.
+- Final proof: top-level Linux serial suite **1518 passed, 11 environment skips, zero failures**;
+  hooks-OFF Release **1476 runnable cases passed** across the full run plus isolated network-observation
+  reruns; final helper/template integration **16/16**; Python **183 passed, 9 skipped**, added CUDA build
+  tests **3/3**, host Node UI tests **3/3**. Full Windows LLVM-MinGW cross-build passed; final helper
+  portability edits rebuilt there. See the audit report for initial failures and exact proof limits.
+- Native Windows package completed in `out/dist-accuracy-templates`, then all **48 runtime files** were
+  published to `out/dist-tool-calling`, including the new helper and license. Previous runtime files
+  were backed up under `out/backup-before-accuracy-*`. SHA-256 checks confirmed all **373 existing data
+  files unchanged**. No running application was stopped. Frontend uses `/W4 /WX`; copied CUDA targets
+  keep their pre-existing vendor warning policy (not a universal CUDA warnings-as-errors claim).
+  Actual model/GPU numerical comparison and Windows runtime confinement acceptance remain owner-side.
+
+### Tool calling access in Settings
+
+- The Tool calling card accepts individual IP addresses and an explicit restriction switch. It is editable from
+  loopback only and takes effect on restart. Enabled with an empty list, it denies client function tools everywhere.
+  Chat Completions uses the socket peer address and refuses unlisted clients with `tool_call_not_allowed`.
+  The setting covers client declarations and result history. Built-in search and ordinary chat keep their own rules.
+- RED: the Settings listing regression failed because both keys were missing before the change.
+
+### Client function tools on Chat Completions
+
+- Authenticated text chats accept OpenAI function declarations and match tool results by ID. The fixed family
+  templates render those declarations and the conversation. Client functions are returned to the caller for execution.
+  Built-in search retains its own route and is bypassed for client tool requests.
+- Complete replies return OpenAI tool-call objects. Streams queue indexed tool-call and argument deltas when the
+  family parser completes a call, and use the same finish reason and usage accounting as other completions.
+  Qwen, Raon1 and DeepSeek prefill the required or named function opening. Other profiles use automatic choice.
+- RED: the socket test client_tool_calls_round_trip initially received 400 invalid_request from the old route.
+  GREEN: the first Linux WSL round trip covered both response modes and a follow-up with the returned tool result.
+  The existing web-search round trip passed in the same 24-case run.
 
 ### 2026-11-01 z99 (the owner's Azure VM; owner-directed)
 
@@ -7689,6 +8376,32 @@ owns it (see the decisions above).
    do not weaken the gate to make a source archive pass. **SP7.**
 
 ## Verification performed
+
+### Tool calling access in Settings
+
+- Linux WSL with warnings as errors: 117 passed, one live SearXNG fixture skipped. The tests cover the Settings card,
+  a rejected subnet, local-only writes, admitted and refused peers, ordinary chat, managed cards and built-in search.
+- The updated server cross-compiled successfully with the LLVM-MinGW preset.
+- The native Windows package built successfully. The existing `out/dist-tool-calling` installation received
+  the new frontend executables and retained its data directory. Its config passed `--check` on the updated binary.
+
+### Client function tools
+
+- Linux WSL, GCC with warnings as errors. The focused suite had 127 passes and one skip for the live SearXNG
+  fixture. The expanded socket regression passed separately. It checks complete and streamed calls, forced
+  named and required choices, choice none, an unmatched result ID, and continuation using a valid result.
+  The same API round trip passed in the top-level build. A repeat with built-in search enabled verified that
+  the client-declared `web_search` function made no request to the configured search service.
+- The full hooks-on frontend run had 1,499 passes, 11 skips, and one failure in
+  `cli_service_enable_without_user_manager` because this WSL session has a reachable user manager. All three release-only checks passed
+  in the separate hooks-off Release build.
+- The repository Python suite passed in Linux WSL with the pinned Python dependencies and the release
+  and cross-build executables in the documented staging paths. Result: 166 passed, six skipped.
+- The Windows package built successfully with `make.bat --with email,search,window` in
+  `out/dist-tool-calling`. Server executable SHA-256:
+  `3592f8dc35b9b9c8ede8e878eb1898ed503da705dbf04b19d87eade842f3d459`.
+  The separate `windows-llvm-mingw-cross` preset also built successfully with warnings as errors.
+  Windows model runtime testing remains on the owner's hardware.
 
 ### SP4 part 2 (2026-10-14, branch `sp4-acquire-part2`, Tasks 25–29)
 

@@ -125,6 +125,7 @@ struct ServerOptions final {
   std::string plugin_choices{};
   // build.json's signing_key (the install's own plugin signing key, 64 hex); empty: none (plugin spec section 11).
   std::string signing_key{};
+  std::optional<std::string> embedded_template_source{};
 };
 
 // strata-unified-server as a test child: fixture models (fake-model.gguf, 0600)

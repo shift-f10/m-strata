@@ -2,6 +2,8 @@
 
 #include "secure_frontend/family_descriptor.hpp"
 #include "secure_frontend/json.hpp"
+#include "secure_frontend/canonical_path.hpp"
+#include "secure_frontend/sha256.hpp"
 #include "secure_frontend/plugin_manifest.hpp"
 
 #include <algorithm>
@@ -24,6 +26,8 @@
 
 #if defined(_WIN32)
 #include "secure_frontend/win32_prelude.hpp"
+#else
+#include <sys/stat.h>
 #endif
 
 namespace secure_frontend {
@@ -347,9 +351,7 @@ bool apply_calibration(FrontendConfigDraft& draft, const std::vector<std::string
   return true;
 }
 
-SweepOutcome run_sweep(const std::vector<SweepStep>& plan, const SweepMeasure& measure,
-                       const std::function<void(const SweepProgress&)>& progress, const std::function<bool()>& cancelled,
-                       const double keep_margin, const unsigned confirm_rounds) {
+std::size_t sweep_trial_upper_bound(const std::vector<SweepStep>& plan, const unsigned confirm_rounds) {
   constexpr unsigned kDefaultTokens = 128U;
   // every candidate, plus a measurement of the best so far wherever a step's answers are of another length
   std::size_t trials = 1U + 2U * confirm_rounds;
@@ -358,6 +360,14 @@ SweepOutcome run_sweep(const std::vector<SweepStep>& plan, const SweepMeasure& m
     trials += step.values.size() + (step.max_tokens != tokens_seen ? 1U : 0U);
     tokens_seen = step.max_tokens;
   }
+  return trials;
+}
+
+SweepOutcome run_sweep(const std::vector<SweepStep>& plan, const SweepMeasure& measure,
+                       const std::function<void(const SweepProgress&)>& progress, const std::function<bool()>& cancelled,
+                       const double keep_margin, const unsigned confirm_rounds) {
+  constexpr unsigned kDefaultTokens = 128U;
+  auto trials = sweep_trial_upper_bound(plan, confirm_rounds);
   std::size_t trial = 0;
   std::optional<double> best_seen;
   // One trial: asked to stop first; nullopt for a cancel (the outcome says so) or a failed start.
@@ -468,7 +478,7 @@ SweepOutcome run_sweep(const std::vector<SweepStep>& plan, const SweepMeasure& m
 CalibrationState compare_key(const CalibrationKey& stored, const CalibrationKey& now) {
   const bool gpu_changed = !stored.gpu.empty() && !now.gpu.empty() && stored.gpu != now.gpu;
   if (gpu_changed || stored.cpu != now.cpu || stored.ram_bytes != now.ram_bytes || stored.engine != now.engine ||
-      stored.model != now.model) {
+      stored.model != now.model || (!stored.runtime.empty() && stored.runtime != now.runtime) || stored.configuration != now.configuration) {
     return CalibrationState::stale;
   }
   return stored.options == now.options ? CalibrationState::fresh : CalibrationState::settings_changed;
@@ -482,7 +492,9 @@ std::string render_calibration(const CalibrationResult& r) {
          "  \"date\": " + json_text(r.date) + ",\n  \"auto_recalibrate\": " + (r.auto_recalibrate ? "true" : "false") + ",\n" +
          "  \"key\": {\"gpu\": " + json_text(r.key.gpu) + ", \"cpu\": " + json_text(r.key.cpu) +
          ", \"ram_bytes\": " + std::to_string(r.key.ram_bytes) + ", \"engine\": " + json_text(r.key.engine) +
-         ", \"model\": " + json_text(r.key.model) + ", \"options\": " + json_text(r.key.options) + "}\n}\n";
+         ", \"model\": " + json_text(r.key.model) + ", \"options\": " + json_text(r.key.options) +
+         (r.key.runtime.empty() ? "" : ", \"runtime\": " + json_text(r.key.runtime)) +
+         (r.key.configuration.empty() ? "" : ", \"configuration\": " + json_text(r.key.configuration)) + "}\n}\n";
 }
 
 namespace {
@@ -532,6 +544,14 @@ std::optional<CalibrationResult> parse_result(const std::string_view text,
     return std::nullopt;
   }
   result.key = CalibrationKey{*gpu, *cpu, static_cast<std::uint64_t>(*ram->if_integer()), *engine, *model, *options};
+  if (const auto* runtime = member(*key, "runtime")) {
+    if (!runtime->if_string() || runtime->if_string()->size() > 128U) return std::nullopt;
+    result.key.runtime = *runtime->if_string();
+  }
+  if (const auto* configuration = member(*key, "configuration")) {
+    if (!configuration->if_string() || !is_lower_hex_digest(*configuration->if_string())) return std::nullopt;
+    result.key.configuration = *configuration->if_string();
+  }
   return result;
 }
 
@@ -555,7 +575,9 @@ namespace {
 
 std::string key_json(const CalibrationKey& key) {
   return "{\"gpu\": " + json_text(key.gpu) + ", \"cpu\": " + json_text(key.cpu) + ", \"ram_bytes\": " + std::to_string(key.ram_bytes) +
-         ", \"engine\": " + json_text(key.engine) + ", \"model\": " + json_text(key.model) + ", \"options\": " + json_text(key.options) + "}";
+         ", \"engine\": " + json_text(key.engine) + ", \"model\": " + json_text(key.model) + ", \"options\": " + json_text(key.options) +
+         (key.runtime.empty() ? "" : ", \"runtime\": " + json_text(key.runtime)) +
+         (key.configuration.empty() ? "" : ", \"configuration\": " + json_text(key.configuration)) + "}";
 }
 
 std::optional<CalibrationKey> key_of(const JsonValue* key) {
@@ -571,7 +593,16 @@ std::optional<CalibrationKey> key_of(const JsonValue* key) {
       ram->if_integer() == nullptr || *ram->if_integer() < 0) {
     return std::nullopt;
   }
-  return CalibrationKey{*gpu, *cpu, static_cast<std::uint64_t>(*ram->if_integer()), *engine, *model, *options};
+  CalibrationKey result{*gpu, *cpu, static_cast<std::uint64_t>(*ram->if_integer()), *engine, *model, *options};
+  if (const auto* runtime = member(*key, "runtime")) {
+    if (!runtime->if_string() || runtime->if_string()->size() > 128U) return std::nullopt;
+    result.runtime = *runtime->if_string();
+  }
+  if (const auto* configuration = member(*key, "configuration")) {
+    if (!configuration->if_string() || !is_lower_hex_digest(*configuration->if_string())) return std::nullopt;
+    result.configuration = *configuration->if_string();
+  }
+  return result;
 }
 
 }  // namespace
@@ -639,6 +670,245 @@ std::string file_fact(const std::filesystem::path& file) {
   // (the count as a long long: libc++'s file clock may count in __int128, which to_string does not take; the same number
   // as before on MSVC and libstdc++, so the records already kept stay fresh)
   return std::to_string(size) + ":" + std::to_string(static_cast<long long>(written.time_since_epoch().count()));
+}
+
+namespace {
+struct RuntimeMetadata {
+  std::string fact;
+  std::int64_t modified_second{0};
+};
+std::optional<RuntimeMetadata> runtime_metadata(const OpenedFile& file) {
+#if defined(_WIN32)
+  BY_HANDLE_FILE_INFORMATION info{};
+  if (!GetFileInformationByHandle(file.native(), &info)) return std::nullopt;
+  const std::uint64_t modified = (static_cast<std::uint64_t>(info.ftLastWriteTime.dwHighDateTime) << 32U) | info.ftLastWriteTime.dwLowDateTime;
+  const std::uint64_t created = (static_cast<std::uint64_t>(info.ftCreationTime.dwHighDateTime) << 32U) | info.ftCreationTime.dwLowDateTime;
+  const std::uint64_t id = (static_cast<std::uint64_t>(info.nFileIndexHigh) << 32U) | info.nFileIndexLow;
+  return RuntimeMetadata{std::to_string(file.size()) + ":" + std::to_string(modified) + ":" + std::to_string(created) + ":" +
+                         std::to_string(info.dwVolumeSerialNumber) + ":" + std::to_string(id),
+                         static_cast<std::int64_t>(modified / 10000000U) - 11644473600LL};
+#else
+  struct stat info{};
+  if (fstat(file.native(), &info) != 0) return std::nullopt;
+#if defined(__APPLE__)
+  const auto modified = info.st_mtimespec, changed = info.st_ctimespec;
+#else
+  const auto modified = info.st_mtim, changed = info.st_ctim;
+#endif
+  return RuntimeMetadata{std::to_string(file.size()) + ":" + std::to_string(modified.tv_sec) + ":" + std::to_string(modified.tv_nsec) +
+                         ":" + std::to_string(changed.tv_sec) + ":" + std::to_string(changed.tv_nsec) + ":" +
+                         std::to_string(info.st_dev) + ":" + std::to_string(info.st_ino), static_cast<std::int64_t>(modified.tv_sec)};
+#endif
+}
+struct RuntimeInventory {
+  std::string digest;
+  std::int64_t newest_second{0};
+};
+RuntimeInventory runtime_inventory(const std::filesystem::path& configured, const bool fast_math, const bool libraries_only = false,
+                                   const bool all_artifacts = false) {
+  const auto accurate_dir = libraries_only ? configured : fast_math && configured.parent_path().filename() == "fast-math" ?
+      configured.parent_path().parent_path() : configured.parent_path();
+  const auto executable = fast_math ? accurate_dir / "fast-math" / configured.filename() : configured;
+  auto opened = open_root(accurate_dir);
+  const auto* root = std::get_if<CanonicalRoot>(&opened);
+  if (!root) return {};
+  const std::string selected = fast_math ? "fast-math/" : "";
+  std::map<std::string, RuntimeMetadata> facts;
+  std::size_t visited = 0U;
+  const auto add = [&](const std::string& name) {
+    if (facts.contains(name)) return true;
+    auto relative = parse_relative_path(name);
+    const auto* path = std::get_if<RelativePath>(&relative);
+    if (!path) return false;
+    auto file = open_beneath(*root, *path, {.kind = OpenKind::regular_file, .trust = FileTrust::not_shared_writable, .reject_hard_links = true});
+    const auto* handle = std::get_if<OpenedFile>(&file);
+    if (!handle) return false;
+    const auto metadata = runtime_metadata(*handle);
+    if (!metadata) return false;
+    facts.emplace(name, *metadata);
+    return true;
+  };
+  if (!libraries_only && !add(selected + path_to_utf8(executable.filename()))) return {};
+  std::function<bool(const std::string&, unsigned, bool)> scan;
+  scan = [&](const std::string& prefix, const unsigned depth, const bool all_files) {
+    if (depth > (all_artifacts ? 8U : 4U)) return false;
+    if (!prefix.empty()) {
+      auto relative = parse_relative_path(prefix.substr(0, prefix.size() - 1U));
+      const auto* path = std::get_if<RelativePath>(&relative);
+      if (!path || !std::holds_alternative<OpenedFile>(open_beneath(*root, *path, {.kind = OpenKind::directory, .trust = FileTrust::not_shared_writable}))) return false;
+    }
+    std::error_code ec;
+    const std::u8string utf8_prefix(prefix.begin(), prefix.end());
+    std::filesystem::directory_iterator it(root->path() / std::filesystem::path{utf8_prefix}, ec), end;
+    if (ec) return false;
+    while (it != end) {
+      if (++visited > (all_artifacts ? 4096U : 1024U)) return false;
+      const auto name = path_to_utf8(it->path().filename());
+      auto lower = name;
+      for (auto& c : lower) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+      const auto status = it->symlink_status(ec);
+      if (ec) return false;
+      const bool directory = std::filesystem::is_directory(status);
+      const bool profile_dir = lower == "profiles" || lower == "templates";
+      const bool relevant = all_files || lower.ends_with(".dll") || lower.ends_with(".dylib") || lower.ends_with(".so") ||
+                            lower.find(".so.") != std::string::npos || lower == "variants.json" || lower == "build.json";
+      if (directory && (all_files || profile_dir)) {
+        if (!scan(prefix + name + "/", depth + 1U, true)) return false;
+      } else if ((relevant || profile_dir) && (!std::filesystem::is_regular_file(status) || !add(prefix + name))) return false;
+      it.increment(ec);
+      if (ec) return false;
+    }
+    return true;
+  };
+  if (!scan(selected, 0U, all_artifacts)) return {};
+  // Profiles remain anchored to the configured accurate installation when a
+  // fast executable is selected. Include those and its variant manifest too.
+  if (fast_math) {
+    for (const auto* name : {"variants.json", "profiles", "templates"}) {
+      std::error_code ec;
+      const auto status = std::filesystem::symlink_status(root->path() / name, ec);
+      if (ec == std::errc::no_such_file_or_directory || status.type() == std::filesystem::file_type::not_found) continue;
+      if (ec) return {};
+      if (std::filesystem::is_directory(status)) { if (!scan(std::string{name} + "/", 1U, true)) return {}; }
+      else if (!add(name)) return {};
+    }
+  }
+  Sha256 hash;
+  hash.update(fast_math ? "engine-runtime-v1:fast\n" : "engine-runtime-v1:accurate\n");
+  std::int64_t newest = 0;
+  for (const auto& [name, metadata] : facts) {
+    hash.update(std::to_string(name.size()) + ":" + name + ":" + metadata.fact + "\n");
+    newest = std::max(newest, metadata.modified_second);
+  }
+  return {to_hex(hash.finish()), newest};
+}
+std::optional<std::int64_t> utc_second(const std::string_view text) {
+  if (text.size() != 20U || text[4] != '-' || text[7] != '-' || text[10] != 'T' || text[13] != ':' || text[16] != ':' || text[19] != 'Z') return {};
+  const auto number_at = [&](const std::size_t at, const std::size_t count) -> std::optional<unsigned> {
+    const auto part = text.substr(at, count);
+    if (!std::all_of(part.begin(), part.end(), [](const char c) { return c >= '0' && c <= '9'; })) return {};
+    unsigned value = 0;
+    const auto parsed = std::from_chars(part.data(), part.data() + part.size(), value);
+    return parsed.ec == std::errc{} ? std::optional<unsigned>{value} : std::nullopt;
+  };
+  const auto y = number_at(0, 4), m = number_at(5, 2), d = number_at(8, 2), h = number_at(11, 2), minute = number_at(14, 2), s = number_at(17, 2);
+  if (!y || !m || !d || !h || !minute || !s || *y < 1970U || *h > 23U || *minute > 59U || *s > 59U) return {};
+  const std::chrono::year_month_day day{std::chrono::year{static_cast<int>(*y)}, std::chrono::month{*m}, std::chrono::day{*d}};
+  if (!day.ok()) return {};
+  return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::sys_days{day}.time_since_epoch()).count() +
+         static_cast<std::int64_t>(*h * 3600U + *minute * 60U + *s);
+}
+}  // namespace
+
+std::string engine_runtime_fact(const std::filesystem::path& executable, const bool fast_math) {
+  return runtime_inventory(executable, fast_math).digest;
+}
+std::string engine_runtime_fact(const std::filesystem::path& executable, const bool fast_math,
+    const std::vector<std::filesystem::path>& library_directories) {
+  if (library_directories.size() > 32U) return {};
+  const auto base = engine_runtime_fact(executable, fast_math);
+  if (base.empty()) return {};
+  const auto accurate_dir = fast_math && executable.parent_path().filename() == "fast-math" ?
+      executable.parent_path().parent_path() : executable.parent_path();
+  const auto selected_dir = fast_math ? accurate_dir / "fast-math" : accurate_dir;
+  const auto selected_root = open_root(selected_dir);
+  const auto* selected = std::get_if<CanonicalRoot>(&selected_root);
+  if (!selected) return {};
+  std::vector<std::filesystem::path> seen{selected->path()};
+  Sha256 hash;
+  hash.update("engine-libraries-v1:" + base + "\n");
+  bool extra = false;
+  for (const auto& directory : library_directories) {
+    const auto opened = open_root(directory);
+    const auto* root = std::get_if<CanonicalRoot>(&opened);
+    if (!root) return {};
+    if (std::any_of(seen.begin(), seen.end(), [&](const auto& path) {
+          return is_within(path, root->path()) && is_within(root->path(), path);
+        })) continue;
+    const auto inventory = runtime_inventory(root->path(), false, true);
+    if (inventory.digest.empty()) return {};
+    const auto path = path_to_utf8(root->path());
+    hash.update(std::to_string(path.size()) + ":" + path + ":" + inventory.digest + "\n");
+    seen.push_back(root->path());
+    extra = true;
+  }
+  return extra ? to_hex(hash.finish()) : base;
+}
+std::string calibration_configuration_fact(const FrontendConfigDraft& draft) {
+  Sha256 hash;
+  hash.update("calibration-configuration-v1\n");
+  for (const auto& [name, entry] : draft.entries) {
+    if (!(name.starts_with("engine.") || name.starts_with("glm.") || name.starts_with("reasoning.") ||
+          name.starts_with("defaults.sampling.") || name.starts_with("vision.") || name.starts_with("limits.chat.") ||
+          name == "roots.models" || name == "roots.tokenizer_pack" || name == "replicas.parallel" ||
+          name == "session.expert_profile_save" || name == "session.expert_profile_save_every")) continue;
+    std::string value;
+    if (const auto* b = std::get_if<bool>(&entry.value)) value = *b ? "true" : "false";
+    else if (const auto* i = std::get_if<std::int64_t>(&entry.value)) value = std::to_string(*i);
+    else if (const auto* d = std::get_if<double>(&entry.value)) value = decimal(*d);
+    else if (const auto* s = std::get_if<std::string>(&entry.value)) value = json_text(*s);
+    else if (const auto* list = std::get_if<std::vector<std::string>>(&entry.value)) {
+      value = "[";
+      for (const auto& item : *list) { if (value.size() > 1U) value += ','; value += json_text(item); }
+      value += ']';
+    }
+    hash.update(std::to_string(name.size()) + ":" + name + ":" + std::to_string(value.size()) + ":" + value + "\n");
+  }
+  return to_hex(hash.finish());
+}
+std::string calibration_artifact_fact(const std::filesystem::path& artifact) {
+  std::error_code ec;
+  const auto status = std::filesystem::symlink_status(artifact, ec);
+  if (ec || std::filesystem::is_symlink(status)) return {};
+  if (std::filesystem::is_directory(status)) return runtime_inventory(artifact, false, true, true).digest;
+  if (!std::filesystem::is_regular_file(status)) return {};
+  const auto opened = open_root(artifact.parent_path());
+  const auto* root = std::get_if<CanonicalRoot>(&opened);
+  if (!root) return {};
+  const auto basename = path_to_utf8(artifact.filename());
+  std::vector<std::string> names{basename};
+  // GGUF's conventional split naming gives a closed exact set. Do not walk
+  // unrelated files in the configured model root just to discover other models.
+  if (basename.size() > 20U && basename.ends_with(".gguf")) {
+    const auto offset = basename.size() - 20U;
+    if (basename[offset] == '-' && basename.substr(offset + 6U, 4U) == "-of-") {
+      const auto index = basename.substr(offset + 1U, 5U), total = basename.substr(offset + 10U, 5U);
+      const auto digits = [](const std::string& part) { return std::all_of(part.begin(), part.end(), [](const char c) { return c >= '0' && c <= '9'; }); };
+      unsigned count = 0, part = 0;
+      if (!digits(index) || !digits(total)) return {};
+      std::from_chars(total.data(), total.data() + total.size(), count);
+      std::from_chars(index.data(), index.data() + index.size(), part);
+      if (count < 1U || count > 4096U || part < 1U || part > count) return {};
+      names.clear();
+      for (unsigned i = 1U; i <= count; ++i) {
+        const auto digits_text = std::to_string(i);
+        names.push_back(basename.substr(0, offset) + "-" + std::string(5U - digits_text.size(), '0') + digits_text + "-of-" + total + ".gguf");
+      }
+    }
+  }
+  Sha256 hash;
+  hash.update("calibration-artifacts-v1\n");
+  for (const auto& name : names) {
+    const auto relative = parse_relative_path(name);
+    const auto* path = std::get_if<RelativePath>(&relative);
+    if (!path) return {};
+    const auto file = open_beneath(*root, *path, {.kind = OpenKind::regular_file, .trust = FileTrust::not_shared_writable, .reject_hard_links = true});
+    const auto* handle = std::get_if<OpenedFile>(&file);
+    if (!handle) return {};
+    const auto metadata = runtime_metadata(*handle);
+    if (!metadata) return {};
+    hash.update(std::to_string(name.size()) + ":" + name + ":" + metadata->fact + "\n");
+  }
+  return to_hex(hash.finish());
+}
+void adopt_legacy_runtime_identity(CalibrationResult& result, const std::filesystem::path& executable, const bool fast_math) {
+  if (!result.key.runtime.empty()) return;
+  result.key.runtime = "legacy-runtime-unverified";
+  if (result.key.engine.empty() || result.key.engine != file_fact(executable)) return;
+  const auto saved = utc_second(result.date);
+  if (!saved) return;
+  const auto current = runtime_inventory(executable, fast_math);
+  if (!current.digest.empty() && current.newest_second <= *saved) result.key.runtime = current.digest;
 }
 
 std::string cpu_fact() {

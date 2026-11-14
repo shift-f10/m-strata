@@ -10,6 +10,7 @@
 #include "secure_frontend/launch_composition.hpp"
 #include "secure_frontend/low_ram.hpp"
 #include "secure_frontend/minimax_prompt_renderer.hpp"
+#include "secure_frontend/sha256.hpp"
 #include "secure_frontend/subsystem_limits.hpp"
 #include "secure_frontend/token_store.hpp"
 #include "secure_frontend/tokenizer_pack.hpp"
@@ -262,6 +263,28 @@ void offer_sampling(ModelCard& card) {
   }
 }
 
+// Explicit speed tradeoffs start at accuracy defaults, while a hand-written
+// card's closed speed settings become its visible defaults instead of vanishing.
+void offer_accuracy_tradeoffs(ModelCard& card) {
+  const auto order = model_options_for(card.profile);
+  for (const auto& [name, value] : accuracy_option_defaults(card.profile, card.config)) {
+    const auto* spec = find_model_option(card.profile, name);
+    if (spec == nullptr || std::any_of(card.options.begin(), card.options.end(),
+        [spec](const ModelOptionLimits& limit) { return limit.spec == spec; })) continue;
+    ModelOptionLimits limit;
+    limit.spec = spec;
+    limit.default_value = value;
+    limit.minimum = spec->minimum;
+    limit.maximum = spec->maximum;
+    limit.minimum_decimal = spec->minimum_decimal;
+    limit.maximum_decimal = spec->maximum_decimal;
+    const auto later = std::find_if(card.options.begin(), card.options.end(), [&](const ModelOptionLimits& listed) {
+      return listed.spec != nullptr && listed.spec - order.data() > spec - order.data();
+    });
+    card.options.insert(later, std::move(limit));
+  }
+}
+
 // An option a card's file does not list, offered in the profile's order at the server's own integer row (the main
 // config's - a card's file holds no server row - else the schema's default) as `from_row` reads it. Started without a
 // choice, the card runs on that row as before.
@@ -381,6 +404,7 @@ void offer_options(ModelCard& card, const FrontendConfigDraft& main, const ToolR
   offer_gpus(card);
   offer_low_ram(card);
   offer_vram_reserve(card);
+  offer_accuracy_tradeoffs(card);
 }
 
 // The card's options as the page sees them: without the server's web search, no Web search checkbox.
@@ -520,6 +544,7 @@ void ModelLauncher::erase_card(const std::size_t index) {
   auto_recalibrate_.erase(name);
   calibration_errors_.erase(name);
   calibration_reports_.erase(name);
+  benchmark_status_.erase(name);
 }
 
 void ModelLauncher::forget_card(const std::string& name) {
@@ -528,6 +553,9 @@ void ModelLauncher::forget_card(const std::string& name) {
     std::error_code ec;
     std::filesystem::remove(*settings_.calibration_dir / path_from_utf8(calibration_file_name(name)), ec);
     std::filesystem::remove(*settings_.calibration_dir / path_from_utf8(prefill_file_name(name)), ec);
+    const auto prefix="benchmark-"+to_hex(sha256(name)).substr(0,24);
+    for(const auto* kind:{"history","checkpoint","summary"})
+      std::filesystem::remove(*settings_.calibration_dir / (prefix+"."+kind+".json"),ec);
   }
   log("[strata] models: removed " + name);
   // a removed card kept loaded is forgotten (part 4)
@@ -776,7 +804,7 @@ std::optional<ModelLauncher::Refusal> ModelLauncher::stop(const bool remote_clie
 
 std::optional<ModelLauncher::Refusal> ModelLauncher::calibrate(const std::string_view name, const JsonValue* options,
                                                                const bool then_start, const std::optional<bool> auto_recalibrate,
-                                                               const bool remote_client) {
+                                                               const bool remote_client, const std::optional<BenchmarkOptions> benchmark) {
   std::optional<std::size_t> card;
   const ModelCard* chosen_card = nullptr;
   {
@@ -822,6 +850,7 @@ std::optional<ModelLauncher::Refusal> ModelLauncher::calibrate(const std::string
     cancel_calibration_.store(false);
     pending_ = Job{Job::Kind::calibrate, *card, std::move(std::get<ModelOptionValues>(values)), std::move(config), then_start,
                    auto_recalibrate};
+    pending_->benchmark = benchmark;
   }
   changed_.notify_all();
   return std::nullopt;
@@ -971,14 +1000,68 @@ CalibrationKey ModelLauncher::calibration_key(const ModelCard& card, const Model
     return value == nullptr ? std::string{} : *value;
   };
   CalibrationKey key;
+  const auto resolved = resolve_option_values(card.options, nullptr, values);
+  const auto* effective = std::get_if<ModelOptionValues>(&resolved);
+  const auto& selected=effective?*effective:values;
   key.gpu = settings_.gpu_fact ? settings_.gpu_fact() : std::string{};
   key.cpu = cpu_fact_;
   if (const auto memory = read_memory()) key.ram_bytes = memory->total_bytes;
   // the engine it was measured with: the launcher, and an engine plugin's library (an updated plugin is another engine)
   key.engine = engine_fact(path_from_utf8(text("engine.executable")), family_descriptor(card.profile));
-  key.model = file_fact(path_from_utf8(text("roots.models")) / path_from_utf8(text("engine.model_id") + ".gguf"));
-  key.options = options_fact(values);
+  const auto selected_draft = card_draft(settings_.main, card, selected);
+  bool fast = false;
+  if (const auto it = selected_draft.entries.find("engine.fast_math"); it != selected_draft.entries.end())
+    if (const auto* enabled = std::get_if<bool>(&it->second.value)) fast = *enabled;
+  std::vector<std::filesystem::path> library_directories;
+  if (const auto it = selected_draft.entries.find("engine.lib_dirs"); it != selected_draft.entries.end())
+    if (const auto* paths = std::get_if<std::vector<std::string>>(&it->second.value))
+      for (const auto& path : *paths) library_directories.push_back(path_from_utf8(path));
+  key.runtime = engine_runtime_fact(path_from_utf8(text("engine.executable")), fast, library_directories);
+  // Fixed file rows are distinct from selectable options: a changed knob keeps
+  // settings_changed semantics; changing the card's fixed launch invalidates it.
+  key.configuration = calibration_configuration_fact(card_draft(settings_.main, card, {}));
+  const auto model_file = path_from_utf8(text("roots.models")) / path_from_utf8(text("engine.model_id") + ".gguf");
+  Sha256 model_identity;
+  model_identity.update("calibration-model-v1\n");
+  bool model_known = true;
+  const auto include_artifact = [&](const std::filesystem::path& path) {
+    const auto fact = calibration_artifact_fact(path);
+    if (fact.empty()) model_known = false;
+    else model_identity.update(fact + "\n");
+  };
+  include_artifact(model_file);
+  // Pack families launch the marker's directory: the marker itself contains no
+  // weights. Only inventory that selected pack, never the surrounding model store.
+  if (card.profile == EngineProfile::glm53 || card.profile == EngineProfile::raon1 ||
+      card.profile == EngineProfile::deepseek || card.profile == EngineProfile::minimax)
+    include_artifact(model_file.parent_path());
+  if (const auto tokenizer = text("roots.tokenizer_pack"); !tokenizer.empty()) include_artifact(path_from_utf8(tokenizer));
+  if (const auto it = selected_draft.entries.find("engine.args"); it != selected_draft.entries.end()) {
+    if (const auto* args = std::get_if<std::vector<std::string>>(&it->second.value)) {
+      constexpr std::array<std::string_view, 11> artifacts{"--pack", "--native", "--ple-gguf", "--embd-gguf", "--native-head-gguf",
+          "--native-dense-gguf", "--mtp", "--expert-profile", "--profile", "--draft-vocab", "--prefill-tune"};
+      for (std::size_t i = 0; i < args->size(); ++i) for (const auto flag : artifacts) {
+        std::string path;
+        if ((*args)[i] == flag && i + 1U < args->size() && !(*args)[i + 1U].starts_with("--")) path = (*args)[i + 1U];
+        else if ((*args)[i].starts_with(std::string{flag} + "=")) path = (*args)[i].substr(flag.size() + 1U);
+        if (path.empty()) continue;
+        const auto file = path_from_utf8(path);
+        if (file.is_absolute()) include_artifact(file);
+        else if (flag != "--mtp") model_known = false;  // MTP can be a boolean/count in other families.
+      }
+    }
+  }
+  if (model_known) key.model = to_hex(model_identity.finish());
+  // A remembered record from an older build may omit newly offered defaults.
+  // Compare the same fully resolved values that a start/calibration uses.
+  key.options = options_fact(selected);
   return key;
+}
+
+// (by its name: main's calibration experiments ask so)
+std::optional<CalibrationResult> ModelLauncher::read_calibration(const std::string_view card) const {
+  const auto index = find_card(card);
+  return index ? read_calibration(settings_.cards[*index]) : std::nullopt;
 }
 
 std::optional<CalibrationResult> ModelLauncher::read_calibration(const ModelCard& card) const {
@@ -990,6 +1073,16 @@ std::optional<CalibrationResult> ModelLauncher::read_calibration(const ModelCard
   // its settings are its family's sweep's (an engine plugin's: its own steps' flags)
   auto result = parse_calibration(text.str(), family_descriptor(card.profile));
   if (!result || result->card != card.name) return std::nullopt;
+  if (result->key.runtime.empty()) {
+    const auto& entries = card.config.entries;
+    if (const auto it = entries.find("engine.executable"); it != entries.end()) {
+      if (const auto* path = std::get_if<std::string>(&it->second.value)) {
+        adopt_legacy_runtime_identity(*result, path_from_utf8(*path), result->key.options.find("speed_fast_math=true") != std::string::npos);
+      }
+    }
+  }
+  // Legacy records have no evidence of their original fixed card configuration.
+  // Keep that field absent; compare_key conservatively reports them stale.
   return result;
 }
 
@@ -1230,6 +1323,7 @@ std::string ModelLauncher::calibration_json(const std::size_t index, const Model
          ",\"error\":" + (error == calibration_errors_.end() ? std::string{"null"} : json_string(error->second));
   // a calibration's report for a bug report (owner 2026-10-30): its file in the logs folder, and when it was made
   const auto report = calibration_reports_.find(card.name);
+  out += ",\"experiment\":" + benchmark_json(card, values);
   out += ",\"report\":" + (report == calibration_reports_.end()
                                 ? std::string{"null"}
                                 : "{\"file\":" + json_string(report->second.file) + ",\"date\":" + json_string(report->second.date) + "}");
@@ -1380,6 +1474,7 @@ std::optional<double> ModelLauncher::measure(const ModelCard& card, const ModelO
 
 // §5: the running model is stopped (the GPU to itself), the plan swept, the result kept with its key.
 bool ModelLauncher::run_calibration(const Job& job) {
+  if (job.benchmark) return run_benchmark(job);
   const ModelCard& card = [this, &job]() -> const ModelCard& {
     std::lock_guard lock(mutex_);
     return settings_.cards[job.card];
@@ -1393,14 +1488,15 @@ bool ModelLauncher::run_calibration(const Job& job) {
       return false;
     }
     status_[job.card] = CardStatus{CardState::calibrating, {}};
-    calibrating_ = CalibrationRun{job.card, {}};
+    calibrating_ = CalibrationRun{job.card, SweepProgress{"preparing", 1U,
+        sweep_trial_upper_bound(sweep_plan(card.profile, machine_)) + (card.profile == EngineProfile::minimax ? 1U : 0U), std::nullopt}};
     calibration_errors_.erase(card.name);
   }
   // MiniMax: Maya's --calibrate measures its prompt reading first (the engine keeps it in the pack; the sweep's starts read it)
   if (family_descriptor(card.profile).prefill_calibration) {
     {
       std::lock_guard lock(mutex_);
-      calibrating_->progress = SweepProgress{"prompt reading", 0U, 0U, std::nullopt};
+      calibrating_->progress.stage = "prompt reading";
     }
     (void)run_prefill_calibration(job);
   }
@@ -1427,7 +1523,13 @@ bool ModelLauncher::run_calibration(const Job& job) {
       [this, &card](const SweepProgress& progress) {
         {
           std::lock_guard lock(mutex_);
-          if (calibrating_.has_value()) calibrating_->progress = progress;
+          if (calibrating_.has_value()) {
+            calibrating_->progress = progress;
+            if (card.profile == EngineProfile::minimax) {
+              ++calibrating_->progress.trial;
+              ++calibrating_->progress.trials;
+            }
+          }
         }
         log("[strata] models: " + card.name + ": calibration trial " + std::to_string(progress.trial) + "/" +
             std::to_string(progress.trials) + " (" + progress.stage + ")");
@@ -1462,6 +1564,11 @@ bool ModelLauncher::run_calibration(const Job& job) {
     CalibrationResult result{card.name, outcome.args, outcome.baseline_tok_s, outcome.best_tok_s, utc_now(),
                              job.auto_recalibrate.value_or(switched.value_or(before ? before->auto_recalibrate : false)),
                              calibration_key(card, job.values)};
+    if (before) {
+      ModelOptionValues previous;
+      { std::lock_guard lock(mutex_); previous = remembered_[card.name]; }
+      archive_calibration(*before, previous, "Previous calibration");
+    }
     kept = write_calibration(result);
     std::string flags;
     for (const auto& arg : outcome.args) flags += " " + arg;
@@ -1469,6 +1576,8 @@ bool ModelLauncher::run_calibration(const Job& job) {
         decimal_text(outcome.best_tok_s) + " tok/s" + (flags.empty() ? " (the engine's defaults)" : " with" + flags));
     if (!kept) failure = kCalibrationNotSaved;
     if (kept) {
+      remember(job.card, job.values);
+      archive_calibration(result, job.values, "Calibration");
       alert("calibration_finished", card.name + " is calibrated",
             "Decode speed: " + decimal_text(outcome.baseline_tok_s) + " tok/s with the engine's defaults, " +
                 decimal_text(outcome.best_tok_s) + " tok/s" + (flags.empty() ? " (the defaults were fastest)." : " with" + flags + ".") +

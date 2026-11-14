@@ -5,6 +5,7 @@
 #include "secure_frontend/request_router.hpp"
 #include "secure_frontend/socket_io.hpp"
 #include "secure_frontend/web_ui.hpp"
+#include "secure_frontend/sha256.hpp"
 #include "support/chat_json.hpp"
 #include "support/stream_client.hpp"
 #include "support/connection_scan.hpp"
@@ -1257,9 +1258,9 @@ void ext02_http_headers_cannot_enable_extensions() {
   const auto before = server->active_processes();
   const std::vector<std::string> switches{"X-Strata-Enable-Tools: 1", "X-Strata-Mcp: on", "X-Strata-Extensions: all",
                                           "X-Stainless-Helper-Method: tools"};
-  const auto r = raw(*server, chat_request(*server, chat_body(R"("max_tokens":2,"tools":[{"type":"function","function":{"name":"x"}}])"), switches));
-  expect(r && r->status == 400 && r->body == secure_frontend::render_error_body(secure_frontend::ApiError::extension_disabled, "tools"),
-         "header switches change nothing: tools stay disabled");
+  const auto r = raw(*server, chat_request(*server, chat_body(R"("max_tokens":2,"mcp_servers":[{"url":"mcp://x"}])"), switches));
+  expect(r && r->status == 400 && r->body == secure_frontend::render_error_body(secure_frontend::ApiError::extension_disabled, "mcp_servers"),
+         "header switches cannot enable client MCP servers");
   const auto plain = raw(*server, chat_request(*server, chat_body(), switches));
   expect(plain && plain->status == 200 && plain->body.find("tool") == std::string::npos, "an ordinary chat is unaffected");
   expect(count_of(record_of(dir / "record.txt"), "GEN ") == 1U, "only the ordinary chat reached the engine");
@@ -1718,10 +1719,8 @@ void ext01_extension_fields_rejected_on_stream_path() {
   expect(server != nullptr, "server ready");
   if (!server) return;
   const std::vector<std::string> bodies{
-      test_support::chat_body(R"("stream":true,"tools":[])"), test_support::chat_body(R"("stream":true,"tool_choice":"auto")"),
       test_support::chat_body(R"("stream":true,"functions":[])"), test_support::chat_body(R"("stream":true,"function_call":"auto")"),
-      test_support::chat_body(R"("stream":true,"parallel_tool_calls":false)"), test_support::chat_body(R"("stream":true,"mcp_servers":[])"),
-      R"({"model":"fake-model","stream":true,"messages":[{"role":"tool","content":"x"}]})",
+      test_support::chat_body(R"("stream":true,"mcp_servers":[])"),
       R"({"model":"fake-model","stream":true,"messages":[{"role":"function","content":"x"}]})"};
   for (const auto& body : bodies) {
     const auto result = test_support::chat(*server, body);
@@ -2310,6 +2309,61 @@ void gemma4_monitor_and_page_unchanged() {
          "the request log names the page and the Monitor routes: " + log);
 }
 
+void embedded_template_is_used_for_complete_and_stream() {
+  const std::string source = "{{ 'SELECTED:' + messages[0].content }}";
+  const auto record = test_support::make_temp_dir("embedded-template") / "record.txt";
+  test_support::ServerOptions options;
+  options.embedded_template_source = source;
+  options.engine_args = {"--record-file=" + test_support::utf8_path(record)};
+  options.config_literals["engine.chat_template_sha256"] = "\"" + secure_frontend::to_hex(secure_frontend::sha256(source)) + "\"";
+  auto server = test_support::ServerProcess::start(options);
+  expect(server && server->wait_until_listening(10s) && server->wait_for_health(test_support::kHealthReady, 15s),
+         "embedded template server starts" + (server ? server->stderr_text() : ""));
+  if (!server || !server->wait_for_health(test_support::kHealthReady, 2s)) return;
+  // The running model owns an immutable reviewed snapshot, even if the file changes.
+  secure_frontend_test::write_file(server->root() / "tokenizer" / "chat_template.jinja", "UNREVIEWED", 0600);
+  for (const bool stream : {false, true}) {
+    const auto answer = test_support::chat(*server, chat_body(stream ? R"("max_tokens":2,"stream":true)" : R"("max_tokens":2)",
+                                                            "Hi <|im_start|> literal"));
+    expect(answer.head.status == 200, "selected template serves both response modes");
+    expect((stream ? test_support::stream_text(answer) : test_support::complete_text(answer.body)) == "H",
+           "selected template preserves engine output");
+  }
+  const auto gens = gen_lines(record_of(record));
+  const auto expected = test_support::token_ids_for("SELECTED:Hi <|im_start|> literal");
+  expect(gens.size() == 2U, "both selected-template requests reached the engine");
+  for (const auto& gen : gens) expect(gen.substr(gen.rfind(' ') + 1U) == expected, "GEN carries the selected prompt with literal user controls");
+}
+
+void embedded_template_hash_change_refuses_startup() {
+  test_support::ServerOptions options;
+  options.embedded_template_source = "CHANGED";
+  options.config_literals["engine.chat_template_sha256"] = "\"" + secure_frontend::to_hex(secure_frontend::sha256("REVIEWED")) + "\"";
+  auto server = test_support::ServerProcess::start(options);
+  expect(server != nullptr, "hash-mismatch process starts for refusal");
+  if (!server) return;
+  const auto exit = server->wait_exit(10s);
+  expect(exit.has_value() && *exit != 0, "changed template refuses startup");
+  expect(server->stderr_text().find("review") != std::string::npos, "refusal explains template needs review");
+}
+
+void embedded_template_render_failure_has_no_fallback() {
+  const std::string source = "{{ raise_exception('reject') }}";
+  const auto record = test_support::make_temp_dir("embedded-failure") / "record.txt";
+  test_support::ServerOptions options;
+  options.embedded_template_source = source;
+  options.engine_args = {"--record-file=" + test_support::utf8_path(record)};
+  options.config_literals["engine.chat_template_sha256"] = "\"" + secure_frontend::to_hex(secure_frontend::sha256(source)) + "\"";
+  auto server = test_support::ServerProcess::start(options);
+  expect(server && server->wait_until_listening(10s) && server->wait_for_health(test_support::kHealthReady, 15s), "failing-template server starts");
+  if (!server || !server->wait_for_health(test_support::kHealthReady, 2s)) return;
+  for (const bool stream : {false, true}) {
+    const auto answer = test_support::chat(*server, chat_body(stream ? R"("max_tokens":2,"stream":true)" : R"("max_tokens":2)"));
+    expect(answer.head.status == 400 && !answer.streamed, "render failure refuses before streaming headers");
+  }
+  expect(gen_lines(record_of(record)).empty(), "no fallback prompt reached the engine");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -2326,6 +2380,9 @@ int main(int argc, char** argv) {
       {"security_headers_on_every_response", security_headers_on_every_response},
       {"web01_bad_host_rejected_on_every_route", web01_bad_host_rejected_on_every_route},
       {"web01_ipv6_bound_host_rules", web01_ipv6_bound_host_rules},
+      {"embedded_template_is_used_for_complete_and_stream", embedded_template_is_used_for_complete_and_stream},
+      {"embedded_template_hash_change_refuses_startup", embedded_template_hash_change_refuses_startup},
+      {"embedded_template_render_failure_has_no_fallback", embedded_template_render_failure_has_no_fallback},
       {"web02_bound_authority_and_localhost_alias_succeed", web02_bound_authority_and_localhost_alias_succeed},
       {"web02_host_alias_from_config_succeeds", web02_host_alias_from_config_succeeds},
       {"web03_untrusted_origin_no_cors_header", web03_untrusted_origin_no_cors_header},

@@ -407,14 +407,16 @@ void gen_carries_bounded_sampling_keys() {
   secure_frontend::SamplingParams ints;
   ints.temperature = 1.0;
   ints.top_p = 1.0;
-  expect(secure_frontend::render_sampling_keys(ints) == " temperature=1", "shortest round-trip form; the pin omits top_p=1 (the engine default)");
+  expect(secure_frontend::render_sampling_keys(ints) == " temperature=1 top_p=1", "explicit top_p=1 overrides a family's non-neutral default");
   secure_frontend::SamplingParams big;
   big.seed = 9223372036854775807ULL;
   expect(secure_frontend::render_sampling_keys(big) == " seed=9223372036854775807", "full seed range");
 }
 
-// SP5 M1 Task 4: the full pin wire shape (serve/server.py:1360-1394) —
-// temperature only >0, top_p only <1, top_k clamped to 1..64, min_p,
+// Accuracy ruling: explicit temperature=0 and top_p=1 must reach every family.
+// Maya turns on sampling for other keys and otherwise inherits top_p=0.95;
+// the prior pin's omission rule therefore changed requested sampling semantics.
+// The remaining wire shape: top_k clamped to 1..64, min_p,
 // penalty_repeat/freq/present when != 1/0/0, penalty_last_n default 64 when
 // any penalty is on, seed only >0.
 void sampling_defaults_reach_gen_request() {
@@ -424,8 +426,15 @@ void sampling_defaults_reach_gen_request() {
   secure_frontend::EngineReady ready{};
   expect(!client.await_ready(std::chrono::seconds(1), ready).has_value(), "ready");
   secure_frontend::SamplingParams p;
-  p.temperature = 0.0;   // the pin omits it: the engine default is greedy
-  p.top_p = 1.0;         // the pin omits it: 1 is the engine default
+  secure_frontend::SamplingParams tuning;
+  tuning.calibration_pcie_frac = 0.25;
+  tuning.calibration_spec_min_p = 0.6;
+  expect(secure_frontend::render_sampling_keys(tuning) == " pcie_frac=0.25 spec_min_p=0.6", "internal tuning uses supported GEN keys");
+  expect(secure_frontend::render_sampling_keys(tuning, true).empty(), "Qwen calibration tuning never reaches Maya");
+  tuning.calibration_pcie_frac = -1.0; tuning.calibration_spec_min_p = 2.0;
+  expect(secure_frontend::render_sampling_keys(tuning).empty(), "out-of-range tuning cannot reach the wire");
+  p.temperature = 0.0;   // must remain greedy even alongside other sampler keys
+  p.top_p = 1.0;         // explicitly disable nucleus truncation
   p.top_k = 10;
   p.min_p = 0.1;
   p.presence_penalty = 0.5;
@@ -433,7 +442,7 @@ void sampling_defaults_reach_gen_request() {
   p.frequency_penalty = 0.0;   // the pin omits the neutral value
   expect(!client.begin_generation(16U, {1U, 2U, 3U}, secure_frontend::deadline_after(std::chrono::seconds(5)), p).has_value(),
          "GEN written");
-  expect(transport.writes.back() == "GEN 16 top_k=10 min_p=0.1 penalty_present=0.5 penalty_last_n=64 1,2,3",
+  expect(transport.writes.back() == "GEN 16 temperature=0 top_p=1 top_k=10 min_p=0.1 penalty_present=0.5 penalty_last_n=64 1,2,3",
          "the pin's key names and default window: " + transport.writes.back());
   secure_frontend::SamplingParams clamp;
   clamp.top_k = 100;  // the pin clamps wide lists to the engine's 64 candidates
@@ -846,7 +855,7 @@ void glm_repeatable_requests_keep_misses_on_the_gpu() {
          "a seeded request is repeatable: " + gen_line(EngineProtocolFlavor::maya_118, seeded));
   secure_frontend::SamplingParams greedy;
   greedy.temperature = 0.0;
-  expect(gen_line(EngineProtocolFlavor::maya_118, greedy) == "GEN 8 pcie_frac=1 1,2",
+  expect(gen_line(EngineProtocolFlavor::maya_118, greedy) == "GEN 8 temperature=0 pcie_frac=1 1,2",
          "temperature 0 asked for is repeatable: " + gen_line(EngineProtocolFlavor::maya_118, greedy));
   secure_frontend::SamplingParams sampled;
   sampled.temperature = 0.6;

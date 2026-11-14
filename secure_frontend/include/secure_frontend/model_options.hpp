@@ -42,6 +42,8 @@ using ModelOptionValues = std::map<std::string, ModelOptionValue, std::less<>>;
 // 1.0 / 0.95 / 20; GLM-5.3 and MiniMax 1.0 / 0.95). A card whose file does not list one of these options offers it
 // with this default (the model launcher), so a start with the card's defaults samples as the model's card says.
 [[nodiscard]] ModelOptionValues recommended_sampling(EngineProfile profile);
+// Accuracy defaults, or the card's explicit engine.speed_settings / engine.fast_math values when present.
+[[nodiscard]] ModelOptionValues accuracy_option_defaults(EngineProfile profile, const FrontendConfigDraft& draft);
 
 // A card's view of one option: its default and the card's own bounds inside the spec's.
 struct ModelOptionLimits final {

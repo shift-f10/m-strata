@@ -338,6 +338,8 @@ std::unique_ptr<ServerProcess> ServerProcess::start(const ServerOptions& options
       write_tokenizer_pack(tokenizer);  // 0600 files
     }
   }
+  if (options.embedded_template_source)
+    secure_frontend_test::write_file(tokenizer / "chat_template.jinja", *options.embedded_template_source, 0600);
   // SP1's open_executable refuses an engine file or folder writable by group or
   // others; the build tree is 0775 under umask 0002. Copy the engine into a
   // private <root>/bin exactly as SP1's ServerFixture does.

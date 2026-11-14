@@ -1,4 +1,5 @@
 #include "secure_frontend/engine_environment.hpp"
+#include "secure_frontend/engine_accuracy_policy.hpp"
 
 #include <algorithm>
 #include <array>
@@ -167,7 +168,19 @@ std::optional<EnvironmentBlock> apply_family_environment(EnvironmentBlock generi
 }
 
 std::optional<EnvironmentBlock> render_family_environment(const EngineEnvironment& environment, const FamilyEnvironmentHook hook) {
-  return apply_family_environment(render_engine_environment(environment), environment, hook);
+  auto block = apply_family_environment(render_engine_environment(environment), environment, hook);
+  if (!block) return std::nullopt;
+  // Only explicit validated card choices may change accuracy defaults. The
+  // launcher repeats this policy before loading a DLL using the same channel.
+  std::vector<EngineSpeedValue> checked;
+  if (!parse_engine_speed_settings(environment.speed_settings, checked)) return std::nullopt;
+  const auto selected = encode_engine_speed_settings(environment.speed_settings);
+  if (!apply_engine_accuracy_policy([&](const char* name, const char* value) {
+        block->insert_or_assign(name, value);
+        return true;
+      }, selected)) return std::nullopt;
+  if (!selected.empty()) block->insert_or_assign("MSTRATA_SPEED_SETTINGS", selected);
+  return block;
 }
 
 EnvironmentBlock render_posix_environment(const EngineEnvironment& environment) {

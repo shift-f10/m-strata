@@ -37,6 +37,27 @@ def options(*extra: str, platform: str = "windows"):
                             "--ggml-dir", "G:/llama.cpp", "--cuda-root", "C:/CUDA/v13.0", *extra], platform=platform)
 
 
+def test_native_template_helper_and_license_are_required_in_every_bundle():
+    for platform, suffix in (("windows", ".exe"), ("linux", "")):
+        files = make.required_files(options(platform=platform), platform)
+        assert "strata-template" + suffix in files
+        assert "licenses/llama-jinja/LICENSE" in files
+
+
+def test_dual_math_build_warns_and_keeps_accurate_launch_default(capsys, tmp_path):
+    plain = options()
+    assert "-DMULTIENGINE_FAST_MATH=OFF" in make.engine_configure_args(plain, "windows")
+    _, fast = make.engine_variants(plain)
+    for platform in ("windows", "linux"):
+        assert "-DMULTIENGINE_FAST_MATH=ON" in make.engine_configure_args(fast, platform)
+        text = make.readme_text(fast, platform)
+        assert "engine/fast-math/" in text and "restart" in text and "accuracy" in text
+    make.announce(fast)
+    assert "accuracy" in capsys.readouterr().out
+    make.stage_plugins(plain, tmp_path)   # (the plugins branch: the record lists each first-party plugin, as staged)
+    assert "dual-math" in make.build_record(plain, "windows", tmp_path, "fixture", "fixture")["features"]
+
+
 def test_engine_configure_is_the_tested_box_build():
     args = make.engine_configure_args(options(), "windows")
     for expected in ("-DCMAKE_BUILD_TYPE=Release", "-DSTRATA_ENABLE_CUDA=ON", "-DSTRATA_BUILD_TESTS=OFF",
@@ -292,7 +313,8 @@ def stage(tmp_path: Path, platform: str, extra: tuple[str, ...] = (), skip: tupl
           search: bool = False, email: bool = False) -> Path:
     exe = ".exe" if platform == "windows" else ""
     lib = (lambda n: n + ".dll") if platform == "windows" else (lambda n: "lib" + n + ".so")
-    files = [f"strata-unified-server{exe}", f"strata{exe}", f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
+    files = [f"strata-unified-server{exe}", f"strata{exe}", f"strata-template{exe}", "licenses/llama-jinja/LICENSE",
+             f"engine/multiengine{exe}", f"engine/strata-prepare{exe}",
              f"engine/strata-vision{exe}", "engine/profiles/expert-profile.bin", "engine/profiles/expert-profile-coder.bin",
              "engine/data/draft_vocab.bin", "engine/build.json", "README.txt", "config.example.json", "LICENSE", "NOTICE.md",
              "plugins/debugging/plugin.json", "plugins/debugging/plugin.sig"] + ["engine/profiles/" + p for p in MAYA_PROFILES] + \
@@ -306,6 +328,9 @@ def stage(tmp_path: Path, platform: str, extra: tuple[str, ...] = (), skip: tupl
                                            "multiengine_maya_mm3", "strata_kq")]
     files += (["engine/cublas64_13.dll", "engine/cublasLt64_13.dll", "msvcp140.dll", "engine/vcruntime140.dll"]
               if platform == "windows" else ["engine/libcublas.so.13", "engine/libcublasLt.so.13"])
+    files += ["engine/fast-math/" + name.removeprefix("engine/") for name in files
+              if name.startswith("engine/") and name != "engine/build.json" and name not in skip]
+    files += ["engine/variants.json"]
     for name in list(files) + list(extra):
         if name in skip:
             continue
@@ -442,7 +467,7 @@ def test_the_build_record_names_each_engine_and_its_source(tmp_path):
     assert record["schema_version"] == 1 and record["commit"] == "0123456789ab" and record["built"] == "2026-10-27T23:00:00Z"
     ggml = (ROOT / "engine" / "third_party" / "ggml" / "VERSION.txt").read_text(encoding="utf-8").split()[0][:12]
     maya = (ROOT / "engine" / "third_party" / "maya" / "VERSION").read_text(encoding="utf-8").strip()
-    assert record["ggml"] == ggml and record["cuda_arch"] == "120-real" and record["features"] == []
+    assert record["ggml"] == ggml and record["cuda_arch"] == "120-real" and record["features"] == ["dual-math"]
     engines = {e["library"]: e for e in record["engines"]}
     assert list(engines) == ["multiengine_strata.dll", "multiengine_gemma4.dll", "multiengine_flint.dll", "multiengine_raon1.dll",
                              "multiengine_maya.dll", "multiengine_maya_ds4.dll", "multiengine_maya_mm3.dll", "strata-vision.exe"]
@@ -454,7 +479,7 @@ def test_the_build_record_names_each_engine_and_its_source(tmp_path):
                              stage(tmp_path / "linux", "linux", search=True), commit="x", built="y")
     assert [e["library"] for e in lean["engines"]] == ["libmultiengine_strata.so", "libmultiengine_gemma4.so", "libmultiengine_flint.so",
                                                        "strata-vision"]
-    assert lean["features"] == ["search"]
+    assert lean["features"] == ["search", "dual-math"]
     assert "engine/build.json" in make.required_files(options(), "windows")
     json.dumps(record)   # it is written as JSON
 
@@ -611,7 +636,7 @@ def test_email_is_a_first_party_plugin_with_its_program_in_its_folder(tmp_path):
              "files": {finder: hashlib.sha256(b"the search program").hexdigest()}, "on": True},
             {"id": "email", "manifest": hashlib.sha256(shipped).hexdigest(),
              "files": {program: hashlib.sha256(b"the email program").hexdigest()}, "on": True}], record["plugins"]
-        assert record["features"] == ["email", "search"]
+        assert record["features"] == ["email", "search", "dual-math"]   # (dual-math: both compiler-math runtimes, main 2026-11)
         assert make.build_record(options("--with", "email,search", "--debugging", platform=platform), platform, folder,
                                  commit="c", built="b")["plugins"][0]["on"] is True
 

@@ -65,8 +65,9 @@ std::string skipped_event(const std::size_t round) {
 
 }  // namespace
 
-ToolCallObserver::ToolCallObserver(GenerationObserver& client, std::vector<ToolDeclaration> tools, const ToolFormat format)
-    : client_(client), parser_(make_tool_call_parser(format, std::move(tools))) {}
+ToolCallObserver::ToolCallObserver(GenerationObserver& client, std::vector<ToolDeclaration> tools, const ToolFormat format,
+                                   std::function<void(const ToolCall&)> on_call)
+    : client_(client), parser_(make_tool_call_parser(format, std::move(tools))), on_call_(std::move(on_call)) {}
 
 void ToolCallObserver::on_text(const std::string_view text) { deliver(parser_->feed_content(text)); }
 void ToolCallObserver::on_reasoning(const std::string_view text) { deliver(parser_->feed_reasoning(text)); }
@@ -95,7 +96,10 @@ void ToolCallObserver::deliver(std::vector<ToolParseEvent> events) {
         content_ += event.text;
         client_.on_text(event.text);
         break;
-      case ToolParseEvent::Kind::call: calls_.push_back(std::move(event.call)); break;
+      case ToolParseEvent::Kind::call:
+        if (on_call_) on_call_(event.call);
+        else calls_.push_back(std::move(event.call));
+        break;
     }
   }
 }

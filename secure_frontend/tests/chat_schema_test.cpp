@@ -24,6 +24,15 @@ void expect(bool condition, const std::string& message) {
   if (!condition) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
 }
 
+void accepts_client_function_tools() {
+  const auto request = secure_frontend::parse_chat_completion_request(
+      R"({"model":"local","messages":[{"role":"user","content":"weather?"}],"tools":[{"type":"function","function":{"name":"weather","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}}],"tool_choice":"auto"})");
+  expect(request.has_value(), "an OpenAI function tool declaration should parse");
+  const auto named = secure_frontend::parse_chat_completion_request(
+      R"({"model":"local","messages":[{"role":"user","content":"weather?"}],"tools":[{"type":"function","function":{"name":"weather"}}],"tool_choice":{"type":"function","function":{"name":"weather"}}})");
+  expect(named.has_value(), "a named OpenAI function choice should parse");
+}
+
 void parses_minimal_text_request() {
   const auto request = secure_frontend::parse_chat_completion_request(
       R"({"model":"local-model.Q4_K_M","messages":[{"role":"system","content":"Be concise."},{"role":"user","content":"Hello"}],"max_tokens":42,"stream":false})");
@@ -202,7 +211,7 @@ void rejects_unsupported_and_unsafe_features() {
   for (const std::string json : {
            R"({"model":"local","messages":[{"role":"user","content":"hi"}],"stream":"true"})",
            R"({"model":"local","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":"yes"}}"),
-           R"({"model":"local","messages":[{"role":"user","content":"hi"}],"tools":[]})",
+           R"({"model":"local","messages":[{"role":"user","content":"hi"}],"tools":"invalid"})",
            R"({"model":"local","messages":[{"role":"user","content":[{"type":"image_url"}]]})",
            R"({"model":"mcp://remote","messages":[{"role":"user","content":"hi"}]})",
            R"({"model":"local","messages":[{"role":"tool","content":"hi"}]})",
@@ -249,6 +258,15 @@ void renders_openai_completion_shape() {
          "spec §3.5 shape: " + body.value_or("<nullopt>"));
   expect(!secure_frontend::render_chat_completion({.id = "x", .created = 0, .model = "m", .text = "\xff", .finish_reason = "stop",
                                                    .prompt_tokens = 0U, .completion_tokens = 0U}).has_value(), "invalid UTF-8 is refused");
+}
+
+void renders_client_tool_calls() {
+  secure_frontend::ClientToolCall call{"call_1", {"weather", {{"city", secure_frontend::JsonValue::make_string("Paris")}}}};
+  const std::vector<secure_frontend::ClientToolCall> calls{call};
+  const auto body = secure_frontend::render_chat_completion({.id="x", .created=0, .model="m", .text="", .finish_reason="tool_calls",
+                                                            .prompt_tokens=1, .completion_tokens=2, .tool_calls=calls});
+  expect(body.has_value() && body->find(R"("tool_calls":[{"id":"call_1","type":"function","function":{"name":"weather","arguments":"{\"city\": \"Paris\"}"}}])") != std::string::npos,
+         "function calls must carry a stable id and JSON-string arguments");
 }
 
 // Issue 19: a Qwen3 think block comes back as message.reasoning_content beside the
@@ -548,6 +566,8 @@ void minimax_route_plan_follows_thinking_and_its_level() {
 
 int main(int argc, char** argv) {
   return secure_frontend_test::run_cases(argc, argv, {
+      {"accepts_client_function_tools", accepts_client_function_tools},
+      {"renders_client_tool_calls", renders_client_tool_calls},
       {"minimax_route_plan_follows_thinking_and_its_level", minimax_route_plan_follows_thinking_and_its_level},
       {"reasoning_effort_per_request_on_gemma4", reasoning_effort_per_request_on_gemma4},
       {"gemma4_thinking_defaults_to_off", gemma4_thinking_defaults_to_off},

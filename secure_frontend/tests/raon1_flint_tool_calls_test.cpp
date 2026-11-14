@@ -169,7 +169,8 @@ void refuses_what_the_tool_prompts_cannot_say() {
     };
     const std::string who = raon ? "raon1: " : "flint: ";
     expect(render(question, tools, good).has_value(), who + "the good case renders");
-    expect(!render(question, {}, good), who + "no tools");
+    expect(!render(question, {}, {}), who + "no declarations or history");
+    expect(render(question, {}, good).has_value(), who + "history needs no new declarations");
     expect(!render(question, tools, no_call), who + "a round without a call");
     expect(!render(question, tools, short_results), who + "fewer results than calls");
     // raon1 refuses a framing literal in a message; flint's template escapes one, so its refusal is text the escapes

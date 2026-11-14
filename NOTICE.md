@@ -98,4 +98,5 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Third-party code keeps its own license beside it: `upstream/LICENSE` (Strata, the unmodified submodule),
 `engine/third_party/*/LICENSE` (Project Maya, ggml, exllamav3, beellama.cpp), `engines/maya-ref/LICENSE`,
-`secure_frontend/web/LICENSE.strata-ui.txt`. [`docs/PROVENANCE.md`](docs/PROVENANCE.md) is the full record.
+`secure_frontend/web/LICENSE.strata-ui.txt`, and `secure_frontend/third_party/llama_jinja/LICENSE`
+(llama.cpp native Jinja interpreter, MIT). [`docs/PROVENANCE.md`](docs/PROVENANCE.md) is the full record.

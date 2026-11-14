@@ -293,6 +293,7 @@ std::string printable_stderr_line(const std::string_view line, const bool cut) {
 struct EngineStdioProcess::StderrReader final {
   std::atomic<bool> stop{false};
   mutable std::mutex mutex;
+  std::mutex sink_mutex;
   ConversationCacheState state;
   bool read_cache{false};
   std::function<void(std::string_view)> sink;
@@ -302,6 +303,18 @@ struct EngineStdioProcess::StderrReader final {
   int pipe{-1};
 #endif
   std::thread thread;
+
+  // stderr and opted-in stdout ERR diagnostics can arrive on different
+  // threads. Preserve the sink's serialized-call contract and contain errors.
+  void forward(const std::string_view text, const bool cut) noexcept {
+    if (!sink) return;
+    try {
+      const auto printable = printable_stderr_line(text, cut);
+      std::lock_guard lock(sink_mutex);
+      sink(printable);
+    } catch (...) {
+    }
+  }
 
   // Zeros the compiler may not drop as dead stores (the buffers die right after the last wipe).
   static void wipe(char* const data, const std::size_t count) noexcept {
@@ -314,13 +327,6 @@ struct EngineStdioProcess::StderrReader final {
     std::array<char, 4096> chunk{};
     std::size_t length = 0;
     bool overlong = false;
-    // A sink that throws (out of memory) loses that line, never the drain.
-    const auto forward = [this](const std::string_view text, const bool cut) noexcept {
-      try {
-        sink(printable_stderr_line(text, cut));
-      } catch (...) {
-      }
-    };
     const auto take = [&](const std::size_t count) {
       for (std::size_t index = 0; index < count; ++index) {
         const char character = chunk[index];
@@ -766,6 +772,13 @@ std::optional<EngineReadResult> EngineStdioProcess::take_pending_line() {
   pending_stdout_.erase(0, newline + 1);
   if (!line.empty() && line.back() == '\r') line.pop_back();
   if (line.size() > max_read_line_ || line.find('\0') != std::string::npos) return EngineReadResult{EngineReadKind::failure, {}, "engine emitted an invalid line"};
+  // Native engines put request failures on stdout rather than stderr. The
+  // existing explicit engine-output opt-in receives only these ERR records;
+  // tokens, prompts and all other protocol/stdout lines remain unlogged.
+  if (stderr_reader_ && (line == "ERR" || line.starts_with("ERR "))) {
+    const auto size = std::min(line.size(), kStderrLineBytes);
+    stderr_reader_->forward(std::string_view{line}.substr(0U, size), line.size() > size);
+  }
   return EngineReadResult{EngineReadKind::line, std::move(line), {}};
 }
 

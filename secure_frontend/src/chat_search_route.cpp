@@ -4,12 +4,15 @@
 // tools.max_rounds times (then one round to answer, SearchRounds::after).
 
 #include "secure_frontend/chat_route.hpp"
+#include "secure_frontend/embedded_template_plan.hpp"
 
 #include "secure_frontend/chat_generation_plan.hpp"
 #include "secure_frontend/chat_stream.hpp"
+#include "secure_frontend/prompt_builder.hpp"
 #include "secure_frontend/search_rounds.hpp"
 #include "secure_frontend/shutdown_signal.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <utility>
 #include <variant>
@@ -26,11 +29,21 @@ std::vector<ToolDeclaration> declarations_of(const std::vector<ToolOffer>& offer
 }
 
 // A round's prompt: the conversation, the tool and the rounds so far, in the family's form.
-ChatGenerationPlanResult search_plan(const SearchLimits& limits, const SearchTurn& turn, const TokenizerPack& tokenizer,
-                                     const std::span<const ToolRound> rounds) {
-  std::vector<std::string> tools;
-  tools.reserve(turn.offers.size());
-  for (const auto& offer : turn.offers) tools.push_back(offer.template_json);
+ChatGenerationPlanResult tool_plan(const SearchLimits& limits, const SearchTurn& turn, const TokenizerPack& tokenizer,
+                                   const std::span<const std::string> tools, const std::span<const ToolRound> rounds) {
+  if (limits.embedded_template) {
+    auto fixed = limits;
+    fixed.embedded_template.reset();
+    fixed.max_prompt_tokens = 1048576U;
+    auto skeleton = turn;
+    skeleton.request.messages = {{"user", "a"}};
+    const std::vector<std::string> metadata_tools{R"({"name":"tool","parameters":{"type":"object"}})"};
+    auto baseline = tool_plan(fixed, skeleton, tokenizer, metadata_tools, {});
+    const auto effort = turn.minimax.effort.value_or(turn.effort.effort == QwenEffort::low ? "low" :
+                                                   turn.effort.effort == QwenEffort::medium ? "medium" : "high");
+    return apply_embedded_template(std::move(baseline), *limits.embedded_template, turn.request, tokenizer, tools, rounds,
+                                  limits.max_prompt_tokens, turn.thinking, effort);
+  }
   switch (turn.format) {
     case ToolFormat::glm:  // GLM-5.3 always thinks (its template opens <think>), as the glm53 profile does
       return make_glm53_tool_generation_plan(turn.request, tokenizer, tools, rounds, limits.max_prompt_tokens, 1U, limits.sampling);
@@ -54,6 +67,15 @@ ChatGenerationPlanResult search_plan(const SearchLimits& limits, const SearchTur
   }
   return make_qwen_tool_generation_plan(turn.request, tokenizer, tools, rounds, limits.max_prompt_tokens, 1U, limits.sampling,
                                         turn.thinking, turn.effort);
+}
+
+ChatGenerationPlanResult search_plan(const SearchLimits& limits, const SearchTurn& turn, const TokenizerPack& tokenizer,
+                                     const std::span<const ToolRound> rounds) {
+  // every tool the plugins list (tool_hub.hpp)
+  std::vector<std::string> tools;
+  tools.reserve(turn.offers.size());
+  for (const auto& offer : turn.offers) tools.push_back(offer.template_json);
+  return tool_plan(limits, turn, tokenizer, tools, rounds);
 }
 
 std::optional<std::vector<std::uint32_t>> wire_ids(const std::vector<std::size_t>& ids) {
@@ -175,17 +197,120 @@ class SearchStreamRounds final : public StreamRounds {
   std::optional<ToolCallObserver> round_;
 };
 
+class ClientToolStream final : public StreamRounds {
+ public:
+  ClientToolStream(ClientToolTurn turn, const SseIdentity& identity) : turn_(std::move(turn)), identity_(identity) {}
+
+  void set_event_queue(std::function<void(std::string)> enqueue) override { enqueue_ = std::move(enqueue); }
+
+  GenerationObserver& observer(GenerationObserver& stream) override {
+    parser_.emplace(stream, turn_.declarations, turn_.format, [this](const ToolCall& call) { queue_call(call); });
+    if (!turn_.prefix.empty()) parser_->on_text(turn_.prefix);
+    return *parser_;
+  }
+
+  bool ended_with_tool_calls() const override { return count_ != 0U; }
+
+  Next next(const GenerationRunResult& run, const std::function<bool()>&,
+            const std::function<bool(std::string_view)>&) override {
+    if (run.end == RunEnd::stop || run.end == RunEnd::length) parser_->finish(run.end == RunEnd::stop);
+    return {};
+  }
+
+ private:
+  void queue_call(const ToolCall& call) {
+    if (count_ >= (turn_.parallel ? kMaxClientToolCalls : 1U)) return;
+    const auto index = count_++;
+    enqueue_(render_tool_call_event(identity_, index, make_tool_call_id(identity_.id, index), call.name, ""));
+    const std::string arguments = tool_arguments_json(call);
+    for (std::string_view remaining = arguments; !remaining.empty();) {
+      const auto size = next_delta_size(remaining);
+      enqueue_(render_tool_arguments_event(identity_, index, remaining.substr(0, size)));
+      remaining.remove_prefix(size);
+    }
+  }
+
+  ClientToolTurn turn_;
+  SseIdentity identity_;
+  std::optional<ToolCallObserver> parser_;
+  std::function<void(std::string)> enqueue_;
+  std::size_t count_{0};
+};
+
 }  // namespace
 
 SearchLimits search_limits(const ChatRouteConfig& config) {
   return SearchLimits{.max_prompt_tokens = config.max_prompt_tokens, .max_completion_tokens = config.max_completion_tokens,
                       .default_max_tokens = config.default_max_tokens, .fit_max_tokens = config.fit_max_tokens,
                       .minimum_output_tokens = config.minimum_output_tokens, .maximum_output_tokens = config.maximum_output_tokens,
-                      .sampling = config.sampling_default, .tools = config.tools, .rounds = config.tool_rounds, .monitor = config.monitor};
+                      .sampling = config.sampling_default, .tools = config.tools, .rounds = config.tool_rounds, .monitor = config.monitor,
+                      .embedded_template = config.embedded_template};
 }
 
 ChatGenerationPlanResult search_first_plan(const ChatRouteConfig& config, const SearchTurn& turn, const TokenizerPack& tokenizer) {
   return search_plan(search_limits(config), turn, tokenizer, {});
+}
+
+ChatGenerationPlanResult client_tool_plan(const ChatRouteConfig& config, const ChatCompletionRequest& request,
+    const TokenizerPack& tokenizer, const ClientToolTurn& client, const bool thinking, const QwenEffortPlacement effort,
+    const MinimaxThinking& minimax) {
+  SearchTurn turn{.request = request, .offers = {}, .thinking = thinking && client.prefix.empty(), .effort = effort,
+                  .format = client.format, .minimax = minimax};
+  std::vector<std::string> tools;
+  if (request.tool_choice != "none") {
+    for (const auto& tool : request.client_tools) tools.push_back(tool.template_json);
+  }
+  std::vector<ToolRound> trailing;
+  if (request.client_tool_history && turn.request.messages.back().role == "assistant" &&
+      turn.request.messages.back().content.empty()) {
+    trailing = std::move(turn.request.messages.back().rounds);
+    turn.request.messages.pop_back();
+  }
+  auto result = tool_plan(search_limits(config), turn, tokenizer, tools, trailing);
+  auto* plan = std::get_if<ChatGenerationPlan>(&result);
+  if (plan == nullptr || client.prefix.empty()) return result;
+  const auto opening = std::string_view(client.prefix);
+  const auto marker = client.format == ToolFormat::deepseek ? kDeepseekToolMarker : std::string_view{"<tool_call>"};
+  PromptBuilder prefix;
+  if (std::any_of(plan->literal_tokens.begin(), plan->literal_tokens.end(),
+                  [marker](const auto& literal) { return literal.second == marker; })) {
+    prefix.templated(opening, std::span<const std::string_view>(&marker, 1U));
+  } else {
+    prefix.text(opening);
+  }
+  const auto pieces = prefix.take();
+  const auto encoded = encode_prompt_pieces(tokenizer, pieces);
+  const auto* ids = std::get_if<std::vector<std::size_t>>(&encoded);
+  if (ids == nullptr) return ChatGenerationPlanError{ChatGenerationPlanErrorCode::tokenization_failed, "tool prefix"};
+  plan->prompt_token_ids.insert(plan->prompt_token_ids.end(), ids->begin(), ids->end());
+  if (plan->prompt_token_ids.size() > config.max_prompt_tokens)
+    return ChatGenerationPlanError{ChatGenerationPlanErrorCode::prompt_too_large, "tool prefix exceeds context"};
+  return result;
+}
+
+std::unique_ptr<StreamRounds> make_client_tool_stream(ClientToolTurn turn, const SseIdentity& identity) {
+  return std::make_unique<ClientToolStream>(std::move(turn), identity);
+}
+
+GenerationOutcome ChatRoute::run_client_tools(Lease& lease, const ClientToolTurn& turn, const ChatGenerationPlan& plan,
+    const std::vector<std::uint32_t>& prompt_ids, const std::size_t max_tokens, const RequestContext& context,
+    std::vector<ToolCall>& calls) {
+  if (const auto failure = lease.chat().begin(prompt_ids, {.max_tokens = max_tokens, .sampling = plan.sampling})) return *failure;
+  const ExecutionControl control{.cancelled = context.client_gone, .shutting_down = context.shutting_down,
+                                 .shutdown_requested = [] { return shutdown_signalled(); }};
+  Collector collector(control);
+  ToolCallObserver parser(collector, turn.declarations, turn.format);
+  if (!turn.prefix.empty()) parser.on_text(turn.prefix);
+  const TokenByteDecoder decoder(tokenizer_);
+  const auto run = drive_generation(lease.protocol(), decoder, round_limits(lease.chat(), plan, max_tokens, config_.monitor), parser);
+  parser.finish(run.end == RunEnd::stop);
+  if (run.end != RunEnd::stop && run.end != RunEnd::length) return failure_of(run, control);
+  const auto& parsed = parser.calls();
+  const std::size_t count = std::min(parsed.size(), turn.parallel ? kMaxClientToolCalls : 1U);
+  calls.assign(parsed.begin(), parsed.begin() + static_cast<std::ptrdiff_t>(count));
+  return GenerationResult{std::move(collector.text), prompt_ids.size(), run.completion_tokens,
+                          run.end == RunEnd::stop ? FinishReason::stop : FinishReason::length,
+                          run.timed_out, std::move(collector.reasoning)};
 }
 
 std::unique_ptr<StreamRounds> make_search_stream_rounds(SearchLimits limits, std::shared_ptr<const SearchTurn> turn,

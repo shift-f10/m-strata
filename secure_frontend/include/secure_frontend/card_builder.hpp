@@ -16,6 +16,9 @@
 #include <vector>
 
 namespace secure_frontend {
+// Persist only the reviewed digest; an empty digest restores the frontend renderer.
+[[nodiscard]] std::variant<std::string, std::string_view> card_with_template_digest(
+    std::string_view card_json, std::string_view digest);
 
 // Cards the page writes (docs/superpowers/specs/2026-10-27-gui-first-install-design.md §4.2-§4.5).
 

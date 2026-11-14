@@ -212,7 +212,8 @@ void refuses_what_the_tool_prompt_cannot_say() {
   const secure_frontend::ToolCall call{"web_search", {{"query", secure_frontend::JsonValue::make_string("q")}}};
   const std::vector<secure_frontend::ToolRound> good{{"r", "", {call}, {"ok"}}};
   expect(secure_frontend::render_qwen_tool_prompt(question, tools, good, QwenThinking::on).has_value(), "the good case renders");
-  expect(!secure_frontend::render_qwen_tool_prompt(question, {}, good, QwenThinking::on), "no tools");
+  expect(!secure_frontend::render_qwen_tool_prompt(question, {}, {}, QwenThinking::on), "no declarations or history");
+  expect(secure_frontend::render_qwen_tool_prompt(question, {}, good, QwenThinking::on).has_value(), "history needs no new declarations");
   expect(!secure_frontend::render_qwen_tool_prompt(question, tools, good, QwenThinking::absent), "a pack without reasoning markers");
   const std::vector<secure_frontend::ToolRound> no_call{{"r", "", {}, {}}};
   expect(!secure_frontend::render_qwen_tool_prompt(question, tools, no_call, QwenThinking::on), "a round without a call");

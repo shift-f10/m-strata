@@ -20,9 +20,12 @@ struct SamplingParams final {
   std::optional<double> repetition_penalty;     // (0, 2] (cap added, C-1)
   std::optional<double> frequency_penalty;      // [0, 2] (cap added, C-1)
   std::optional<std::int64_t> penalty_last_n;   // 0..8192 (cap added, C-1)
+  // Internal benchmark controls only; never parsed from client JSON.
+  std::optional<double> calibration_pcie_frac;
+  std::optional<double> calibration_spec_min_p;
   [[nodiscard]] bool empty() const noexcept {
     return !temperature && !top_p && !seed && !top_k && !min_p && !presence_penalty && !repetition_penalty &&
-           !frequency_penalty && !penalty_last_n;
+           !frequency_penalty && !penalty_last_n && !calibration_pcie_frac && !calibration_spec_min_p;
   }
 };
 

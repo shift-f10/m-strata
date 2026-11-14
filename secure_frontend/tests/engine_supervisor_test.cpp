@@ -2,6 +2,7 @@
 #include "secure_frontend/crt_environment.hpp"
 #include "secure_frontend/cgroup_scope.hpp"
 #include "secure_frontend/engine_environment.hpp"
+#include "secure_frontend/engine_accuracy_policy.hpp"
 #include "secure_frontend/parity_table.hpp"
 #include "secure_frontend/engine_stdio_process.hpp"
 #include "secure_frontend/privilege_check.hpp"
@@ -1758,7 +1759,15 @@ void proc02_child_env_is_exact_allowlist() {
   auto rendered = environment;
   rendered.temp_dir = state / "engine-tmp" / "1";
   std::vector<std::string> expected;
-  for (const auto& [name, value] : secure_frontend::render_engine_environment(rendered)) expected.push_back(name + "=" + value);
+  const auto rendered_block = secure_frontend::render_family_environment(rendered);
+  expect(rendered_block.has_value(), "the closed engine environment renders");
+  if (!rendered_block) return;
+  for (const auto& [name, value] : *rendered_block) expected.push_back(name + "=" + value);
+  std::vector<std::string> accuracy_rows;
+  expect(secure_frontend::apply_engine_accuracy_policy([&](const char* name, const char* value) {
+           accuracy_rows.push_back(std::string(name) + "=" + value);
+           return true;
+         }), "the mandatory accuracy rows render");
   std::sort(expected.begin(), expected.end());
   // On a mismatch, name the entries that differ (names only, never values).
   std::string differing;
@@ -1778,7 +1787,8 @@ void proc02_child_env_is_exact_allowlist() {
     expect(entry.rfind("STRATA_TEST_TOKEN_ENV=", 0) != 0, "the token variable never reaches the engine");
     if (entry.rfind("STRATA_", 0) == 0) {
       expect(entry.rfind("STRATA_HIPBLASLT_TUNING=", 0) == 0 || entry.rfind("STRATA_WATCHDOG_S=", 0) == 0 ||
-                 entry.rfind("STRATA_WATCHDOG_IO_S=", 0) == 0,
+                 entry.rfind("STRATA_WATCHDOG_IO_S=", 0) == 0 ||
+                 std::find(accuracy_rows.begin(), accuracy_rows.end(), entry) != accuracy_rows.end(),
              "no other STRATA_* variable: " + entry.substr(0, entry.find('=')));
     }
   }
@@ -1891,6 +1901,14 @@ const secure_frontend::EnvironmentBlock kPinnedWindowsBlock{{"CUDA_CACHE_PATH", 
                                                             {"TMP", "C:\\state\\engine-tmp\\7"},
                                                             {"WINDIR", "C:\\Windows"}};
 
+secure_frontend::EnvironmentBlock with_accuracy_policy(secure_frontend::EnvironmentBlock block) {
+  expect(secure_frontend::apply_engine_accuracy_policy([&](const char* name, const char* value) {
+           block.insert_or_assign(name, value);
+           return true;
+         }), "the closed accuracy constants apply");
+  return block;
+}
+
 void sp6_env_strata_family_renders_unchanged() {
 #if !defined(_WIN32)
   expect(secure_frontend::render_posix_environment(representative_posix_environment()) == kPinnedPosixBlock,
@@ -1911,7 +1929,8 @@ void sp6_env_strata_family_renders_unchanged() {
 #if !defined(_WIN32)
   auto strata_posix = representative_posix_environment();
   strata_posix.family = EngineFamily::strata;
-  expect(secure_frontend::render_family_environment(strata_posix) == kPinnedPosixBlock, "strata through the family step: POSIX pin");
+  expect(secure_frontend::render_family_environment(strata_posix) == with_accuracy_policy(kPinnedPosixBlock),
+         "strata spawn keeps the POSIX pin plus mandatory accuracy constants");
 #endif
   // SP5 M2 Task 4 (D-7): the glm hook is no longer empty — it carries the
   // §4.9 safety defaults and the CUDA selectors; the exact block is pinned by
@@ -2145,9 +2164,13 @@ void glm_child_env_is_exactly_the_named_typed_set() {
     expect(secure_frontend::merge_forced_environment(probe, rows) && probe.at(std::string{name}) == "7",
            "the table's typed engine_env name is on the allowlist: " + std::string{name});
   }
-  // Nothing else named STRATA_*/MAYA_* reaches the child.
+  // Only typed rows and exact mandatory accuracy constants reach the child.
+  const auto accuracy = with_accuracy_policy({});
   for (const auto& [name, value] : *block) {
-    static_cast<void>(value);
+    if (const auto fixed = accuracy.find(name); fixed != accuracy.end()) {
+      expect(value == fixed->second, "the accuracy constant has its fixed value: " + name);
+      continue;
+    }
     if (name.rfind("STRATA_", 0) == 0 || name.rfind("MAYA_", 0) == 0) {
       const auto* row = parity::maya_parity_row(name);
       expect(row != nullptr && row->disposition == parity::ParityDisposition::typed &&
@@ -2192,6 +2215,35 @@ void several_glm_gpus_split_as_mayas_engine_does() {
 // SP6 §4.9's safety values stay forced unless a typed row moves them; the
 // glm family omits the rows MAYA v1.1.21 has no literal for (SP6 §4.9).
 void forced_defaults_stay_forced_unless_the_table_moves_them() {
+  for (const auto family : {secure_frontend::EngineFamily::strata, secure_frontend::EngineFamily::glm}) {
+    auto accuracy = representative_posix_environment();
+    accuracy.family = family;
+    accuracy.glm_knobs = {{"STRATA_GLM_TRUNK_KEEP", "1"}, {"STRATA_GLM_TRUNK_KEEP_MAP", "1111"},
+                         {"STRATA_GLM_MISS_SKIP_W", "0.5"}, {"STRATA_GLM_DISK_SKIP_FROM", "1"},
+                         {"STRATA_GLM_DISK_SKIP_W", "0.5"}, {"STRATA_GLM_MTP_KEEP", "1"}};
+    const auto actual = secure_frontend::render_family_environment(accuracy);
+    expect(actual.has_value(), "both engine families enforce the accuracy policy");
+    if (!actual) continue;
+    for (const auto& [name, value] : secure_frontend::EnvironmentBlock{
+             {"STRATA_ROUTE_TAIL_SKIP", "0"}, {"STRATA_ROUTE_RESIDENT", "0"}, {"STRATA_ROUTE_PRIOR", "0"},
+             {"STRATA_ROUTE_RESIDENT_MTP", "0"}, {"STRATA_SPEC_PROB", "0"}, {"DS4_DSPARK_SAMPLE", "0"},
+             {"STRATA_GLM_TRUNK_KEEP", "8"}, {"STRATA_GLM_TRUNK_KEEP_MAP", ""},
+             {"STRATA_GLM_DISK_SKIP_FROM", "8"}, {"STRATA_GLM_DISK_SKIP_W", "0"},
+             {"STRATA_GLM_MISS_SKIP_W", "0"}, {"STRATA_GLM_MTP_KEEP", "8"}, {"STRATA_GLM_MTP_MISS", "1"},
+             {"STRATA_DS4_DISK_SKIP_W", "0"}, {"STRATA_DS4_RAM_SKIP_W", "0"}, {"MAYA_GLM_TRUNK_KEEP", "8"}}) {
+      const auto found = actual->find(name);
+      expect(found != actual->end() && found->second == value, "legacy/inherited rows cannot override accuracy defaults: " + name);
+    }
+    accuracy.speed_settings = {"ROUTE_TAIL_SKIP=7", "ROUTE_RESIDENT=0.125", "GLM_TRUNK_KEEP=4"};
+    const auto chosen = secure_frontend::render_family_environment(accuracy);
+    expect(chosen && chosen->at("STRATA_ROUTE_TAIL_SKIP") == "7" && chosen->at("MAYA_ROUTE_TAIL_SKIP") == "7" &&
+               chosen->at("STRATA_ROUTE_RESIDENT") == "0.125" && chosen->at("STRATA_GLM_TRUNK_KEEP") == "4" &&
+               chosen->at("STRATA_GLM_MTP_KEEP") == "8" &&
+               chosen->at("MSTRATA_SPEED_SETTINGS") == "ROUTE_TAIL_SKIP=7;ROUTE_RESIDENT=0.125;GLM_TRUNK_KEEP=4",
+           "explicit speed choices reach both aliases and the launcher, unspecified settings remain accurate");
+    accuracy.speed_settings = {"HOME=1"};
+    expect(!secure_frontend::render_family_environment(accuracy), "invalid speed settings fail before spawning");
+  }
   auto environment = secure_frontend::EngineEnvironment{
       .lib_dirs = {},
       .temp_dir = std::filesystem::path{"/state/engine-tmp/1"},

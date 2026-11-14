@@ -33,6 +33,8 @@
 #include <string>
 #include <variant>
 #include <vector>
+#include "../../../secure_frontend/include/secure_frontend/engine_accuracy_policy.hpp"
+#include "sampling_policy.hpp"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -441,6 +443,21 @@ int main(int argc, char** argv) {
 #if defined(_WIN32)
     SetUnhandledExceptionFilter(crash_filter);
 #endif
+    if (!multiengine::sampling_arguments_supported(argc, argv)) {
+        std::fprintf(stderr, "multiengine: --top-k must be an integer in 1..64\n");
+        return 1;
+    }
+    const std::string speed_settings = env("MSTRATA_SPEED_SETTINGS");
+    if (!secure_frontend::apply_engine_accuracy_policy([](const char* name, const char* value) {
+#if defined(_WIN32)
+            return _putenv_s(name, value) == 0;
+#else
+            return setenv(name, value, 1) == 0;
+#endif
+        }, speed_settings)) {
+        std::fprintf(stderr, "multiengine: invalid speed settings or could not apply the accuracy policy\n");
+        return 1;
+    }
     // `--version` / `-V`: upstream's engine answers (its version and nothing else, before any GPU is touched).
     // `--families`: the GGUF architectures this build runs, every family's.
     for (int i = 1; i < argc && i < 3; ++i) {

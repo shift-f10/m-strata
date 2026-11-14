@@ -45,6 +45,7 @@ struct ToolRound final {
 // are DSML, read as Maya reads them (deepseek_tool_calls.hpp); MiniMax-M3.1's are its namespaced XML, read as Maya reads
 // them (minimax_tool_calls.hpp).
 enum class ToolFormat { qwen, glm, raon1, flint, gemma4, deepseek, minimax };
+inline constexpr std::string_view kDeepseekToolMarker = "\xEF\xBD\x9C" "DSML\xEF\xBD\x9C";
 
 struct ToolParseEvent final {
   enum class Kind { reasoning, content, call };

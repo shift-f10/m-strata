@@ -27,6 +27,10 @@ class StreamObserver final : public GenerationObserver {
 
   void on_text(const std::string_view text) override { queue(Channel::content, text); }
   void on_reasoning(const std::string_view text) override { queue(Channel::reasoning, text); }
+  void enqueue(std::string event) {
+    if (pending_.empty()) pending_since_ = Clock::now();
+    pending_.push_back(Segment{Channel::event, std::move(event)});
+  }
 
   RunCancel on_tick(bool /*progress*/) override {
     if (shutting_down_()) {
@@ -63,7 +67,8 @@ class StreamObserver final : public GenerationObserver {
       }
       blocked_since_.reset();
       if (pending_.empty()) return;
-      if (pending_.front().text.size() >= api_constants::kMaxDeltaTextBytes || pending_.size() > 1U ||
+      if (pending_.front().channel == Channel::event ||
+          pending_.front().text.size() >= api_constants::kMaxDeltaTextBytes || pending_.size() > 1U ||
           Clock::now() - pending_since_ >= kPartialFlushHold) {
         send_one();
         continue;
@@ -103,7 +108,7 @@ class StreamObserver final : public GenerationObserver {
   [[nodiscard]] std::optional<Clock::time_point> shutdown_seen() const { return shutdown_seen_; }
 
  private:
-  enum class Channel { content, reasoning };
+  enum class Channel { content, reasoning, event };
   struct Segment final {
     Channel channel;
     std::string text;
@@ -118,6 +123,12 @@ class StreamObserver final : public GenerationObserver {
 
   void send_one() {
     Segment& front = pending_.front();
+    if (front.channel == Channel::event) {
+      (void)sink_.send_event(front.text);
+      pending_.pop_front();
+      last_activity_ = Clock::now();
+      return;
+    }
     const std::size_t size = next_delta_size(front.text);
     const std::string_view delta = std::string_view(front.text).substr(0, size);
     (void)sink_.send_event(front.channel == Channel::reasoning ? render_reasoning_event(identity_, delta)
@@ -148,6 +159,7 @@ ChatStreamOutcome run_chat_stream(StreamSink& sink, EngineProtocolClient& protoc
   (void)sink.send_headers(make_sse_head());
   (void)sink.send_event(render_role_event(identity));
   StreamObserver observer(sink, identity, settings, shutting_down);  // after the role chunk: the keepalive timer starts here
+  if (settings.rounds != nullptr) settings.rounds->set_event_queue([&observer](std::string event) { observer.enqueue(std::move(event)); });
   GenerationRunResult run =
       drive_generation(protocol, decoder, settings.run, settings.rounds != nullptr ? settings.rounds->observer(observer) : observer);
   std::size_t prompt_tokens = settings.prompt_tokens;
@@ -209,7 +221,9 @@ ChatStreamOutcome run_chat_stream(StreamSink& sink, EngineProtocolClient& protoc
   }
   if (run.end != RunEnd::stop && run.end != RunEnd::length) return outcome;  // shutdown: Task 14
   if (!observer.flush_all(until)) return outcome;
-  if (!observer.send(render_final_event(identity, run.end == RunEnd::stop ? "stop" : "length"), until)) return outcome;
+  const bool calls = settings.rounds != nullptr && settings.rounds->ended_with_tool_calls();
+  if (!observer.send(render_final_event(identity, run.end == RunEnd::stop ? (calls ? "tool_calls" : "stop") : "length"), until))
+    return outcome;
   if (settings.include_usage && !observer.send(render_usage_event(identity, prompt_tokens, run.completion_tokens), until)) return outcome;
   if (!observer.send(kSseDoneEvent, until) || !observer.wait_writable(until)) return outcome;
   sink.finish();

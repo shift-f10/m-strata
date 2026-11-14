@@ -29,6 +29,8 @@ struct ModelOptionSpec final {
   std::span<const std::int64_t> values{};
   std::string_view zero_label{};  // the label of 0 among `values` ("Off"); empty: "0"
   std::string_view at_most{};     // another option this one may not exceed (KV streaming: the context)
+  bool accuracy_tradeoff{false};        // a speed option that may change results (main, 2026-11)
+  std::string_view accuracy_default{};  // fixed JSON scalar for restoring the accuracy baseline
 };
 
 }  // namespace secure_frontend

@@ -219,6 +219,17 @@ std::variant<CardText, CardError> plugin_card(const PluginFamily& plugin, const 
 }
 }  // namespace
 
+std::variant<std::string, std::string_view> card_with_template_digest(const std::string_view card_json, const std::string_view digest) {
+  const auto parsed = parse_json(card_json, JsonLimits{.max_bytes = 1U << 20U, .max_depth = 16U, .max_container_entries = 4096U,
+                                                       .max_string_bytes = 1U << 16U, .allow_fractions = true});
+  const auto* card = std::get_if<JsonValue>(&parsed);
+  const auto* config = card != nullptr ? object_member(*card, "config") : nullptr;
+  const auto* engine = config != nullptr ? object_member(*config, "engine") : nullptr;
+  if (engine == nullptr || engine->if_object() == nullptr) return std::string_view{"the card has no engine configuration"};
+  return python_json_text(with_member(*card, "config", with_member(*config, "engine",
+      with_member(*engine, "chat_template_sha256", JsonValue::make_string(std::string{digest}))))) + "\n";
+}
+
 std::variant<CardText, CardError> card_for_gguf(const GgufMetadata& metadata, const GgufCardRequest& request) {
   const auto* arch = metadata.string("general.architecture");
   if (arch == nullptr || arch->empty()) return CardError{"the GGUF names no model architecture (general.architecture)"};
